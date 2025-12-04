@@ -1,0 +1,27 @@
+﻿# AI EQUALIZER PRO - Backup Info
+# ================================
+
+Version: 2.0.0
+Created: 2025-12-07 14:40:16
+Backup Name: v2.0.0_2025-12-07_14-38-14
+
+## Contents
+- AI Equalizer Pro.vst3 (4.2 MB)
+- Source.zip (Source code archive)
+
+## Note
+Initial v2.0.0 release with all Phase 1 features:
+- Dynamic EQ (FabFilter style)
+- Enhanced AI Detection v2.0
+- ML Integration
+- Improved Problem Panel
+- Freeze/Capture Spectrum
+- Undo/Redo
+
+## Restore Instructions
+1. Close your DAW
+2. Copy 'AI Equalizer Pro.vst3' to:
+   - C:\Program Files\Common Files\VST3\AI Equalizer Pro.vst3\Contents\x86_64-win\
+   OR
+   - C:\Users\<username>\AppData\Local\VST3\AI Equalizer Pro.vst3\Contents\x86_64-win\
+3. Restart DAW and rescan plugins
