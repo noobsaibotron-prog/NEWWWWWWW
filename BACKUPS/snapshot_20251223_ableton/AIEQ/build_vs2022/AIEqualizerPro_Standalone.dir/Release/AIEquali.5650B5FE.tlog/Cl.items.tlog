@@ -1,0 +1,8 @@
+C:\AIEQ\JUCE\modules\juce_audio_plugin_client\juce_audio_plugin_client_AAX.cpp;C:\AIEQ\build_vs2022\AIEqualizerPro_Standalone.dir\Release\juce_audio_plugin_client_AAX.obj
+C:\AIEQ\JUCE\modules\juce_audio_plugin_client\juce_audio_plugin_client_AAX_utils.cpp;C:\AIEQ\build_vs2022\AIEqualizerPro_Standalone.dir\Release\juce_audio_plugin_client_AAX_utils.obj
+C:\AIEQ\JUCE\modules\juce_audio_plugin_client\juce_audio_plugin_client_ARA.cpp;C:\AIEQ\build_vs2022\AIEqualizerPro_Standalone.dir\Release\juce_audio_plugin_client_ARA.obj
+C:\AIEQ\JUCE\modules\juce_audio_plugin_client\juce_audio_plugin_client_LV2.cpp;C:\AIEQ\build_vs2022\AIEqualizerPro_Standalone.dir\Release\juce_audio_plugin_client_LV2.obj
+C:\AIEQ\JUCE\modules\juce_audio_plugin_client\juce_audio_plugin_client_Standalone.cpp;C:\AIEQ\build_vs2022\AIEqualizerPro_Standalone.dir\Release\juce_audio_plugin_client_Standalone.obj
+C:\AIEQ\JUCE\modules\juce_audio_plugin_client\juce_audio_plugin_client_Unity.cpp;C:\AIEQ\build_vs2022\AIEqualizerPro_Standalone.dir\Release\juce_audio_plugin_client_Unity.obj
+C:\AIEQ\JUCE\modules\juce_audio_plugin_client\juce_audio_plugin_client_VST2.cpp;C:\AIEQ\build_vs2022\AIEqualizerPro_Standalone.dir\Release\juce_audio_plugin_client_VST2.obj
+C:\AIEQ\JUCE\modules\juce_audio_plugin_client\juce_audio_plugin_client_VST3.cpp;C:\AIEQ\build_vs2022\AIEqualizerPro_Standalone.dir\Release\juce_audio_plugin_client_VST3.obj

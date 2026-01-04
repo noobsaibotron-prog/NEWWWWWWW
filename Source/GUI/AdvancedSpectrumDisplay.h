@@ -1,8 +1,11 @@
 #pragma once
 #include <juce_gui_basics/juce_gui_basics.h>
+#include <juce_audio_basics/juce_audio_basics.h>
 #include "../PluginProcessor.h"
 #include "ModernLookAndFeel.h"
 #include <array>
+#include <cmath>
+#include <limits>
 
 //==============================================================================
 /**
@@ -26,14 +29,15 @@ public:
     {
         setOpaque(true);
         startTimerHz(60);
-        smoothedSpectrum.resize(512, -90.0f);
-        frozenSpectrum.resize(512, -90.0f);
-        capturedSpectrum.resize(512, -90.0f);
+        smoothedSpectrum.resize(512, spectrumMinDb);
+        frozenSpectrum.resize(512, spectrumMinDb);
+        capturedSpectrum.resize(512, spectrumMinDb);
         
-        // Initialize band colors
-        for (int i = 0; i < 8; ++i)
+        // Initialize band colors (repeat palette for all supported bands)
+        constexpr int paletteSize = 8;
+        for (int i = 0; i < AIEqualizerAudioProcessor::maxBands; ++i)
         {
-            bandColors[i] = ModernLookAndFeel::Colors::getBandColor(i);
+            bandColors[i] = ModernLookAndFeel::Colors::getBandColor(i % paletteSize);
         }
         
         // Freeze button
@@ -48,6 +52,7 @@ public:
             if (isFrozen) {
                 frozenSpectrum = smoothedSpectrum;
             }
+            refreshPeaks();
         };
         addAndMakeVisible(freezeButton);
         
@@ -128,9 +133,25 @@ public:
     }
     
     ProblemHighlight currentHighlight;
+    
+    // Display range for spectrum (helps visual width/height of the curve)
+    static constexpr float spectrumMinDb = -90.0f;
+    static constexpr float spectrumMaxDb = 12.0f;
+
+    struct SpectrumPeak
+    {
+        float frequency = 0.0f;
+        float magnitudeDb = spectrumMinDb;
+        float suggestedGain = 0.0f;
+        AIEngine::ProblemType aiType = AIEngine::ProblemType::None;
+        bool fromAI = false;
+    };
 
     void paint(juce::Graphics& g) override
     {
+        g.setImageResamplingQuality(juce::Graphics::ResamplingQuality::highResamplingQuality);
+        g.reduceClipRegion(getLocalBounds()); // ensure crisp edges
+
         auto bounds = getLocalBounds().toFloat();
         
         // Background
@@ -144,6 +165,7 @@ public:
         
         drawGrid(g);
         drawSpectrum(g);
+        drawSpectrumGrab(g);
         drawProblemHighlight(g);  // Draw AI problem highlight BEFORE EQ curve
         drawEQCurve(g);
         drawEQBands(g);      // Draw EQ band controls on spectrum
@@ -174,8 +196,14 @@ public:
     
     void timerCallback() override 
     { 
+        // SAFETY: Skip processing if processor not ready
+        if (!processor.isProcessorReady())
+        {
+            repaint();  // Still repaint background
+            return;
+        }
+        
         // Reset capture button text after showing "CAPTURED!"
-        static int captureTextTimer = 0;
         if (captureButton.getButtonText() == "CAPTURED!") {
             if (++captureTextTimer > 10) {
                 captureButton.setButtonText("CAPTURE");
@@ -185,6 +213,7 @@ public:
         
         if (!isFrozen) {
             updateSmoothedSpectrum();
+            refreshPeaks();
         }
         repaint(); 
     }
@@ -196,9 +225,10 @@ public:
         
         // Check if hovering over a band
         hoveredBandIndex = getBandAtPosition(e.position);
+        hoveredPeakIndex = getPeakAtPosition(e.position);
         
         // Change cursor when over a band
-        if (hoveredBandIndex >= 0)
+        if (hoveredBandIndex >= 0 || hoveredPeakIndex >= 0)
             setMouseCursor(juce::MouseCursor::PointingHandCursor);
         else
             setMouseCursor(juce::MouseCursor::NormalCursor);
@@ -208,11 +238,18 @@ public:
     { 
         hoverX = -1; 
         hoveredBandIndex = -1;
+        hoveredPeakIndex = -1;
         setMouseCursor(juce::MouseCursor::NormalCursor);
     }
     
     void mouseDown(const juce::MouseEvent& e) override 
     {
+        if (e.mods.isPopupMenu())
+        {
+            showContextMenu(e.getPosition());
+            return;
+        }
+
         if (!graphBounds.contains(e.position))
             return;
         
@@ -238,9 +275,15 @@ public:
         }
         else
         {
+            if (hoveredPeakIndex >= 0 && hoveredPeakIndex < static_cast<int>(detectedPeaks.size()))
+            {
+                handlePeakClick(detectedPeaks[hoveredPeakIndex]);
+                return;
+            }
+
             // Clicked on empty space - just report frequency
             if (onFrequencySelected)
-                onFrequencySelected(xToFreq((float)e.x));
+                onFrequencySelected(quantizeFrequency(xToFreq((float)e.x)));
         }
     }
     
@@ -290,7 +333,7 @@ public:
         if (!graphBounds.contains(e.position))
             return;
         
-        float freq = xToFreq((float)e.x);
+        float freq = quantizeFrequency(xToFreq((float)e.x));
         float gain = yToGain((float)e.y);
         
         // Check if double-clicking on existing band -> reset its gain
@@ -311,9 +354,11 @@ public:
             // Double-click on empty space -> activate the best available band
             // Find band with lowest gain (most "unused")
             int targetBand = -1;
-            float minGain = 1000.0f;
-            
-            for (int i = 0; i < AIEqualizerAudioProcessor::numBands; ++i)
+            float minGain = std::numeric_limits<float>::max();
+
+            // Use the processor's configured active band count
+            int numBands = processor.getNumActiveBands();
+            for (int i = 0; i < numBands; ++i)
             {
                 auto state = processor.getBandState(i);
                 if (std::abs(state.gain) < minGain)
@@ -363,20 +408,403 @@ public:
     }
 
 private:
+    float getAnalyzerSlopeDbPerOct() const
+    {
+        // New: analyzerSlope choice parameter (0=Flat,1=3dB,2=4.5dB)
+        if (auto* p = processor.getAPVTS().getRawParameterValue("analyzerSlope"))
+        {
+            const int v = static_cast<int>(p->load());
+            if (v == 1) return 3.0f;
+            if (v == 2) return 4.5f;
+            return 0.0f;
+        }
+        // Backward compatibility: analyzerTilt bool toggles 4.5 dB/oct
+        if (auto* tilt = processor.getAPVTS().getRawParameterValue("analyzerTilt"))
+            return (tilt->load() > 0.5f) ? 4.5f : 0.0f;
+        return 4.5f; // default visual
+    }
+
+    bool isPianoRollEnabled() const
+    {
+        if (auto* p = processor.getAPVTS().getRawParameterValue("pianoRollOverlay"))
+            return p->load() > 0.5f;
+        return false;
+    }
+
+    bool isDeltaEnabled() const
+    {
+        if (auto* p = processor.getAPVTS().getRawParameterValue("showDeltaSpectrum"))
+            return p->load() > 0.5f;
+        return false;
+    }
+
+    float getPeakHoldSeconds() const
+    {
+        if (auto* p = processor.getAPVTS().getRawParameterValue("analyzerPeakHold"))
+            return p->load();
+        return 2.0f;
+    }
+
+    float getPeakDecayDbPerSec() const
+    {
+        if (auto* p = processor.getAPVTS().getRawParameterValue("analyzerPeakDecay"))
+            return p->load();
+        return 20.0f;
+    }
+
+    float applyTilt(float db, float freq) const
+    {
+        float slope = getAnalyzerSlopeDbPerOct();
+        if (std::abs(slope) < 0.01f)
+            return db;
+        float safeFreq = juce::jmax(20.0f, freq);
+        float octaves = static_cast<float>(std::log2(static_cast<double>(safeFreq) / 1000.0));
+        return static_cast<float>(db + octaves * slope);
+    }
+
+    float quantizeFrequency(float freq) const
+    {
+        if (!isPianoRollEnabled())
+            return freq;
+        float clamped = juce::jlimit(20.0f, 20000.0f, freq);
+        float midi = 69.0f + 12.0f * static_cast<float>(std::log2(static_cast<double>(clamped) / 440.0));
+        int rounded = static_cast<int>(std::round(midi));
+        rounded = juce::jlimit(0, 127, rounded);
+        return static_cast<float>(juce::MidiMessage::getMidiNoteInHertz(rounded));
+    }
+
+    juce::String getNoteName(float freq) const
+    {
+        int midi = static_cast<int>(std::round(69.0f + 12.0f * static_cast<float>(std::log2(static_cast<double>(juce::jlimit(20.0f, 20000.0f, freq)) / 440.0))));
+        midi = juce::jlimit(0, 127, midi);
+        return juce::MidiMessage::getMidiNoteName(midi, true, true, 3);
+    }
+
+    void refreshPeaks()
+    {
+        const auto& source = (isFrozen && !frozenSpectrum.empty()) ? frozenSpectrum : smoothedSpectrum;
+        if (source.size() < 5 || graphBounds.isEmpty())
+        {
+            detectedPeaks.clear();
+            hoveredPeakIndex = -1;
+            return;
+        }
+
+        std::vector<SpectrumPeak> rawPeaks;
+        const size_t size = source.size();
+        const int step = 2;
+        for (size_t i = 2; i + 2 < size; i += step)
+        {
+            float v = source[i];
+            if (v < spectrumMinDb + 6.0f)
+                continue;
+
+            if (v > source[i - 1] + 1.5f && v > source[i + 1] + 1.5f)
+            {
+                float x = graphBounds.getX() + static_cast<float>(i);
+                float freq = xToFreq(x);
+                SpectrumPeak peak;
+                peak.frequency = freq;
+                peak.magnitudeDb = applyTilt(v, freq);
+                rawPeaks.push_back(peak);
+            }
+        }
+
+        std::sort(rawPeaks.begin(), rawPeaks.end(),
+                  [](const SpectrumPeak& a, const SpectrumPeak& b) { return a.magnitudeDb > b.magnitudeDb; });
+
+        const size_t maxPeaks = 10;
+        if (rawPeaks.size() > maxPeaks)
+            rawPeaks.resize(maxPeaks);
+
+        detectedPeaks = rawPeaks;
+        if (hoveredPeakIndex >= static_cast<int>(detectedPeaks.size()))
+            hoveredPeakIndex = -1;
+
+        auto corrections = processor.getAIEngine().getPendingCorrections();
+        for (auto& peak : detectedPeaks)
+        {
+            for (const auto& c : corrections)
+            {
+                float ratio = std::abs(std::log2(peak.frequency / juce::jmax(20.0f, c.frequency)));
+                if (ratio < 0.08f)
+                {
+                    peak.fromAI = true;
+                    peak.aiType = c.type;
+                    peak.suggestedGain = c.suggestedGain;
+                    break;
+                }
+            }
+        }
+    }
+
+    int getPeakAtPosition(juce::Point<float> pos) const
+    {
+        if (detectedPeaks.empty())
+            return -1;
+
+        for (size_t i = 0; i < detectedPeaks.size(); ++i)
+        {
+            const auto& peak = detectedPeaks[i];
+            float x = freqToX(peak.frequency);
+            float y = dbToY(peak.magnitudeDb);
+            float dist = std::sqrt((pos.x - x) * (pos.x - x) + (pos.y - y) * (pos.y - y));
+            if (dist < 12.0f)
+                return static_cast<int>(i);
+        }
+        return -1;
+    }
+
+    void handlePeakClick(const SpectrumPeak& peak)
+    {
+        float targetFreq = quantizeFrequency(peak.frequency);
+        float targetGain = std::abs(peak.suggestedGain) > 0.01f ? peak.suggestedGain : 0.0f;
+        float targetQ = peak.fromAI ? 2.5f : 2.0f;
+
+        int targetBand = -1;
+        float minGain = std::numeric_limits<float>::max();
+        int numBands = processor.getNumActiveBands();
+        for (int i = 0; i < numBands; ++i)
+        {
+            auto state = processor.getBandState(i);
+            if (std::abs(state.gain) < minGain)
+            {
+                minGain = std::abs(state.gain);
+                targetBand = i;
+            }
+        }
+
+        if (targetBand >= 0)
+        {
+            auto state = processor.getBandState(targetBand);
+            state.frequency = targetFreq;
+            state.gain = targetGain;
+            state.q = targetQ;
+            state.enabled = true;
+            processor.setBandState(targetBand, state);
+
+            selectedBandIndex = targetBand;
+
+            if (onBandCreatedOrActivated)
+                onBandCreatedOrActivated(targetBand, targetFreq, targetGain);
+            if (onBandSelected)
+                onBandSelected(targetBand);
+
+            repaint();
+        }
+    }
+
+    void setBoolParameter(const juce::String& paramID, bool value)
+    {
+        if (auto* p = processor.getAPVTS().getParameter(paramID))
+        {
+            p->beginChangeGesture();
+            p->setValueNotifyingHost(value ? 1.0f : 0.0f);
+            p->endChangeGesture();
+        }
+    }
+
+    void setChoiceParameter(const juce::String& paramID, int index)
+    {
+        if (auto* p = processor.getAPVTS().getParameter(paramID))
+        {
+            auto norm = p->convertTo0to1(static_cast<float>(index));
+            p->beginChangeGesture();
+            p->setValueNotifyingHost(norm);
+            p->endChangeGesture();
+        }
+    }
+
+    void showContextMenu(juce::Point<int> pos)
+    {
+        juce::PopupMenu menu;
+
+        bool showPre = processor.getAPVTS().getRawParameterValue("showPreSpectrum")->load() > 0.5f;
+        bool showPost = processor.getAPVTS().getRawParameterValue("showPostSpectrum")->load() > 0.5f;
+        bool showDelta = isDeltaEnabled();
+        const float slope = getAnalyzerSlopeDbPerOct();
+        bool pianoRoll = isPianoRollEnabled();
+
+        menu.addItem(1, "Input Spectrum (Pre)", true, showPre);
+        menu.addItem(2, "Output Spectrum (Post)", true, showPost);
+        menu.addItem(3, "Delta (Post - Pre)", true, showDelta);
+        menu.addSeparator();
+
+        juce::PopupMenu fftMenu;
+        auto resParam = processor.getAPVTS().getRawParameterValue("analyzerResolution");
+        int resIdx = resParam ? static_cast<int>(resParam->load()) : 2;
+        fftMenu.addItem(10, "Low (1024)", true, resIdx == 0);
+        fftMenu.addItem(11, "Medium (2048)", true, resIdx == 1);
+        fftMenu.addItem(12, "High (4096)", true, resIdx == 2);
+        fftMenu.addItem(13, "Maximum (8192)", true, resIdx == 3);
+        menu.addSubMenu("FFT Resolution", fftMenu);
+
+        juce::PopupMenu speedMenu;
+        auto speedParam = processor.getAPVTS().getRawParameterValue("analyzerSpeed");
+        int speedIdx = speedParam ? static_cast<int>(speedParam->load()) : 1;
+        speedMenu.addItem(20, "Fast", true, speedIdx == 0);
+        speedMenu.addItem(21, "Medium", true, speedIdx == 1);
+        speedMenu.addItem(22, "Slow", true, speedIdx == 2);
+        menu.addSubMenu("Analyzer Speed", speedMenu);
+
+        menu.addSeparator();
+        menu.addItem(30, "Slope: Flat", true, std::abs(slope) < 0.01f);
+        menu.addItem(31, "Slope: 3 dB/oct", true, std::abs(slope - 3.0f) < 0.01f);
+        menu.addItem(32, "Slope: 4.5 dB/oct", true, std::abs(slope - 4.5f) < 0.01f);
+        menu.addItem(40, "Piano Roll Overlay", true, pianoRoll);
+
+        menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(this).withTargetScreenArea({pos, {1, 1}}),
+            [this, showPre, showPost, showDelta, pianoRoll](int result)
+            {
+                switch (result)
+                {
+                    case 1: setBoolParameter("showPreSpectrum", !showPre); break;
+                    case 2: setBoolParameter("showPostSpectrum", !showPost); break;
+                    case 3: setBoolParameter("showDeltaSpectrum", !showDelta); break;
+                    case 10: setChoiceParameter("analyzerResolution", 0); break;
+                    case 11: setChoiceParameter("analyzerResolution", 1); break;
+                    case 12: setChoiceParameter("analyzerResolution", 2); break;
+                    case 13: setChoiceParameter("analyzerResolution", 3); break;
+                    case 20: setChoiceParameter("analyzerSpeed", 0); break;
+                    case 21: setChoiceParameter("analyzerSpeed", 1); break;
+                    case 22: setChoiceParameter("analyzerSpeed", 2); break;
+                    case 30: setChoiceParameter("analyzerSlope", 0); break;
+                    case 31: setChoiceParameter("analyzerSlope", 1); break;
+                    case 32: setChoiceParameter("analyzerSlope", 2); break;
+                    case 40: setBoolParameter("pianoRollOverlay", !pianoRoll); break;
+                    default: break;
+                }
+            });
+    }
+
+    void drawSpectrumGrab(juce::Graphics& g)
+    {
+        bool showPre = processor.getAPVTS().getRawParameterValue("showPreSpectrum")->load() > 0.5f;
+        if (!showPre || detectedPeaks.empty())
+            return;
+
+        for (size_t i = 0; i < detectedPeaks.size(); ++i)
+        {
+            const auto& peak = detectedPeaks[i];
+            float x = freqToX(peak.frequency);
+            float y = dbToY(peak.magnitudeDb);
+
+            if (x < graphBounds.getX() || x > graphBounds.getRight())
+                continue;
+
+            juce::Colour base = peak.fromAI ? ModernLookAndFeel::Colors::accentOrange
+                                            : ModernLookAndFeel::Colors::textSecondary;
+
+            g.setColour(base.withAlpha(0.35f));
+            g.drawVerticalLine(static_cast<int>(x), graphBounds.getY(), graphBounds.getBottom());
+
+            g.setColour(base);
+            g.fillEllipse(x - 5.0f, y - 5.0f, 10.0f, 10.0f);
+
+            if (static_cast<int>(i) == hoveredPeakIndex)
+            {
+                juce::String freqStr = peak.frequency >= 1000.0f
+                    ? juce::String(peak.frequency / 1000.0f, 2) + " kHz"
+                    : juce::String(peak.frequency, 1) + " Hz";
+                auto note = getNoteName(peak.frequency);
+                juce::String label = freqStr + "  (" + note + ")";
+                if (peak.fromAI)
+                    label += " • AI DETECT";
+
+                int w = 170;
+                int h = 24;
+                int tx = static_cast<int>(juce::jlimit(graphBounds.getX(), graphBounds.getRight() - w, x - w * 0.5f));
+                int ty = static_cast<int>(y) - 32;
+                if (ty < graphBounds.getY() + 4) ty = static_cast<int>(y) + 12;
+
+                g.setColour(ModernLookAndFeel::Colors::bgLight.withAlpha(0.95f));
+                g.fillRoundedRectangle((float)tx, (float)ty, (float)w, (float)h, 4.0f);
+                g.setColour(base);
+                g.drawRoundedRectangle((float)tx, (float)ty, (float)w, (float)h, 4.0f, 1.4f);
+
+                g.setColour(ModernLookAndFeel::Colors::textBright);
+                g.setFont(juce::Font(juce::FontOptions().withHeight(11.0f)));
+                g.drawText(label, tx, ty, w, h, juce::Justification::centred);
+            }
+        }
+    }
+
+    void drawPianoRollOverlay(juce::Graphics& g)
+    {
+        auto area = juce::Rectangle<float>(graphBounds.getX(), graphBounds.getBottom(), graphBounds.getWidth(), 18.0f);
+        g.setColour(ModernLookAndFeel::Colors::bgLight);
+        g.fillRect(area);
+
+        auto isWhite = [](int midi)
+        {
+            int n = midi % 12;
+            return n == 0 || n == 2 || n == 4 || n == 5 || n == 7 || n == 9 || n == 11;
+        };
+
+        for (int midi = 36; midi <= 96; ++midi)
+        {
+            float f1 = static_cast<float>(juce::MidiMessage::getMidiNoteInHertz(midi));
+            float f2 = static_cast<float>(juce::MidiMessage::getMidiNoteInHertz(midi + 1));
+            float x1 = freqToX(f1);
+            float x2 = freqToX(f2);
+            if (x2 < graphBounds.getX() || x1 > graphBounds.getRight())
+                continue;
+
+            float w = x2 - x1;
+            juce::Rectangle<float> keyRect(x1, area.getY(), w, area.getHeight());
+            g.setColour(isWhite(midi) ? ModernLookAndFeel::Colors::bgDark.brighter(0.08f)
+                                      : ModernLookAndFeel::Colors::bgDark);
+            g.fillRect(keyRect);
+
+            g.setColour(ModernLookAndFeel::Colors::bgLighter);
+            g.drawLine(x1, area.getY(), x1, area.getBottom(), 0.5f);
+
+            if (midi % 12 == 0)
+            {
+                juce::String name = juce::MidiMessage::getMidiNoteName(midi, true, true, 3);
+                g.setColour(ModernLookAndFeel::Colors::textMuted);
+                g.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
+                g.drawText(name, (int)x1 - 8, (int)area.getY(), 40, (int)area.getHeight(),
+                           juce::Justification::centredLeft, false);
+            }
+        }
+    }
+
     void updateSmoothedSpectrum()
     {
         const auto& raw = processor.getSpectrumAnalyzer().getSmoothedSpectrum();
         if (raw.empty()) return;
         
-        size_t w = static_cast<size_t>(juce::jmax(100.0f, graphBounds.getWidth()));
-        if (smoothedSpectrum.size() != w) smoothedSpectrum.resize(w, -90.0f);
+        const size_t w = static_cast<size_t>(juce::jmax(100.0f, graphBounds.getWidth()));
+        if (smoothedSpectrum.size() < w) smoothedSpectrum.resize(w, spectrumMinDb); // grow only (no per-frame realloc)
+        if (peakHold.size() < w) peakHold.resize(w, spectrumMinDb);
+        if (peakTimers.size() < w) peakTimers.resize(w, 0.0f);
+        
+        const float dt = 1.0f / 60.0f; // timer at 60 Hz
+        const float holdSec = getPeakHoldSeconds();
+        const float decayDbPerSec = getPeakDecayDbPerSec();
         
         for (size_t i = 0; i < w; ++i)
         {
             float freq = xToFreq(graphBounds.getX() + (float)i);
             int bin = processor.getSpectrumAnalyzer().getBinForFrequency(freq);
-            float db = (bin >= 0 && bin < (int)raw.size()) ? raw[bin] : -90.0f;
+            float db = (bin >= 0 && bin < (int)raw.size()) ? raw[bin] : spectrumMinDb;
             smoothedSpectrum[i] = smoothedSpectrum[i] * 0.75f + db * 0.25f;
+
+            // Peak-hold tracking
+            if (smoothedSpectrum[i] >= peakHold[i])
+            {
+                peakHold[i] = smoothedSpectrum[i];
+                peakTimers[i] = 0.0f;
+            }
+            else
+            {
+                peakTimers[i] += dt;
+                if (peakTimers[i] > holdSec)
+                {
+                    peakHold[i] = juce::jmax(peakHold[i] - decayDbPerSec * dt, spectrumMinDb);
+                }
+            }
         }
     }
 
@@ -396,10 +824,10 @@ private:
         }
         
         // Horizontal dB lines
-        for (float db = -48; db <= 12; db += 12)
+        for (float db = spectrumMinDb; db <= spectrumMaxDb; db += 12.0f)
         {
             float y = dbToY(db);
-            bool isZero = (db == 0);
+            bool isZero = std::abs(db) < 0.01f;
             g.setColour(isZero ? ModernLookAndFeel::Colors::textMuted.withAlpha(0.4f)
                                : ModernLookAndFeel::Colors::grid);
             g.drawHorizontalLine((int)y, graphBounds.getX(), graphBounds.getRight());
@@ -408,123 +836,126 @@ private:
 
     void drawSpectrum(juce::Graphics& g)
     {
-        if (smoothedSpectrum.empty()) return;
-        
         bool showPre = processor.getAPVTS().getRawParameterValue("showPreSpectrum")->load() > 0.5f;
         bool showPost = processor.getAPVTS().getRawParameterValue("showPostSpectrum")->load() > 0.5f;
+        bool showDelta = isDeltaEnabled();
         bool showCaptured = showCapturedButton.getToggleState() && hasCaptured;
-        
+
+        const auto& preBuffer = (isFrozen && !frozenSpectrum.empty()) ? frozenSpectrum : smoothedSpectrum;
+        if (preBuffer.empty() && !showCaptured && !(showPost && !isFrozen))
+            return;
+
         //----------------------------------------------------------------------
-        // Draw CAPTURED spectrum (orange, dashed) - behind live spectrum
+        // Captured spectrum (orange dashed)
         //----------------------------------------------------------------------
         if (showCaptured && !capturedSpectrum.empty())
         {
             juce::Path capturedPath;
             bool started = false;
-            
+
             for (size_t i = 0; i < capturedSpectrum.size(); ++i)
             {
                 float x = graphBounds.getX() + (float)i;
-                float y = dbToY(capturedSpectrum[i]);
+                float freq = xToFreq(x);
+                float y = dbToY(applyTilt(capturedSpectrum[i], freq));
                 if (!started) { capturedPath.startNewSubPath(x, y); started = true; }
                 else capturedPath.lineTo(x, y);
             }
-            
-            // Orange color for captured
+
             g.setColour(juce::Colour(0xFFE6A23C).withAlpha(0.6f));
             float dashLengths[] = { 4.0f, 4.0f };
             juce::PathStrokeType stroke(1.5f);
             stroke.createDashedStroke(capturedPath, capturedPath, dashLengths, 2);
             g.strokePath(capturedPath, stroke);
         }
-        
+
         //----------------------------------------------------------------------
-        // Draw FROZEN spectrum (cyan) when frozen
+        // Frozen spectrum (blue indicator)
         //----------------------------------------------------------------------
         if (isFrozen && !frozenSpectrum.empty())
         {
             juce::Path frozenFillPath;
             frozenFillPath.startNewSubPath(graphBounds.getX(), graphBounds.getBottom());
-            
+
             for (size_t i = 0; i < frozenSpectrum.size(); ++i)
             {
                 float x = graphBounds.getX() + (float)i;
-                float y = dbToY(frozenSpectrum[i]);
+                float freq = xToFreq(x);
+                float y = dbToY(applyTilt(frozenSpectrum[i], freq));
                 frozenFillPath.lineTo(x, y);
             }
             frozenFillPath.lineTo(graphBounds.getRight(), graphBounds.getBottom());
             frozenFillPath.closeSubPath();
-            
-            // Cyan gradient fill for frozen
+
             juce::ColourGradient frozenGrad(
-                juce::Colour(0xFF00BCD4).withAlpha(0.4f), 0, graphBounds.getY(),
-                juce::Colour(0xFF00BCD4).withAlpha(0.02f), 0, graphBounds.getBottom(), false);
+                ModernLookAndFeel::Colors::accentBlue.withAlpha(0.35f), 0, graphBounds.getY(),
+                ModernLookAndFeel::Colors::accentBlue.withAlpha(0.03f), 0, graphBounds.getBottom(), false);
             g.setGradientFill(frozenGrad);
             g.fillPath(frozenFillPath);
-            
-            // Frozen line (cyan)
+
             juce::Path frozenLinePath;
             bool started = false;
             for (size_t i = 0; i < frozenSpectrum.size(); ++i)
             {
                 float x = graphBounds.getX() + (float)i;
-                float y = dbToY(frozenSpectrum[i]);
+                float freq = xToFreq(x);
+                float y = dbToY(applyTilt(frozenSpectrum[i], freq));
                 if (!started) { frozenLinePath.startNewSubPath(x, y); started = true; }
                 else frozenLinePath.lineTo(x, y);
             }
-            
-            g.setColour(juce::Colour(0xFF00BCD4));
+
+            g.setColour(ModernLookAndFeel::Colors::accentBlue);
             g.strokePath(frozenLinePath, juce::PathStrokeType(2.0f));
-            
-            // Draw "FROZEN" label
-            g.setColour(juce::Colour(0xFF00BCD4));
-            g.setFont(12.0f);
-            g.drawText("FROZEN", graphBounds.getX() + 10, graphBounds.getY() + 30, 80, 20, 
+
+            g.setColour(ModernLookAndFeel::Colors::accentBlue);
+            g.setFont(juce::Font(juce::FontOptions().withHeight(12.0f)));
+            g.drawText("FROZEN",
+                      static_cast<int>(graphBounds.getX() + 10.0f),
+                      static_cast<int>(graphBounds.getY() + 30.0f),
+                      80, 20,
                       juce::Justification::centredLeft);
+
+            g.fillEllipse(graphBounds.getRight() - 16.0f, graphBounds.getY() + 10.0f, 8.0f, 8.0f);
         }
-        
+
+        const size_t usable = std::min(preBuffer.size(), static_cast<size_t>(std::max(0, (int)graphBounds.getWidth())));
+
         //----------------------------------------------------------------------
-        // Draw LIVE spectrum (blue) - only when NOT frozen
+        // Pre (input) - grey behind
         //----------------------------------------------------------------------
-        if (showPre && !isFrozen)
+        if (showPre && usable > 4)
         {
-            // Build filled path
             juce::Path fillPath;
             fillPath.startNewSubPath(graphBounds.getX(), graphBounds.getBottom());
-            
-            for (size_t i = 0; i < smoothedSpectrum.size(); ++i)
-            {
-                float x = graphBounds.getX() + (float)i;
-                float y = dbToY(smoothedSpectrum[i]);
-                fillPath.lineTo(x, y);
-            }
-            fillPath.lineTo(graphBounds.getRight(), graphBounds.getBottom());
-            fillPath.closeSubPath();
-            
-            // Gradient fill (TDR Nova blue style)
-            juce::ColourGradient fillGrad(
-                ModernLookAndFeel::Colors::spectrumFill.withAlpha(0.5f), 0, graphBounds.getY(),
-                ModernLookAndFeel::Colors::spectrumFill.withAlpha(0.05f), 0, graphBounds.getBottom(), false);
-            g.setGradientFill(fillGrad);
-            g.fillPath(fillPath);
-            
-            // Top line
+
             juce::Path linePath;
             bool started = false;
-            for (size_t i = 0; i < smoothedSpectrum.size(); ++i)
+
+            for (size_t i = 0; i < usable; ++i)
             {
                 float x = graphBounds.getX() + (float)i;
-                float y = dbToY(smoothedSpectrum[i]);
+                float freq = xToFreq(x);
+                float y = dbToY(applyTilt(preBuffer[i], freq));
+                fillPath.lineTo(x, y);
+
                 if (!started) { linePath.startNewSubPath(x, y); started = true; }
                 else linePath.lineTo(x, y);
             }
-            
-            g.setColour(ModernLookAndFeel::Colors::spectrumLine);
-            g.strokePath(linePath, juce::PathStrokeType(1.5f));
+            fillPath.lineTo(graphBounds.getRight(), graphBounds.getBottom());
+            fillPath.closeSubPath();
+
+            juce::ColourGradient fillGrad(
+                ModernLookAndFeel::Colors::textSecondary.withAlpha(0.28f), 0, graphBounds.getY(),
+                ModernLookAndFeel::Colors::textSecondary.withAlpha(0.05f), 0, graphBounds.getBottom(), false);
+            g.setGradientFill(fillGrad);
+            g.fillPath(fillPath);
+
+            g.setColour(ModernLookAndFeel::Colors::textSecondary.withAlpha(0.55f));
+            g.strokePath(linePath, juce::PathStrokeType(1.4f));
         }
-        
+
         //----------------------------------------------------------------------
-        // Post EQ (green, thinner)
+        // Post (output) - coloured front line
         //----------------------------------------------------------------------
         if (showPost && !isFrozen)
         {
@@ -533,59 +964,103 @@ private:
             {
                 juce::Path postPath;
                 bool started = false;
-                
-                for (size_t i = 0; i < smoothedSpectrum.size(); ++i)
+
+                for (size_t i = 0; i < usable; ++i)
                 {
-                    float freq = xToFreq(graphBounds.getX() + (float)i);
-                    int bin = processor.getPostEQAnalyzer().getBinForFrequency(freq);
-                    float db = (bin >= 0 && bin < (int)postRaw.size()) ? postRaw[bin] : -90.0f;
                     float x = graphBounds.getX() + (float)i;
-                    float y = dbToY(db);
-                    
+                    float freq = xToFreq(x);
+                    int bin = processor.getPostEQAnalyzer().getBinForFrequency(freq);
+                    float db = (bin >= 0 && bin < (int)postRaw.size()) ? postRaw[bin] : spectrumMinDb;
+                    float y = dbToY(applyTilt(db, freq));
+
                     if (!started) { postPath.startNewSubPath(x, y); started = true; }
                     else postPath.lineTo(x, y);
                 }
-                
-                g.setColour(ModernLookAndFeel::Colors::accentGreen.withAlpha(0.7f));
-                g.strokePath(postPath, juce::PathStrokeType(1.2f));
+
+                juce::Colour front = ModernLookAndFeel::Colors::accentGreen.brighter(0.05f);
+                juce::ColourGradient postGrad(
+                    ModernLookAndFeel::Colors::accentYellow.withAlpha(0.85f), 0, graphBounds.getY(),
+                    front.withAlpha(0.85f), 0, graphBounds.getBottom(), false);
+                g.setGradientFill(postGrad);
+                g.strokePath(postPath, juce::PathStrokeType(1.8f));
             }
+        }
+
+        //----------------------------------------------------------------------
+        // Delta (post - pre) overlay
+        //----------------------------------------------------------------------
+        if (showDelta && showPost && !isFrozen)
+        {
+            const auto& postRaw = processor.getPostEQAnalyzer().getSmoothedSpectrum();
+            if (!postRaw.empty() && usable > 4)
+            {
+                juce::Path deltaPath;
+                bool started = false;
+                float zeroY = dbToY(0.0f);
+
+                for (size_t i = 0; i < usable; ++i)
+                {
+                    float x = graphBounds.getX() + (float)i;
+                    float freq = xToFreq(x);
+                    int bin = processor.getPostEQAnalyzer().getBinForFrequency(freq);
+                    float postDb = (bin >= 0 && bin < (int)postRaw.size()) ? postRaw[bin] : spectrumMinDb;
+                    float preDb = preBuffer[i];
+                    float delta = applyTilt(postDb, freq) - applyTilt(preDb, freq);
+                    delta = juce::jlimit(-24.0f, 24.0f, delta);
+                    float y = zeroY - (delta / 24.0f) * (graphBounds.getHeight() * 0.45f);
+
+                    if (!started) { deltaPath.startNewSubPath(x, y); started = true; }
+                    else deltaPath.lineTo(x, y);
+                }
+
+                g.setColour(ModernLookAndFeel::Colors::accentCyan.withAlpha(0.8f));
+                g.strokePath(deltaPath, juce::PathStrokeType(1.6f));
+            }
+        }
+
+        //----------------------------------------------------------------------
+        // Peak-hold overlay (visual only)
+        //----------------------------------------------------------------------
+        if (!peakHold.empty() && usable > 4)
+        {
+            juce::Path peakPath;
+            bool started = false;
+            const size_t limit = std::min(usable, peakHold.size());
+            for (size_t i = 0; i < limit; ++i)
+            {
+                float x = graphBounds.getX() + (float)i;
+                float freq = xToFreq(x);
+                float y = dbToY(applyTilt(peakHold[i], freq));
+                if (!started) { peakPath.startNewSubPath(x, y); started = true; }
+                else peakPath.lineTo(x, y);
+            }
+            g.setColour(ModernLookAndFeel::Colors::accentOrange.withAlpha(0.9f));
+            g.strokePath(peakPath, juce::PathStrokeType(1.2f));
         }
     }
 
     void drawEQCurve(juce::Graphics& g)
     {
-        auto& eq = processor.getEQProcessor();
-        double sr = processor.getSampleRate();
-        if (sr <= 0) sr = 44100;
-        
-        juce::Path curvePath;
-        bool started = false;
-        float zeroY = dbToY(0);
-        
-        for (float x = graphBounds.getX(); x <= graphBounds.getRight(); x += 1.0f)
-        {
-            float freq = xToFreq(x);
-            float mag = eq.getMagnitudeForFrequency(freq, sr);
-            float db = juce::Decibels::gainToDecibels(mag, -48.0f);
-            db = juce::jlimit(-24.0f, 24.0f, db);
-            
-            // Map to Y centered at 0dB line
-            float y = zeroY - (db / 24.0f) * (graphBounds.getHeight() * 0.45f);
-            
-            if (!started) { curvePath.startNewSubPath(x, y); started = true; }
-            else curvePath.lineTo(x, y);
-        }
-        
+        // SAFETY: Skip if processor not ready
+        if (!processor.isProcessorReady())
+            return;
+
+        rebuildEQCurvePath();
+
         // EQ curve (white/gray like TDR Nova)
         g.setColour(ModernLookAndFeel::Colors::eqCurve.withAlpha(0.15f));
-        g.strokePath(curvePath, juce::PathStrokeType(4.0f));
+        g.strokePath(cachedEQCurve, juce::PathStrokeType(4.0f));
         
         g.setColour(ModernLookAndFeel::Colors::eqCurve);
-        g.strokePath(curvePath, juce::PathStrokeType(2.0f));
+        g.strokePath(cachedEQCurve, juce::PathStrokeType(2.0f));
     }
 
     void drawAIMarkers(juce::Graphics& g)
     {
+        // SAFETY: Skip if processor not ready
+        if (!processor.isProcessorReady())
+            return;
+            
         const auto corrections = processor.getAIEngine().getPendingCorrections();
         
         for (const auto& c : corrections)
@@ -619,8 +1094,9 @@ private:
     
     void drawEQBands(juce::Graphics& g)
     {
-        // Draw all 8 EQ bands
-        for (int i = 0; i < AIEqualizerAudioProcessor::numBands; ++i)
+        const int active = processor.getNumActiveBands();
+        const int maxBands = AIEqualizerAudioProcessor::maxBands;
+        for (int i = 0; i < std::min(active, maxBands); ++i)
         {
             auto state = processor.getBandState(i);
             
@@ -680,6 +1156,26 @@ private:
                 g.setColour(col.withAlpha(0.7f));
                 g.drawEllipse(x - radius - 4, y - radius - 4, (radius + 4) * 2, (radius + 4) * 2, 2.0f);
             }
+
+            //------------------------------------------------------------------
+            // SOLO indicator (badge + outline)
+            //------------------------------------------------------------------
+            if (state.solo)
+            {
+                juce::Rectangle<float> badge(x - radius - 10.0f, y - radius - 18.0f, 20.0f, 14.0f);
+                g.setColour(ModernLookAndFeel::Colors::accentYellow.withAlpha(0.9f));
+                g.fillRoundedRectangle(badge, 3.0f);
+                g.setColour(ModernLookAndFeel::Colors::bgDark);
+                {
+                    juce::Font font(9.0f);
+                    font.setBold(true);
+                    g.setFont(font);
+                }
+                g.drawText("S", badge, juce::Justification::centred);
+
+                g.setColour(ModernLookAndFeel::Colors::accentYellow);
+                g.drawEllipse(x - radius - 3, y - radius - 3, (radius + 3) * 2, (radius + 3) * 2, 2.0f);
+            }
             else if (isHovered)
             {
                 g.setColour(col.withAlpha(0.2f));
@@ -719,7 +1215,9 @@ private:
                 }
                 
                 g.setColour(ModernLookAndFeel::Colors::bgDark);
-                g.setFont(juce::Font(i < 4 ? 10.0f : 9.0f, juce::Font::bold));
+                const float fontHeight = (i < 4 ? 10.0f : 9.0f);
+                g.setFont(juce::Font(juce::FontOptions().withHeight(fontHeight)
+                                                          .withStyle("Bold")));
                 g.drawText(label, static_cast<int>(x - radius), static_cast<int>(y - radius),
                           static_cast<int>(radius * 2), static_cast<int>(radius * 2),
                           juce::Justification::centred);
@@ -767,39 +1265,35 @@ private:
                                    static_cast<float>(tw), static_cast<float>(th), 4.0f, 1.5f);
             
             g.setColour(ModernLookAndFeel::Colors::textBright);
-            g.setFont(10.0f);
+            g.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
             g.drawText(info, tx, ty, tw, th, juce::Justification::centred);
         }
     }
     
-    int getBandAtPosition(juce::Point<float> pos) const
-    {
-        const float hitRadius = 18.0f;
-        
-        for (int i = 0; i < AIEqualizerAudioProcessor::numBands; ++i)
-        {
-            auto state = processor.getBandState(i);
-            float bx = freqToX(state.frequency);
-            float by = gainToY(state.gain);
-            
-            float dist = std::sqrt((pos.x - bx) * (pos.x - bx) + (pos.y - by) * (pos.y - by));
-            
-            if (dist < hitRadius)
-                return i;
-        }
-        
-        return -1; // No band at this position
-    }
-
+public:
     void drawLabels(juce::Graphics& g)
     {
-        g.setFont(10.0f);
+        g.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
         g.setColour(ModernLookAndFeel::Colors::textMuted);
         
+        // dB labels
+        for (float db = spectrumMinDb; db <= spectrumMaxDb; db += 12.0f)
+        {
+            float y = dbToY(db);
+            juce::String txt = juce::String((int)db);
+            g.drawText(txt, 5, (int)y - 7, 32, 14, juce::Justification::centredRight);
+        }
+
+        if (isPianoRollEnabled())
+        {
+            drawPianoRollOverlay(g);
+            return;
+        }
+
         // Frequency labels
         const std::pair<float, const char*> freqLabels[] = {
-            {20,"20"}, {50,"50"}, {100,"100"}, {200,"200"}, {500,"500"},
-            {1000,"1k"}, {2000,"2k"}, {5000,"5k"}, {10000,"10k"}, {20000,"20k"}
+            {20.0f,"20"}, {50.0f,"50"}, {100.0f,"100"}, {200.0f,"200"}, {500.0f,"500"},
+            {1000.0f,"1k"}, {2000.0f,"2k"}, {5000.0f,"5k"}, {10000.0f,"10k"}, {20000.0f,"20k"}
         };
         for (auto& [f, lbl] : freqLabels)
         {
@@ -807,14 +1301,6 @@ private:
             if (x >= graphBounds.getX() && x <= graphBounds.getRight())
                 g.drawText(lbl, (int)x - 15, (int)graphBounds.getBottom() + 3, 30, 14, 
                           juce::Justification::centred);
-        }
-        
-        // dB labels
-        for (float db = -48; db <= 12; db += 12)
-        {
-            float y = dbToY(db);
-            juce::String txt = juce::String((int)db);
-            g.drawText(txt, 5, (int)y - 7, 32, 14, juce::Justification::centredRight);
         }
     }
 
@@ -897,7 +1383,7 @@ private:
             icon = "📈";
         
         g.setColour(juce::Colours::white.withAlpha(alpha));
-        g.setFont(11.0f);
+        g.setFont(juce::Font(juce::FontOptions().withHeight(11.0f)));
         g.drawText(icon + " " + freqStr, static_cast<int>(markerX), static_cast<int>(markerY), markerW, markerH,
                    juce::Justification::centred);
         
@@ -920,6 +1406,10 @@ private:
         // Tooltip
         juce::String txt = freq >= 1000 ? juce::String(freq/1000.0f, 1) + " kHz"
                                         : juce::String((int)freq) + " Hz";
+        if (isPianoRollEnabled())
+        {
+            txt += "  (" + getNoteName(freq) + ")";
+        }
         
         int tw = 60, th = 18;
         int tx = juce::jlimit((int)graphBounds.getX(), (int)graphBounds.getRight() - tw, hoverX - tw/2);
@@ -931,8 +1421,42 @@ private:
         g.drawRoundedRectangle((float)tx, (float)ty, (float)tw, (float)th, 3.0f, 1.0f);
         
         g.setColour(ModernLookAndFeel::Colors::textBright);
-        g.setFont(10.0f);
+        g.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
         g.drawText(txt, tx, ty, tw, th, juce::Justification::centred);
+    }
+
+public:
+    int getBandAtPosition(juce::Point<float> pos) const
+    {
+        const float hitRadius = 10.0f;
+        const float stickyRadius = hitRadius * 2.0f;
+        
+        const int active = processor.getNumActiveBands();
+        const int maxBands = AIEqualizerAudioProcessor::maxBands;
+
+        int bestIndex = -1;
+        float bestDist = hitRadius;
+
+        for (int i = 0; i < std::min(active, maxBands); ++i)
+        {
+            auto state = processor.getBandState(i);
+            float bx = freqToX(state.frequency);
+            float by = gainToY(state.gain);
+            
+            float dist = std::sqrt((pos.x - bx) * (pos.x - bx) + (pos.y - by) * (pos.y - by));
+            
+            // Keep current selection sticky when bands overlap
+            if (i == selectedBandIndex && dist < stickyRadius)
+                return i;
+
+            if (dist < bestDist)
+            {
+                bestDist = dist;
+                bestIndex = i;
+            }
+        }
+        
+        return bestIndex; // -1 if nothing within radius
     }
 
     // Conversions
@@ -949,7 +1473,7 @@ private:
     }
     
     float dbToY(float db) const {
-        float p = juce::jlimit(0.0f, 1.0f, (db - (-60.0f)) / (12.0f - (-60.0f)));
+        float p = juce::jlimit(0.0f, 1.0f, (db - spectrumMinDb) / (spectrumMaxDb - spectrumMinDb));
         return graphBounds.getBottom() - p * graphBounds.getHeight();
     }
     
@@ -965,9 +1489,78 @@ private:
         return juce::jmap(p, 0.0f, 1.0f, 24.0f, -24.0f);
     }
 
+private:
+    void rebuildEQCurvePath()
+    {
+        const uint64_t version = processor.getParameterChangeCounter();
+        const bool boundsChanged = (lastCurveBounds != graphBounds);
+
+        if (!eqCurveDirty && !boundsChanged && version == lastEQVersion && !cachedEQCurve.isEmpty())
+            return;
+
+        lastEQVersion = version;
+        lastCurveBounds = graphBounds;
+        eqCurveDirty = false;
+        cachedEQCurve.clear();
+
+        if (graphBounds.isEmpty())
+            return;
+
+        auto& eq = processor.getEQProcessor();
+        double sr = processor.getSampleRate();
+        if (sr <= 0) sr = 44100.0;
+
+        ensureEQCurveFrequencies();
+        eqCurveMagnitudes.resize(eqCurveFrequencies.size(), 1.0f);
+        eq.getMagnitudeForFrequencyArray(eqCurveFrequencies.data(),
+                                         eqCurveMagnitudes.data(),
+                                         eqCurveFrequencies.size(),
+                                         sr);
+
+        const float zeroY = dbToY(0.0f);
+        const float yScale = graphBounds.getHeight() * 0.45f;
+        bool started = false;
+
+        for (size_t i = 0; i < eqCurveFrequencies.size(); ++i)
+        {
+            float db = juce::Decibels::gainToDecibels(eqCurveMagnitudes[i], -48.0f);
+            db = juce::jlimit(-24.0f, 24.0f, db);
+
+            const float x = freqToX(eqCurveFrequencies[i]);
+            const float y = zeroY - (db / 24.0f) * yScale;
+
+            if (!started)
+            {
+                cachedEQCurve.startNewSubPath(x, y);
+                started = true;
+            }
+            else
+            {
+                cachedEQCurve.lineTo(x, y);
+            }
+        }
+    }
+
+    void ensureEQCurveFrequencies()
+    {
+        if (!eqCurveFrequencies.empty())
+            return;
+
+        eqCurveFrequencies.resize(eqCurvePointCount);
+        const float logMin = std::log10(20.0f);
+        const float logMax = std::log10(20000.0f);
+        for (size_t i = 0; i < eqCurveFrequencies.size(); ++i)
+        {
+            const float t = static_cast<float>(i) / static_cast<float>(eqCurveFrequencies.size() - 1);
+            eqCurveFrequencies[i] = std::pow(10.0f, logMin + t * (logMax - logMin));
+        }
+    }
+
     AIEqualizerAudioProcessor& processor;
     juce::Rectangle<float> graphBounds;
     std::vector<float> smoothedSpectrum;
+    std::vector<float> peakHold;
+    std::vector<float> peakTimers;
     int hoverX = -1, hoverY = -1;
     
     // Freeze/Capture functionality
@@ -977,6 +1570,8 @@ private:
     std::vector<float> capturedSpectrum;
     bool isFrozen = false;
     bool hasCaptured = false;
+    int captureTextTimer = 0;
+    // Spectrum buffers are grown on demand; no shrinking to avoid per-frame realloc
     
     // Band interaction
     int selectedBandIndex = 0;      // Currently selected band
@@ -986,7 +1581,18 @@ private:
     float dragStartFreq = 0.0f;
     float dragStartGain = 0.0f;
     float dragStartQ = 0.0f;
-    std::array<juce::Colour, 8> bandColors;
+    std::array<juce::Colour, AIEqualizerAudioProcessor::maxBands> bandColors;
+    std::vector<SpectrumPeak> detectedPeaks;
+    int hoveredPeakIndex = -1;
+
+    // Cached EQ curve to avoid per-pixel recomputation
+    juce::Path cachedEQCurve;
+    std::vector<float> eqCurveFrequencies;
+    std::vector<float> eqCurveMagnitudes;
+    juce::Rectangle<float> lastCurveBounds;
+    uint64_t lastEQVersion = std::numeric_limits<uint64_t>::max();
+    bool eqCurveDirty = true;
+    static constexpr size_t eqCurvePointCount = 256;
     
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AdvancedSpectrumDisplay)
 };

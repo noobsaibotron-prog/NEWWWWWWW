@@ -1,0 +1,7 @@
+C:/AIEQ/build/JUCE/tools/CMakeFiles/INSTALL.dir
+C:/AIEQ/build/JUCE/tools/CMakeFiles/ALL_BUILD.dir
+C:/AIEQ/build/JUCE/tools/CMakeFiles/ZERO_CHECK.dir
+C:/AIEQ/build/JUCE/tools/modules/CMakeFiles/INSTALL.dir
+C:/AIEQ/build/JUCE/tools/extras/Build/CMakeFiles/INSTALL.dir
+C:/AIEQ/build/JUCE/tools/extras/Build/juceaide/CMakeFiles/juceaide.dir
+C:/AIEQ/build/JUCE/tools/extras/Build/juceaide/CMakeFiles/INSTALL.dir

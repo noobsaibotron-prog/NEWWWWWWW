@@ -325,7 +325,8 @@ bool UserLearningSystem::loadFromFile(const juce::File& file)
                 UserProfile profile = varToProfile(profiles[i]);
                 if (profiles[i].hasProperty("name"))
                     profile.name = profiles[i]["name"].toString();
-                savedProfiles[profile.name] = profile;
+                if (!profile.name.isEmpty())
+                    savedProfiles[profile.name] = profile;
             }
         }
     }

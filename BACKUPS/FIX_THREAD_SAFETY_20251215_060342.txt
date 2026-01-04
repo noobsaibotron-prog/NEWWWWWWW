@@ -1,0 +1,51 @@
+BACKUP E FIX THREAD-SAFETY - 15 Dicembre 2025, 06:03:42
+================================================================
+
+BACKUP CREATO:
+- Posizione: C:\AIEQ\BACKUPS\auto_backup_20251215_060342\
+- Contiene: Source/, build artifacts, VST3 installati
+
+FIX IMPLEMENTATI (CRITICI - THREAD-SAFETY E PRESTAZIONI):
+================================================================
+
+1. AIEngine - Thread-Safety (CRITICO)
+   - Sostituito std::mutex con std::shared_mutex per pendingCorrections
+   - Letture: std::shared_lock (concurrent reads)
+   - Scritture: std::unique_lock (exclusive writes)
+   - Aggiunte assertion per verificare acquisizione lock
+   File: Source/AI/AIEngine.h, Source/AI/AIEngine.cpp
+
+2. PluginProcessor - Thread-Safety (CRITICO)
+   - Sostituito SpinLock con std::mutex in pushToCaptureRing()
+   - Aggiunto controllo overflow buffer con logging
+   - Usato try_lock per evitare blocchi in audio thread
+   - Aggiunto include Logger.h
+   File: Source/PluginProcessor.h, Source/PluginProcessor.cpp
+
+3. SpectrumAnalyzer - Thread-Safety (CRITICO)
+   - Sostituito SpinLock con std::mutex
+   - Aggiunto timeout (100µs) per evitare latency spikes
+   - Skip update se lock non disponibile (previene blocchi audio)
+   File: Source/DSP/SpectrumAnalyzer.h, Source/DSP/SpectrumAnalyzer.cpp
+
+4. LinearPhaseProcessor - Allocazioni Memoria (URGENTE)
+   - Pre-allocati freqDomainBuf, timeDomainBuf, irBuf come membri classe
+   - Rimossi std::vector locali in updateImpulseResponse()
+   - Eliminate allocazioni dinamiche nel path di build IR
+   File: Source/DSP/LinearPhaseProcessor.h, Source/DSP/LinearPhaseProcessor.cpp
+
+STATO COMPILAZIONE:
+================================================================
+- CMake configurato correttamente (Configuring done, Generating done)
+- Per completare la build, eseguire: BUILD_NOW.bat (da CMD, non PowerShell)
+- Il backup è stato creato con successo prima delle modifiche
+
+PROSSIMI FIX DA IMPLEMENTARE:
+================================================================
+- MLEngine: Pre-allocazione buffer output
+- DynamicEQProcessor: Ottimizzazione calculateDynamicGain
+- Portabilità Windows: #pragma pack, workaround C2719
+- Logica AIEngine: Validazione, normalizzazione thresholds
+- UserLearningSystem: Thread-safety recentAdjustments
+- GUI: Ottimizzazioni rendering
+

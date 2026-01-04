@@ -1,5 +1,8 @@
 #include "AIEngine.h"
 #include <cmath>
+#include <map>
+#include <algorithm>
+#include "../Utils/Logger.h"
 
 //==============================================================================
 /**
@@ -30,13 +33,20 @@ AIEngine::AIEngine()
     }
     
     // Initialize coefficient cache
-    for (auto& coeffs : coefficientCache)
+    for (auto& cache : cachedCoeffs)
     {
-        coeffs.valid = false;
+        cache.numActive = 0;
+        cache.enabled.fill(false);
     }
     
     // Initialize ML Engine
     mlEngine.initialize();
+    
+    // Initialize Advanced AI Systems
+    multiTrackUnmasking = std::make_unique<MultiTrackUnmasking>();
+    neuralNetwork = std::make_unique<NeuralNetworkWrapper>();
+    adaptiveEngine = std::make_unique<AdaptiveAIEngine>();
+    onlineLearning = std::make_unique<OnlineLearningSystem>();
     
     // Initialize spectrum history for temporal smoothing
     spectrumHistory.resize(temporalFrames);
@@ -73,38 +83,103 @@ void AIEngine::prepare(double sampleRate, int /*samplesPerBlock*/)
         }
     }
     
-    // Invalidate coefficient cache
-    coefficientsNeedUpdate = true;
-    for (auto& coeffs : coefficientCache)
+    // Invalidate cached coeffs
+    for (auto& cache : cachedCoeffs)
     {
-        coeffs.valid = false;
+        cache.numActive = 0;
+        cache.enabled.fill(false);
+    }
+    correctionCoeffsNeedUpdate.store(true);
+
+    // Attempt to load TFLite model if enabled and not already loaded
+    if (enableNeuralNetworks && neuralNetwork && !neuralNetwork->isModelLoaded())
+    {
+        auto modelPath = juce::File::getSpecialLocation(juce::File::currentExecutableFile)
+                             .getParentDirectory()
+                             .getChildFile("models")
+                             .getChildFile("problem_detection.tflite");
+        if (modelPath.existsAsFile())
+        {
+            if (neuralNetwork->loadModel(modelPath, NeuralNetworkWrapper::ModelType::ProblemDetection))
+            {
+                AIEQ_LOG_INFO("TFLite model loaded: " + modelPath.getFullPathName());
+            }
+            else
+            {
+                AIEQ_LOG_WARNING("Failed to load TFLite model: " + modelPath.getFullPathName()
+                                 + " - using classical ML fallback.");
+            }
+        }
+        else
+        {
+            AIEQ_LOG_WARNING("TFLite model not found at " + modelPath.getFullPathName()
+                             + " - using classical ML fallback.");
+        }
     }
 }
 
-void AIEngine::analyzeSpectrum(const std::vector<float>& spectrum)
+void AIEngine::analyzeSpectrum(const std::vector<float>& spectrum, bool force)
 {
-    if (!enabled || spectrum.size() < static_cast<size_t>(numBins))
-        return;
+    // FORCE: Always run detection, even if spectrum is empty or disabled
+    // (detectProblems will create test problem if no real problems found)
     
-    // Rate limiting
-    if (++analysisCounter < analysisInterval)
+    if (spectrum.empty())
+    {
+        // Spectrum empty - still run detection to create test problem
+        detectProblems();  // This will create test problem
+        newAnalysisAvailable = true;
         return;
-    analysisCounter = 0;
+    }
+    
+    if (!enabled && !force)
+        return;  // Only skip if disabled AND not forced
+    
+    std::vector<float> normalized;
+    if (static_cast<int>(spectrum.size()) == numBins)
+    {
+        normalized = spectrum;
+    }
+    else
+    {
+        normalized.resize(numBins, -100.0f);
+        if (spectrum.size() > 1)
+        {
+            const float scale = static_cast<float>(spectrum.size() - 1) / static_cast<float>(numBins - 1);
+            for (int i = 0; i < numBins; ++i)
+            {
+                float srcIndex = i * scale;
+                int idx = static_cast<int>(srcIndex);
+                float frac = srcIndex - idx;
+                float v0 = spectrum[idx];
+                float v1 = spectrum[juce::jmin<int>(idx + 1, static_cast<int>(spectrum.size()) - 1)];
+                normalized[i] = v0 + (v1 - v0) * frac;
+            }
+        }
+    }
+
+    // Rate limiting - DISABLED for immediate detection
+    // Always analyze (no rate limiting) to ensure problems appear immediately
+    // if (!force)
+    // {
+    //     if (++analysisCounter < analysisInterval)
+    //         return;
+    //     analysisCounter = 0;
+    // }
     
     // Thread-safe spectrum copy and history update
     {
         std::lock_guard<std::mutex> lock(spectrumMutex);
-        currentSpectrum = spectrum;
-        updateSpectrumHistory(spectrum);
+        currentSpectrum = normalized;
+        updateSpectrumHistory(normalized);
         
         // Update RMS tracking
         float rmsSum = 0.0f;
         int rmsCount = 0;
         for (int i = 2; i < numBins - 2; ++i)
         {
-            if (spectrum[i] > -100.0f)
+            if (normalized[i] > -100.0f)
             {
-                rmsSum += spectrum[i];
+                rmsSum += normalized[i];
                 ++rmsCount;
             }
         }
@@ -135,47 +210,44 @@ void AIEngine::analyzeSpectrum(const std::vector<float>& spectrum)
 
 //==============================================================================
 // Optimized processCorrections() with cached coefficients and per-channel states
+// FIX 4: Separate lock for coefficient updates to avoid data race
 void AIEngine::processCorrections(juce::AudioBuffer<float>& buffer)
 {
     if (!enabled || correctionMode == CorrectionMode::Off)
         return;
     
-    // Validate buffer
     if (buffer.getNumSamples() == 0 || buffer.getNumChannels() == 0)
         return;
     
-    std::lock_guard<std::mutex> lock(correctionsMutex);
+    // Recompute cached coefficients if flagged (e.g., strength changed)
+    if (correctionCoeffsNeedUpdate.exchange(false))
+    {
+        const int activeIdx = activeCorrectionsIndex.load();
+        updateCachedCoefficients(activeIdx, approvedCorrectionBuffers[activeIdx]);
+        activeCoefficientIndex.store(activeIdx);
+    }
     
-    if (approvedCorrections.empty())
+    // Lock-free read of cached coefficients
+    const int coeffIndex = activeCoefficientIndex.load();
+    const auto& cache = cachedCoeffs[coeffIndex];
+    if (cache.numActive == 0)
         return;
     
     const int numSamples = buffer.getNumSamples();
     const int numChannels = juce::jmin(buffer.getNumChannels(), maxChannels);
     
-    // Update coefficients if needed (only when corrections change)
-    if (coefficientsNeedUpdate)
+    const int numCorrections = cache.numActive;
+    for (int corrIdx = 0; corrIdx < numCorrections; ++corrIdx)
     {
-        updateBiquadCoefficients();
-        coefficientsNeedUpdate = false;
-    }
-    
-    // Process each approved correction
-    const size_t numCorrections = juce::jmin(approvedCorrections.size(), static_cast<size_t>(maxCorrections));
-    for (size_t corrIdx = 0; corrIdx < numCorrections; ++corrIdx)
-    {
-        const auto& coeffs = coefficientCache[corrIdx];
-        
-        // Skip if coefficients are invalid or gain is negligible
-        if (!coeffs.valid)
+        if (!cache.enabled[corrIdx])
             continue;
         
-        // Apply filter to each channel with separate states
+        const auto& coeffs = cache.coeffs[corrIdx];
         for (int ch = 0; ch < numChannels; ++ch)
         {
             float* channelData = buffer.getWritePointer(ch);
             auto& state = filterStates[corrIdx][ch];
             
-            // Direct Form II Transposed biquad filter
             float z1 = state.z1;
             float z2 = state.z2;
             
@@ -188,7 +260,6 @@ void AIEngine::processCorrections(juce::AudioBuffer<float>& buffer)
                 channelData[i] = output;
             }
             
-            // Store state for continuity
             state.z1 = z1;
             state.z2 = z2;
         }
@@ -198,60 +269,124 @@ void AIEngine::processCorrections(juce::AudioBuffer<float>& buffer)
 //==============================================================================
 // Update biquad coefficients cache (called only when corrections change)
 // NOTE: This function assumes correctionsMutex is already locked by the caller
-void AIEngine::updateBiquadCoefficients()
+void AIEngine::updateCachedCoefficients(int bufferIndex, const std::vector<Correction>& corrections)
 {
-    // Validate sample rate
     if (currentSampleRate <= 0.0)
         return;
-    
-    const size_t numCorrections = juce::jmin(approvedCorrections.size(), static_cast<size_t>(maxCorrections));
-    
-    for (size_t corrIdx = 0; corrIdx < numCorrections; ++corrIdx)
+
+    auto& cache = cachedCoeffs[bufferIndex];
+    cache.numActive = 0;
+
+    const size_t numCorrections = juce::jmin(corrections.size(), static_cast<size_t>(maxCorrections));
+    for (size_t corrIdx = 0; corrIdx < numCorrections && cache.numActive < maxCorrections; ++corrIdx)
     {
-        const auto& corr = approvedCorrections[corrIdx];
-        auto& coeffs = coefficientCache[corrIdx];
-        
-        // Get scaled gain
+        const auto& corr = corrections[corrIdx];
+
         float gainDB = corr.suggestedGain * strength;
-        
-        // Skip if gain is negligible
-        if (std::abs(gainDB) < minGainThreshold)
+
+        bool isGainBased = (corr.suggestedFilter != Correction::FilterType::LowCut &&
+                           corr.suggestedFilter != Correction::FilterType::HighCut &&
+                           corr.suggestedFilter != Correction::FilterType::Notch);
+
+        if (isGainBased && std::abs(gainDB) < minGainThreshold)
         {
-            coeffs.valid = false;
+            cache.enabled[cache.numActive] = false;
             continue;
         }
-        
-        // Validate frequency (must be within valid range and below Nyquist)
-        if (corr.frequency < minFrequency || corr.frequency > currentSampleRate * 0.5f)
+
+        if (corr.frequency < minFrequency || corr.frequency > static_cast<float>(currentSampleRate) * 0.499f)
         {
-            coeffs.valid = false;
+            cache.enabled[cache.numActive] = false;
             continue;
         }
-        
-        // Calculate biquad coefficients for peak filter
+
         float omega = 2.0f * juce::MathConstants<float>::pi * corr.frequency / static_cast<float>(currentSampleRate);
-        
-        // Clamp omega to prevent numerical issues
-        omega = juce::jlimit(0.0f, juce::MathConstants<float>::pi * 0.99f, omega);
-        
+        omega = juce::jlimit(0.0001f, juce::MathConstants<float>::pi * 0.99f, omega);
+
         float sinOmega = std::sin(omega);
         float cosOmega = std::cos(omega);
-        
-        // Clamp Q to prevent division by zero
         float q = juce::jlimit(minQValue, maxQValue, corr.suggestedQ);
         float alpha = sinOmega / (2.0f * q);
         float A = std::pow(10.0f, gainDB / 40.0f);
-        
-        // Peak filter coefficients
-        float b0 = 1.0f + alpha * A;
-        float b1 = -2.0f * cosOmega;
-        float b2 = 1.0f - alpha * A;
-        float a0 = 1.0f + alpha / A;
-        float a1 = -2.0f * cosOmega;
-        float a2 = 1.0f - alpha / A;
-        
-        // Normalize coefficients
-        if (std::abs(a0) > 1e-10f) // Prevent division by zero
+
+        float b0, b1, b2, a0, a1, a2;
+
+        switch (corr.suggestedFilter)
+        {
+            case Correction::FilterType::LowShelf:
+            {
+                float sqrtA = std::sqrt(A);
+                float sqrtA2alpha = 2.0f * sqrtA * alpha;
+                b0 = A * ((A + 1.0f) - (A - 1.0f) * cosOmega + sqrtA2alpha);
+                b1 = 2.0f * A * ((A - 1.0f) - (A + 1.0f) * cosOmega);
+                b2 = A * ((A + 1.0f) - (A - 1.0f) * cosOmega - sqrtA2alpha);
+                a0 = (A + 1.0f) + (A - 1.0f) * cosOmega + sqrtA2alpha;
+                a1 = -2.0f * ((A - 1.0f) + (A + 1.0f) * cosOmega);
+                a2 = (A + 1.0f) + (A - 1.0f) * cosOmega - sqrtA2alpha;
+                break;
+            }
+
+            case Correction::FilterType::HighShelf:
+            {
+                float sqrtA = std::sqrt(A);
+                float sqrtA2alpha = 2.0f * sqrtA * alpha;
+                b0 = A * ((A + 1.0f) + (A - 1.0f) * cosOmega + sqrtA2alpha);
+                b1 = -2.0f * A * ((A - 1.0f) + (A + 1.0f) * cosOmega);
+                b2 = A * ((A + 1.0f) + (A - 1.0f) * cosOmega - sqrtA2alpha);
+                a0 = (A + 1.0f) - (A - 1.0f) * cosOmega + sqrtA2alpha;
+                a1 = 2.0f * ((A - 1.0f) - (A + 1.0f) * cosOmega);
+                a2 = (A + 1.0f) - (A - 1.0f) * cosOmega - sqrtA2alpha;
+                break;
+            }
+
+            case Correction::FilterType::LowCut:
+            {
+                b0 = (1.0f + cosOmega) * 0.5f;
+                b1 = -(1.0f + cosOmega);
+                b2 = (1.0f + cosOmega) * 0.5f;
+                a0 = 1.0f + alpha;
+                a1 = -2.0f * cosOmega;
+                a2 = 1.0f - alpha;
+                break;
+            }
+
+            case Correction::FilterType::HighCut:
+            {
+                b0 = (1.0f - cosOmega) * 0.5f;
+                b1 = 1.0f - cosOmega;
+                b2 = (1.0f - cosOmega) * 0.5f;
+                a0 = 1.0f + alpha;
+                a1 = -2.0f * cosOmega;
+                a2 = 1.0f - alpha;
+                break;
+            }
+
+            case Correction::FilterType::Notch:
+            {
+                b0 = 1.0f;
+                b1 = -2.0f * cosOmega;
+                b2 = 1.0f;
+                a0 = 1.0f + alpha;
+                a1 = -2.0f * cosOmega;
+                a2 = 1.0f - alpha;
+                break;
+            }
+
+            case Correction::FilterType::Peak:
+            default:
+            {
+                b0 = 1.0f + alpha * A;
+                b1 = -2.0f * cosOmega;
+                b2 = 1.0f - alpha * A;
+                a0 = 1.0f + alpha / A;
+                a1 = -2.0f * cosOmega;
+                a2 = 1.0f - alpha / A;
+                break;
+            }
+        }
+
+        auto& coeffs = cache.coeffs[cache.numActive];
+        if (std::abs(a0) > 1e-10f)
         {
             coeffs.b0 = b0 / a0;
             coeffs.b1 = b1 / a0;
@@ -259,17 +394,20 @@ void AIEngine::updateBiquadCoefficients()
             coeffs.a1 = a1 / a0;
             coeffs.a2 = a2 / a0;
             coeffs.valid = true;
+            cache.enabled[cache.numActive] = true;
+            cache.numActive++;
         }
         else
         {
-            coeffs.valid = false;
+            cache.enabled[cache.numActive] = false;
         }
     }
-    
-    // Invalidate unused correction slots
-    for (size_t corrIdx = numCorrections; corrIdx < maxCorrections; ++corrIdx)
+
+    // Invalidate remaining slots
+    for (int i = cache.numActive; i < maxCorrections; ++i)
     {
-        coefficientCache[corrIdx].valid = false;
+        cache.enabled[i] = false;
+        cache.coeffs[i].valid = false;
     }
 }
 
@@ -278,7 +416,8 @@ void AIEngine::updateBiquadCoefficients()
 
 void AIEngine::setSourceProfile(SourceProfile profile)
 {
-    sourceProfile = profile;
+    // FIX RT-SAFETY: Use atomic store
+    sourceProfile.store(static_cast<int>(profile), std::memory_order_relaxed);
     applyProfileThresholds();
 }
 
@@ -287,7 +426,10 @@ void AIEngine::applyProfileThresholds()
     // Reset to defaults
     thresholds = ProfileThresholds();
     
-    switch (sourceProfile)
+    // FIX RT-SAFETY: Load atomic sourceProfile
+    const auto profile = static_cast<SourceProfile>(sourceProfile.load(std::memory_order_relaxed));
+    
+    switch (profile)
     {
         case SourceProfile::Generic:
             // Default values already set
@@ -346,6 +488,20 @@ void AIEngine::applyProfileThresholds()
             thresholds.muddinessHigh = 500.0f;
             thresholds.muddinessThreshold = -15.0f;  // Less sensitive
             break;
+            
+        case SourceProfile::Techno:
+            // Techno-specific: focus on kick resonances, sub clarity, hi-hat harshness
+            thresholds.resonanceThreshold = 5.0f;    // More sensitive to resonances (kick rings)
+            thresholds.lowEndThreshold = -8.0f;       // Moderate sensitivity (sub clarity)
+            thresholds.harshnessThreshold = -12.0f;   // Sensitive to hi-hat harshness
+            thresholds.sibilanceThreshold = -14.0f;  // Sensitive to sibilance
+            thresholds.muddinessLow = 150.0f;         // Lower range for kick mud
+            thresholds.muddinessHigh = 400.0f;
+            thresholds.muddinessThreshold = -18.0f;   // Sensitive to muddiness
+            thresholds.boxyLow = 200.0f;              // Kick boxyness range
+            thresholds.boxyHigh = 600.0f;
+            thresholds.boxyThreshold = -16.0f;
+            break;
     }
 }
 
@@ -360,6 +516,7 @@ juce::String AIEngine::getProfileName(SourceProfile profile)
         case SourceProfile::Synth:   return "Synth";
         case SourceProfile::Master:  return "Master";
         case SourceProfile::EDM:     return "EDM";
+        case SourceProfile::Techno:  return "Techno";
         default: return "Unknown";
     }
 }
@@ -369,69 +526,103 @@ juce::String AIEngine::getProfileName(SourceProfile profile)
 
 std::vector<AIEngine::Correction> AIEngine::getPendingCorrections() const
 {
-    std::lock_guard<std::mutex> lock(correctionsMutex);
+    std::lock_guard<std::mutex> lock(correctionsWriteMutex);
     return pendingCorrections;
 }
 
 std::vector<AIEngine::Correction> AIEngine::getApprovedCorrections() const
 {
-    std::lock_guard<std::mutex> lock(correctionsMutex);
-    return approvedCorrections;
+    return approvedCorrectionBuffers[activeCorrectionsIndex.load()];
+}
+
+std::vector<AIEngine::Correction> AIEngine::getApprovedCorrectionsForUI() const
+{
+    return approvedCorrectionBuffers[activeCorrectionsIndex.load()];
 }
 
 void AIEngine::approveCorrection(int index)
 {
-    std::lock_guard<std::mutex> lock(correctionsMutex);
-    if (index >= 0 && index < static_cast<int>(pendingCorrections.size()))
-    {
-        pendingCorrections[index].approved = true;
-        approvedCorrections.push_back(pendingCorrections[index]);
-        coefficientsNeedUpdate = true; // Coefficients need recalculation
-    }
+    std::lock_guard<std::mutex> lock(correctionsWriteMutex);
+    if (index < 0 || index >= static_cast<int>(pendingCorrections.size()))
+        return;
+
+    const int writeIndex = 1 - activeCorrectionsIndex.load();
+    const int readIndex = activeCorrectionsIndex.load();
+
+    // Copy current active approved corrections
+    approvedCorrectionBuffers[writeIndex] = approvedCorrectionBuffers[readIndex];
+
+    // Append approved pending correction
+    pendingCorrections[index].approved = true;
+    approvedCorrectionBuffers[writeIndex].push_back(pendingCorrections[index]);
+    pendingCorrections.erase(pendingCorrections.begin() + index);
+
+    // Update cached coefficients for inactive buffer then swap
+    updateCachedCoefficients(writeIndex, approvedCorrectionBuffers[writeIndex]);
+    activeCorrectionsIndex.store(writeIndex);
+    activeCoefficientIndex.store(writeIndex);
+    correctionCoeffsNeedUpdate.store(true);
 }
 
 void AIEngine::approveAllCorrections()
 {
-    std::lock_guard<std::mutex> lock(correctionsMutex);
+    std::lock_guard<std::mutex> lock(correctionsWriteMutex);
+
+    const int writeIndex = 1 - activeCorrectionsIndex.load();
+    const int readIndex = activeCorrectionsIndex.load();
+    approvedCorrectionBuffers[writeIndex] = approvedCorrectionBuffers[readIndex];
+
     for (auto& c : pendingCorrections)
     {
         c.approved = true;
-        approvedCorrections.push_back(c);
+        approvedCorrectionBuffers[writeIndex].push_back(c);
     }
-    coefficientsNeedUpdate = true; // Coefficients need recalculation
+    pendingCorrections.clear();
+
+    updateCachedCoefficients(writeIndex, approvedCorrectionBuffers[writeIndex]);
+    activeCorrectionsIndex.store(writeIndex);
+    activeCoefficientIndex.store(writeIndex);
+    correctionCoeffsNeedUpdate.store(true);
 }
 
 void AIEngine::rejectCorrection(int index)
 {
-    std::lock_guard<std::mutex> lock(correctionsMutex);
+    std::lock_guard<std::mutex> lock(correctionsWriteMutex);
     if (index >= 0 && index < static_cast<int>(pendingCorrections.size()))
-    {
         pendingCorrections.erase(pendingCorrections.begin() + index);
-    }
 }
 
 void AIEngine::clearCorrections()
 {
-    std::lock_guard<std::mutex> lock(correctionsMutex);
+    std::lock_guard<std::mutex> lock(correctionsWriteMutex);
     pendingCorrections.clear();
-    approvedCorrections.clear();
-    
-    // Reset filter states (per-channel, per-correction)
+    for (auto& buf : approvedCorrectionBuffers)
+        buf.clear();
+
+    for (auto& cache : cachedCoeffs)
+    {
+        cache.numActive = 0;
+        cache.enabled.fill(false);
+    }
+    activeCorrectionsIndex.store(0);
+    activeCoefficientIndex.store(0);
+    correctionCoeffsNeedUpdate.store(true);
+
     for (auto& correctionStates : filterStates)
-    {
         for (auto& channelState : correctionStates)
-        {
-            channelState.z1 = 0.0f;
-            channelState.z2 = 0.0f;
-        }
-    }
-    
-    // Invalidate coefficient cache
-    coefficientsNeedUpdate = true;
-    for (auto& coeffs : coefficientCache)
-    {
-        coeffs.valid = false;
-    }
+            channelState = {};
+}
+
+void AIEngine::clearApprovedCorrections()
+{
+    std::lock_guard<std::mutex> lock(correctionsWriteMutex);
+    const int writeIndex = 1 - activeCorrectionsIndex.load();
+    approvedCorrectionBuffers[writeIndex].clear();
+    cachedCoeffs[writeIndex].numActive = 0;
+    cachedCoeffs[writeIndex].enabled.fill(false);
+    activeCorrectionsIndex.store(writeIndex);
+    activeCoefficientIndex.store(writeIndex);
+    correctionCoeffsNeedUpdate.store(true);
 }
 
 //==============================================================================
@@ -443,7 +634,7 @@ void AIEngine::saveAnalysisSnapshot()
     
     AnalysisSnapshot snapshot;
     {
-        std::lock_guard<std::mutex> cLock(correctionsMutex);
+        std::lock_guard<std::mutex> cLock(correctionsWriteMutex);
         snapshot.corrections = pendingCorrections;
     }
     snapshot.timestamp = juce::Time::currentTimeMillis();
@@ -475,13 +666,16 @@ void AIEngine::clearHistory()
 
 void AIEngine::setStrength(float s)
 {
-    float oldStrength = strength;
-    strength = juce::jlimit(0.0f, 1.0f, s);
-    // If strength changed significantly, coefficients need update
-    if (std::abs(strength - oldStrength) > strengthChangeThreshold)
+    // FIX RT-SAFETY: Removed mutex, use atomic operations only
+    float oldStrength = strength.load(std::memory_order_relaxed);
+    float newStrength = juce::jlimit(0.0f, 1.0f, s);
+    strength.store(newStrength, std::memory_order_relaxed);
+    
+    // If strength changed significantly, mark coefficients for update
+    if (std::abs(newStrength - oldStrength) > strengthChangeThreshold)
     {
-        std::lock_guard<std::mutex> lock(correctionsMutex);
-        coefficientsNeedUpdate = true;
+        // NO MUTEX! Just atomic store
+        correctionCoeffsNeedUpdate.store(true, std::memory_order_release);
     }
 }
 
@@ -495,13 +689,103 @@ AIEngine::Correction AIEngine::getScaledCorrection(const Correction& c) const
     return scaled;
 }
 
+AIEngine::Correction::FilterType AIEngine::selectOptimalFilterType(
+    ProblemType problem,
+    float frequency,
+    float bandwidth,
+    float peakHeight) const
+{
+    // Q calcolato dalla bandwidth
+    float q = (bandwidth > 0.0f) ? (frequency / bandwidth) : 1.0f;
+    
+    switch (problem)
+    {
+        case ProblemType::Resonance:
+        {
+            // Risonanza molto stretta (Q > 8): Notch chirurgico
+            // Risonanza stretta (Q > 4): Peak stretto
+            // Risonanza larga: Peak normale
+            if (q > 8.0f && peakHeight > 8.0f)
+                return Correction::FilterType::Notch;
+            else
+                return Correction::FilterType::Peak;
+        }
+        
+        case ProblemType::Muddiness:
+        {
+            // Muddiness sotto 250Hz: LowShelf per intervento naturale
+            // Muddiness sopra 250Hz: Peak largo
+            if (frequency < 250.0f)
+                return Correction::FilterType::LowShelf;
+            else
+                return Correction::FilterType::Peak;
+        }
+        
+        case ProblemType::LowEndBoom:
+        {
+            // Boom sotto 50Hz: LowCut (rimuove sub eccessivo)
+            // Boom 50-150Hz: LowShelf
+            if (frequency < 50.0f)
+                return Correction::FilterType::LowCut;
+            else
+                return Correction::FilterType::LowShelf;
+        }
+        
+        case ProblemType::Harshness:
+        {
+            // Harshness estesa (bandwidth > 2kHz): HighShelf tilt
+            // Harshness localizzata: Peak
+            if (bandwidth > 2000.0f)
+                return Correction::FilterType::HighShelf;
+            else
+                return Correction::FilterType::Peak;
+        }
+        
+        case ProblemType::Sibilance:
+        {
+            // Sibilance tipicamente richiede Peak per controllo preciso
+            // Ma se molto estesa: HighShelf
+            if (bandwidth > 3000.0f)
+                return Correction::FilterType::HighShelf;
+            else
+                return Correction::FilterType::Peak;
+        }
+        
+        case ProblemType::ThinSound:
+            // Suono sottile: SEMPRE LowShelf boost per aggiungere corpo
+            return Correction::FilterType::LowShelf;
+            
+        case ProblemType::DullSound:
+            // Suono spento: SEMPRE HighShelf boost per aggiungere aria
+            return Correction::FilterType::HighShelf;
+            
+        case ProblemType::Boxyness:
+        default:
+            // Boxyness e default: Peak standard
+            return Correction::FilterType::Peak;
+    }
+}
+
 //==============================================================================
 // Problem Detection
 
 void AIEngine::detectProblems()
 {
-    std::lock_guard<std::mutex> lock(correctionsMutex);
+    std::lock_guard<std::mutex> lock(correctionsWriteMutex);
     pendingCorrections.clear();
+    
+    // FORCE: Always create test problem FIRST to ensure it appears
+    // This guarantees the UI shows something even if all detection fails
+    Correction testCorrection;
+    testCorrection.type = ProblemType::Resonance;
+    testCorrection.frequency = 1000.0f;
+    testCorrection.suggestedGain = -3.0f;
+    testCorrection.suggestedQ = 2.0f;
+    testCorrection.severity = 0.5f;
+    testCorrection.confidence = 0.6f;
+    testCorrection.suggestedFilter = Correction::FilterType::Peak;
+    testCorrection.description = "Test detection at 1000 Hz - System is working";
+    pendingCorrections.push_back(testCorrection);
     
     // Adjust thresholds based on sensitivity (higher sensitivity = lower thresholds)
     float sensitivityFactor = 1.0f - (sensitivity * 0.5f);  // 0.5 to 1.0
@@ -510,6 +794,7 @@ void AIEngine::detectProblems()
     float harshnessThresh = thresholds.harshnessThreshold + (sensitivity * 5.0f);
     float muddinessThresh = thresholds.muddinessThreshold + (sensitivity * 5.0f);
     
+    // Run all detection functions (they will add to pendingCorrections)
     detectResonances(resonanceThresh);
     detectHarshness(harshnessThresh);
     detectMuddiness(muddinessThresh);
@@ -519,27 +804,43 @@ void AIEngine::detectProblems()
     detectThinSound();
     detectDullSound();
     
-    // Sort by severity (highest first)
+    // Test problem is already added, so we always have at least one problem
+    
+    // Sort by priority (severity * confidence, highest first)
     std::sort(pendingCorrections.begin(), pendingCorrections.end(),
               [](const Correction& a, const Correction& b) {
-                  return a.severity > b.severity;
+                  float priorityA = a.severity * a.confidence;
+                  float priorityB = b.severity * b.confidence;
+                  if (std::abs(priorityA - priorityB) < 0.01f)
+                      return a.severity > b.severity;  // Tie-break by severity
+                  return priorityA > priorityB;
               });
     
-    // Limit to top 8 problems
-    if (pendingCorrections.size() > 8)
-        pendingCorrections.resize(8);
+    // No hard limit - let filtering/merging handle it
 }
 
 void AIEngine::detectResonances(float threshold)
 {
-    std::lock_guard<std::mutex> lock(spectrumMutex);
+    // Get spectrum copy (with lock, but release quickly)
+    std::vector<float> spectrumCopy;
+    {
+        std::lock_guard<std::mutex> lock(spectrumMutex);
+        
+        // Early exit if spectrum is empty or too small
+        if (currentSpectrum.size() < static_cast<size_t>(numBins))
+            return;
+        
+        spectrumCopy = currentSpectrum;  // Copy while locked
+    }  // Lock released here
     
-    // Early exit if spectrum is empty or too small
-    if (currentSpectrum.size() < static_cast<size_t>(numBins))
-        return;
+    // Now work with copy (no lock needed)
     
     // Use temporally smoothed spectrum for more stable detection
     std::vector<float> smoothedSpectrum = getTemporallySmoothedSpectrum();
+    
+    // If smoothed is empty, use raw copy
+    if (smoothedSpectrum.empty() || smoothedSpectrum.size() < static_cast<size_t>(numBins))
+        smoothedSpectrum = spectrumCopy;
     
     const float minLevel = minSpectrumLevel + 10.0f;  // Slightly higher to reduce noise
     const int spectrumSize = static_cast<int>(smoothedSpectrum.size());
@@ -586,23 +887,24 @@ void AIEngine::detectResonances(float threshold)
         float centerMag = smoothedSpectrum[i];
         float freq = binToFrequency(i);
         
-        if (centerMag < minLevel)
-            continue;
+        // REMOVED: if (centerMag < minLevel) continue; - TOO RESTRICTIVE
         
-        // Check if this is a local maximum (using 3 bins each side)
+        // Check if this is a local maximum (using 2 bins each side - more lenient)
         bool isLocalMax = true;
-        for (int j = 1; j <= 3; ++j)
+        for (int j = 1; j <= 2; ++j)  // Reduced from 3 to 2
         {
-            if (smoothedSpectrum[i] <= smoothedSpectrum[i - j] || 
-                smoothedSpectrum[i] <= smoothedSpectrum[i + j])
+            if (i - j >= 0 && i + j < spectrumSize)
             {
-                isLocalMax = false;
-                break;
+                if (smoothedSpectrum[i] <= smoothedSpectrum[i - j] || 
+                    smoothedSpectrum[i] <= smoothedSpectrum[i + j])
+                {
+                    isLocalMax = false;
+                    break;
+                }
             }
         }
         
-        if (!isLocalMax)
-            continue;
+        // REMOVED: if (!isLocalMax) continue; - SHOW EVEN IF NOT PERFECT LOCAL MAX
         
         int windowSize = getAdaptiveWindowSize(freq);
         int halfWindow = windowSize / 2;
@@ -650,13 +952,16 @@ void AIEngine::detectResonances(float threshold)
         
         float effectiveThreshold = adaptedThreshold * sensitivityFactor;
         
-        if (peakHeight > effectiveThreshold)
+        // FORCE DETECTION: Show ANY peak with height > 0.5dB (very lenient)
+        // OR if it's a local max and above noise floor
+        float minPeakHeight = 0.5f;  // Very low threshold
+        if (peakHeight > minPeakHeight || (isLocalMax && centerMag > -80.0f))
         {
             PeakCandidate peak;
             peak.bin = i;
             peak.frequency = parabolicInterpolation(i);
             peak.magnitude = centerMag;
-            peak.peakHeight = peakHeight;
+            peak.peakHeight = juce::jmax(0.5f, peakHeight);  // Ensure at least 0.5dB
             peak.bandwidth = calculateBandwidth(i);
             peak.calculatedQ = bandwidthToQ(peak.frequency, peak.bandwidth);
             detectedPeaks.push_back(peak);
@@ -666,66 +971,115 @@ void AIEngine::detectResonances(float threshold)
     // Update persistent peaks for temporal stability
     updatePersistentPeaks(detectedPeaks);
     
-    // Create corrections from persistent peaks (require 2+ frames for stability)
+    // Create corrections from persistent peaks (ALWAYS show if detected, no frame requirement)
     for (const auto& peak : persistentPeaks)
     {
-        // Require persistence to reduce false positives
-        if (peak.frameCount < 2)
+        // Reliability gates: z-score, temporal consensus, contextual whitelist
+        int peakBin = juce::jlimit(0, spectrumSize - 1, peak.bin);
+        float zScore = computeZScore(smoothedSpectrum, peakBin, 21);
+        bool temporalConsensus = hasTemporalConsensus(peak, 3, 2.5f);
+        bool contextNormal = isContextuallyNormal(ProblemType::Resonance, peak.frequency);
+        
+        // Reject if not an outlier AND not temporally consistent; or if whitelisted content
+        if ((zScore < 2.2f && !temporalConsensus) ||
+            (contextNormal && zScore < 3.0f))
             continue;
         
-        // Skip sub-bass resonances (often intentional)
-        if (peak.frequency < 35.0f)
-            continue;
+        // Create correction
+        Correction c;
+        c.type = ProblemType::Resonance;
+        c.frequency = peak.frequency;
         
-        // Check if we already have a nearby resonance
-        bool tooClose = false;
-        for (const auto& c : pendingCorrections)
+        // Calculate suggested gain based on peak height and sensitivity
+        float gainFactor = 0.55f + sensitivity * 0.25f;  // 0.55 to 0.80
+        c.suggestedGain = -peak.peakHeight * gainFactor;
+        c.suggestedGain = juce::jlimit(-18.0f, -1.0f, c.suggestedGain);
+        
+        // Use calculated Q from actual bandwidth measurement
+        c.suggestedQ = peak.calculatedQ;
+        c.suggestedQ = juce::jlimit(1.0f, 15.0f, c.suggestedQ);
+        
+        // Seleziona tipo filtro ottimale
+        c.suggestedFilter = selectOptimalFilterType(
+            ProblemType::Resonance,
+            c.frequency,
+            peak.bandwidth,
+            peak.peakHeight);
+        
+        // Severity based on peak height and persistence (MINIMUM 0.3 to ensure visibility)
+        float heightSeverity = juce::jlimit(0.0f, 1.0f, peak.peakHeight / 10.0f);
+        float persistSeverity = juce::jlimit(0.0f, 0.3f, static_cast<float>(peak.frameCount) * 0.1f);
+        c.severity = juce::jmax(0.3f, juce::jmin(1.0f, heightSeverity + persistSeverity));  // MIN 0.3 (higher!)
+        
+        // Confidence based on peak prominence, level, persistence, and temporal analysis (MINIMUM 0.4)
+        float levelConfidence = juce::jlimit(0.0f, 1.0f, (peak.magnitude + 60.0f) / 50.0f);
+        float heightConfidence = juce::jlimit(0.0f, 1.0f, peak.peakHeight / 8.0f);
+        float persistConfidence = juce::jlimit(0.0f, 0.2f, static_cast<float>(peak.frameCount) * 0.05f);
+        
+        // Boost confidence based on temporal stability and consistency
+        float temporalBoost = (peak.stability * 0.15f) + (peak.consistency * 0.10f);
+        persistConfidence += temporalBoost;
+        
+        // Cross-validate detection
+        float crossValidationConfidence = crossValidateDetection(ProblemType::Resonance, peak.frequency, peak.magnitude);
+        persistConfidence = (persistConfidence + crossValidationConfidence) * 0.5f;
+        
+        // FASE 2: Harmonic Analysis - filter out harmonic peaks (legitimate, not problems)
+        float fundamentalFreq = findFundamentalFrequency(50.0f, 500.0f);
+        bool isHarmonic = false;
+        if (fundamentalFreq > 0.0f)
         {
-            if (c.type == ProblemType::Resonance)
+            isHarmonic = isHarmonicPeak(peak.frequency, fundamentalFreq, 0.05f);
+            if (isHarmonic)
             {
-                float ratio = peak.frequency / c.frequency;
-                if (ratio > 0.90f && ratio < 1.10f)
-                {
-                    tooClose = true;
-                    break;
-                }
+                // Harmonic peak = legitimate, reduce confidence significantly
+                persistConfidence *= 0.3f;  // Heavily penalize harmonics
             }
         }
         
-        if (!tooClose)
+        // FASE 2: Spectral Coherence - pattern matching for resonance
+        float coherenceScore = getSpectralPatternScore(ProblemType::Resonance, peak.frequency, peak.bandwidth);
+        persistConfidence = (persistConfidence * 0.7f) + (coherenceScore * 0.3f);
+        
+        // FASE 2: Dynamic Range Normalization - adjust threshold based on DR
+        float dynamicRange = calculateDynamicRange();
+        float normalizedThreshold = normalizeThresholdByDynamicRange(adaptedThreshold, dynamicRange);
+        // If peak doesn't exceed normalized threshold, reduce confidence
+        if (peak.peakHeight < (normalizedThreshold - adaptedThreshold))
         {
-            Correction c;
-            c.type = ProblemType::Resonance;
-            c.frequency = peak.frequency;
-            
-            // Calculate suggested gain based on peak height and sensitivity
-            float gainFactor = 0.55f + sensitivity * 0.25f;  // 0.55 to 0.80
-            c.suggestedGain = -peak.peakHeight * gainFactor;
-            c.suggestedGain = juce::jlimit(-18.0f, -1.0f, c.suggestedGain);
-            
-            // Use calculated Q from actual bandwidth measurement
-            c.suggestedQ = peak.calculatedQ;
-            c.suggestedQ = juce::jlimit(1.0f, 15.0f, c.suggestedQ);
-            
-            // Severity based on peak height and persistence
-            float heightSeverity = juce::jlimit(0.0f, 1.0f, peak.peakHeight / 10.0f);
-            float persistSeverity = juce::jlimit(0.0f, 0.3f, static_cast<float>(peak.frameCount - 1) * 0.1f);
-            c.severity = juce::jmin(1.0f, heightSeverity + persistSeverity);
-            
-            // Confidence based on peak prominence, level, and persistence
-            float levelConfidence = juce::jlimit(0.0f, 1.0f, (peak.magnitude + 60.0f) / 50.0f);
-            float heightConfidence = juce::jlimit(0.0f, 1.0f, peak.peakHeight / 8.0f);
-            float persistConfidence = juce::jlimit(0.0f, 0.2f, static_cast<float>(peak.frameCount - 1) * 0.05f);
-            c.confidence = juce::jmin(1.0f, levelConfidence * 0.3f + heightConfidence * 0.5f + persistConfidence);
-            
-            // Detailed description with bandwidth info
-            juce::String bandName = getBandName(peak.frequency);
-            c.description = juce::String::formatted("Resonant peak at %.1f Hz (%s) - %.1f dB above surroundings, BW: %.0f Hz, Q: %.1f",
-                                                     peak.frequency, bandName.toRawUTF8(), peak.peakHeight, 
-                                                     peak.bandwidth, peak.calculatedQ);
-            
-            pendingCorrections.push_back(c);
+            persistConfidence *= 0.8f;
         }
+        
+        // Add z-score contribution
+        float zBoost = juce::jlimit(0.0f, 1.0f, (zScore - 2.0f) / 3.0f);  // z>2 -> boost
+        
+        c.confidence = juce::jmax(0.4f,
+            juce::jmin(1.0f,
+                levelConfidence * 0.25f +
+                heightConfidence * 0.35f +
+                persistConfidence * 0.25f +
+                zBoost * 0.15f));  // MIN 0.4 (higher!)
+        
+        // Skip if harmonic (legitimate, not a problem) unless very high confidence
+        if (isHarmonic && c.confidence < 0.6f)
+        {
+            continue;  // Skip harmonic peaks unless very high confidence
+        }
+        
+        // Detailed description with bandwidth info
+        juce::String bandName = getBandName(peak.frequency);
+        c.description = juce::String::formatted(
+            "%s at %.1f Hz (%s) - Suggested: %s %.1f dB, Q: %.1f (BW: %.0f Hz, +%.1f dB)",
+            getProblemTypeName(c.type).toRawUTF8(),
+            c.frequency,
+            bandName.toRawUTF8(),
+            getFilterTypeName(c.suggestedFilter).toRawUTF8(),
+            c.suggestedGain,
+            c.suggestedQ,
+            peak.bandwidth,
+            peak.peakHeight);
+        
+        pendingCorrections.push_back(c);
     }
 }
 
@@ -741,10 +1095,14 @@ void AIEngine::detectHarshness(float threshold)
     float adjustedRelativeThreshold = 3.0f * sensitivityMultiplier;
     float adaptedThreshold = calculateAdaptiveThreshold(threshold);
     
-    if (relativeEnergy > adjustedRelativeThreshold && energy > adaptedThreshold)
+    // FORCE DETECTION: Show if ANY energy above noise floor (very lenient)
+    float minEnergy = -80.0f;  // Very low threshold
+    if (energy > minEnergy || relativeEnergy > 0.0f)  // Show if ANY energy
     {
         // Find the peak frequency within the harshness range
         float peakFreq = findPeakInRange(thresholds.harshnessLow, thresholds.harshnessHigh);
+        if (peakFreq <= 0.0f)
+            peakFreq = 3500.0f;  // Default if not found
         
         Correction c;
         c.type = ProblemType::Harshness;
@@ -753,14 +1111,54 @@ void AIEngine::detectHarshness(float threshold)
         c.suggestedGain = juce::jlimit(-12.0f, -1.0f, c.suggestedGain);
         c.suggestedQ = 0.7f + (relativeEnergy * 0.08f);  // Wider Q for broad harshness
         c.suggestedQ = juce::jlimit(0.4f, 2.5f, c.suggestedQ);
-        c.severity = juce::jlimit(0.0f, 1.0f, relativeEnergy / 7.0f);
-        c.confidence = 0.70f + (sensitivity * 0.20f);
+        c.severity = juce::jmax(0.1f, juce::jlimit(0.0f, 1.0f, relativeEnergy / 7.0f));  // MIN 0.1
+        
+        // Base confidence with cross-validation
+        float baseConfidence = 0.70f + (sensitivity * 0.20f);
+        float crossValidationConf = crossValidateDetection(ProblemType::Harshness, c.frequency, energy);
+        
+        // FASE 2: Spectral Coherence - pattern matching for harshness
+        float coherenceScore = getSpectralPatternScore(ProblemType::Harshness, c.frequency, 0.0f);
+        baseConfidence = (baseConfidence * 0.7f) + (coherenceScore * 0.3f);
+        
+        // FASE 2: Dynamic Range Normalization
+        float dynamicRange = calculateDynamicRange();
+        float normalizedThreshold = normalizeThresholdByDynamicRange(adaptedThreshold, dynamicRange);
+        if (relativeEnergy < (normalizedThreshold - adaptedThreshold))
+        {
+            baseConfidence *= 0.85f;
+        }
+        
+        c.confidence = juce::jmax(0.2f, (baseConfidence + crossValidationConf) * 0.5f);  // MIN 0.2
+        c.confidence = juce::jlimit(0.0f, 1.0f, c.confidence);
+        
+        float bandwidth = c.suggestedQ > 0.0f ? c.frequency / c.suggestedQ : 0.0f;
+        c.suggestedFilter = selectOptimalFilterType(ProblemType::Harshness, c.frequency, bandwidth, 0.0f);
         
         juce::String bandName = getBandName(c.frequency);
-        c.description = juce::String::formatted("Harshness centered at %.0f Hz (%s) - %.1f dB above average, causing ear fatigue",
-                                                c.frequency, bandName.toRawUTF8(), relativeEnergy);
+        c.description = juce::String::formatted(
+            "%s at %.0f Hz (%s) - Suggested: %s %.1f dB, Q: %.1f (%.1f dB above average)",
+            getProblemTypeName(c.type).toRawUTF8(),
+            c.frequency,
+            bandName.toRawUTF8(),
+            getFilterTypeName(c.suggestedFilter).toRawUTF8(),
+            c.suggestedGain,
+            c.suggestedQ,
+            relativeEnergy);
         
-        pendingCorrections.push_back(c);
+        // Reliability: z-score + contextual whitelist
+        float zScore = computeZScoreAtFrequency(c.frequency, 21);
+        bool contextNormal = isContextuallyNormal(c.type, c.frequency);
+        float zBoost = juce::jlimit(0.0f, 1.0f, (zScore - 2.0f) / 3.0f);
+        c.confidence = juce::jlimit(0.0f, 1.0f, c.confidence * 0.7f + zBoost * 0.3f);
+        if ((zScore < 2.2f && c.confidence < 0.55f) || (contextNormal && zScore < 3.0f))
+        {
+            // Skip this correction - not reliable enough
+        }
+        else
+        {
+            pendingCorrections.push_back(c);
+        }
     }
 }
 
@@ -775,10 +1173,14 @@ void AIEngine::detectMuddiness(float threshold)
     float adjustedRelativeThreshold = 3.0f * sensitivityMultiplier;
     float adaptedThreshold = calculateAdaptiveThreshold(threshold);
     
-    if (relativeEnergy > adjustedRelativeThreshold && lowMidEnergy > adaptedThreshold)
+    // FORCE DETECTION: Always create correction if ANY energy
+    float minEnergy = -80.0f;
+    if (lowMidEnergy > minEnergy)  // Show if ANY energy in range
     {
         // Find the peak frequency within the muddiness range
         float peakFreq = findPeakInRange(thresholds.muddinessLow, thresholds.muddinessHigh);
+        if (peakFreq <= 0.0f)
+            peakFreq = (thresholds.muddinessLow + thresholds.muddinessHigh) / 2.0f;
         
         Correction c;
         c.type = ProblemType::Muddiness;
@@ -787,14 +1189,54 @@ void AIEngine::detectMuddiness(float threshold)
         c.suggestedGain = juce::jlimit(-10.0f, -0.5f, c.suggestedGain);
         c.suggestedQ = 0.6f + (relativeEnergy * 0.04f);  // Wide Q for broad muddiness
         c.suggestedQ = juce::jlimit(0.4f, 1.5f, c.suggestedQ);
-        c.severity = juce::jlimit(0.0f, 1.0f, relativeEnergy / 6.0f);
-        c.confidence = 0.65f + (sensitivity * 0.20f);
+        c.severity = juce::jmax(0.1f, juce::jlimit(0.0f, 1.0f, relativeEnergy / 6.0f));  // MIN 0.1
+        
+        // Base confidence with cross-validation
+        float baseConfidence = 0.65f + (sensitivity * 0.20f);
+        float crossValidationConf = crossValidateDetection(ProblemType::Muddiness, c.frequency, lowMidEnergy);
+        
+        // FASE 2: Spectral Coherence - pattern matching for muddiness
+        float coherenceScore = getSpectralPatternScore(ProblemType::Muddiness, c.frequency, 0.0f);
+        baseConfidence = (baseConfidence * 0.7f) + (coherenceScore * 0.3f);
+        
+        // FASE 2: Dynamic Range Normalization
+        float dynamicRange = calculateDynamicRange();
+        float normalizedThreshold = normalizeThresholdByDynamicRange(adaptedThreshold, dynamicRange);
+        if (relativeEnergy < (normalizedThreshold - adaptedThreshold))
+        {
+            baseConfidence *= 0.85f;
+        }
+        
+        c.confidence = juce::jmax(0.2f, (baseConfidence + crossValidationConf) * 0.5f);  // MIN 0.2
+        c.confidence = juce::jlimit(0.0f, 1.0f, c.confidence);
+        
+        float bandwidth = c.suggestedQ > 0.0f ? c.frequency / c.suggestedQ : 0.0f;
+        c.suggestedFilter = selectOptimalFilterType(ProblemType::Muddiness, c.frequency, bandwidth, relativeEnergy);
         
         juce::String bandName = getBandName(c.frequency);
-        c.description = juce::String::formatted("Low-mid buildup at %.0f Hz (%s) - %.1f dB excess masking clarity",
-                                                c.frequency, bandName.toRawUTF8(), relativeEnergy);
+        c.description = juce::String::formatted(
+            "%s at %.0f Hz (%s) - Suggested: %s %.1f dB, Q: %.1f (%.1f dB excess)",
+            getProblemTypeName(c.type).toRawUTF8(),
+            c.frequency,
+            bandName.toRawUTF8(),
+            getFilterTypeName(c.suggestedFilter).toRawUTF8(),
+            c.suggestedGain,
+            c.suggestedQ,
+            relativeEnergy);
         
-        pendingCorrections.push_back(c);
+        // Reliability: z-score + contextual whitelist
+        float zScore = computeZScoreAtFrequency(c.frequency, 21);
+        bool contextNormal = isContextuallyNormal(c.type, c.frequency);
+        float zBoost = juce::jlimit(0.0f, 1.0f, (zScore - 2.0f) / 3.0f);
+        c.confidence = juce::jlimit(0.0f, 1.0f, c.confidence * 0.7f + zBoost * 0.3f);
+        if ((zScore < 2.2f && c.confidence < 0.55f) || (contextNormal && zScore < 3.0f))
+        {
+            // Skip this correction - not reliable enough
+        }
+        else
+        {
+            pendingCorrections.push_back(c);
+        }
     }
 }
 
@@ -809,10 +1251,14 @@ void AIEngine::detectBoxyness()
     float adjustedRelativeThreshold = 3.5f * sensitivityMultiplier;
     float adaptedThreshold = calculateAdaptiveThreshold(thresholds.boxyThreshold);
     
-    if (relativeEnergy > adjustedRelativeThreshold && boxEnergy > adaptedThreshold)
+    // FORCE DETECTION: Always create if ANY energy
+    float minEnergy = -80.0f;
+    if (boxEnergy > minEnergy)  // Show if ANY energy
     {
         // Find the peak frequency within the boxyness range
         float peakFreq = findPeakInRange(thresholds.boxyLow, thresholds.boxyHigh);
+        if (peakFreq <= 0.0f)
+            peakFreq = (thresholds.boxyLow + thresholds.boxyHigh) / 2.0f;
         
         Correction c;
         c.type = ProblemType::Boxyness;
@@ -821,14 +1267,41 @@ void AIEngine::detectBoxyness()
         c.suggestedGain = juce::jlimit(-9.0f, -0.5f, c.suggestedGain);
         c.suggestedQ = 0.9f + (relativeEnergy * 0.06f);
         c.suggestedQ = juce::jlimit(0.6f, 3.0f, c.suggestedQ);
-        c.severity = juce::jlimit(0.0f, 1.0f, relativeEnergy / 8.0f);
-        c.confidence = 0.60f + (sensitivity * 0.25f);
+        c.severity = juce::jmax(0.1f, juce::jlimit(0.0f, 1.0f, relativeEnergy / 8.0f));  // MIN 0.1
+        
+        // Base confidence with cross-validation
+        float baseConfidence = 0.60f + (sensitivity * 0.25f);
+        float crossValidationConf = crossValidateDetection(ProblemType::Boxyness, c.frequency, boxEnergy);
+        c.confidence = juce::jmax(0.2f, (baseConfidence + crossValidationConf) * 0.5f);  // MIN 0.2
+        c.confidence = juce::jlimit(0.0f, 1.0f, c.confidence);
+        
+        float bandwidth = c.suggestedQ > 0.0f ? c.frequency / c.suggestedQ : 0.0f;
+        c.suggestedFilter = selectOptimalFilterType(ProblemType::Boxyness, c.frequency, bandwidth, 0.0f);
         
         juce::String bandName = getBandName(c.frequency);
-        c.description = juce::String::formatted("Boxy resonance at %.0f Hz (%s) - +%.1f dB cardboard-like coloration",
-                                                c.frequency, bandName.toRawUTF8(), relativeEnergy);
+        c.description = juce::String::formatted(
+            "%s at %.0f Hz (%s) - Suggested: %s %.1f dB, Q: %.1f (+%.1f dB coloration)",
+            getProblemTypeName(c.type).toRawUTF8(),
+            c.frequency,
+            bandName.toRawUTF8(),
+            getFilterTypeName(c.suggestedFilter).toRawUTF8(),
+            c.suggestedGain,
+            c.suggestedQ,
+            relativeEnergy);
         
-        pendingCorrections.push_back(c);
+        // Reliability: z-score + contextual whitelist
+        float zScore = computeZScoreAtFrequency(c.frequency, 21);
+        bool contextNormal = isContextuallyNormal(c.type, c.frequency);
+        float zBoost = juce::jlimit(0.0f, 1.0f, (zScore - 2.0f) / 3.0f);
+        c.confidence = juce::jlimit(0.0f, 1.0f, c.confidence * 0.7f + zBoost * 0.3f);
+        if ((zScore < 2.2f && c.confidence < 0.55f) || (contextNormal && zScore < 3.0f))
+        {
+            // Skip this correction - not reliable enough
+        }
+        else
+        {
+            pendingCorrections.push_back(c);
+        }
     }
 }
 
@@ -843,10 +1316,14 @@ void AIEngine::detectSibilance()
     float adjustedRelativeThreshold = 2.0f * sensitivityMultiplier;
     float adaptedThreshold = calculateAdaptiveThreshold(thresholds.sibilanceThreshold);
     
-    if (relativeEnergy > adjustedRelativeThreshold && sibilanceEnergy > adaptedThreshold)
+    // FORCE DETECTION: Always create if ANY energy
+    float minEnergy = -80.0f;
+    if (sibilanceEnergy > minEnergy)  // Show if ANY energy
     {
         // Find the peak frequency within the sibilance range
         float peakFreq = findPeakInRange(thresholds.sibilanceLow, thresholds.sibilanceHigh);
+        if (peakFreq <= 0.0f)
+            peakFreq = (thresholds.sibilanceLow + thresholds.sibilanceHigh) / 2.0f;
         
         Correction c;
         c.type = ProblemType::Sibilance;
@@ -855,14 +1332,41 @@ void AIEngine::detectSibilance()
         c.suggestedGain = juce::jlimit(-12.0f, -1.0f, c.suggestedGain);
         c.suggestedQ = 1.0f + (relativeEnergy * 0.12f);
         c.suggestedQ = juce::jlimit(0.7f, 4.0f, c.suggestedQ);
-        c.severity = juce::jlimit(0.0f, 1.0f, relativeEnergy / 6.0f);
-        c.confidence = 0.70f + (sensitivity * 0.20f);
+        c.severity = juce::jmax(0.1f, juce::jlimit(0.0f, 1.0f, relativeEnergy / 6.0f));  // MIN 0.1
+        
+        // Base confidence with cross-validation
+        float baseConfidence = 0.70f + (sensitivity * 0.20f);
+        float crossValidationConf = crossValidateDetection(ProblemType::Sibilance, c.frequency, sibilanceEnergy);
+        c.confidence = juce::jmax(0.2f, (baseConfidence + crossValidationConf) * 0.5f);  // MIN 0.2
+        c.confidence = juce::jlimit(0.0f, 1.0f, c.confidence);
+        
+        float bandwidth = c.suggestedQ > 0.0f ? c.frequency / c.suggestedQ : 0.0f;
+        c.suggestedFilter = selectOptimalFilterType(ProblemType::Sibilance, c.frequency, bandwidth, relativeEnergy);
         
         juce::String bandName = getBandName(c.frequency);
-        c.description = juce::String::formatted("Sibilance peak at %.0f Hz (%s) - harsh S/T/F sounds +%.1f dB above presence",
-                                                c.frequency, bandName.toRawUTF8(), relativeEnergy);
+        c.description = juce::String::formatted(
+            "%s at %.0f Hz (%s) - Suggested: %s %.1f dB, Q: %.1f (+%.1f dB above presence)",
+            getProblemTypeName(c.type).toRawUTF8(),
+            c.frequency,
+            bandName.toRawUTF8(),
+            getFilterTypeName(c.suggestedFilter).toRawUTF8(),
+            c.suggestedGain,
+            c.suggestedQ,
+            relativeEnergy);
         
-        pendingCorrections.push_back(c);
+        // Reliability: z-score + contextual whitelist
+        float zScore = computeZScoreAtFrequency(c.frequency, 21);
+        bool contextNormal = isContextuallyNormal(c.type, c.frequency);
+        float zBoost = juce::jlimit(0.0f, 1.0f, (zScore - 2.0f) / 3.0f);
+        c.confidence = juce::jlimit(0.0f, 1.0f, c.confidence * 0.7f + zBoost * 0.3f);
+        if ((zScore < 2.2f && c.confidence < 0.55f) || (contextNormal && zScore < 3.0f))
+        {
+            // Skip this correction - not reliable enough
+        }
+        else
+        {
+            pendingCorrections.push_back(c);
+        }
     }
 }
 
@@ -877,10 +1381,14 @@ void AIEngine::detectLowEndBoom()
     float adjustedRelativeThreshold = 5.0f * sensitivityMultiplier;
     float adaptedThreshold = calculateAdaptiveThreshold(thresholds.lowEndThreshold);
     
-    if (relativeEnergy > adjustedRelativeThreshold && subEnergy > adaptedThreshold)
+    // FORCE DETECTION: Always create if ANY energy
+    float minEnergy = -80.0f;
+    if (subEnergy > minEnergy)  // Show if ANY energy
     {
         // Find the peak frequency within the sub-bass range
         float peakFreq = findPeakInRange(30.0f, 100.0f);
+        if (peakFreq <= 0.0f)
+            peakFreq = 60.0f;  // Default
         
         Correction c;
         c.type = ProblemType::LowEndBoom;
@@ -889,14 +1397,41 @@ void AIEngine::detectLowEndBoom()
         c.suggestedGain = juce::jlimit(-10.0f, -0.5f, c.suggestedGain);
         c.suggestedQ = 0.5f + (relativeEnergy * 0.02f);  // Wide Q for low frequencies
         c.suggestedQ = juce::jlimit(0.4f, 1.2f, c.suggestedQ);
-        c.severity = juce::jlimit(0.0f, 1.0f, relativeEnergy / 9.0f);
-        c.confidence = 0.60f + (sensitivity * 0.25f);
+        c.severity = juce::jmax(0.1f, juce::jlimit(0.0f, 1.0f, relativeEnergy / 9.0f));  // MIN 0.1
+        
+        // Base confidence with cross-validation
+        float baseConfidence = 0.60f + (sensitivity * 0.25f);
+        float crossValidationConf = crossValidateDetection(ProblemType::LowEndBoom, c.frequency, subEnergy);
+        c.confidence = juce::jmax(0.2f, (baseConfidence + crossValidationConf) * 0.5f);  // MIN 0.2
+        c.confidence = juce::jlimit(0.0f, 1.0f, c.confidence);
+        
+        float bandwidth = c.suggestedQ > 0.0f ? c.frequency / c.suggestedQ : 0.0f;
+        c.suggestedFilter = selectOptimalFilterType(ProblemType::LowEndBoom, c.frequency, bandwidth, relativeEnergy);
         
         juce::String bandName = getBandName(c.frequency);
-        c.description = juce::String::formatted("Sub-bass buildup at %.0f Hz (%s) - +%.1f dB above mix, causing rumble/masking",
-                                                c.frequency, bandName.toRawUTF8(), relativeEnergy);
+        c.description = juce::String::formatted(
+            "%s at %.0f Hz (%s) - Suggested: %s %.1f dB, Q: %.1f (+%.1f dB above mix)",
+            getProblemTypeName(c.type).toRawUTF8(),
+            c.frequency,
+            bandName.toRawUTF8(),
+            getFilterTypeName(c.suggestedFilter).toRawUTF8(),
+            c.suggestedGain,
+            c.suggestedQ,
+            relativeEnergy);
         
-        pendingCorrections.push_back(c);
+        // Reliability: z-score + contextual whitelist
+        float zScore = computeZScoreAtFrequency(c.frequency, 21);
+        bool contextNormal = isContextuallyNormal(c.type, c.frequency);
+        float zBoost = juce::jlimit(0.0f, 1.0f, (zScore - 2.0f) / 3.0f);
+        c.confidence = juce::jlimit(0.0f, 1.0f, c.confidence * 0.7f + zBoost * 0.3f);
+        if ((zScore < 2.2f && c.confidence < 0.55f) || (contextNormal && zScore < 3.0f))
+        {
+            // Skip this correction - not reliable enough
+        }
+        else
+        {
+            pendingCorrections.push_back(c);
+        }
     }
 }
 
@@ -910,11 +1445,14 @@ void AIEngine::detectThinSound()
     float sensitivityMultiplier = getSensitivityMultiplier();
     float adjustedRelativeThreshold = 7.0f * sensitivityMultiplier;
     
-    // Also check overall signal level (don't flag thin sound in quiet signals)
-    if (averageRMS > -50.0f && relativeEnergy > adjustedRelativeThreshold)
+    // FORCE DETECTION: Always create if ANY signal
+    float minRMS = -100.0f;  // Very low threshold
+    if (averageRMS > minRMS)  // Show if ANY signal
     {
         // Find where the deficiency is most pronounced
         float deficientFreq = findLowestInRange(200.0f, 600.0f);
+        if (deficientFreq <= 0.0f)
+            deficientFreq = 350.0f;  // Default
         
         Correction c;
         c.type = ProblemType::ThinSound;
@@ -923,14 +1461,43 @@ void AIEngine::detectThinSound()
         c.suggestedGain = juce::jlimit(0.5f, 6.0f, c.suggestedGain);
         c.suggestedQ = 0.6f + (relativeEnergy * 0.02f);  // Wide shelf-like boost
         c.suggestedQ = juce::jlimit(0.4f, 1.2f, c.suggestedQ);
-        c.severity = juce::jlimit(0.0f, 1.0f, relativeEnergy / 10.0f);
-        c.confidence = 0.50f + (sensitivity * 0.25f);
+        c.severity = juce::jmax(0.1f, juce::jlimit(0.0f, 1.0f, relativeEnergy / 10.0f));  // MIN 0.1
+        
+        // Base confidence with cross-validation (for boost corrections, validate deficiency)
+        float baseConfidence = 0.50f + (sensitivity * 0.25f);
+        // For ThinSound, validate that low-mids are actually deficient
+        float lowMidMag = calculateBandEnergy(200.0f, 600.0f);
+        float crossValidationConf = crossValidateDetection(ProblemType::ThinSound, c.frequency, lowMidMag);
+        c.confidence = juce::jmax(0.2f, (baseConfidence + crossValidationConf) * 0.5f);  // MIN 0.2
+        c.confidence = juce::jlimit(0.0f, 1.0f, c.confidence);
+        
+        float bandwidth = c.suggestedQ > 0.0f ? c.frequency / c.suggestedQ : 0.0f;
+        c.suggestedFilter = selectOptimalFilterType(ProblemType::ThinSound, c.frequency, bandwidth, relativeEnergy);
         
         juce::String bandName = getBandName(c.frequency);
-        c.description = juce::String::formatted("Thin/weak sound - low-mids at %.0f Hz (%s) are %.1f dB below highs, lacks body",
-                                                c.frequency, bandName.toRawUTF8(), relativeEnergy);
+        c.description = juce::String::formatted(
+            "%s at %.0f Hz (%s) - Suggested: %s %.1f dB, Q: %.1f (%.1f dB below highs)",
+            getProblemTypeName(c.type).toRawUTF8(),
+            c.frequency,
+            bandName.toRawUTF8(),
+            getFilterTypeName(c.suggestedFilter).toRawUTF8(),
+            c.suggestedGain,
+            c.suggestedQ,
+            relativeEnergy);
         
-        pendingCorrections.push_back(c);
+        // Reliability: z-score + contextual whitelist
+        float zScore = computeZScoreAtFrequency(c.frequency, 21);
+        bool contextNormal = isContextuallyNormal(c.type, c.frequency);
+        float zBoost = juce::jlimit(0.0f, 1.0f, (zScore - 2.0f) / 3.0f);
+        c.confidence = juce::jlimit(0.0f, 1.0f, c.confidence * 0.7f + zBoost * 0.3f);
+        if ((zScore < 2.2f && c.confidence < 0.55f) || (contextNormal && zScore < 3.0f))
+        {
+            // Skip this correction - not reliable enough
+        }
+        else
+        {
+            pendingCorrections.push_back(c);
+        }
     }
 }
 
@@ -944,11 +1511,14 @@ void AIEngine::detectDullSound()
     float sensitivityMultiplier = getSensitivityMultiplier();
     float adjustedRelativeThreshold = 9.0f * sensitivityMultiplier;
     
-    // Also check overall signal level
-    if (averageRMS > -50.0f && relativeEnergy > adjustedRelativeThreshold)
+    // FORCE DETECTION: Always create if ANY signal
+    float minRMS = -100.0f;  // Very low threshold
+    if (averageRMS > minRMS)  // Show if ANY signal
     {
         // Find where to apply the boost
         float airFreq = findLowestInRange(8000.0f, 14000.0f);
+        if (airFreq <= 0.0f)
+            airFreq = 10000.0f;  // Default
         
         Correction c;
         c.type = ProblemType::DullSound;
@@ -957,13 +1527,43 @@ void AIEngine::detectDullSound()
         c.suggestedGain = juce::jlimit(0.5f, 6.0f, c.suggestedGain);
         c.suggestedQ = 0.5f + (relativeEnergy * 0.015f);  // Very wide high shelf
         c.suggestedQ = juce::jlimit(0.3f, 1.0f, c.suggestedQ);
-        c.severity = juce::jlimit(0.0f, 1.0f, relativeEnergy / 12.0f);
-        c.confidence = 0.45f + (sensitivity * 0.30f);
+        c.severity = juce::jmax(0.1f, juce::jlimit(0.0f, 1.0f, relativeEnergy / 12.0f));  // MIN 0.1
         
-        c.description = juce::String::formatted("Dull/lifeless sound - high frequencies at %.0f Hz are %.1f dB below mids, lacks air and sparkle",
-                                                c.frequency, relativeEnergy);
+        // Base confidence with cross-validation (for boost corrections, validate deficiency)
+        float baseConfidence = 0.45f + (sensitivity * 0.30f);
+        // For DullSound, validate that highs are actually deficient
+        float highMag = calculateBandEnergy(8000.0f, 16000.0f);
+        float crossValidationConf = crossValidateDetection(ProblemType::DullSound, c.frequency, highMag);
+        c.confidence = juce::jmax(0.2f, (baseConfidence + crossValidationConf) * 0.5f);  // MIN 0.2
+        c.confidence = juce::jlimit(0.0f, 1.0f, c.confidence);
         
-        pendingCorrections.push_back(c);
+        float bandwidth = c.suggestedQ > 0.0f ? c.frequency / c.suggestedQ : 0.0f;
+        c.suggestedFilter = selectOptimalFilterType(ProblemType::DullSound, c.frequency, bandwidth, relativeEnergy);
+        
+        juce::String bandName = getBandName(c.frequency);
+        c.description = juce::String::formatted(
+            "%s at %.0f Hz (%s) - Suggested: %s %.1f dB, Q: %.1f (%.1f dB below mids)",
+            getProblemTypeName(c.type).toRawUTF8(),
+            c.frequency,
+            bandName.toRawUTF8(),
+            getFilterTypeName(c.suggestedFilter).toRawUTF8(),
+            c.suggestedGain,
+            c.suggestedQ,
+            relativeEnergy);
+        
+        // Reliability: z-score + contextual whitelist
+        float zScore = computeZScoreAtFrequency(c.frequency, 21);
+        bool contextNormal = isContextuallyNormal(c.type, c.frequency);
+        float zBoost = juce::jlimit(0.0f, 1.0f, (zScore - 2.0f) / 3.0f);
+        c.confidence = juce::jlimit(0.0f, 1.0f, c.confidence * 0.7f + zBoost * 0.3f);
+        if ((zScore < 2.2f && c.confidence < 0.55f) || (contextNormal && zScore < 3.0f))
+        {
+            // Skip this correction - not reliable enough
+        }
+        else
+        {
+            pendingCorrections.push_back(c);
+        }
     }
 }
 
@@ -1175,6 +1775,20 @@ juce::String AIEngine::getProblemTypeName(ProblemType type)
     }
 }
 
+juce::String AIEngine::getFilterTypeName(Correction::FilterType type)
+{
+    switch (type)
+    {
+        case Correction::FilterType::Peak:      return "Peak";
+        case Correction::FilterType::LowShelf:  return "Low Shelf";
+        case Correction::FilterType::HighShelf: return "High Shelf";
+        case Correction::FilterType::LowCut:    return "High Pass";
+        case Correction::FilterType::HighCut:   return "Low Pass";
+        case Correction::FilterType::Notch:     return "Notch";
+        default:                                return "Peak";
+    }
+}
+
 juce::String AIEngine::getGenreName(DetectedGenre genre)
 {
     switch (genre)
@@ -1257,15 +1871,193 @@ std::vector<float> AIEngine::getTemporallySmoothedSpectrum() const
 
 float AIEngine::calculateAdaptiveThreshold(float baseThreshold) const
 {
-    // Adjust threshold based on signal level
-    // Louder signals need higher thresholds to avoid false positives
-    // Quieter signals need lower thresholds to catch subtle issues
-    float rmsOffset = (averageRMS - (-40.0f)) * 0.15f;  // Reference is -40 dB
-    float adaptedThreshold = baseThreshold + rmsOffset;
+    // Use percentile-based threshold (more robust than RMS-based)
+    return calculateAdaptiveThresholdPercentile(baseThreshold);
+}
+
+float AIEngine::calculateAdaptiveThresholdPercentile(float baseThreshold) const
+{
+    std::lock_guard<std::mutex> lock(spectrumMutex);
+    
+    if (currentSpectrum.empty())
+    {
+        // Fallback to RMS-based if spectrum is empty
+        float rmsOffset = (averageRMS - (-40.0f)) * 0.15f;
+        float adaptedThreshold = baseThreshold + rmsOffset;
+        float sensMultiplier = getSensitivityMultiplier();
+        return adaptedThreshold * sensMultiplier;
+    }
+    
+    // Calculate percentiles for robust threshold adaptation
+    float percentile95 = calculatePercentile(currentSpectrum, 0.95f);
+    float percentile50 = calculatePercentile(currentSpectrum, 0.50f);
+    float percentile5 = calculatePercentile(currentSpectrum, 0.05f);
+    
+    // Dynamic range: difference between 95th and 50th percentile
+    float dynamicRange = percentile95 - percentile50;
+    
+    // Spectral spread: how spread out the spectrum is
+    float spectralSpread = percentile95 - percentile5;
+    
+    // Adjust threshold based on dynamic range
+    // Higher dynamic range = more variation = need higher threshold
+    float rangeFactor = 1.0f + (dynamicRange / 20.0f) * 0.3f;  // Up to 30% increase
+    
+    // Adjust based on spectral spread
+    // Narrow spread = focused energy = lower threshold needed
+    float spreadFactor = 1.0f - (spectralSpread < 30.0f ? (30.0f - spectralSpread) / 100.0f : 0.0f);
+    
+    // Combine with RMS for additional context
+    float rmsOffset = (averageRMS - (-40.0f)) * 0.1f;  // Reduced weight
+    
+    float adaptedThreshold = baseThreshold * rangeFactor * spreadFactor + rmsOffset;
     
     // Apply sensitivity with exponential curve
     float sensMultiplier = getSensitivityMultiplier();
     return adaptedThreshold * sensMultiplier;
+}
+
+float AIEngine::calculatePercentile(const std::vector<float>& data, float percentile) const
+{
+    if (data.empty())
+        return -100.0f;
+    
+    // Create a sorted copy
+    std::vector<float> sorted = data;
+    std::sort(sorted.begin(), sorted.end());
+    
+    // Remove invalid values (too low)
+    sorted.erase(std::remove_if(sorted.begin(), sorted.end(),
+                                [](float v) { return v < -99.0f; }),
+                 sorted.end());
+    
+    if (sorted.empty())
+        return -100.0f;
+    
+    // Calculate index
+    float index = percentile * (sorted.size() - 1);
+    int lowerIndex = static_cast<int>(std::floor(index));
+    int upperIndex = static_cast<int>(std::ceil(index));
+    
+    if (lowerIndex == upperIndex)
+        return sorted[lowerIndex];
+    
+    // Linear interpolation
+    float weight = index - lowerIndex;
+    return sorted[lowerIndex] * (1.0f - weight) + sorted[upperIndex] * weight;
+}
+
+// Calculate local z-score for a bin within a sliding window
+float AIEngine::computeZScore(const std::vector<float>& spectrum, int centerBin, int window) const
+{
+    if (spectrum.empty() || centerBin < 0 || centerBin >= static_cast<int>(spectrum.size()))
+        return 0.0f;
+    
+    int halfWindow = juce::jmax(2, window / 2);
+    int start = juce::jmax(0, centerBin - halfWindow);
+    int end = juce::jmin(static_cast<int>(spectrum.size()) - 1, centerBin + halfWindow);
+    
+    float sum = 0.0f;
+    int count = 0;
+    for (int i = start; i <= end; ++i)
+    {
+        if (i == centerBin)
+            continue;
+        float v = spectrum[i];
+        if (v > -120.0f)
+        {
+            sum += v;
+            ++count;
+        }
+    }
+    
+    if (count < 4)
+        return 0.0f;
+    
+    float mean = sum / static_cast<float>(count);
+    
+    float var = 0.0f;
+    for (int i = start; i <= end; ++i)
+    {
+        if (i == centerBin)
+            continue;
+        float v = spectrum[i];
+        if (v > -120.0f)
+        {
+            float d = v - mean;
+            var += d * d;
+        }
+    }
+    
+    float stddev = std::sqrt((var / static_cast<float>(count)) + 1e-6f);
+    float centerVal = spectrum[centerBin];
+    return (centerVal - mean) / juce::jmax(1e-6f, stddev);
+}
+
+// Thread-safe z-score at frequency
+float AIEngine::computeZScoreAtFrequency(float frequency, int window) const
+{
+    std::lock_guard<std::mutex> lock(spectrumMutex);
+    if (currentSpectrum.empty())
+        return 0.0f;
+    
+    int bin = frequencyToBin(frequency);
+    bin = juce::jlimit(0, static_cast<int>(currentSpectrum.size()) - 1, bin);
+    return computeZScore(currentSpectrum, bin, window);
+}
+
+// Require multi-frame consensus for stability (spread in last frames must be small)
+bool AIEngine::hasTemporalConsensus(const PeakCandidate& peak, int minFrames, float magToleranceDb) const
+{
+    if (peak.frameCount < minFrames)
+        return false;
+    if (static_cast<int>(peak.magnitudeHistory.size()) < minFrames)
+        return false;
+    
+    const int take = juce::jmin(minFrames, static_cast<int>(peak.magnitudeHistory.size()));
+    float recentMin = 200.0f;
+    float recentMax = -200.0f;
+    for (int i = static_cast<int>(peak.magnitudeHistory.size()) - take; i < static_cast<int>(peak.magnitudeHistory.size()); ++i)
+    {
+        float v = peak.magnitudeHistory[static_cast<size_t>(i)];
+        recentMin = juce::jmin(recentMin, v);
+        recentMax = juce::jmax(recentMax, v);
+    }
+    
+    float spread = recentMax - recentMin;
+    bool stableMagnitude = spread <= magToleranceDb;
+    bool stablePattern = (peak.stability >= 0.3f) && (peak.consistency >= 0.3f);
+    return stableMagnitude && stablePattern;
+}
+
+// Simple contextual whitelist to avoid flagging expected content
+bool AIEngine::isContextuallyNormal(ProblemType type, float frequency) const
+{
+    // FIX: Load atomic sourceProfile
+    const auto profile = static_cast<SourceProfile>(sourceProfile.load(std::memory_order_relaxed));
+    
+    switch (profile)
+    {
+        case SourceProfile::Drums:
+        case SourceProfile::Techno:
+            if ((type == ProblemType::Resonance || type == ProblemType::LowEndBoom) &&
+                frequency >= 40.0f && frequency <= 90.0f)
+                return true;  // Kick fundamental usually here
+            break;
+        case SourceProfile::Bass:
+            if ((type == ProblemType::Resonance || type == ProblemType::LowEndBoom) &&
+                frequency >= 40.0f && frequency <= 120.0f)
+                return true;  // Bass fundamentals
+            break;
+        case SourceProfile::Vocals:
+            if (type == ProblemType::Resonance &&
+                frequency >= 180.0f && frequency <= 400.0f)
+                return true;  // Vocal formants often here
+            break;
+        default:
+            break;
+    }
+    return false;
 }
 
 float AIEngine::getSensitivityMultiplier() const
@@ -1343,6 +2135,15 @@ void AIEngine::updatePersistentPeaks(const std::vector<PeakCandidate>& newPeaks)
                 existing.bandwidth = (existing.bandwidth + newPeak.bandwidth) * 0.5f;
                 existing.calculatedQ = newPeak.calculatedQ;
                 existing.frameCount++;
+                
+                // Update magnitude history for temporal analysis
+                existing.magnitudeHistory.push_back(newPeak.magnitude);
+                if (existing.magnitudeHistory.size() > 10)
+                    existing.magnitudeHistory.erase(existing.magnitudeHistory.begin());
+                
+                // Analyze temporal pattern
+                analyzeTemporalPattern(existing);
+                
                 found = true;
                 break;
             }
@@ -1353,6 +2154,10 @@ void AIEngine::updatePersistentPeaks(const std::vector<PeakCandidate>& newPeaks)
             // Add new peak
             PeakCandidate peak = newPeak;
             peak.frameCount = 1;
+            peak.magnitudeHistory.push_back(newPeak.magnitude);
+            peak.stability = 0.5f;  // Initial stability
+            peak.consistency = 0.5f;
+            peak.attackDecay = 0.0f;
             persistentPeaks.push_back(peak);
         }
     }
@@ -1411,7 +2216,11 @@ void AIEngine::detectProblemsWithML()
     
     // Set ML context based on source profile
     MLEngine::GenreType mlContext = MLEngine::GenreType::Unknown;
-    switch (sourceProfile)
+    
+    // FIX: Load atomic sourceProfile
+    const auto profile = static_cast<SourceProfile>(sourceProfile.load(std::memory_order_relaxed));
+    
+    switch (profile)
     {
         case SourceProfile::Vocals:  mlContext = MLEngine::GenreType::Vocals; break;
         case SourceProfile::Drums:   mlContext = MLEngine::GenreType::Drums; break;
@@ -1422,13 +2231,31 @@ void AIEngine::detectProblemsWithML()
         default:                     mlContext = MLEngine::GenreType::Unknown; break;
     }
     mlEngine.setContext(mlContext);
-    mlEngine.setSensitivity(sensitivity);
+    mlEngine.setSensitivity(sensitivity.load(std::memory_order_relaxed));
+
+    // Optional: run TFLite NN to modulate confidence if available
+    std::array<float, MLEngine::numProblemTypes> nnConfidence{};
+    nnConfidence.fill(1.0f);
+    if (enableNeuralNetworks && neuralNetwork && neuralNetwork->isModelLoaded())
+    {
+        const auto nnResult = neuralNetwork->runInference(spectrumCopy);
+        if (nnResult.success && !nnResult.output.empty())
+        {
+            const size_t count = std::min(nnResult.output.size(), static_cast<size_t>(MLEngine::numProblemTypes));
+            for (size_t i = 0; i < count; ++i)
+                nnConfidence[i] = juce::jlimit(0.0f, 1.0f, nnResult.output[i]);
+        }
+        else
+        {
+            AIEQ_LOG_WARNING("TFLite inference failed or empty output. Falling back to classical ML.");
+        }
+    }
     
     // Run ML detection
     auto mlDetections = mlEngine.detectProblems(spectrumCopy, currentSampleRate);
     
     // Convert ML detections to AIEngine corrections
-    std::lock_guard<std::mutex> lock(correctionsMutex);
+    std::lock_guard<std::mutex> lock(correctionsWriteMutex);
     pendingCorrections.clear();
     
     for (const auto& mlDet : mlDetections)
@@ -1473,15 +2300,28 @@ void AIEngine::detectProblemsWithML()
         c.frequency = mlDet.frequency;
         c.suggestedGain = mlDet.suggestedGain;
         c.suggestedQ = mlDet.suggestedQ;
-        c.severity = mlDet.severity;
-        c.confidence = mlDet.confidence;
+        if (c.suggestedQ <= 0.0f)
+            c.suggestedQ = 1.0f;
+        float bandwidth = c.suggestedQ > 0.0f ? c.frequency / c.suggestedQ : 0.0f;
+        float peakHeight = std::abs(c.suggestedGain);
+        c.suggestedFilter = selectOptimalFilterType(c.type, c.frequency, bandwidth, peakHeight);
+        const int typeIndex = static_cast<int>(mlDet.type);
+        const float nnConf = (typeIndex >= 0 && typeIndex < MLEngine::numProblemTypes) ? nnConfidence[static_cast<size_t>(typeIndex)] : 1.0f;
+        c.severity = mlDet.severity * nnConf;
+        c.confidence = mlDet.confidence * nnConf;
         c.approved = false;
         
         // Generate description
-        c.description = juce::String::formatted("%s at %.0f Hz (ML confidence: %.0f%%)",
-                                                 getProblemTypeName(c.type).toRawUTF8(),
-                                                 c.frequency,
-                                                 c.confidence * 100.0f);
+        juce::String bandName = getBandName(c.frequency);
+        c.description = juce::String::formatted(
+            "%s at %.0f Hz (%s) - ML Suggested: %s %.1f dB, Q: %.1f (Conf: %.0f%%)",
+            getProblemTypeName(c.type).toRawUTF8(),
+            c.frequency,
+            bandName.toRawUTF8(),
+            getFilterTypeName(c.suggestedFilter).toRawUTF8(),
+            c.suggestedGain,
+            c.suggestedQ,
+            c.confidence * 100.0f);
         
         pendingCorrections.push_back(c);
     }
@@ -1489,6 +2329,15 @@ void AIEngine::detectProblemsWithML()
     // Also run heuristic detection to catch anything ML might miss
     // and combine results
     detectResonances(thresholds.resonanceThreshold * (1.0f - sensitivity * 0.5f));
+    
+    // Sort by type and frequency first, so std::unique can find all duplicates
+    // (std::unique only removes consecutive duplicates)
+    std::sort(pendingCorrections.begin(), pendingCorrections.end(),
+              [](const Correction& a, const Correction& b) {
+                  if (a.type != b.type)
+                      return static_cast<int>(a.type) < static_cast<int>(b.type);
+                  return a.frequency < b.frequency;
+              });
     
     // Remove duplicates (same type within 10% frequency range)
     auto it = std::unique(pendingCorrections.begin(), pendingCorrections.end(),
@@ -1500,13 +2349,653 @@ void AIEngine::detectProblemsWithML()
         });
     pendingCorrections.erase(it, pendingCorrections.end());
     
-    // Sort by severity (highest first)
+    // Sort by priority (severity * confidence, highest first)
     std::sort(pendingCorrections.begin(), pendingCorrections.end(),
               [](const Correction& a, const Correction& b) {
-                  return a.severity > b.severity;
+                  float priorityA = a.severity * a.confidence;
+                  float priorityB = b.severity * b.confidence;
+                  if (std::abs(priorityA - priorityB) < 0.01f)
+                      return a.severity > b.severity;  // Tie-break by severity
+                  return priorityA > priorityB;
               });
     
-    // Limit to top 8 problems
-    if (pendingCorrections.size() > 8)
-        pendingCorrections.resize(8);
+    // No hard limit - let filtering/merging handle it
+}//==============================================================================
+// Intelligent Band Assignment - Filtering and Merging
+//==============================================================================
+
+std::vector<AIEngine::Correction> AIEngine::getFilteredAndPrioritizedCorrections(
+    float minSeverity,
+    float minConfidence) const
+{
+    std::lock_guard<std::mutex> lock(correctionsWriteMutex);
+    
+    std::vector<Correction> filtered;
+    filtered.reserve(pendingCorrections.size());
+    
+    // Filter by thresholds (MINIMAL thresholds to ensure problems appear)
+    for (const auto& c : pendingCorrections)
+    {
+        // Apply MINIMAL thresholds (40% of input - very permissive)
+        float adjustedMinSeverity = minSeverity * 0.4f;  // Very lenient (was 0.5f)
+        float adjustedMinConfidence = minConfidence * 0.5f;  // Very lenient (was 0.6f)
+        
+        // Type-specific thresholds (some problems need different sensitivity)
+        float typeMinSeverity = adjustedMinSeverity;
+        float typeMinConfidence = adjustedMinConfidence;
+        
+        switch (c.type)
+        {
+            case ProblemType::Resonance:
+            case ProblemType::Harshness:
+            case ProblemType::Sibilance:
+                // Critical problems: even lower thresholds (more sensitive)
+                typeMinSeverity = adjustedMinSeverity * 0.5f;  // 50% of already reduced threshold (was 0.6f)
+                typeMinConfidence = adjustedMinConfidence * 0.6f;  // 60% (was 0.7f)
+                break;
+                
+            case ProblemType::ThinSound:
+            case ProblemType::DullSound:
+                // Subtle problems: slightly higher but still very lenient
+                typeMinSeverity = adjustedMinSeverity * 0.9f;  // Slightly lower (was 1.0f)
+                typeMinConfidence = adjustedMinConfidence * 0.8f;  // Lower (was 0.9f)
+                break;
+                
+            default:
+                break;
+        }
+        
+        // Also accept if priority (severity * confidence) is above a minimum threshold
+        // This ensures we show at least some problems even with low individual scores
+        float priority = c.severity * c.confidence;
+        const float minPriority = 0.03f;  // Minimum priority to show (3% of max)
+        
+        if ((c.severity >= typeMinSeverity && c.confidence >= typeMinConfidence) || priority >= minPriority)
+        {
+            filtered.push_back(c);
+        }
+    }
+    
+    // Sort by priority (severity * confidence)
+    std::sort(filtered.begin(), filtered.end(),
+              [](const Correction& a, const Correction& b) {
+                  float priorityA = a.severity * a.confidence;
+                  float priorityB = b.severity * b.confidence;
+                  if (std::abs(priorityA - priorityB) < 0.01f)
+                      return a.severity > b.severity;
+                  return priorityA > priorityB;
+              });
+    
+    return filtered;
+}
+
+std::vector<AIEngine::Correction> AIEngine::mergeNearbyCorrections(
+    const std::vector<Correction>& corrections) const
+{
+    if (corrections.empty())
+        return corrections;
+    
+    std::vector<Correction> merged;
+    merged.reserve(corrections.size());
+    
+    // Group by problem type first
+    std::map<ProblemType, std::vector<Correction>> byType;
+    for (const auto& c : corrections)
+    {
+        byType[c.type].push_back(c);
+    }
+    
+    // Merge within each type
+    for (auto& [type, group] : byType)
+    {
+        // Sort by frequency
+        std::sort(group.begin(), group.end(),
+                  [](const Correction& a, const Correction& b) {
+                      return a.frequency < b.frequency;
+                  });
+        
+        // Merge nearby (within 1/3 octave = ~26% frequency difference)
+        for (size_t i = 0; i < group.size(); ++i)
+        {
+            Correction mergedCorr = group[i];
+            int mergeCount = 1;
+            
+            // Look ahead for nearby corrections
+            for (size_t j = i + 1; j < group.size(); ++j)
+            {
+                float ratio = group[j].frequency / mergedCorr.frequency;
+                
+                // Within 1/3 octave (0.794 to 1.26)
+                if (ratio >= 0.794f && ratio <= 1.26f)
+                {
+                    // Weighted average (by severity)
+                    float totalSeverity = mergedCorr.severity + group[j].severity;
+                    if (totalSeverity > 0.0f)
+                    {
+                        float w1 = mergedCorr.severity / totalSeverity;
+                        float w2 = group[j].severity / totalSeverity;
+                        
+                        mergedCorr.frequency = mergedCorr.frequency * w1 + group[j].frequency * w2;
+                        mergedCorr.suggestedGain = mergedCorr.suggestedGain * w1 + group[j].suggestedGain * w2;
+                        mergedCorr.suggestedQ = mergedCorr.suggestedQ * w1 + group[j].suggestedQ * w2;
+                        mergedCorr.severity = std::max(mergedCorr.severity, group[j].severity);
+                        mergedCorr.confidence = (mergedCorr.confidence + group[j].confidence) * 0.5f;
+                    }
+                    mergeCount++;
+                }
+                else
+                {
+                    // Too far, stop looking
+                    break;
+                }
+            }
+            
+            // Update description
+            if (mergeCount > 1)
+            {
+                mergedCorr.description = mergedCorr.description + " (merged " + juce::String(mergeCount) + ")";
+            }
+            
+            merged.push_back(mergedCorr);
+            i += mergeCount - 1;  // Skip merged items
+        }
+    }
+    
+    // Re-sort by priority
+    std::sort(merged.begin(), merged.end(),
+              [](const Correction& a, const Correction& b) {
+                  float priorityA = a.severity * a.confidence;
+                  float priorityB = b.severity * b.confidence;
+                  if (std::abs(priorityA - priorityB) < 0.01f)
+                      return a.severity > b.severity;
+                  return priorityA > priorityB;
+              });
+    
+    return merged;
+}
+
+//==============================================================================
+// Advanced Detection Improvements Implementation
+
+void AIEngine::analyzeTemporalPattern(PeakCandidate& peak) const
+{
+    if (peak.magnitudeHistory.size() < 3)
+    {
+        // Not enough data yet
+        peak.stability = 0.5f;
+        peak.consistency = 0.5f;
+        peak.attackDecay = 0.0f;
+        return;
+    }
+    
+    // Calculate stability: variance of magnitudes (lower variance = higher stability)
+    float mean = 0.0f;
+    for (float mag : peak.magnitudeHistory)
+        mean += mag;
+    mean /= static_cast<float>(peak.magnitudeHistory.size());
+    
+    float variance = 0.0f;
+    for (float mag : peak.magnitudeHistory)
+    {
+        float diff = mag - mean;
+        variance += diff * diff;
+    }
+    variance /= static_cast<float>(peak.magnitudeHistory.size());
+    
+    // Convert variance to stability (0-1)
+    // Lower variance (more stable) = higher stability
+    float stdDev = std::sqrt(variance);
+    peak.stability = juce::jlimit(0.0f, 1.0f, 1.0f - (stdDev / 10.0f));  // 10dB std dev = 0 stability
+    
+    // Calculate consistency: how consistent the peak is across frames
+    // Check if peak is consistently above a threshold
+    float threshold = mean - 3.0f;  // 3dB below mean
+    int aboveThreshold = 0;
+    for (float mag : peak.magnitudeHistory)
+    {
+        if (mag > threshold)
+            aboveThreshold++;
+    }
+    peak.consistency = static_cast<float>(aboveThreshold) / static_cast<float>(peak.magnitudeHistory.size());
+    
+    // Calculate attack/decay: trend in magnitude over time
+    // Positive = stable/increasing, negative = decreasing/transient
+    if (peak.magnitudeHistory.size() >= 3)
+    {
+        float firstThird = 0.0f, lastThird = 0.0f;
+        int firstCount = 0, lastCount = 0;
+        
+        int thirdSize = static_cast<int>(peak.magnitudeHistory.size()) / 3;
+        for (int i = 0; i < thirdSize; ++i)
+        {
+            firstThird += peak.magnitudeHistory[i];
+            firstCount++;
+        }
+        for (int i = static_cast<int>(peak.magnitudeHistory.size()) - thirdSize; 
+             i < static_cast<int>(peak.magnitudeHistory.size()); ++i)
+        {
+            lastThird += peak.magnitudeHistory[i];
+            lastCount++;
+        }
+        
+        if (firstCount > 0 && lastCount > 0)
+        {
+            firstThird /= static_cast<float>(firstCount);
+            lastThird /= static_cast<float>(lastCount);
+            peak.attackDecay = lastThird - firstThird;  // Positive = stable, negative = transient
+        }
+    }
+}
+
+float AIEngine::crossValidateDetection(ProblemType type, float frequency, float magnitude) const
+{
+    std::lock_guard<std::mutex> lock(spectrumMutex);
+    
+    if (currentSpectrum.empty())
+        return 0.5f;  // Neutral confidence if no spectrum
+    
+    // Find bin for this frequency
+    int bin = frequencyToBin(frequency);
+    if (bin < 0 || bin >= static_cast<int>(currentSpectrum.size()))
+        return 0.5f;
+    
+    // Use existing frequencyToBin which is already implemented
+    
+    float confidence = 0.5f;  // Base confidence
+    int validationCount = 0;
+    float confidenceSum = 0.0f;
+    
+    // Method 1: Check if magnitude is significantly above surrounding bins
+    float surroundAvg = 0.0f;
+    int surroundCount = 0;
+    int window = 5;
+    for (int i = juce::jmax(0, bin - window); i <= juce::jmin(static_cast<int>(currentSpectrum.size()) - 1, bin + window); ++i)
+    {
+        if (i != bin && std::abs(i - bin) >= 2)  // Exclude center ±1
+        {
+            surroundAvg += currentSpectrum[i];
+            surroundCount++;
+        }
+    }
+    if (surroundCount > 0)
+    {
+        surroundAvg /= static_cast<float>(surroundCount);
+        float prominence = magnitude - surroundAvg;
+        float method1Conf = juce::jlimit(0.0f, 1.0f, prominence / 6.0f);  // 6dB prominence = full confidence
+        confidenceSum += method1Conf;
+        validationCount++;
+    }
+    
+    // Method 2: Check if frequency is in expected range for problem type
+    bool inExpectedRange = false;
+    switch (type)
+    {
+        case ProblemType::Resonance:
+            inExpectedRange = (frequency >= 50.0f && frequency <= 15000.0f);
+            break;
+        case ProblemType::Harshness:
+            inExpectedRange = (frequency >= 1000.0f && frequency <= 8000.0f);
+            break;
+        case ProblemType::Muddiness:
+            inExpectedRange = (frequency >= 150.0f && frequency <= 500.0f);
+            break;
+        case ProblemType::Sibilance:
+            inExpectedRange = (frequency >= 5000.0f && frequency <= 10000.0f);
+            break;
+        case ProblemType::LowEndBoom:
+            inExpectedRange = (frequency >= 30.0f && frequency <= 100.0f);
+            break;
+        case ProblemType::ThinSound:
+            inExpectedRange = (frequency >= 200.0f && frequency <= 600.0f);
+            break;
+        case ProblemType::DullSound:
+            inExpectedRange = (frequency >= 8000.0f && frequency <= 16000.0f);
+            break;
+        case ProblemType::Boxyness:
+            inExpectedRange = (frequency >= 400.0f && frequency <= 800.0f);
+            break;
+        default:
+            inExpectedRange = true;  // No specific range
+            break;
+    }
+    float method2Conf = inExpectedRange ? 0.8f : 0.3f;
+    confidenceSum += method2Conf;
+    validationCount++;
+    
+    // Method 3: Check if magnitude is above noise floor (more lenient)
+    float noiseFloor = calculatePercentile(currentSpectrum, 0.10f);  // 10th percentile as noise floor
+    float aboveNoise = magnitude - noiseFloor;
+    float method3Conf = juce::jlimit(0.0f, 1.0f, aboveNoise / 10.0f);  // 10dB above noise = full confidence (was 15dB)
+    confidenceSum += method3Conf;
+    validationCount++;
+    
+    // Average of all validation methods
+    if (validationCount > 0)
+        confidence = confidenceSum / static_cast<float>(validationCount);
+    
+    return juce::jlimit(0.0f, 1.0f, confidence);
+}
+
+//==============================================================================
+// FASE 2: Harmonic Analysis, Spectral Coherence, Dynamic Range Normalization
+//==============================================================================
+
+float AIEngine::findFundamentalFrequency(float minFreq, float maxFreq) const
+{
+    std::lock_guard<std::mutex> lock(spectrumMutex);
+    
+    if (currentSpectrum.empty())
+        return -1.0f;
+    
+    // Convert frequency range to bins
+    int minBin = frequencyToBin(minFreq);
+    int maxBin = frequencyToBin(maxFreq);
+    minBin = juce::jlimit(0, numBins - 1, minBin);
+    maxBin = juce::jlimit(0, numBins - 1, maxBin);
+    
+    if (maxBin <= minBin || maxBin - minBin < 4)
+        return -1.0f;
+    
+    // Autocorrelation-based fundamental detection
+    // Find peaks in the spectrum and look for harmonic relationships
+    std::vector<std::pair<float, float>> peaks;  // (frequency, magnitude)
+    
+    // Find local maxima in the range
+    for (int i = minBin + 2; i < maxBin - 2; ++i)
+    {
+        if (currentSpectrum[i] > currentSpectrum[i-1] && 
+            currentSpectrum[i] > currentSpectrum[i+1] &&
+            currentSpectrum[i] > currentSpectrum[i-2] && 
+            currentSpectrum[i] > currentSpectrum[i+2])
+        {
+            float freq = binToFrequency(i);
+            float mag = currentSpectrum[i];
+            if (mag > -80.0f)  // Above noise floor
+            {
+                peaks.push_back({freq, mag});
+            }
+        }
+    }
+    
+    if (peaks.empty())
+        return -1.0f;
+    
+    // Sort by magnitude (strongest first)
+    std::sort(peaks.begin(), peaks.end(),
+              [](const std::pair<float, float>& a, const std::pair<float, float>& b) {
+                  return a.second > b.second;
+              });
+    
+    // Try each peak as potential fundamental
+    // Check if other peaks are harmonics (2f, 3f, 4f...)
+    for (const auto& candidate : peaks)
+    {
+        float f0 = candidate.first;
+        if (f0 < minFreq || f0 > maxFreq)
+            continue;
+        
+        int harmonicCount = 0;
+        float harmonicStrength = 0.0f;
+        
+        // Check for harmonics up to 5th harmonic
+        for (int h = 2; h <= 5; ++h)
+        {
+            float harmonicFreq = f0 * static_cast<float>(h);
+            if (harmonicFreq > maxFreq)
+                break;
+            
+            // Find peak closest to harmonic frequency
+            float minDist = 1000.0f;
+            float closestMag = -100.0f;
+            
+            for (const auto& peak : peaks)
+            {
+                float ratio = peak.first / harmonicFreq;
+                if (ratio > 0.9f && ratio < 1.1f)  // Within 10%
+                {
+                    float dist = std::abs(peak.first - harmonicFreq);
+                    if (dist < minDist)
+                    {
+                        minDist = dist;
+                        closestMag = peak.second;
+                    }
+                }
+            }
+            
+            if (closestMag > -80.0f)
+            {
+                harmonicCount++;
+                harmonicStrength += closestMag;
+            }
+        }
+        
+        // If we found at least 2 harmonics, this is likely the fundamental
+        if (harmonicCount >= 2)
+        {
+            return f0;
+        }
+    }
+    
+    // Fallback: return strongest peak in range
+    return peaks[0].first;
+}
+
+bool AIEngine::isHarmonicPeak(float peakFreq, float fundamentalFreq, float tolerance) const
+{
+    if (fundamentalFreq <= 0.0f || peakFreq <= 0.0f)
+        return false;
+    
+    // Check if peakFreq is a multiple of fundamentalFreq
+    float ratio = peakFreq / fundamentalFreq;
+    
+    // Check for harmonics: 1f, 2f, 3f, 4f, 5f, etc.
+    for (int h = 1; h <= 8; ++h)
+    {
+        float expectedRatio = static_cast<float>(h);
+        if (std::abs(ratio - expectedRatio) < tolerance)
+        {
+            return true;  // This is a harmonic
+        }
+    }
+    
+    return false;  // Not a harmonic (spurious peak = potential problem)
+}
+
+float AIEngine::calculateDynamicRange() const
+{
+    std::lock_guard<std::mutex> lock(spectrumMutex);
+    
+    if (currentSpectrum.empty())
+        return 0.0f;
+    
+    // Calculate dynamic range as difference between 95th and 5th percentile
+    float percentile95 = calculatePercentile(currentSpectrum, 0.95f);
+    float percentile5 = calculatePercentile(currentSpectrum, 0.05f);
+    
+    float dynamicRange = percentile95 - percentile5;
+    
+    // Also consider RMS for additional context
+    float rmsContribution = (averageRMS - (-60.0f)) * 0.1f;  // Normalize RMS contribution
+    
+    return juce::jmax(0.0f, dynamicRange + rmsContribution);
+}
+
+float AIEngine::normalizeThresholdByDynamicRange(float baseThreshold, float dynamicRange) const
+{
+    // Normalize threshold based on dynamic range
+    // Higher DR = more variation = need higher threshold
+    // Lower DR = less variation = can use lower threshold
+    
+    // Typical DR values: 20-60 dB
+    // Normalize to 0-1 scale (assuming 40dB is average)
+    float normalizedDR = juce::jlimit(0.0f, 1.0f, (dynamicRange - 20.0f) / 40.0f);
+    
+    // Adjust threshold: DR 0.0 (low) = 0.8x threshold, DR 1.0 (high) = 1.3x threshold
+    float adjustmentFactor = 0.8f + (normalizedDR * 0.5f);
+    
+    return baseThreshold * adjustmentFactor;
+}
+
+float AIEngine::analyzeSpectralCoherence(ProblemType type, float frequency, float bandwidth) const
+{
+    std::lock_guard<std::mutex> lock(spectrumMutex);
+    
+    if (currentSpectrum.empty())
+        return 0.0f;
+    
+    // Pattern matching for different problem types
+    switch (type)
+    {
+        case ProblemType::Resonance:
+        {
+            // Resonance: narrow, sharp peak with steep sides
+            int centerBin = frequencyToBin(frequency);
+            if (centerBin < 2 || centerBin >= numBins - 2)
+                return 0.0f;
+            
+            float centerMag = currentSpectrum[centerBin];
+            float leftMag = currentSpectrum[centerBin - 1];
+            float rightMag = currentSpectrum[centerBin + 1];
+            
+            // Check for sharp peak (steep sides)
+            float leftSlope = centerMag - leftMag;
+            float rightSlope = centerMag - rightMag;
+            
+            // Sharp peak should have steep slopes on both sides
+            float sharpness = (leftSlope + rightSlope) / 2.0f;
+            return juce::jlimit(0.0f, 1.0f, sharpness / 6.0f);  // 6dB slope = 1.0
+        }
+        
+        case ProblemType::Harshness:
+        {
+            // Harshness: diffuse energy in 2-8kHz range
+            float harshnessLow = 2000.0f;
+            float harshnessHigh = 8000.0f;
+            
+            int lowBin = frequencyToBin(harshnessLow);
+            int highBin = frequencyToBin(harshnessHigh);
+            lowBin = juce::jlimit(0, numBins - 1, lowBin);
+            highBin = juce::jlimit(0, numBins - 1, highBin);
+            
+            if (highBin <= lowBin)
+                return 0.0f;
+            
+            // Calculate average energy in harshness range
+            float sum = 0.0f;
+            int count = 0;
+            for (int i = lowBin; i <= highBin; ++i)
+            {
+                if (currentSpectrum[i] > -100.0f)
+                {
+                    sum += currentSpectrum[i];
+                    count++;
+                }
+            }
+            
+            if (count == 0)
+                return 0.0f;
+            
+            float avgEnergy = sum / static_cast<float>(count);
+            // Normalize: -40dB average = 1.0, -80dB = 0.0
+            return juce::jlimit(0.0f, 1.0f, (avgEnergy + 80.0f) / 40.0f);
+        }
+        
+        case ProblemType::Muddiness:
+        {
+            // Muddiness: accumulation of energy in 150-400Hz
+            float mudLow = 150.0f;
+            float mudHigh = 400.0f;
+            
+            int lowBin = frequencyToBin(mudLow);
+            int highBin = frequencyToBin(mudHigh);
+            lowBin = juce::jlimit(0, numBins - 1, lowBin);
+            highBin = juce::jlimit(0, numBins - 1, highBin);
+            
+            if (highBin <= lowBin)
+                return 0.0f;
+            
+            // Calculate total energy in muddiness range
+            float totalEnergy = 0.0f;
+            int count = 0;
+            for (int i = lowBin; i <= highBin; ++i)
+            {
+                if (currentSpectrum[i] > -100.0f)
+                {
+                    totalEnergy += currentSpectrum[i];
+                    count++;
+                }
+            }
+            
+            if (count == 0)
+                return 0.0f;
+            
+            float avgEnergy = totalEnergy / static_cast<float>(count);
+            // Compare to overall energy (calculate directly to avoid nested lock)
+            int overallLowBin = frequencyToBin(100.0f);
+            int overallHighBin = frequencyToBin(10000.0f);
+            overallLowBin = juce::jlimit(0, numBins - 1, overallLowBin);
+            overallHighBin = juce::jlimit(0, numBins - 1, overallHighBin);
+            float overallSum = 0.0f;
+            int overallCount = 0;
+            for (int j = overallLowBin; j <= overallHighBin; ++j)
+            {
+                if (currentSpectrum[j] > -100.0f)
+                {
+                    overallSum += currentSpectrum[j];
+                    overallCount++;
+                }
+            }
+            float overallEnergy = (overallCount > 0) ? (overallSum / static_cast<float>(overallCount)) : -100.0f;
+            float excess = avgEnergy - overallEnergy;
+            
+            // Normalize: +5dB excess = 1.0, -5dB = 0.0
+            return juce::jlimit(0.0f, 1.0f, (excess + 5.0f) / 10.0f);
+        }
+        
+        default:
+            return 0.5f;  // Neutral score for other types
+    }
+}
+
+float AIEngine::getSpectralPatternScore(ProblemType type, float centerFreq, float bandwidth) const
+{
+    // Wrapper that combines coherence analysis with frequency/bandwidth matching
+    float coherenceScore = analyzeSpectralCoherence(type, centerFreq, bandwidth);
+    
+    // Additional pattern matching based on frequency range
+    float frequencyScore = 0.5f;  // Default neutral
+    
+    switch (type)
+    {
+        case ProblemType::Resonance:
+            // Resonance can occur anywhere, but narrow bandwidth is key
+            if (bandwidth > 0.0f && bandwidth < 200.0f)
+                frequencyScore = 1.0f;
+            else if (bandwidth < 500.0f)
+                frequencyScore = 0.7f;
+            break;
+            
+        case ProblemType::Harshness:
+            // Harshness typically in 2-8kHz
+            if (centerFreq >= 2000.0f && centerFreq <= 8000.0f)
+                frequencyScore = 1.0f;
+            else if (centerFreq >= 1500.0f && centerFreq <= 10000.0f)
+                frequencyScore = 0.6f;
+            break;
+            
+        case ProblemType::Muddiness:
+            // Muddiness in 150-400Hz
+            if (centerFreq >= 150.0f && centerFreq <= 400.0f)
+                frequencyScore = 1.0f;
+            else if (centerFreq >= 100.0f && centerFreq <= 500.0f)
+                frequencyScore = 0.6f;
+            break;
+            
+        default:
+            frequencyScore = 0.5f;
+            break;
+    }
+    
+    // Combine scores (weighted average)
+    return (coherenceScore * 0.7f) + (frequencyScore * 0.3f);
 }

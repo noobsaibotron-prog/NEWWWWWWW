@@ -1,0 +1,51 @@
+FILE MODIFICATI - Thread Safety Fixes (15/12/2025)
+==================================================
+
+FIX 1-2: LinearPhaseProcessor (Move Semantics + Constants)
+----------------------------------------------------------
+✓ Source/DSP/LinearPhaseProcessor.h
+  - Rimossa variabile tempIRBuffer non utilizzata
+  - Costanti già pubbliche (verificato)
+
+✓ Source/DSP/LinearPhaseProcessor.cpp
+  - Fix move semantics: crea nuovo buffer per ogni canale
+  - Rimosso riutilizzo di buffer dopo std::move
+
+FIX 3: PluginProcessor (Atomic + Pre-allocated Buffers)
+--------------------------------------------------------
+✓ Source/PluginProcessor.h
+  - currentSampleRate reso std::atomic<double>
+  - Aggiunti midProcessBuffer e sideProcessBuffer (pre-allocati)
+  - Aggiunto metodo updateReportedLatency()
+
+✓ Source/PluginProcessor.cpp
+  - Tutti gli accessi a currentSampleRate aggiornati (.load()/.store())
+  - Pre-allocazione buffer M/S in prepareToPlay()
+  - Uso fetch_add() per manualCaptureSamples
+  - Rimosso logging da RT thread (pushToCaptureRing, processBlock)
+  - Spostato calcolo latency in updateReportedLatency()
+  - Rimosso warning variabile availableSpace non utilizzata
+
+FIX 4, 10: AIEngine (Thread Safety Coefficients)
+-------------------------------------------------
+✓ Source/AI/AIEngine.h
+  - coefficientsNeedUpdate reso std::atomic<bool>
+  - Aggiunto coefficientsMutex separato
+  - Aggiunto metodo updateBiquadCoefficientsFromCopy()
+
+✓ Source/AI/AIEngine.cpp
+  - processCorrections() riscritto: copia corrections, rilascia lock, aggiorna coefficienti sotto mutex separato
+  - Aggiunto updateBiquadCoefficientsFromCopy() helper method
+  - updateBiquadCoefficients() ora usa il nuovo helper
+
+FIX 9: PluginEditor (Timer Frequency)
+-------------------------------------
+✓ Source/PluginEditor.cpp
+  - Timer frequency ridotta da 60Hz a 30Hz
+
+TOTALE: 7 file modificati
+- 2 file DSP
+- 2 file PluginProcessor
+- 2 file AIEngine
+- 1 file PluginEditor
+

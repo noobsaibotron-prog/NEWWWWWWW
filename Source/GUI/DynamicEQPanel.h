@@ -3,6 +3,8 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "../DSP/DynamicEQProcessor.h"
+#include <atomic>
+#include <functional>
 
 //==============================================================================
 /**
@@ -68,7 +70,7 @@ public:
                             &attackLabel, &releaseLabel, &rangeLabel, &kneeLabel})
         {
             label->setColour(juce::Label::textColourId, juce::Colours::white.withAlpha(0.8f));
-            label->setFont(juce::Font(11.0f));
+            label->setFont(juce::Font(juce::FontOptions().withHeight(11.0f)));
             label->setJustificationType(juce::Justification::centred);
             addAndMakeVisible(label);
         }
@@ -84,7 +86,11 @@ public:
         // Title label
         titleLabel.setText("DYNAMIC EQ - Band " + juce::String(bandIndex + 1), juce::dontSendNotification);
         titleLabel.setColour(juce::Label::textColourId, juce::Colour(0xFF4A90D9));
-        titleLabel.setFont(juce::Font(13.0f, juce::Font::bold));
+        {
+            auto font = juce::Font(juce::FontOptions().withHeight(13.0f));
+            font.setBold(true);
+            titleLabel.setFont(font);
+        }
         titleLabel.setJustificationType(juce::Justification::centredLeft);
         addAndMakeVisible(titleLabel);
         
@@ -169,17 +175,17 @@ public:
     void timerCallback() override
     {
         // Update gain reduction display
-        if (dynamicProcessor != nullptr)
+        if (bandMeterProvider)
         {
-            auto meter = dynamicProcessor->getBandMeter(bandIndex);
+            auto meter = bandMeterProvider(bandIndex);
             currentGainReduction = meter.gainReduction;
             repaint(gainReductionBounds);
         }
     }
     
-    void setDynamicProcessor(DynamicEQProcessor* processor)
+    void setBandMeterProvider(std::function<DynamicEQProcessor::BandMeter(int)> provider)
     {
-        dynamicProcessor = processor;
+        bandMeterProvider = std::move(provider);
     }
     
     void setBandIndex(int newIndex)
@@ -191,15 +197,7 @@ public:
         
         juce::String prefix = "band" + juce::String(bandIndex);
         
-        // Re-attach all parameters
-        modeAttachment.reset();
-        thresholdAtt.reset();
-        ratioAtt.reset();
-        attackAtt.reset();
-        releaseAtt.reset();
-        rangeAtt.reset();
-        kneeAtt.reset();
-        
+        // Re-attach all parameters (construct new attachments before replacing old ones)
         modeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
             apvts, prefix + "DynMode", modeCombo);
         thresholdAtt = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
@@ -223,6 +221,7 @@ private:
     void setupKnob(juce::Slider& knob, const juce::String& name,
                    float min, float max, float defaultVal, const juce::String& suffix)
     {
+        juce::ignoreUnused(name);
         knob.setSliderStyle(juce::Slider::RotaryVerticalDrag);
         knob.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 50, 15);
         knob.setRange(min, max);
@@ -267,14 +266,14 @@ private:
         // Text
         juce::String grText = "GR: " + juce::String(currentGainReduction, 1) + " dB";
         g.setColour(juce::Colours::white);
-        g.setFont(10.0f);
+        g.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
         g.drawText(grText, gainReductionBounds, juce::Justification::centred);
     }
     
     //==========================================================================
     juce::AudioProcessorValueTreeState& apvts;
     int bandIndex;
-    DynamicEQProcessor* dynamicProcessor = nullptr;
+    std::function<DynamicEQProcessor::BandMeter(int)> bandMeterProvider;
     
     // UI Components
     juce::ComboBox modeCombo;
@@ -351,7 +350,7 @@ public:
         // Labels
         mixLabel.setText("MIX", juce::dontSendNotification);
         mixLabel.setColour(juce::Label::textColourId, juce::Colours::white.withAlpha(0.8f));
-        mixLabel.setFont(juce::Font(11.0f));
+        mixLabel.setFont(juce::Font(juce::FontOptions().withHeight(11.0f)));
         mixLabel.setJustificationType(juce::Justification::centred);
         addAndMakeVisible(mixLabel);
         
@@ -403,16 +402,16 @@ public:
     
     void timerCallback() override
     {
-        if (dynamicProcessor != nullptr)
+        if (totalGRProvider)
         {
-            totalGainReduction = dynamicProcessor->getTotalGainReduction();
+            totalGainReduction = totalGRProvider();
             repaint(totalGRBounds);
         }
     }
     
-    void setDynamicProcessor(DynamicEQProcessor* processor)
+    void setTotalGRProvider(std::function<float()> provider)
     {
-        dynamicProcessor = processor;
+        totalGRProvider = std::move(provider);
     }
 
 private:
@@ -446,13 +445,13 @@ private:
         // Text
         juce::String grText = "TOTAL GR: " + juce::String(totalGainReduction, 1) + " dB";
         g.setColour(juce::Colours::white);
-        g.setFont(9.0f);
+        g.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
         g.drawText(grText, totalGRBounds, juce::Justification::centred);
     }
     
     //==========================================================================
     juce::AudioProcessorValueTreeState& apvts;
-    DynamicEQProcessor* dynamicProcessor = nullptr;
+    std::function<float()> totalGRProvider;
     
     juce::ToggleButton enableButton, autoMakeupButton;
     juce::Slider mixKnob;

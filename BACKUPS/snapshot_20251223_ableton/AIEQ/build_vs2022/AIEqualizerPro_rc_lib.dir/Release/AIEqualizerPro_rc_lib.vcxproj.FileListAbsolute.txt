@@ -1,0 +1,1 @@
+C:\AIEQ\build_vs2022\AIEqualizerPro_rc_lib.dir\Release\AIEqualizerPro_rc_lib.lib

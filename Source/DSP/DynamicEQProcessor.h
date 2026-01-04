@@ -2,14 +2,20 @@
 
 #include <juce_dsp/juce_dsp.h>
 #include <juce_audio_basics/juce_audio_basics.h>
-#include <vector>
+#include "../Core/LockFreeStructures.h"
 #include <array>
-#include <mutex>
+#include <atomic>
 #include <cmath>
 
 //==============================================================================
 /**
  * Dynamic EQ Processor - FabFilter Pro-Q / TDR Nova Style
+ * 
+ * LOCK-FREE ARCHITECTURE (Elite/Top-Tier Standard):
+ * - Zero mutex in audio path
+ * - Atomic parameters with version counter
+ * - Wait-free reads from audio thread
+ * - Lock-free writes from message thread
  * 
  * Each band can operate in static or dynamic mode:
  * - Static: Traditional parametric EQ (fixed gain)
@@ -26,54 +32,77 @@ class DynamicEQProcessor
 {
 public:
     //==============================================================================
-    static constexpr int maxBands = 8;
+    static constexpr int maxBands = AIEQCore::kMaxBands;
     
-    enum class DetectionMode
-    {
-        Peak,
-        RMS
-    };
+    // Use int for atomic operations (enum class not trivially copyable in all contexts)
+    static constexpr int DetectionMode_Peak = 0;
+    static constexpr int DetectionMode_RMS = 1;
     
-    enum class DynamicMode
+    static constexpr int DynamicMode_Off = 0;
+    static constexpr int DynamicMode_Compress = 1;
+    static constexpr int DynamicMode_Expand = 2;
+    static constexpr int DynamicMode_Gate = 3;
+    
+    //==============================================================================
+    // Atomic parameters for each band (lock-free, trivially copyable)
+    struct alignas(AIEQCore::kCacheLineSize) AtomicDynamicBandParams
     {
-        Off,        // Static EQ (traditional)
-        Compress,   // Reduce gain when above threshold
-        Expand,     // Increase gain when above threshold (upward)
-        Gate        // Cut when below threshold
+        // EQ parameters
+        std::atomic<float> frequency { 1000.0f };
+        std::atomic<float> gain { 0.0f };
+        std::atomic<float> q { 1.0f };
+        std::atomic<int> filterType { 2 };  // Peak
+        std::atomic<bool> enabled { true };
+        
+        // Dynamic parameters
+        std::atomic<int> dynamicMode { DynamicMode_Off };
+        std::atomic<float> threshold { -20.0f };
+        std::atomic<float> ratio { 2.0f };
+        std::atomic<float> attackMs { 10.0f };
+        std::atomic<float> releaseMs { 100.0f };
+        std::atomic<float> range { 24.0f };
+        std::atomic<float> knee { 6.0f };
+        std::atomic<int> detection { DetectionMode_RMS };
+        
+        // Sidechain
+        std::atomic<bool> sidechainEnabled { false };
+        std::atomic<float> sidechainFreq { 1000.0f };
+        std::atomic<float> sidechainQ { 1.0f };
+        
+        // Version counter for change detection
+        std::atomic<uint64_t> version { 0 };
     };
     
     //==============================================================================
+    // Plain struct for API compatibility (non-atomic version for get/set)
     struct DynamicBandParams
     {
-        // EQ parameters
-        float frequency = 1000.0f;      // Hz
-        float gain = 0.0f;              // dB (static gain, target for dynamic)
+        float frequency = 1000.0f;
+        float gain = 0.0f;
         float q = 1.0f;
-        int filterType = 2;             // 0=LowCut, 1=LowShelf, 2=Peak, 3=HighShelf, 4=HighCut
+        int filterType = 2;
         bool enabled = true;
         
-        // Dynamic parameters
-        DynamicMode dynamicMode = DynamicMode::Off;
-        float threshold = -20.0f;       // dB - level at which dynamics kick in
-        float ratio = 2.0f;             // 1:1 to inf:1 (1 = no compression)
-        float attackMs = 10.0f;         // ms
-        float releaseMs = 100.0f;       // ms
-        float range = 24.0f;            // dB - max gain reduction/boost
-        float knee = 6.0f;              // dB - soft knee width (0 = hard)
-        DetectionMode detection = DetectionMode::RMS;
+        int dynamicMode = DynamicMode_Off;
+        float threshold = -20.0f;
+        float ratio = 2.0f;
+        float attackMs = 10.0f;
+        float releaseMs = 100.0f;
+        float range = 24.0f;
+        float knee = 6.0f;
+        int detection = DetectionMode_RMS;
         
-        // Sidechain (internal)
         bool sidechainEnabled = false;
-        float sidechainFreq = 1000.0f;  // Listen to this freq for detection
+        float sidechainFreq = 1000.0f;
         float sidechainQ = 1.0f;
     };
     
     //==============================================================================
     struct BandMeter
     {
-        float inputLevel = -100.0f;     // dB
-        float gainReduction = 0.0f;     // dB (negative = reduction)
-        float outputLevel = -100.0f;    // dB
+        float inputLevel = -100.0f;
+        float gainReduction = 0.0f;
+        float outputLevel = -100.0f;
     };
 
     //==============================================================================
@@ -85,90 +114,117 @@ public:
     void process(juce::AudioBuffer<float>& buffer);
     
     //==============================================================================
-    // Band management
+    // Band management (all lock-free)
     void setBandParams(int bandIndex, const DynamicBandParams& params);
-    DynamicBandParams getBandParams(int bandIndex) const;
+    [[nodiscard]] DynamicBandParams getBandParams(int bandIndex) const;
     void setBandEnabled(int bandIndex, bool enabled);
-    void setDynamicMode(int bandIndex, DynamicMode mode);
+    void setDynamicMode(int bandIndex, int mode);
     
     //==============================================================================
-    // Global controls
-    void setGlobalMix(float mix) { globalMix = juce::jlimit(0.0f, 1.0f, mix); }
-    float getGlobalMix() const { return globalMix; }
+    // Global controls (atomic)
+    void setGlobalMix(float mix) { globalMix.store(juce::jlimit(0.0f, 1.0f, mix), std::memory_order_relaxed); }
+    [[nodiscard]] float getGlobalMix() const { return globalMix.load(std::memory_order_relaxed); }
     
-    void setAutoMakeup(bool enabled) { autoMakeupEnabled = enabled; }
-    bool isAutoMakeupEnabled() const { return autoMakeupEnabled; }
+    void setAutoMakeup(bool enabled) { autoMakeupEnabled.store(enabled, std::memory_order_relaxed); }
+    [[nodiscard]] bool isAutoMakeupEnabled() const { return autoMakeupEnabled.load(std::memory_order_relaxed); }
     
-    void setLookahead(float ms) { lookaheadMs = juce::jlimit(0.0f, 20.0f, ms); }
-    float getLookahead() const { return lookaheadMs; }
+    void setLookahead(float ms);
+    [[nodiscard]] float getLookahead() const { return lookaheadMs.load(std::memory_order_relaxed); }
+
+    void updateLookaheadBuffer(double sampleRate, int samplesPerBlock, int channels);
     
     //==============================================================================
     // Metering
-    BandMeter getBandMeter(int bandIndex) const;
-    float getTotalGainReduction() const;
+    [[nodiscard]] BandMeter getBandMeter(int bandIndex) const;
+    [[nodiscard]] float getTotalGainReduction() const;
     
     //==============================================================================
     // Magnitude response (for GUI curve drawing)
-    float getMagnitudeForFrequency(float freq, double sampleRate) const;
+    [[nodiscard]] float getMagnitudeForFrequency(float freq, double sampleRate) const;
 
 private:
     //==============================================================================
+    // Processing state for each band (audio thread only)
     struct BandState
     {
-        // Filter coefficients
         juce::dsp::IIR::Coefficients<float>::Ptr eqCoeffs;
-        juce::dsp::IIR::Coefficients<float>::Ptr scCoeffs; // Sidechain filter
+        juce::dsp::IIR::Coefficients<float>::Ptr scCoeffs;
         
-        // Per-channel filter states
         std::array<juce::dsp::IIR::Filter<float>, 2> eqFiltersL;
         std::array<juce::dsp::IIR::Filter<float>, 2> eqFiltersR;
         juce::dsp::IIR::Filter<float> scFilterL, scFilterR;
         
-        // Envelope follower state (per channel)
         float envelopeL = 0.0f;
         float envelopeR = 0.0f;
-        
-        // Current dynamic gain (smoothed)
         float currentGain = 0.0f;
         float targetGain = 0.0f;
+        float scFreqApplied = 0.0f;
+        float scQApplied = 1.0f;
         
-        // Metering
-        BandMeter meter;
+        // Cached attack/release coefficients
+        float attackCoeff = 0.0f;
+        float releaseCoeff = 0.0f;
         
-        // Coefficients need update flag
-        bool needsUpdate = true;
+        // Metering (atomic for thread-safe reads)
+        std::atomic<float> meterInputLevel { -100.0f };
+        std::atomic<float> meterGainReduction { 0.0f };
+        std::atomic<float> meterOutputLevel { -100.0f };
+        
+        uint64_t lastVersion = 0;
+        bool prepared = false;
     };
     
     void updateBandCoefficients(int bandIndex);
-    float calculateDynamicGain(float inputLevelDb, const DynamicBandParams& params) const;
-    float computeSoftKnee(float inputDb, float threshold, float ratio, float knee) const;
+    void updateAttackReleaseCoeffs(int bandIndex);
+    [[nodiscard]] float calculateDynamicGain(float inputLevelDb,
+                                             int dynMode,
+                                             float threshold,
+                                             float ratio,
+                                             float knee,
+                                             float range) const;
+    [[nodiscard]] float computeSoftKnee(float inputDb, float threshold, float ratio, float knee) const;
     
-    juce::dsp::IIR::Coefficients<float>::Ptr makeEQCoefficients(
+    [[nodiscard]] juce::dsp::IIR::Coefficients<float>::Ptr makeEQCoefficients(
         int filterType, float freq, float gain, float q) const;
     
     //==============================================================================
-    double currentSampleRate = 44100.0;
-    int currentBlockSize = 512;
-    int numChannels = 2;
+    // LOCK-FREE ARCHITECTURE
+    //==============================================================================
     
-    std::array<DynamicBandParams, maxBands> bandParams;
+    // Atomic parameters for each band
+    std::array<AtomicDynamicBandParams, maxBands> bandParams;
+    
+    // Processing state (audio thread only)
     std::array<BandState, maxBands> bandStates;
-    mutable std::mutex paramsMutex;
     
-    // Global settings
-    float globalMix = 1.0f;
-    bool autoMakeupEnabled = false;
-    float lookaheadMs = 0.0f;
+    // Smoothed dynamic parameters (per-band, updated on version change)
+    std::array<juce::SmoothedValue<float>, maxBands> smoothedThresholds;
+    std::array<juce::SmoothedValue<float>, maxBands> smoothedRatios;
+    std::array<juce::SmoothedValue<float>, maxBands> smoothedRanges;
+    std::array<juce::SmoothedValue<float>, maxBands> smoothedKnees;
+    std::array<juce::SmoothedValue<float>, maxBands> smoothedSidechainFreq;
+    std::array<juce::SmoothedValue<float>, maxBands> smoothedSidechainQ;
+    
+    // Global settings (atomic)
+    std::atomic<float> globalMix { 1.0f };
+    std::atomic<bool> autoMakeupEnabled { false };
+    std::atomic<float> lookaheadMs { 0.0f };
+    
+    // Sample rate and block size
+    std::atomic<double> currentSampleRate { 44100.0 };
+    std::atomic<int> currentBlockSize { 512 };
+    int numChannels = 2;
     
     // Lookahead delay line
     juce::AudioBuffer<float> lookaheadBuffer;
     int lookaheadWritePos = 0;
-    int lookaheadSamples = 0;
+    std::atomic<int> lookaheadSamples { 0 };
+
+    // Pre-allocated dry buffer
+    juce::AudioBuffer<float> dryBuffer;
     
-    // Smoothing coefficients (calculated from attack/release)
-    std::array<float, maxBands> attackCoeffs;
-    std::array<float, maxBands> releaseCoeffs;
+    // Prepare flag
+    std::atomic<bool> isPrepared { false };
     
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(DynamicEQProcessor)
 };
-

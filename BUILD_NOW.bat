@@ -2,6 +2,9 @@
 setlocal enabledelayedexpansion
 echo === AI EQUALIZER BUILD ===
 
+:: FIX RT-SAFETY: Non-interactive mode for automated builds
+set "NO_PAUSE=%1"
+
 :: IMPORTANTE: Inizializza ambiente VS PRIMA di tutto
 :: Prova diverse versioni di Visual Studio (2026 = versione 19)
 set "VS_GENERATOR="
@@ -25,7 +28,7 @@ if exist "C:\Program Files\Microsoft Visual Studio\18\Community\VC\Auxiliary\Bui
 
 if "!VS_PATH!"=="" (
     echo [ERRORE] Visual Studio non trovato!
-    pause
+    if not "%NO_PAUSE%"=="--no-pause" pause
     exit /b 1
 )
 
@@ -43,7 +46,7 @@ if exist "!VS_PATH!\VC\Tools\MSVC" (
 :msvc_found
 if "!MSVC_BIN!"=="" (
     echo [ERRORE] Compilatore MSVC non trovato in !VS_PATH!
-    pause
+    if not "%NO_PAUSE%"=="--no-pause" pause
     exit /b 1
 )
 
@@ -274,14 +277,14 @@ if !ERRORLEVEL! neq 0 (
         if !ERRORLEVEL! neq 0 (
             echo [ERRORE] cl.exe ancora non trovato dopo aggiunta al PATH!
             echo [INFO] Percorso MSVC: !MSVC_BIN!
-            pause
+            if not "%NO_PAUSE%"=="--no-pause" pause
             exit /b 1
         )
     ) else (
         echo [ERRORE] cl.exe non trovato nel PATH e non esiste in !MSVC_BIN!
         echo [INFO] Verifica che Visual Studio sia installato correttamente
         echo [INFO] Percorso Visual Studio: !VS_PATH!
-        pause
+        if not "%NO_PAUSE%"=="--no-pause" pause
         exit /b 1
     )
 )
@@ -300,6 +303,10 @@ if exist build (
     if exist build\CMakeCache.txt del /Q /F build\CMakeCache.txt 2>nul
     if exist build\CMakeFiles rd /S /Q build\CMakeFiles 2>nul
     if exist build\CMakeScratch rd /S /Q build\CMakeScratch 2>nul
+    
+    :: Pulisci JUCE tools per evitare problemi con percorsi lunghi
+    if exist build\JUCE\tools rd /S /Q build\JUCE\tools 2>nul
+    if exist build\JUCE rd /S /Q build\JUCE 2>nul
     
     :: Prova a rimuovere completamente, ma continua anche se fallisce
     rmdir /s /q build 2>nul
@@ -326,7 +333,7 @@ echo.
 :: Verifica che CMake esista
 if not exist "!VS_PATH!\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" (
     echo [ERRORE] CMake non trovato in: !VS_PATH!\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe
-    pause
+    if not "%NO_PAUSE%"=="--no-pause" pause
     exit /b 1
 )
 
@@ -334,7 +341,7 @@ if not exist "!VS_PATH!\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\c
 if not exist "%~dp0JUCE\CMakeLists.txt" (
     echo [ERRORE] JUCE non trovato in: %~dp0JUCE
     echo [INFO] Assicurati che la cartella JUCE esista nella directory del progetto
-    pause
+    if not "%NO_PAUSE%"=="--no-pause" pause
     exit /b 1
 )
 
@@ -361,7 +368,7 @@ set "CMAKE_GENERATOR=!VS_GENERATOR!"
 :: NOTA: Con Visual Studio generator, NON usiamo il toolchain file
 :: CMake dovrebbe trovare automaticamente tutto se l'ambiente è configurato correttamente
 :: Il toolchain file verrà usato solo con NMake generator se Visual Studio fallisce
-:: Usa direttamente NMake Makefiles generator (più affidabile)
+:: Usa Visual Studio generator (NMake ha problemi con percorsi lunghi in juceaide)
 echo [INFO] Usando NMake Makefiles generator (più affidabile per questo ambiente)...
 echo [INFO] Le variabili d'ambiente (INCLUDE, LIB, PATH) sono già impostate correttamente
 
@@ -382,7 +389,7 @@ if !ERRORLEVEL! neq 0 (
     echo   - vcvarsall.bat abbia configurato correttamente l'ambiente
     echo   - Le librerie Windows SDK siano installate
     echo.
-    pause
+    if not "%NO_PAUSE%"=="--no-pause" pause
     exit /b 1
 )
 
@@ -394,7 +401,7 @@ echo.
 
 if !ERRORLEVEL! neq 0 (
     echo ERRORE nella compilazione!
-    pause
+    if not "%NO_PAUSE%"=="--no-pause" pause
     exit /b 1
 )
 
@@ -421,4 +428,5 @@ if !ERRORLEVEL! equ 0 (
     echo   build\AIEqualizerPro_artefacts\Release\VST3\AI Equalizer Pro.vst3
     echo   a: %LOCALAPPDATA%\VST3\ oppure %ProgramFiles%\Common Files\VST3\
 )
-pause
+
+if not "%NO_PAUSE%"=="--no-pause" pause

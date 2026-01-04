@@ -1,0 +1,9 @@
+BACKUP CREATO: 28/12/2025 20:33:00,50 
+================================ 
+ 
+Contenuto backup: 
+- build\tools 
+- build\CMakeCache.txt 
+- build\CMakeFiles 
+ 
+Per ripristinare usa: RESTORE_BUILD_STATE.bat build_backup_202512_2032 

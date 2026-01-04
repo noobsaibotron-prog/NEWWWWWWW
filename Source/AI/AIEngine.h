@@ -3,10 +3,16 @@
 #include <juce_core/juce_core.h>
 #include <juce_audio_basics/juce_audio_basics.h>
 #include "MLEngine.h"
+#include "MultiTrackUnmasking.h"
+#include "NeuralNetworkWrapper.h"
+#include "AdaptiveAIEngine.h"
+#include "OnlineLearningSystem.h"
 #include <vector>
 #include <atomic>
 #include <mutex>
+#include <shared_mutex>
 #include <array>
+#include <memory>
 
 //==============================================================================
 /**
@@ -74,7 +80,8 @@ public:
         Bass,       // Focus on sub/low frequencies
         Synth,      // Wide range, resonance focus
         Master,     // Less severe thresholds for full mix
-        EDM         // Tolerates more bass/sub, brightness
+        EDM,        // Tolerates more bass/sub, brightness
+        Techno      // Techno-specific: sub focus, kick resonances, hi-hat harshness
     };
     
     //==============================================================================
@@ -88,6 +95,22 @@ public:
         float confidence = 0.0f;    // 0-1 confidence level
         bool approved = false;
         juce::String description;
+
+        // Tipo di filtro EQ suggerito per questa correzione
+        enum class FilterType
+        {
+            Peak = 0,      // Filtro parametrico standard
+            LowShelf,      // Shelf basse frequenze
+            HighShelf,     // Shelf alte frequenze  
+            LowCut,        // High-pass filter
+            HighCut,       // Low-pass filter
+            Notch          // Notch filter (rejection)
+        };
+
+        FilterType suggestedFilter = FilterType::Peak;
+
+        // Slope per filtri shelf/cut (dB/ottava): 6, 12, 18, 24
+        int filterSlope = 12;
     };
     
     //==============================================================================
@@ -104,7 +127,7 @@ public:
     ~AIEngine() = default;
 
     void prepare(double sampleRate, int samplesPerBlock);
-    void analyzeSpectrum(const std::vector<float>& spectrum);
+    void analyzeSpectrum(const std::vector<float>& spectrum, bool force = false);
     
     /** 
      * Process corrections by applying dynamic EQ filtering to the buffer.
@@ -117,29 +140,31 @@ public:
     void setEnabled(bool e) { enabled = e; }
     bool isEnabled() const { return enabled; }
     
-    void setSensitivity(float s) { sensitivity = juce::jlimit(0.0f, 1.0f, s); }
-    float getSensitivity() const { return sensitivity; }
+    void setSensitivity(float s) { sensitivity.store(juce::jlimit(0.0f, 1.0f, s), std::memory_order_relaxed); }
+    float getSensitivity() const { return sensitivity.load(std::memory_order_relaxed); }
     
     void setStrength(float s);
-    float getStrength() const { return strength; }
+    float getStrength() const { return strength.load(std::memory_order_relaxed); }
     
     void setCorrectionMode(CorrectionMode mode) { correctionMode = mode; }
     CorrectionMode getCorrectionMode() const { return correctionMode; }
     
     // Source profile
     void setSourceProfile(SourceProfile profile);
-    SourceProfile getSourceProfile() const { return sourceProfile; }
+    SourceProfile getSourceProfile() const { return static_cast<SourceProfile>(sourceProfile.load(std::memory_order_relaxed)); }
     static juce::String getProfileName(SourceProfile profile);
     
     //==============================================================================
     // Corrections management
     std::vector<Correction> getPendingCorrections() const;
     std::vector<Correction> getApprovedCorrections() const;
+    std::vector<Correction> getApprovedCorrectionsForUI() const;
     
     void approveCorrection(int index);
     void approveAllCorrections();
     void rejectCorrection(int index);
     void clearCorrections();
+    void clearApprovedCorrections();  // Clear only approved corrections, keep pending
     
     //==============================================================================
     // Analysis state
@@ -157,11 +182,67 @@ public:
     //==============================================================================
     // Utility
     static juce::String getProblemTypeName(ProblemType type);
+    static juce::String getFilterTypeName(Correction::FilterType type);
     static juce::String getGenreName(DetectedGenre genre);
     static juce::String getBandName(float frequency);  // Human-readable band name
     
     // Get scaled correction (apply strength factor)
     Correction getScaledCorrection(const Correction& c) const;
+    
+    //==============================================================================
+    // Intelligent band assignment
+    //==============================================================================
+    
+    /**
+     * Filter and prioritize corrections based on severity/confidence thresholds
+     * @param minSeverity Minimum severity threshold (0-1)
+     * @param minConfidence Minimum confidence threshold (0-1)
+     * @return Filtered and sorted corrections (by priority = severity * confidence)
+     */
+    std::vector<Correction> getFilteredAndPrioritizedCorrections(
+        float minSeverity = 0.25f,
+        float minConfidence = 0.55f) const;
+    
+    /**
+     * Merge nearby corrections (within 1/3 octave) to avoid duplicate bands
+     * @param corrections Input corrections
+     * @return Merged corrections
+     */
+    std::vector<Correction> mergeNearbyCorrections(const std::vector<Correction>& corrections) const;
+    
+    //==============================================================================
+    // Advanced AI Systems Integration
+    //==============================================================================
+    
+    // Feature flags - public getters/setters
+    void setMultiTrackUnmaskingEnabled(bool isEnabled) { enableMultiTrackUnmasking = isEnabled; }
+    bool isMultiTrackUnmaskingEnabled() const { return enableMultiTrackUnmasking; }
+    
+    void setNeuralNetworksEnabled(bool isEnabled) { enableNeuralNetworks = isEnabled; }
+    bool isNeuralNetworksEnabled() const { return enableNeuralNetworks; }
+    
+    void setAdaptiveProcessingEnabled(bool isEnabled) { enableAdaptiveProcessing = isEnabled; }
+    bool isAdaptiveProcessingEnabled() const { return enableAdaptiveProcessing; }
+    
+    void setOnlineLearningEnabled(bool isEnabled) { enableOnlineLearning = isEnabled; }
+    bool isOnlineLearningEnabled() const { return enableOnlineLearning; }
+    
+    // Multi-track unmasking
+    void updateMultiTrackAnalysis(const juce::String& trackId, const std::vector<float>& spectrum);
+    std::vector<MultiTrackUnmasking::UnmaskingCorrection> getUnmaskingCorrections(double sampleRate);
+    
+    // Adaptive processing
+    void updateAdaptiveAnalysis(const juce::AudioBuffer<float>& buffer, double sampleRate);
+    AdaptiveAIEngine::AdaptiveConfig getCurrentAdaptiveConfig() const;
+    
+    // Neural network
+    bool loadNeuralModel(const juce::File& modelFile, NeuralNetworkWrapper::ModelType type);
+    NeuralNetworkWrapper::InferenceResult runNeuralInference(const std::vector<float>& input);
+    
+    // Online learning
+    void addLearningSample(const std::vector<float>& input, const std::vector<float>& target, 
+                          const juce::String& source = "auto");
+    void performOnlineLearningUpdate();
 
 private:
     void detectProblems();
@@ -173,6 +254,11 @@ private:
     void detectLowEndBoom();
     void detectThinSound();
     void detectDullSound();
+    Correction::FilterType selectOptimalFilterType(
+        ProblemType problem,
+        float frequency,
+        float bandwidth,
+        float peakHeight) const;
     void detectGenre();
     
     void saveAnalysisSnapshot();
@@ -206,10 +292,10 @@ private:
     double currentSampleRate = 44100.0;
     
     bool enabled = true;
-    float sensitivity = 0.5f;
-    float strength = 0.7f;
+    std::atomic<float> sensitivity { 0.5f };  // FIX RT-SAFETY: atomic for thread-safe access
+    std::atomic<float> strength { 0.7f };     // FIX RT-SAFETY: atomic for thread-safe access
     CorrectionMode correctionMode = CorrectionMode::Suggest;
-    SourceProfile sourceProfile = SourceProfile::Generic;
+    std::atomic<int> sourceProfile { static_cast<int>(SourceProfile::Generic) };  // FIX RT-SAFETY: atomic
     
     // Profile-specific thresholds
     struct ProfileThresholds
@@ -257,6 +343,12 @@ private:
         float bandwidth = 0.0f;        // Hz at -3dB points
         float calculatedQ = 1.0f;      // Calculated from bandwidth
         int frameCount = 0;            // How many frames this peak has been detected
+        
+        // Advanced temporal analysis
+        float stability = 0.0f;        // Temporal stability (0-1)
+        float consistency = 0.0f;      // Consistency across frames (0-1)
+        float attackDecay = 0.0f;      // Attack/decay rate (positive = stable, negative = transient)
+        std::vector<float> magnitudeHistory;  // Last N magnitudes for pattern analysis
     };
     std::vector<PeakCandidate> persistentPeaks;  // Peaks that persist across frames
     
@@ -269,24 +361,29 @@ private:
     void updatePersistentPeaks(const std::vector<PeakCandidate>& newPeaks);
     float getSensitivityMultiplier() const;  // Exponential curve for sensitivity
     
+    // Advanced detection improvements - FASE 1
+    float computeZScore(const std::vector<float>& spectrum, int centerBin, int window) const;  // Local z-score
+    float computeZScoreAtFrequency(float frequency, int window = 21) const;  // Thread-safe z-score
+    bool hasTemporalConsensus(const PeakCandidate& peak, int minFrames = 3, float magToleranceDb = 2.5f) const;  // Multi-frame consensus
+    bool isContextuallyNormal(ProblemType type, float frequency) const;  // Profile-aware whitelist
+    float calculatePercentile(const std::vector<float>& data, float percentile) const;  // Calculate percentile (0-1)
+    float calculateAdaptiveThresholdPercentile(float baseThreshold) const;  // Threshold based on percentile
+    void analyzeTemporalPattern(PeakCandidate& peak) const;  // Analyze temporal pattern for peak
+    float crossValidateDetection(ProblemType type, float frequency, float magnitude) const;  // Cross-validate detection
+    
+    // FASE 2: Harmonic Analysis, Spectral Coherence, Dynamic Range Normalization
+    float findFundamentalFrequency(float minFreq = 50.0f, float maxFreq = 500.0f) const;  // Find f0 using autocorrelation
+    bool isHarmonicPeak(float peakFreq, float fundamentalFreq, float tolerance = 0.05f) const;  // Check if peak is harmonic (f0, 2f0, 3f0...)
+    float calculateDynamicRange() const;  // Calculate signal dynamic range (dB)
+    float normalizeThresholdByDynamicRange(float baseThreshold, float dynamicRange) const;  // Adjust threshold based on DR
+    float analyzeSpectralCoherence(ProblemType type, float frequency, float bandwidth) const;  // Pattern matching for problem types
+    float getSpectralPatternScore(ProblemType type, float centerFreq, float bandwidth) const;  // Score how well pattern matches problem type
+    
     std::vector<float> currentSpectrum;
     mutable std::mutex spectrumMutex;
     
     std::vector<Correction> pendingCorrections;
-    std::vector<Correction> approvedCorrections;
-    mutable std::mutex correctionsMutex;
     
-    std::atomic<DetectedGenre> detectedGenre{DetectedGenre::Unknown};
-    std::atomic<bool> newAnalysisAvailable{false};
-    
-    // Analysis history
-    std::vector<AnalysisSnapshot> analysisHistory;
-    mutable std::mutex historyMutex;
-    
-    int analysisCounter = 0;
-    static constexpr int analysisInterval = 15;
-    
-    //==============================================================================
     // Filter state for dynamic EQ processing (biquad Direct Form II Transposed)
     struct FilterState
     {
@@ -302,13 +399,40 @@ private:
         bool valid = false;
     };
     
+    // Double-buffered approved corrections (audio reads lock-free)
+    std::array<std::vector<Correction>, 2> approvedCorrectionBuffers;
+    std::atomic<int> activeCorrectionsIndex { 0 };
+    
+    // Mutex only for writes from GUI/AI threads
+    mutable std::mutex correctionsWriteMutex;
+    
+    // Cached coefficients double-buffer
+    struct CachedCorrectionCoeffs
+    {
+        std::array<BiquadCoefficients, maxCorrections> coeffs;
+        std::array<bool, maxCorrections> enabled {};
+        int numActive = 0;
+    };
+    std::array<CachedCorrectionCoeffs, 2> cachedCoeffs;
+    std::atomic<int> activeCoefficientIndex { 0 };
+    std::atomic<bool> correctionCoeffsNeedUpdate { false };
+    
+    std::atomic<DetectedGenre> detectedGenre{DetectedGenre::Unknown};
+    std::atomic<bool> newAnalysisAvailable{false};
+    
+    // Analysis history
+    std::vector<AnalysisSnapshot> analysisHistory;
+    mutable std::mutex historyMutex;
+    
+    int analysisCounter = 0;
+    static constexpr int analysisInterval = 1;  // REDUCED: Analyze every frame for immediate detection
+    
+    //==============================================================================
     // Per-channel, per-correction filter states
     std::array<std::array<FilterState, maxChannels>, maxCorrections> filterStates;
-    std::array<BiquadCoefficients, maxCorrections> coefficientCache;
-    bool coefficientsNeedUpdate = true;
     
-    // Helper to update coefficients when corrections change
-    void updateBiquadCoefficients();
+    // Helper to update cached coefficients for a buffer index
+    void updateCachedCoefficients(int bufferIndex, const std::vector<Correction>& corrections);
     
     //==========================================================================
     // ML Engine for improved detection
@@ -316,6 +440,19 @@ private:
     bool useMLDetection = true;  // Enable ML-based detection
     
     void detectProblemsWithML();  // ML-enhanced detection
+    
+    //==========================================================================
+    // Advanced AI Systems
+    std::unique_ptr<MultiTrackUnmasking> multiTrackUnmasking;
+    std::unique_ptr<NeuralNetworkWrapper> neuralNetwork;
+    std::unique_ptr<AdaptiveAIEngine> adaptiveEngine;
+    std::unique_ptr<OnlineLearningSystem> onlineLearning;
+    
+    // Advanced features flags
+    bool enableMultiTrackUnmasking = false;
+    bool enableNeuralNetworks = false;
+    bool enableAdaptiveProcessing = false;
+    bool enableOnlineLearning = false;
     
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AIEngine)
 };

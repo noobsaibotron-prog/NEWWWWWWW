@@ -1,0 +1,41 @@
+# CRITICAL FIX for CMake 4.1: Prevent using Visual Studio project files with nmake
+# When using NMake Makefiles generator, CMake 4.1 may incorrectly try to use .vcxproj files
+# Force CMake to use STATIC_LIBRARY for compiler tests, which uses simple Makefiles
+# This must be set BEFORE project() call
+# IMPORTANT: Only apply this fix for NMake Makefiles generator, not for Visual Studio generators
+if(NOT DEFINED CMAKE_TRY_COMPILE_TARGET_TYPE)
+    # Check if generator is specified via -G flag or environment
+    # Before project(), CMAKE_GENERATOR property might not be available
+    # so we check multiple sources
+    set(IS_NMAKE_GENERATOR FALSE)
+    
+    # Method 1: Check environment variable (set by scripts like BUILD_NOW.bat)
+    if(DEFINED ENV{CMAKE_GENERATOR} AND "$ENV{CMAKE_GENERATOR}" MATCHES "NMake")
+        set(IS_NMAKE_GENERATOR TRUE)
+        message(STATUS "Detected NMake generator from environment variable")
+    endif()
+    
+    # Method 2: Check cache variable (may be set via -G flag on command line)
+    get_property(GENERATOR_FROM_CACHE CACHE CMAKE_GENERATOR PROPERTY VALUE)
+    if(NOT IS_NMAKE_GENERATOR AND GENERATOR_FROM_CACHE AND "${GENERATOR_FROM_CACHE}" MATCHES "NMake")
+        set(IS_NMAKE_GENERATOR TRUE)
+        message(STATUS "Detected NMake generator from cache")
+    endif()
+    
+    # Method 3: Check if CMAKE_MAKE_PROGRAM points to nmake.exe (indicates NMake generator usage)
+    if(NOT IS_NMAKE_GENERATOR AND DEFINED CMAKE_MAKE_PROGRAM)
+        get_filename_component(MAKE_PROGRAM "${CMAKE_MAKE_PROGRAM}" NAME)
+        if("${MAKE_PROGRAM}" STREQUAL "nmake.exe")
+            set(IS_NMAKE_GENERATOR TRUE)
+            message(STATUS "Detected NMake generator from CMAKE_MAKE_PROGRAM")
+        endif()
+    endif()
+    
+    # Only set CMAKE_TRY_COMPILE_TARGET_TYPE for NMake Makefiles generator
+    if(IS_NMAKE_GENERATOR)
+        set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY CACHE INTERNAL "")
+        message(STATUS "Setting CMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY for NMake generator")
+    else()
+        message(STATUS "Non-NMake generator detected - CMAKE_TRY_COMPILE_TARGET_TYPE not modified")
+    endif()
+endif()
