@@ -878,9 +878,11 @@ endif()
 
 # Unit tests (Debug only). Link against the shared plugin code to exercise state/oversampling/bypass.
 if(HAVE_JUCE AND CMAKE_BUILD_TYPE STREQUAL "Debug")
+    enable_testing()
     add_executable(AIEqualizerPro_Tests
         Source/Tests/ParametricEQTest.cpp
         Source/Tests/IntegrationStateTest.cpp
+        Source/Tests/BlockSizeRegressionTest.cpp
         Source/Tests/TestMain.cpp
     )
     target_link_libraries(AIEqualizerPro_Tests PRIVATE
@@ -892,4 +894,7 @@ if(HAVE_JUCE AND CMAKE_BUILD_TYPE STREQUAL "Debug")
     )
     target_compile_definitions(AIEqualizerPro_Tests PRIVATE JUCE_UNIT_TESTS=1)
     set_target_properties(AIEqualizerPro_Tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/Tests)
+
+    add_test(NAME aieq_blocksize_regression
+             COMMAND $<TARGET_FILE:AIEqualizerPro_Tests> --category=Regression)
 endif()
