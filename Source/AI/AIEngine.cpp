@@ -1673,11 +1673,11 @@ float AIEngine::findPeakInRange(float lowFreq, float highFreq)
     }
     
     // Apply parabolic interpolation for precise frequency
-    if (maxBin > 0 && maxBin < static_cast<int>(currentSpectrum.size()) - 1)
+    if (maxBin > 0 && maxBin < numBins - 1)
     {
-        float y0 = currentSpectrum[maxBin - 1];
-        float y1 = currentSpectrum[maxBin];
-        float y2 = currentSpectrum[maxBin + 1];
+        float y0 = snapshot.bins[static_cast<size_t>(maxBin - 1)];
+        float y1 = snapshot.bins[static_cast<size_t>(maxBin)];
+        float y2 = snapshot.bins[static_cast<size_t>(maxBin + 1)];
         
         float denom = 2.0f * (2.0f * y1 - y0 - y2);
         if (std::abs(denom) > 1e-10f)
@@ -2118,18 +2118,22 @@ float AIEngine::getSensitivityMultiplier() const
 
 float AIEngine::calculateBandwidth(int peakBin) const
 {
+    // SAFETY: Acquire lock for currentSpectrum access
+    std::lock_guard<std::mutex> lock(spectrumMutex);
+    
     // Find -3dB points on either side of peak
-    if (peakBin < 2 || peakBin >= static_cast<int>(currentSpectrum.size()) - 2)
+    const int specSize = static_cast<int>(currentSpectrum.size());
+    if (specSize == 0 || peakBin < 2 || peakBin >= specSize - 2)
         return 100.0f;  // Default fallback
     
-    float peakMag = currentSpectrum[peakBin];
+    float peakMag = currentSpectrum[static_cast<size_t>(peakBin)];
     float threshold3dB = peakMag - 3.0f;
     
     // Search left for -3dB point
     int leftBin = peakBin;
     for (int i = peakBin - 1; i >= 0 && i >= peakBin - 50; --i)
     {
-        if (i < static_cast<int>(currentSpectrum.size()) && currentSpectrum[i] < threshold3dB)
+        if (i >= 0 && i < specSize && currentSpectrum[static_cast<size_t>(i)] < threshold3dB)
         {
             leftBin = i;
             break;
@@ -2139,9 +2143,9 @@ float AIEngine::calculateBandwidth(int peakBin) const
     
     // Search right for -3dB point
     int rightBin = peakBin;
-    for (int i = peakBin + 1; i < static_cast<int>(currentSpectrum.size()) && i <= peakBin + 50; ++i)
+    for (int i = peakBin + 1; i < specSize && i <= peakBin + 50; ++i)
     {
-        if (currentSpectrum[i] < threshold3dB)
+        if (currentSpectrum[static_cast<size_t>(i)] < threshold3dB)
         {
             rightBin = i;
             break;
@@ -2643,7 +2647,7 @@ float AIEngine::crossValidateDetection(ProblemType type, float frequency, float 
     
     // Find bin for this frequency
     int bin = frequencyToBin(frequency);
-    if (bin < 0 || bin >= static_cast<int>(currentSpectrum.size()))
+    if (bin < 0 || bin >= static_cast<int>(spectrumCopy.size()))
         return 0.5f;
     
     // Use existing frequencyToBin which is already implemented
@@ -2656,11 +2660,12 @@ float AIEngine::crossValidateDetection(ProblemType type, float frequency, float 
     float surroundAvg = 0.0f;
     int surroundCount = 0;
     int window = 5;
-    for (int i = juce::jmax(0, bin - window); i <= juce::jmin(static_cast<int>(currentSpectrum.size()) - 1, bin + window); ++i)
+    const int specSize = static_cast<int>(spectrumCopy.size());
+    for (int i = juce::jmax(0, bin - window); i <= juce::jmin(specSize - 1, bin + window); ++i)
     {
         if (i != bin && std::abs(i - bin) >= 2)  // Exclude center ±1
         {
-            surroundAvg += currentSpectrum[i];
+            surroundAvg += spectrumCopy[static_cast<size_t>(i)];
             surroundCount++;
         }
     }
@@ -2905,9 +2910,9 @@ float AIEngine::analyzeSpectralCoherence(ProblemType type, float frequency, floa
             if (centerBin < 2 || centerBin >= numBins - 2)
                 return 0.0f;
             
-            float centerMag = currentSpectrum[centerBin];
-            float leftMag = currentSpectrum[centerBin - 1];
-            float rightMag = currentSpectrum[centerBin + 1];
+            float centerMag = spectrumCopy[static_cast<size_t>(centerBin)];
+            float leftMag = spectrumCopy[static_cast<size_t>(centerBin - 1)];
+            float rightMag = spectrumCopy[static_cast<size_t>(centerBin + 1)];
             
             // Check for sharp peak (steep sides)
             float leftSlope = centerMag - leftMag;
@@ -2937,9 +2942,9 @@ float AIEngine::analyzeSpectralCoherence(ProblemType type, float frequency, floa
             int count = 0;
             for (int i = lowBin; i <= highBin; ++i)
             {
-                if (currentSpectrum[i] > -100.0f)
+                if (spectrumCopy[static_cast<size_t>(i)] > -100.0f)
                 {
-                    sum += currentSpectrum[i];
+                    sum += spectrumCopy[static_cast<size_t>(i)];
                     count++;
                 }
             }
@@ -2971,9 +2976,9 @@ float AIEngine::analyzeSpectralCoherence(ProblemType type, float frequency, floa
             int count = 0;
             for (int i = lowBin; i <= highBin; ++i)
             {
-                if (currentSpectrum[i] > -100.0f)
+                if (spectrumCopy[static_cast<size_t>(i)] > -100.0f)
                 {
-                    totalEnergy += currentSpectrum[i];
+                    totalEnergy += spectrumCopy[static_cast<size_t>(i)];
                     count++;
                 }
             }
@@ -2991,9 +2996,9 @@ float AIEngine::analyzeSpectralCoherence(ProblemType type, float frequency, floa
             int overallCount = 0;
             for (int j = overallLowBin; j <= overallHighBin; ++j)
             {
-                if (currentSpectrum[j] > -100.0f)
+                if (spectrumCopy[static_cast<size_t>(j)] > -100.0f)
                 {
-                    overallSum += currentSpectrum[j];
+                    overallSum += spectrumCopy[static_cast<size_t>(j)];
                     overallCount++;
                 }
             }
