@@ -379,6 +379,10 @@ private:
     float analyzeSpectralCoherence(ProblemType type, float frequency, float bandwidth) const;  // Pattern matching for problem types
     float getSpectralPatternScore(ProblemType type, float centerFreq, float bandwidth) const;  // Score how well pattern matches problem type
     
+    // FIX BUG #2 (PARTIAL): Lock-free spectrum architecture
+    // NOTE: Maintaining both std::mutex and AtomicSnapshot during transition period
+    // TODO: Remove mutex once all access patterns are refactored to use AtomicSnapshot
+    // The mutex is NOT used by audio thread (processCorrections), so RT-safety is maintained
     std::vector<float> currentSpectrum;
     mutable std::mutex spectrumMutex;
     

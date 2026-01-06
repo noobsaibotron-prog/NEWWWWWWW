@@ -114,7 +114,8 @@ void AIEQLogger::logFromRTThread(Level level, const char* msg, const char* compo
         m.component[0] = '\0';
     }
 
-    const juce::SpinLock::ScopedLockType sl(rtQueueLock);
+    // FIX BUG #3: Removed SpinLock - rtQueue.tryPush() is already lock-free and wait-free
+    // SpinLock was causing RT-safety violations and CPU waste (100% busy-wait)
     if (!rtQueue.tryPush(m))
         droppedRTMessages.fetch_add(1, std::memory_order_relaxed);
 }

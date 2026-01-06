@@ -119,18 +119,18 @@ private:
         std::int64_t timestamp { 0 };
     };
 
-    juce::SpinLock rtQueueLock;
+    // SpinLock REMOVED - rtQueue is already lock-free (SPSCQueue)
     AIEQCore::SPSCQueue<RTLogMessage, 256> rtQueue;
     std::atomic<uint32_t> droppedRTMessages { 0 };
     
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AIEQLogger)
 };
 
-// Convenience macros
-#define AIEQ_LOG_ERROR(msg) AIEQLogger::getInstance().logError(msg, __FUNCTION__)
-#define AIEQ_LOG_WARNING(msg) AIEQLogger::getInstance().logWarning(msg, __FUNCTION__)
-#define AIEQ_LOG_INFO(msg) AIEQLogger::getInstance().logInfo(msg, __FUNCTION__)
-#define AIEQ_LOG_DEBUG(msg) AIEQLogger::getInstance().logDebug(msg, __FUNCTION__)
+// Convenience macros (using standard C++ __func__ instead of compiler-specific __FUNCTION__)
+#define AIEQ_LOG_ERROR(msg) AIEQLogger::getInstance().logError(msg, __func__)
+#define AIEQ_LOG_WARNING(msg) AIEQLogger::getInstance().logWarning(msg, __func__)
+#define AIEQ_LOG_INFO(msg) AIEQLogger::getInstance().logInfo(msg, __func__)
+#define AIEQ_LOG_DEBUG(msg) AIEQLogger::getInstance().logDebug(msg, __func__)
 
 #define AIEQ_LOG_ML_ERROR(msg) AIEQLogger::getInstance().logMLError(msg)
 #define AIEQ_LOG_ML_INFO(msg) AIEQLogger::getInstance().logMLInfo(msg)

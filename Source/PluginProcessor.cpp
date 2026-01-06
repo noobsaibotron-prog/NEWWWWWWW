@@ -146,13 +146,25 @@ void AIEqualizerAudioProcessor::irBuilderThreadFunc(std::stop_token st)
             // Use shadow processors (eqProcessorForIR/dynamicEQProcessorForIR) to avoid
             // data race with audio thread. These are updated atomically when coefficients change.
             
-            // DEBUG: Check first few bins magnitude
+            // FIX BUG #1: Cross-platform debug logging (removed hardcoded C:\AIEQ\ path)
             static std::ofstream magDebugLog;
             static bool magLogOpened = false;
             if (!magLogOpened)
             {
-                magDebugLog.open("C:\\AIEQ\\linear_phase_debug.txt", std::ios::app);
+                auto logDir = juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
+                    .getChildFile("AIEqualizerPro").getChildFile("Logs");
+                logDir.createDirectory();
+                auto logFile = logDir.getChildFile("linear_phase_debug.txt");
+
+                magDebugLog.open(logFile.getFullPathName().toRawUTF8(), std::ios::app);
                 magLogOpened = true;
+
+                if (magDebugLog.is_open())
+                {
+                    magDebugLog << "\n=== IR Builder Session Started: "
+                                << juce::Time::getCurrentTime().toString(true, true, true, true).toRawUTF8()
+                                << " ===\n";
+                }
             }
             
             for (size_t bin = 0; bin < halfSize; ++bin)
@@ -207,35 +219,57 @@ void AIEqualizerAudioProcessor::irBuilderThreadFunc(std::stop_token st)
 
         fft.perform(freqDomain.data(), timeDomain.data(), true);
 
-        // IFFT scaling: JUCE FFT doesn't auto-scale, so divide by N
+        // FIX BUG #4: Simplified IR scaling with single unified compensation
+        // JUCE FFT doesn't auto-scale, so divide by N
         const float ifftScale = 1.0f / static_cast<float>(fftSize);
-        
-        // FIX: Calculate average magnitude to detect globally attenuated EQ curves
-        float avgMag = 0.0f;
-        for (const auto& mag : magDB)
-            avgMag += juce::Decibels::decibelsToGain(mag);
-        avgMag /= static_cast<float>(magDB.size());
-        
-        // If average magnitude is < 1.0 (attenuated EQ), compensate
-        // This prevents silent IR when all bands have negative gain
-        const float globalCompensation = (avgMag < 0.99f) ? (1.0f / avgMag) : 1.0f;
-        
-        for (size_t n = 0; n < LinearPhaseProcessor::fftSize; ++n)
-            irBuf[n] = timeDomain[n].real() * ifftScale * globalCompensation;
 
-        // Center (circular shift to create zero-phase / linear-phase IR)
+        // Calculate EQ frequency response RMS (0-20kHz range) for reference level
+        float eqResponseRMS = 0.0f;
+        int validBins = 0;
+        for (size_t k = 1; k < halfSize; ++k)
+        {
+            const float freq = static_cast<float>(k) * static_cast<float>(sr) / static_cast<float>(fftSize);
+            if (freq > 20000.0f)
+                break;
+
+            float magLin = juce::Decibels::decibelsToGain(magDB[k]);
+            eqResponseRMS += magLin * magLin;
+            ++validBins;
+        }
+        if (validBins > 0)
+            eqResponseRMS = std::sqrt(eqResponseRMS / static_cast<float>(validBins));
+        else
+            eqResponseRMS = 1.0f;  // Fallback: unity gain
+
+        // Apply IFFT and center (circular shift for zero-phase)
+        for (size_t n = 0; n < LinearPhaseProcessor::fftSize; ++n)
+            irBuf[n] = timeDomain[n].real() * ifftScale;
         std::rotate(irBuf.begin(), irBuf.begin() + static_cast<long>(halfSize), irBuf.end());
 
-        // Apply Hann window for smooth time-domain response with gain compensation
-        // FIX BUG: Hann window has average of 0.5, so compensate with 2.0x gain
-        // Note: Do NOT normalize to maxAbs=1.0 - this destroys EQ gain information!
-        constexpr float hannGainComp = 2.0f; // Compensate for Hann window average (0.5)
+        // Apply Hann window for smooth time-domain response
+        // Window integral = 0.5, so we'll compensate after measuring IR RMS
         for (size_t n = 0; n < LinearPhaseProcessor::irSize; ++n)
         {
             const float w = 0.5f * (1.0f - std::cos(2.0f * juce::MathConstants<float>::pi * static_cast<float>(n)
                                                     / static_cast<float>(LinearPhaseProcessor::irSize - 1)));
-            irBuf[n] *= (w * hannGainComp); // Apply window with gain compensation
+            irBuf[n] *= w;
         }
+
+        // Measure actual IR RMS and calculate single compensation factor
+        float irRMS = 0.0f;
+        for (size_t n = 0; n < LinearPhaseProcessor::irSize; ++n)
+            irRMS += irBuf[n] * irBuf[n];
+        irRMS = std::sqrt(irRMS / static_cast<float>(LinearPhaseProcessor::irSize));
+
+        // Target: IR should have similar RMS to EQ response (accounting for Hann window loss)
+        // Hann window reduces RMS by ~√2, compensate for that
+        const float targetIRLevel = eqResponseRMS * 1.414f;  // √2 compensation for Hann
+        const float unifiedScaling = (irRMS > 1e-6f) ? (targetIRLevel / irRMS) : 1.0f;
+
+        // Apply unified scaling with safety limits
+        const float safeScaling = juce::jlimit(0.01f, 100.0f, unifiedScaling);
+        for (size_t n = 0; n < LinearPhaseProcessor::irSize; ++n)
+            irBuf[n] *= safeScaling;
         
         // Safety: clamp extreme values to prevent blowup, preserve gain levels
         for (size_t n = 0; n < LinearPhaseProcessor::irSize; ++n)
@@ -275,11 +309,17 @@ void AIEqualizerAudioProcessor::irBuilderThreadFunc(std::stop_token st)
                 }
                 rms = std::sqrt(rms / static_cast<float>(LinearPhaseProcessor::irSize));
                 
+                // FIX BUG #1: Cross-platform debug logging (removed hardcoded C:\AIEQ\ path)
                 static std::ofstream irDebugLog;
                 static bool irLogOpened = false;
                 if (!irLogOpened)
                 {
-                    irDebugLog.open("C:\\AIEQ\\linear_phase_debug.txt", std::ios::app);
+                    auto logDir = juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
+                        .getChildFile("AIEqualizerPro").getChildFile("Logs");
+                    logDir.createDirectory();
+                    auto logFile = logDir.getChildFile("linear_phase_debug.txt");
+
+                    irDebugLog.open(logFile.getFullPathName().toRawUTF8(), std::ios::app);
                     irLogOpened = true;
                 }
                 if (irDebugLog.is_open())
@@ -291,29 +331,18 @@ void AIEqualizerAudioProcessor::irBuilderThreadFunc(std::stop_token st)
                     irDebugLog.flush();
                 }
                 
-                // Aggressive scaling when IR is too small to keep linear-phase audible
-                constexpr float minReasonableIR = 1e-04f;   // threshold for "too small"
-                constexpr float targetIR = 0.1f;            // target peak when scaling is needed
-                float irScale = 1.0f;
-                if (maxAbs > 0.0f && maxAbs < minReasonableIR)
+                // FIX BUG #4: Unified scaling already applied above, no additional scaling needed
+                // Debug: log final IR stats
+                if (irDebugLog.is_open())
                 {
-                    irScale = targetIR / maxAbs;
-                    // Cap extremely large boosts but keep enough headroom to avoid silence
-                    irScale = std::min(irScale, 1.0e6f);
-                }
-                
-                if (irScale > 1.01f && irDebugLog.is_open())  // Log if significant scaling applied
-                {
-                    irDebugLog << "  SCALING IR: " << irScale << "x (maxAbs too small: " << maxAbs << ")\n";
+                    irDebugLog << "  UNIFIED SCALING: eqResponseRMS=" << eqResponseRMS
+                               << " irRMS=" << irRMS << " scaling=" << safeScaling << "x\n";
                     irDebugLog.flush();
                 }
-                
-                // Create scaled IR vector for loading
-                std::vector<float> scaledIR(LinearPhaseProcessor::irSize);
-                for (size_t n = 0; n < LinearPhaseProcessor::irSize; ++n)
-                    scaledIR[n] = irBuf[n] * irScale;
-                
-                back->loadImpulseResponse(scaledIR, sr);
+
+                // Load IR directly (scaling already applied)
+                std::vector<float> irVector(irBuf.begin(), irBuf.begin() + LinearPhaseProcessor::irSize);
+                back->loadImpulseResponse(irVector, sr);
                 linearIRLoaded[static_cast<size_t>(backIdx)].store(true, std::memory_order_release);
                 readyIRIndex.store(backIdx, std::memory_order_release);
                 std::atomic_thread_fence(std::memory_order_release);
