@@ -124,6 +124,15 @@ void SpectrumAnalyzer::pushSamples(const juce::AudioBuffer<float>& buffer)
 //==============================================================================
 void SpectrumAnalyzer::processFFT()
 {
+    if (resolution == Resolution::Max)
+    {
+        static double lastProcessMs = 0.0;
+        const double nowMs = juce::Time::getMillisecondCounterHiRes();
+        if (nowMs - lastProcessMs < 30.0)
+            return; // throttle heavy 8192-pt FFT on message thread
+        lastProcessMs = nowMs;
+    }
+
     const int available = fifo.getNumReady();
     if (available < fftSize)
         return;

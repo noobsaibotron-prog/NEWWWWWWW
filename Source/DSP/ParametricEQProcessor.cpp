@@ -1,6 +1,16 @@
 #include "ParametricEQProcessor.h"
 #include <cmath>
 
+namespace
+{
+inline float fastTanhApprox(float x) noexcept
+{
+    // Padé [3/3] approximation, accurate enough for audio soft clipping
+    const float x2 = x * x;
+    return x * (27.0f + x2) / (27.0f + 9.0f * x2);
+}
+}
+
 //==============================================================================
 ParametricEQProcessor::ParametricEQProcessor()
 {
@@ -168,7 +178,7 @@ void ParametricEQProcessor::process(juce::AudioBuffer<float>& buffer)
                 for (int i = 0; i < numSamples; ++i)
                 {
                     float sample = state.filterL.processSample(channelData[i]);
-                    sample = std::tanh(sample * drive) * invDrive;
+                    sample = fastTanhApprox(sample * drive) * invDrive;
                     channelData[i] = sample;
                 }
             }
@@ -195,7 +205,7 @@ void ParametricEQProcessor::process(juce::AudioBuffer<float>& buffer)
                 for (int i = 0; i < numSamples; ++i)
                 {
                     float sample = state.filterR.processSample(channelData[i]);
-                    sample = std::tanh(sample * drive) * invDrive;
+                    sample = fastTanhApprox(sample * drive) * invDrive;
                     channelData[i] = sample;
                 }
             }

@@ -119,7 +119,8 @@ private:
         std::int64_t timestamp { 0 };
     };
 
-    juce::SpinLock rtQueueLock;
+    // FIX #3: Removed SpinLock - SPSCQueue is inherently lock-free for SPSC scenarios.
+    // SpinLock was causing priority inversion and CPU waste in RT context.
     AIEQCore::SPSCQueue<RTLogMessage, 256> rtQueue;
     std::atomic<uint32_t> droppedRTMessages { 0 };
     

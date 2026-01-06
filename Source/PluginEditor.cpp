@@ -124,19 +124,21 @@ void AIEqualizerAudioProcessorEditor::createHeader()
     addAndMakeVisible(nextBtn);
     
     // Preset with tooltip
-    presetBox.addItem("Default", 1);
-    presetBox.addItem("Vocals", 2);
-    presetBox.addItem("Drums", 3);
-    presetBox.addItem("Bass", 4);
-    presetBox.addItem("Master", 5);
-    presetBox.addItem("EDM", 6);
-    presetBox.addItem("Techno", 7);
-    presetBox.setSelectedId(1);
+    {
+        static const char* profiles[] = { "Generic", "Vocals", "Drums", "Bass", "Synth", "Master", "EDM" };
+        presetBox.clear(juce::dontSendNotification);
+        for (int i = 0; i < 7; ++i)
+            presetBox.addItem(profiles[i], i + 1);
+
+        if (auto* param = processor.getAPVTS().getParameter("sourceProfile"))
+        {
+            const int idx = static_cast<int>(param->convertFrom0to1(param->getValue()) + 0.5f);
+            presetBox.setSelectedId(idx + 1, juce::dontSendNotification);
+        }
+    }
     presetBox.setTooltip("Select source profile - AI adapts detection thresholds accordingly");
-    presetBox.onChange = [this]() {
-        int id = presetBox.getSelectedId();
-        if (id > 0) processor.setSourceProfile(static_cast<AIEngine::SourceProfile>(id - 1));
-    };
+    sourceProfileAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
+        processor.getAPVTS(), "sourceProfile", presetBox);
     addAndMakeVisible(presetBox);
     
     // A/B with tooltips
@@ -222,7 +224,7 @@ void AIEqualizerAudioProcessorEditor::createControlPanel()
     for (int i = 0; i < 8; ++i)
     {
         bandToggles[i].setButtonText(labels[i]);
-        bandToggles[i].setToggleState(true, juce::dontSendNotification);
+        bandToggles[i].setToggleState(processor.getBandState(i).enabled, juce::dontSendNotification);
         bandToggles[i].setTooltip("Click to select Band " + juce::String(i + 1) + "\nToggle checkbox to enable/disable");
         bandToggles[i].onClick = [this, i]() {
             // Toggle enables/disables the band
@@ -1033,6 +1035,7 @@ void AIEqualizerAudioProcessorEditor::timerCallback()
             p.filterType = state.type;
             p.enabled = state.enabled;
             bands[i]->setParameters(p);
+            bandToggles[i].setToggleState(state.enabled, juce::dontSendNotification);
         }
         updateBandPositions();
 
@@ -1055,6 +1058,15 @@ void AIEqualizerAudioProcessorEditor::timerCallback()
                                  mode == 1 ? ModernLookAndFeel::Colors::textBright
                                            : ModernLookAndFeel::Colors::textPrimary);
             qualityBtn.setColour(juce::TextButton::textColourOnId, ModernLookAndFeel::Colors::textBright);
+        }
+
+        // Sync source profile combo with parameter (covers preset load/automation)
+        if (auto* param = processor.getAPVTS().getParameter("sourceProfile"))
+        {
+            const int idx = static_cast<int>(param->convertFrom0to1(param->getValue()) + 0.5f);
+            const int desiredId = idx + 1;
+            if (presetBox.getSelectedId() != desiredId)
+                presetBox.setSelectedId(desiredId, juce::dontSendNotification);
         }
     }
 

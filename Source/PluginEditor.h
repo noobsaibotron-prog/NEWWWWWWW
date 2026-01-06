@@ -206,7 +206,7 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> 
         outAtt, mixAtt, sensitivityAtt, strengthAtt;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> 
-        phaseModeAtt, oversamplingAtt, slopeAtt;
+        phaseModeAtt, oversamplingAtt, slopeAtt, sourceProfileAtt;
 
     uint64_t lastParameterChangeCount = 0;
     uint32_t lastBlockClampEvents = 0;

@@ -481,6 +481,7 @@ private:
     //==============================================================================
     std::atomic<double> currentSampleRate { 44100.0 };
     int currentBlockSize = 512;
+    int preparedNumInputChannels = 0;
     std::atomic<PhaseMode> currentPhaseMode { PhaseMode::ZeroLatency };
     std::atomic<MSMode> currentMSMode { MSMode::Stereo };
     std::atomic<bool> eqCurveNeedsUpdate { true };

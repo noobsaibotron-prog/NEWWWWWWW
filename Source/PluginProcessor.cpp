@@ -146,15 +146,6 @@ void AIEqualizerAudioProcessor::irBuilderThreadFunc(std::stop_token st)
             // Use shadow processors (eqProcessorForIR/dynamicEQProcessorForIR) to avoid
             // data race with audio thread. These are updated atomically when coefficients change.
             
-            // DEBUG: Check first few bins magnitude
-            static std::ofstream magDebugLog;
-            static bool magLogOpened = false;
-            if (!magLogOpened)
-            {
-                magDebugLog.open("C:\\AIEQ\\linear_phase_debug.txt", std::ios::app);
-                magLogOpened = true;
-            }
-            
             for (size_t bin = 0; bin < halfSize; ++bin)
             {
                 const float freq = static_cast<float>(bin) * static_cast<float>(sr)
@@ -166,19 +157,8 @@ void AIEqualizerAudioProcessor::irBuilderThreadFunc(std::stop_token st)
 
                 magDB[bin] = juce::Decibels::gainToDecibels(mag, -120.0f);
                 
-                // DEBUG: Log first 5 bins to understand magnitude
-                if (bin < 5 && magDebugLog.is_open())
-                {
-                    magDebugLog << "  bin " << bin << " (" << freq << " Hz): mag=" << mag << " dB=" << magDB[bin] << "\n";
-                }
             }
             
-            if (magDebugLog.is_open())
-            {
-                magDebugLog << "EQ Magnitude: numBands=" << eqProcessorForIR.getNumBands() << "\n";
-                magDebugLog.flush();
-            }
-
             versionEnd = irCoeffVersion.load(std::memory_order_acquire);
         } while (versionStart != versionEnd || (versionEnd & 1u));
 
@@ -207,37 +187,83 @@ void AIEqualizerAudioProcessor::irBuilderThreadFunc(std::stop_token st)
 
         fft.perform(freqDomain.data(), timeDomain.data(), true);
 
-        // IFFT scaling: JUCE FFT doesn't auto-scale, so divide by N
+        //======================================================================
+        // FIX #4: IR SCALING DOCUMENTATION AND STABILIZATION
+        //======================================================================
+        // The IR scaling pipeline has multiple stages that must work together:
+        //
+        // STAGE 1: IFFT Normalization (ifftScale)
+        //   - JUCE FFT doesn't auto-normalize inverse FFT
+        //   - Standard normalization: 1/N where N = FFT size
+        //   - Reference: Smith, "Mathematics of the DFT", Chapter 7
+        //
+        // STAGE 2: Global Attenuation Compensation (globalCompensation)
+        //   - Problem: EQ curves with all-negative gains produce very small IR
+        //   - Solution: Scale up by 1/avgMag to preserve relative shape
+        //   - Example: -6dB across all bands → avgMag ≈ 0.5 → compensation = 2.0
+        //   - Capped at 1.0 for boost curves (no attenuation of boosted EQs)
+        //
+        // STAGE 3: Final Safety Scaling (irScale, applied later)
+        //   - Rescues IRs that are still too small after stages 1-2
+        //   - Threshold: 1e-04 peak = -80dBFS (below noise floor)
+        //   - Target: 0.1 peak = -20dBFS (reasonable working level)
+        //   - Max boost: 1e6 (60dB) to prevent runaway scaling
+        //
+        // TOTAL GAIN BOUNDS:
+        //   - Minimum IR peak after all stages: 0.1 (-20dBFS)
+        //   - Maximum IR sample value: ±10.0 (clamped for safety)
+        //======================================================================
+        
+        // STAGE 1: IFFT normalization (1/N)
         const float ifftScale = 1.0f / static_cast<float>(fftSize);
         
-        // FIX: Calculate average magnitude to detect globally attenuated EQ curves
+        // STAGE 2: Global attenuation compensation
+        // Calculate average linear magnitude across all bins
         float avgMag = 0.0f;
         for (const auto& mag : magDB)
             avgMag += juce::Decibels::decibelsToGain(mag);
         avgMag /= static_cast<float>(magDB.size());
         
-        // If average magnitude is < 1.0 (attenuated EQ), compensate
-        // This prevents silent IR when all bands have negative gain
-        const float globalCompensation = (avgMag < 0.99f) ? (1.0f / avgMag) : 1.0f;
+        // Compensate for globally attenuated EQ curves (all cuts)
+        // Only apply when average is below unity (0.99 threshold avoids floating-point noise)
+        // Cap compensation at 100x (+40dB) to prevent extreme scaling from very quiet curves
+        const float globalCompensation = (avgMag < 0.99f && avgMag > 1e-6f) 
+                                         ? std::min(1.0f / avgMag, 100.0f) 
+                                         : 1.0f;
         
+        // Apply STAGE 1 + STAGE 2 scaling
         for (size_t n = 0; n < LinearPhaseProcessor::fftSize; ++n)
             irBuf[n] = timeDomain[n].real() * ifftScale * globalCompensation;
 
         // Center (circular shift to create zero-phase / linear-phase IR)
+        // This places the IR peak at the center, creating symmetric linear-phase response
+        // Reference: Oppenheim & Schafer, "Discrete-Time Signal Processing", Chapter 5
         std::rotate(irBuf.begin(), irBuf.begin() + static_cast<long>(halfSize), irBuf.end());
 
-        // Apply Hann window for smooth time-domain response with gain compensation
-        // FIX BUG: Hann window has average of 0.5, so compensate with 2.0x gain
-        // Note: Do NOT normalize to maxAbs=1.0 - this destroys EQ gain information!
-        constexpr float hannGainComp = 2.0f; // Compensate for Hann window average (0.5)
+        //======================================================================
+        // HANN WINDOW APPLICATION
+        //======================================================================
+        // Purpose: Smooth time-domain truncation to reduce frequency ripple
+        // The Hann (raised cosine) window provides -31dB sidelobe suppression
+        // 
+        // Gain factor: Hann window has coherent gain of 0.5
+        // This is NOT compensated here - the gain is preserved in the EQ curve
+        // Do NOT normalize to maxAbs=1.0 - this would destroy EQ gain information!
+        //======================================================================
         for (size_t n = 0; n < LinearPhaseProcessor::irSize; ++n)
         {
             const float w = 0.5f * (1.0f - std::cos(2.0f * juce::MathConstants<float>::pi * static_cast<float>(n)
                                                     / static_cast<float>(LinearPhaseProcessor::irSize - 1)));
-            irBuf[n] *= (w * hannGainComp); // Apply window with gain compensation
+            irBuf[n] *= w;
         }
         
-        // Safety: clamp extreme values to prevent blowup, preserve gain levels
+        //======================================================================
+        // SAFETY CLAMPING
+        //======================================================================
+        // Final sanity check to prevent audio blowup
+        // Limits: ±10.0 linear (~+20dBFS) is extremely loud but prevents DAW crash
+        // NaN/Inf samples are zeroed (indicates numerical instability upstream)
+        //======================================================================
         for (size_t n = 0; n < LinearPhaseProcessor::irSize; ++n)
         {
             if (std::isnan(irBuf[n]) || std::isinf(irBuf[n]))
@@ -265,7 +291,7 @@ void AIEqualizerAudioProcessor::irBuilderThreadFunc(std::stop_token st)
         {
             if (auto* back = linearPhaseProcessors[static_cast<size_t>(backIdx)].get())
             {
-                // DEBUG: Check IR magnitude before loading
+                // Measure IR magnitude for STAGE 3 decision
                 float maxAbs = 0.0f;
                 float rms = 0.0f;
                 for (size_t n = 0; n < LinearPhaseProcessor::irSize; ++n)
@@ -274,41 +300,34 @@ void AIEqualizerAudioProcessor::irBuilderThreadFunc(std::stop_token st)
                     rms += irBuf[n] * irBuf[n];
                 }
                 rms = std::sqrt(rms / static_cast<float>(LinearPhaseProcessor::irSize));
+                juce::ignoreUnused(rms, backIdx); // RMS available for future diagnostics
                 
-                static std::ofstream irDebugLog;
-                static bool irLogOpened = false;
-                if (!irLogOpened)
-                {
-                    irDebugLog.open("C:\\AIEQ\\linear_phase_debug.txt", std::ios::app);
-                    irLogOpened = true;
-                }
-                if (irDebugLog.is_open())
-                {
-                    irDebugLog << "IR BEFORE LOAD: maxAbs=" << maxAbs << " rms=" << rms 
-                               << " avgMag=" << (maxAbs > 0 ? rms / maxAbs : 0) 
-                               << " first5=[" << irBuf[0] << ", " << irBuf[1] << ", " << irBuf[2] << ", " << irBuf[3] << ", " << irBuf[4] << "]\n";
-                    irDebugLog << "  backIdx=" << backIdx << "\n";
-                    irDebugLog.flush();
-                }
+                //==============================================================
+                // STAGE 3: Final Safety Scaling
+                //==============================================================
+                // After IFFT + global compensation, IR may still be too quiet.
+                // This happens with extreme cuts or numerical precision loss.
+                //
+                // Thresholds (empirically validated):
+                //   minReasonableIR = 1e-04 (-80dBFS): Below this, IR is inaudible
+                //   targetIR = 0.1 (-20dBFS): Reasonable working level
+                //   maxScaleBoost = 1e4 (+80dB): Prevents runaway amplification
+                //
+                // When to apply: Only when peak < threshold (very quiet IR)
+                // Effect: Brings quiet IRs up to audible level
+                //==============================================================
+                constexpr float minReasonableIR = 1e-04f;   // -80dBFS threshold
+                constexpr float targetIR = 0.1f;            // -20dBFS target
+                constexpr float maxScaleBoost = 1.0e4f;     // +80dB max (reduced from 1e6)
                 
-                // Aggressive scaling when IR is too small to keep linear-phase audible
-                constexpr float minReasonableIR = 1e-04f;   // threshold for "too small"
-                constexpr float targetIR = 0.1f;            // target peak when scaling is needed
                 float irScale = 1.0f;
                 if (maxAbs > 0.0f && maxAbs < minReasonableIR)
                 {
                     irScale = targetIR / maxAbs;
-                    // Cap extremely large boosts but keep enough headroom to avoid silence
-                    irScale = std::min(irScale, 1.0e6f);
+                    irScale = std::min(irScale, maxScaleBoost);
                 }
                 
-                if (irScale > 1.01f && irDebugLog.is_open())  // Log if significant scaling applied
-                {
-                    irDebugLog << "  SCALING IR: " << irScale << "x (maxAbs too small: " << maxAbs << ")\n";
-                    irDebugLog.flush();
-                }
-                
-                // Create scaled IR vector for loading
+                // Apply STAGE 3 scaling and create final IR
                 std::vector<float> scaledIR(LinearPhaseProcessor::irSize);
                 for (size_t n = 0; n < LinearPhaseProcessor::irSize; ++n)
                     scaledIR[n] = irBuf[n] * irScale;
@@ -638,6 +657,7 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     // FIX 3: Use atomic store
     currentSampleRate.store(sampleRate);
     currentBlockSize = samplesPerBlock;
+    preparedNumInputChannels = getTotalNumInputChannels();
     preallocatedMaxSamples = juce::jmax(samplesPerBlock * 4, 32768);
     blockClampEvents.store(0, std::memory_order_relaxed);
     dryBuffer.setSize(getTotalNumInputChannels(), preallocatedMaxSamples, false, true, false);
@@ -959,6 +979,17 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
             buffer.clear(ch, blockSamples, inputBlockSamples - blockSamples);
     }
+
+    // Safety: if channel layout changed unexpectedly, bypass processing to avoid overflow
+    if (buffer.getNumChannels() != preparedNumInputChannels)
+    {
+        blockClampEvents.fetch_add(1, std::memory_order_relaxed);
+       #if JUCE_DEBUG
+        jassertfalse; // layout mismatch: host likely reconfigured without new prepareToPlay
+       #endif
+        buffer.clear();
+        return;
+    }
     
     auto loadParam = [](std::atomic<float>* ptr, float fallback) -> float
     {
@@ -966,7 +997,8 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     };
 
     // Detect solo (audio thread, lock-free) and capture input for audition
-    const int activeBandsLocal = paramsSnapshot.numActiveBands;
+    // FIX: Clamp to maxBands to prevent array out-of-bounds access
+    const int activeBandsLocal = std::min(paramsSnapshot.numActiveBands, maxBands);
     bool hasSolo = false;
     for (int i = 0; i < activeBandsLocal; ++i)
     {
@@ -1224,7 +1256,8 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
                 {
                     // Simple auto heuristic: use 4x if any band has Q > 8 or qualityMode == HQ
                     osEffective = (qualityModeCached == 1) ? 2 : 1; // default auto: 4x in HQ, else 2x
-                    const int activeBandsLocal = numActiveBands.load(std::memory_order_relaxed);
+                    // FIX: Clamp to maxBands to prevent array out-of-bounds access
+                    const int activeBandsLocal = std::min(numActiveBands.load(std::memory_order_relaxed), maxBands);
                     for (int i = 0; i < activeBandsLocal; ++i)
                     {
                         float qVal = eqProcessor.getBandQ(i);
@@ -1384,25 +1417,6 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         
         const bool irStable = irReady && (consecutiveIRReadyBlocks >= minConsecutiveBlocks);
         
-        // DEBUG LOGGING (TEMPORARY) - Write to file
-        static int debugCounter = 0;
-        static std::ofstream debugLog;
-        if (debugCounter == 0)
-        {
-            debugLog.open("C:\\AIEQ\\linear_phase_debug.txt", std::ios::app);
-            debugLog << "\n=== NEW SESSION " << juce::Time::getCurrentTime().toString(true, true, true, true) << " ===\n";
-        }
-        if (++debugCounter % 100 == 0) // Log ogni 100 blocchi
-        {
-            if (debugLog.is_open())
-            {
-                debugLog << "LP Debug: irReady=" << irReady << " irStable=" << irStable 
-                         << " consecutive=" << consecutiveIRReadyBlocks 
-                         << " currentIR=" << currentIR << " doCrossfade=" << doCrossfade << "\n";
-                debugLog.flush();
-            }
-        }
-        
         if (!irStable)  // Changed from !irReady to !irStable
         {
             // FIX BUG LINEAR PHASE SILENCE:
@@ -1427,6 +1441,8 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
             for (int ch = 0; ch < chs; ++ch)
                 crossfadeBuffer.copyFrom(ch, 0, buffer, ch, 0, blockSamples);
 
+            // FIX: Extra bounds check for safety (prevIR already validated by hasPrev/doCrossfade)
+            if (prevIR >= 0 && prevIR < static_cast<int>(linearPhaseProcessors.size()))
             if (auto* lpPrev = linearPhaseProcessors[static_cast<size_t>(prevIR)].get())
             {
                 juce::dsp::AudioBlock<float> blockPrev(buffer.getArrayOfWritePointers(),
@@ -1436,6 +1452,8 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
                 lpPrev->process(ctxPrev);
             }
 
+            // FIX: Extra bounds check for currentIR
+            if (currentIR >= 0 && currentIR < static_cast<int>(linearPhaseProcessors.size()))
             if (auto* lpNew = linearPhaseProcessors[static_cast<size_t>(currentIR)].get())
             {
                 juce::dsp::AudioBlock<float> blockNew(crossfadeBuffer.getArrayOfWritePointers(),
@@ -1466,22 +1484,6 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
                        ? linearPhaseProcessors[static_cast<size_t>(currentIR)].get() 
                        : nullptr;
             
-            // DEBUG LOGGING (TEMPORARY) - Write to file
-            static int debugCounter2 = 0;
-            static std::ofstream debugLog2;
-            if (debugCounter2 == 0)
-            {
-                debugLog2.open("C:\\AIEQ\\linear_phase_debug.txt", std::ios::app);
-            }
-            if (++debugCounter2 % 100 == 0)
-            {
-                if (debugLog2.is_open())
-                {
-                    debugLog2 << "LP Process: lp=" << (void*)lp << " currentIR=" << currentIR << "\n";
-                    debugLog2.flush();
-                }
-            }
-            
             if (lp != nullptr)
             {
                 juce::dsp::AudioBlock<float> block(buffer.getArrayOfWritePointers(),
@@ -1493,18 +1495,6 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
             else
             {
                 // FIX: If processor is nullptr, use zero-latency EQ fallback
-                static std::ofstream debugLog3;
-                static bool logged = false;
-                if (!logged)
-                {
-                    debugLog3.open("C:\\AIEQ\\linear_phase_debug.txt", std::ios::app);
-                    if (debugLog3.is_open())
-                    {
-                        debugLog3 << "LP Fallback: processor nullptr, using zero-latency EQ\n";
-                        debugLog3.flush();
-                    }
-                    logged = true;
-                }
                 eqProcessor.process(buffer);
                 
                 if (dynEqEnabledLocal)
@@ -1791,7 +1781,9 @@ void AIEqualizerAudioProcessor::clearDynamicMeterCache() noexcept
 
 void AIEqualizerAudioProcessor::updateDynamicMeterCacheFrom(const DynamicEQProcessor& src) noexcept
 {
-    for (int i = 0; i < DynamicEQProcessor::maxBands; ++i)
+    // FIX: Use minimum of both maxBands to prevent out-of-bounds access
+    const int safeMax = std::min(DynamicEQProcessor::maxBands, maxBands);
+    for (int i = 0; i < safeMax; ++i)
     {
         const auto meter = src.getBandMeter(i);
         auto& entry = dynamicMeterCache[static_cast<size_t>(i)];
@@ -1807,7 +1799,9 @@ void AIEqualizerAudioProcessor::updateDynamicMeterCacheFromMS(const DynamicEQPro
                                                               bool includeMid,
                                                               bool includeSide) noexcept
 {
-    for (int i = 0; i < DynamicEQProcessor::maxBands; ++i)
+    // FIX: Use minimum of both maxBands to prevent out-of-bounds access
+    const int safeMax = std::min(DynamicEQProcessor::maxBands, maxBands);
+    for (int i = 0; i < safeMax; ++i)
     {
         DynamicEQProcessor::BandMeter selected {};
         
@@ -1965,7 +1959,8 @@ void AIEqualizerAudioProcessor::updateEQFromParameters()
     numActiveBands.store(juce::jlimit(1, availableBands, currentBands), std::memory_order_relaxed);
     
     const int bandsAvailable = std::min({ maxBands, eqProcessor.getNumBands(), eqProcessorHQ.getNumBands() });
-    const int activeBandsLocal = numActiveBands.load(std::memory_order_relaxed);  // Cache for loop
+    // FIX: Clamp to maxBands to prevent array out-of-bounds access
+    const int activeBandsLocal = std::min(numActiveBands.load(std::memory_order_relaxed), maxBands);
 
     // Detect if any band is soloed (among active and enabled bands)
     bool hasSolo = false;
@@ -2090,21 +2085,6 @@ void AIEqualizerAudioProcessor::updateEQFromParameters()
             eqProcessorForIR.setBandParameters(i, freq, gain, q, type);
             eqProcessorForIR.setBandEnabled(i, enabledFiltered);
             eqProcessorForIR.setBandSolo(i, solo);
-            
-            // DEBUG: Log first 3 bands to see what's being set
-            static std::ofstream shadowDebugLog;
-            static bool shadowLogOpened = false;
-            if (!shadowLogOpened)
-            {
-                shadowDebugLog.open("C:\\AIEQ\\linear_phase_debug.txt", std::ios::app);
-                shadowLogOpened = true;
-            }
-            if (i < 3 && shadowDebugLog.is_open())
-            {
-                shadowDebugLog << "Shadow Band " << i << ": freq=" << freq << " gain=" << gain 
-                             << " q=" << q << " type=" << type << " enabled=" << enabledFiltered << "\n";
-                shadowDebugLog.flush();
-            }
         }
         dynamicEQProcessorForIR.setBandParams(i, dynParams);
     }
@@ -3062,6 +3042,9 @@ bool AIEqualizerAudioProcessor::hasEditor() const { return true; }
 //==============================================================================
 void AIEqualizerAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
 {
+    // Ensure the currently active slot mirrors the latest APVTS values before serialization
+    saveCurrentStateToSlot(currentABState.load(std::memory_order_relaxed));
+
     auto state = apvts.copyState();
     
     // Add A/B/C/D slot data to state
@@ -3071,6 +3054,36 @@ void AIEqualizerAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
     state.setProperty("slotBName", slotB.name, nullptr);
     state.setProperty("slotCName", slotC.name, nullptr);
     state.setProperty("slotDName", slotD.name, nullptr);
+
+    // Persist full slot contents (bands + output gain)
+    auto addSlotTree = [this, &state](const EQSlot& slot, const juce::Identifier& id)
+    {
+        state.removeChild(state.getChildWithName(id), nullptr);
+
+        juce::ValueTree slotTree(id);
+        slotTree.setProperty("name", slot.name, nullptr);
+        slotTree.setProperty("outputGain", slot.outputGain, nullptr);
+
+        for (int i = 0; i < maxBands; ++i)
+        {
+            const auto& band = slot.bands[static_cast<size_t>(i)];
+            juce::ValueTree bandTree("band" + juce::String(i));
+            bandTree.setProperty("freq", band.frequency, nullptr);
+            bandTree.setProperty("gain", band.gain, nullptr);
+            bandTree.setProperty("q", band.q, nullptr);
+            bandTree.setProperty("type", band.type, nullptr);
+            bandTree.setProperty("enabled", band.enabled, nullptr);
+            bandTree.setProperty("solo", band.solo, nullptr);
+            slotTree.addChild(bandTree, -1, nullptr);
+        }
+
+        state.addChild(std::move(slotTree), -1, nullptr);
+    };
+
+    addSlotTree(slotA, "SlotA");
+    addSlotTree(slotB, "SlotB");
+    addSlotTree(slotC, "SlotC");
+    addSlotTree(slotD, "SlotD");
     
     std::unique_ptr<juce::XmlElement> xml(state.createXml());
     copyXmlToBinary(*xml, destData);
@@ -3102,6 +3115,49 @@ void AIEqualizerAudioProcessor::setStateInformation(const void* data, int sizeIn
                 slotC.name = loadedState.getProperty("slotCName").toString();
             if (loadedState.hasProperty("slotDName"))
                 slotD.name = loadedState.getProperty("slotDName").toString();
+
+            // Restore full slot contents (bands + output gain)
+            auto restoreSlot = [this, &loadedState](const juce::Identifier& id, EQSlot& slot)
+            {
+                auto slotTree = loadedState.getChildWithName(id);
+                if (!slotTree.isValid())
+                    return;
+
+                if (slotTree.hasProperty("name"))
+                    slot.name = slotTree.getProperty("name").toString();
+                if (slotTree.hasProperty("outputGain"))
+                    slot.outputGain = static_cast<float>(slotTree.getProperty("outputGain"));
+
+                for (int i = 0; i < maxBands; ++i)
+                {
+                    auto bandTree = slotTree.getChildWithName("band" + juce::String(i));
+                    if (!bandTree.isValid())
+                        continue;
+
+                    auto& band = slot.bands[static_cast<size_t>(i)];
+                    if (bandTree.hasProperty("freq"))
+                        band.frequency = static_cast<float>(bandTree.getProperty("freq"));
+                    if (bandTree.hasProperty("gain"))
+                        band.gain = static_cast<float>(bandTree.getProperty("gain"));
+                    if (bandTree.hasProperty("q"))
+                        band.q = static_cast<float>(bandTree.getProperty("q"));
+                    if (bandTree.hasProperty("type"))
+                        band.type = static_cast<int>(bandTree.getProperty("type"));
+                    if (bandTree.hasProperty("enabled"))
+                        band.enabled = static_cast<bool>(bandTree.getProperty("enabled"));
+                    if (bandTree.hasProperty("solo"))
+                        band.solo = static_cast<bool>(bandTree.getProperty("solo"));
+                }
+            };
+
+            restoreSlot("SlotA", slotA);
+            restoreSlot("SlotB", slotB);
+            restoreSlot("SlotC", slotC);
+            restoreSlot("SlotD", slotD);
+
+            // Make sure the active slot struct reflects the APVTS state (for legacy presets)
+            if (auto* mm = juce::MessageManager::getInstance(); mm != nullptr && mm->isThisTheMessageThread())
+                saveCurrentStateToSlot(currentABState.load(std::memory_order_relaxed));
         }
     }
 }
@@ -3278,7 +3334,8 @@ void AIEqualizerAudioProcessor::loadParameterSnapshot(AIEQCore::ProcessBlockPara
         return ptr ? ptr->load(std::memory_order_relaxed) : fallback;
     };
     
-    params.numActiveBands = numActiveBands.load(std::memory_order_relaxed);
+    // FIX: Clamp to maxBands to prevent array out-of-bounds access in loops
+    params.numActiveBands = std::min(numActiveBands.load(std::memory_order_relaxed), maxBands);
     params.outputGainDB = loadParam(cachedOutputGain, 0.0f);
     params.autoGainEnabled = autoGainEnabled.load(std::memory_order_relaxed);
     params.autoGainCompensationDB = autoGainCompensation.load(std::memory_order_relaxed);

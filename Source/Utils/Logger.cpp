@@ -114,7 +114,9 @@ void AIEQLogger::logFromRTThread(Level level, const char* msg, const char* compo
         m.component[0] = '\0';
     }
 
-    const juce::SpinLock::ScopedLockType sl(rtQueueLock);
+    // FIX #3: Removed SpinLock - SPSCQueue is already lock-free for single producer.
+    // SpinLock causes priority inversion and busy-wait CPU waste in RT context.
+    // The queue is designed for exactly one producer (RT thread) and one consumer (flush thread).
     if (!rtQueue.tryPush(m))
         droppedRTMessages.fetch_add(1, std::memory_order_relaxed);
 }

@@ -379,6 +379,8 @@ private:
     float analyzeSpectralCoherence(ProblemType type, float frequency, float bandwidth) const;  // Pattern matching for problem types
     float getSpectralPatternScore(ProblemType type, float centerFreq, float bandwidth) const;  // Score how well pattern matches problem type
     
+    // FIX #2: DISABLED - Triple-buffering removed to debug crash
+    // Original mutex-protected spectrum access (reverted)
     std::vector<float> currentSpectrum;
     mutable std::mutex spectrumMutex;
     

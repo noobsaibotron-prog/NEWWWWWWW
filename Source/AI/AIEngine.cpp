@@ -57,6 +57,8 @@ AIEngine::AIEngine()
     historyWriteIndex = 0;
 }
 
+// NOTE: Triple-buffer methods were removed - using mutex-protected spectrum instead
+
 void AIEngine::prepare(double sampleRate, int /*samplesPerBlock*/)
 {
     // Validate sample rate
@@ -157,16 +159,18 @@ void AIEngine::analyzeSpectrum(const std::vector<float>& spectrum, bool force)
         }
     }
 
-    // Rate limiting - DISABLED for immediate detection
-    // Always analyze (no rate limiting) to ensure problems appear immediately
-    // if (!force)
-    // {
-    //     if (++analysisCounter < analysisInterval)
-    //         return;
-    //     analysisCounter = 0;
-    // }
+    // FIX #5: Simple rate limiting (~30Hz) to reduce CPU usage
+    // Kept simple to avoid potential issues - just frame counting
+    if (!force)
+    {
+        if (++analysisCounter < 3)  // Analyze every 3rd frame
+            return;
+        analysisCounter = 0;
+    }
     
     // Thread-safe spectrum copy and history update
+    float localRMS = currentRMS;
+    float localAvgRMS = averageRMS;
     {
         std::lock_guard<std::mutex> lock(spectrumMutex);
         currentSpectrum = normalized;
@@ -188,7 +192,12 @@ void AIEngine::analyzeSpectrum(const std::vector<float>& spectrum, bool force)
             currentRMS = rmsSum / static_cast<float>(rmsCount);
             averageRMS = averageRMS * rmsSmoothing + currentRMS * (1.0f - rmsSmoothing);
         }
+        localRMS = currentRMS;
+        localAvgRMS = averageRMS;
     }
+    
+    // NOTE: Triple-buffer spectrum publishing removed (was causing issues)
+    // Using mutex-protected currentSpectrum instead (safe for non-RT threads)
     
     // Perform detection (use ML if enabled, otherwise heuristics)
     if (useMLDetection)
@@ -773,20 +782,7 @@ void AIEngine::detectProblems()
 {
     std::lock_guard<std::mutex> lock(correctionsWriteMutex);
     pendingCorrections.clear();
-    
-    // FORCE: Always create test problem FIRST to ensure it appears
-    // This guarantees the UI shows something even if all detection fails
-    Correction testCorrection;
-    testCorrection.type = ProblemType::Resonance;
-    testCorrection.frequency = 1000.0f;
-    testCorrection.suggestedGain = -3.0f;
-    testCorrection.suggestedQ = 2.0f;
-    testCorrection.severity = 0.5f;
-    testCorrection.confidence = 0.6f;
-    testCorrection.suggestedFilter = Correction::FilterType::Peak;
-    testCorrection.description = "Test detection at 1000 Hz - System is working";
-    pendingCorrections.push_back(testCorrection);
-    
+
     // Adjust thresholds based on sensitivity (higher sensitivity = lower thresholds)
     float sensitivityFactor = 1.0f - (sensitivity * 0.5f);  // 0.5 to 1.0
     

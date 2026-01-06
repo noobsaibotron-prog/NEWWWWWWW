@@ -737,6 +737,18 @@ if(TARGET AIEqualizerPro)
         endif()
     endif()
 
+    # Enable debug logging macros across all targets
+    target_compile_definitions(AIEqualizerPro PRIVATE AIEQ_ENABLE_DEBUG_LOGGING)
+    if(TARGET AIEqualizerPro_Standalone)
+        target_compile_definitions(AIEqualizerPro_Standalone PRIVATE AIEQ_ENABLE_DEBUG_LOGGING)
+    endif()
+    if(TARGET AIEqualizerPro_VST3)
+        target_compile_definitions(AIEqualizerPro_VST3 PRIVATE AIEQ_ENABLE_DEBUG_LOGGING)
+    endif()
+    if(TARGET AIEqualizerPro_Tests)
+        target_compile_definitions(AIEqualizerPro_Tests PRIVATE AIEQ_ENABLE_DEBUG_LOGGING)
+    endif()
+
     # Compiler-specific optimizations
     if(MSVC)
         target_compile_options(AIEqualizerPro PRIVATE 
