@@ -168,36 +168,36 @@ void AIEngine::analyzeSpectrum(const std::vector<float>& spectrum, bool force)
         analysisCounter = 0;
     }
     
-    // Thread-safe spectrum copy and history update
-    float localRMS = currentRMS;
-    float localAvgRMS = averageRMS;
+    // Update RMS tracking (no lock needed - local calculation)
+    float rmsSum = 0.0f;
+    int rmsCount = 0;
+    for (int i = 2; i < numBins - 2; ++i)
+    {
+        if (normalized[i] > -100.0f)
+        {
+            rmsSum += normalized[i];
+            ++rmsCount;
+        }
+    }
+    if (rmsCount > 0)
+    {
+        currentRMS = rmsSum / static_cast<float>(rmsCount);
+        averageRMS = averageRMS * rmsSmoothing + currentRMS * (1.0f - rmsSmoothing);
+    }
+    const float localRMS = currentRMS;
+    const float localAvgRMS = averageRMS;
+    
+    // LOCK-FREE: Publish spectrum to triple-buffer for GUI/other threads
+    publishSpectrum(normalized, localRMS, localAvgRMS);
+    
+    // Update temporal history (internal use only, no lock needed)
+    updateSpectrumHistory(normalized);
+    
+    // Also update the internal currentSpectrum for legacy functions
     {
         std::lock_guard<std::mutex> lock(spectrumMutex);
         currentSpectrum = normalized;
-        updateSpectrumHistory(normalized);
-        
-        // Update RMS tracking
-        float rmsSum = 0.0f;
-        int rmsCount = 0;
-        for (int i = 2; i < numBins - 2; ++i)
-        {
-            if (normalized[i] > -100.0f)
-            {
-                rmsSum += normalized[i];
-                ++rmsCount;
-            }
-        }
-        if (rmsCount > 0)
-        {
-            currentRMS = rmsSum / static_cast<float>(rmsCount);
-            averageRMS = averageRMS * rmsSmoothing + currentRMS * (1.0f - rmsSmoothing);
-        }
-        localRMS = currentRMS;
-        localAvgRMS = averageRMS;
     }
-    
-    // NOTE: Triple-buffer spectrum publishing removed (was causing issues)
-    // Using mutex-protected currentSpectrum instead (safe for non-RT threads)
     
     // Perform detection (use ML if enabled, otherwise heuristics)
     if (useMLDetection)
@@ -818,18 +818,15 @@ void AIEngine::detectProblems()
 void AIEngine::detectResonances(float threshold)
 {
     // Get spectrum copy (with lock, but release quickly)
-    std::vector<float> spectrumCopy;
-    {
-        std::lock_guard<std::mutex> lock(spectrumMutex);
-        
-        // Early exit if spectrum is empty or too small
-        if (currentSpectrum.size() < static_cast<size_t>(numBins))
-            return;
-        
-        spectrumCopy = currentSpectrum;  // Copy while locked
-    }  // Lock released here
+    // LOCK-FREE: Read spectrum from triple-buffer
+    const auto snapshot = readSpectrumSnapshot();
     
-    // Now work with copy (no lock needed)
+    // Early exit if spectrum version is 0 (never written)
+    if (snapshot.version == 0)
+        return;
+    
+    // Convert array to vector for compatibility with existing code
+    std::vector<float> spectrumCopy(snapshot.bins.begin(), snapshot.bins.end());
     
     // Use temporally smoothed spectrum for more stable detection
     std::vector<float> smoothedSpectrum = getTemporallySmoothedSpectrum();
@@ -1564,18 +1561,39 @@ void AIEngine::detectDullSound()
 }
 
 //==============================================================================
-// FIX: detectGenre() - Uses internal calculateBandEnergyUnlocked to avoid deadlock
+// LOCK-FREE: detectGenre() - Uses triple-buffered spectrum
 void AIEngine::detectGenre()
 {
-    std::lock_guard<std::mutex> lock(spectrumMutex);
+    // LOCK-FREE: Read spectrum from triple-buffer
+    const auto snapshot = readSpectrumSnapshot();
+    if (snapshot.version == 0)
+        return;
     
-    // Use unlocked version since we already hold the mutex
-    float subBass = calculateBandEnergyUnlocked(20.0f, 60.0f);
-    float bass = calculateBandEnergyUnlocked(60.0f, 200.0f);
-    float lowMid = calculateBandEnergyUnlocked(200.0f, 500.0f);
-    float mid = calculateBandEnergyUnlocked(500.0f, 2000.0f);
-    float highMid = calculateBandEnergyUnlocked(2000.0f, 6000.0f);
-    float high = calculateBandEnergyUnlocked(6000.0f, 16000.0f);
+    // Calculate band energies from snapshot
+    auto calcBandEnergy = [&](float lowFreq, float highFreq) -> float {
+        const int lowBin = std::max(0, static_cast<int>(lowFreq * static_cast<float>(fftSize) / static_cast<float>(currentSampleRate)));
+        const int highBin = std::min(numBins - 1, static_cast<int>(highFreq * static_cast<float>(fftSize) / static_cast<float>(currentSampleRate)));
+        if (lowBin >= highBin) return -100.0f;
+        
+        float sum = 0.0f;
+        int count = 0;
+        for (int i = lowBin; i <= highBin; ++i)
+        {
+            if (snapshot.bins[static_cast<size_t>(i)] > -100.0f)
+            {
+                sum += snapshot.bins[static_cast<size_t>(i)];
+                ++count;
+            }
+        }
+        return (count > 0) ? (sum / static_cast<float>(count)) : -100.0f;
+    };
+    
+    float subBass = calcBandEnergy(20.0f, 60.0f);
+    float bass = calcBandEnergy(60.0f, 200.0f);
+    float lowMid = calcBandEnergy(200.0f, 500.0f);
+    float mid = calcBandEnergy(500.0f, 2000.0f);
+    float highMid = calcBandEnergy(2000.0f, 6000.0f);
+    float high = calcBandEnergy(6000.0f, 16000.0f);
     
     DetectedGenre detected = DetectedGenre::Unknown;
     
@@ -1622,10 +1640,13 @@ void AIEngine::detectGenre()
 //==============================================================================
 // Utility Functions
 
-// Find the peak frequency within a given range (thread-safe)
+// Find the peak frequency within a given range (LOCK-FREE)
 float AIEngine::findPeakInRange(float lowFreq, float highFreq)
 {
-    std::lock_guard<std::mutex> lock(spectrumMutex);
+    // LOCK-FREE: Read spectrum from triple-buffer
+    const auto snapshot = readSpectrumSnapshot();
+    if (snapshot.version == 0)
+        return -1.0f;
     
     int lowBin = frequencyToBin(lowFreq);
     int highBin = frequencyToBin(highFreq);
@@ -1633,7 +1654,7 @@ float AIEngine::findPeakInRange(float lowFreq, float highFreq)
     lowBin = juce::jlimit(0, numBins - 1, lowBin);
     highBin = juce::jlimit(0, numBins - 1, highBin);
     
-    if (highBin <= lowBin || currentSpectrum.empty())
+    if (highBin <= lowBin)
         return -1.0f;
     
     float maxMag = -200.0f;
@@ -1641,11 +1662,11 @@ float AIEngine::findPeakInRange(float lowFreq, float highFreq)
     
     for (int i = lowBin; i <= highBin; ++i)
     {
-        if (i >= 0 && i < static_cast<int>(currentSpectrum.size()))
+        if (i >= 0 && i < numBins)
         {
-            if (currentSpectrum[i] > maxMag)
+            if (snapshot.bins[static_cast<size_t>(i)] > maxMag)
             {
-                maxMag = currentSpectrum[i];
+                maxMag = snapshot.bins[static_cast<size_t>(i)];
                 maxBin = i;
             }
         }
@@ -1670,10 +1691,13 @@ float AIEngine::findPeakInRange(float lowFreq, float highFreq)
     return binToFrequency(maxBin);
 }
 
-// Find the lowest energy frequency within a given range (thread-safe)
+// Find the lowest energy frequency within a given range (LOCK-FREE)
 float AIEngine::findLowestInRange(float lowFreq, float highFreq)
 {
-    std::lock_guard<std::mutex> lock(spectrumMutex);
+    // LOCK-FREE: Read spectrum from triple-buffer
+    const auto snapshot = readSpectrumSnapshot();
+    if (snapshot.version == 0)
+        return -1.0f;
     
     int lowBin = frequencyToBin(lowFreq);
     int highBin = frequencyToBin(highFreq);
@@ -1681,7 +1705,7 @@ float AIEngine::findLowestInRange(float lowFreq, float highFreq)
     lowBin = juce::jlimit(0, numBins - 1, lowBin);
     highBin = juce::jlimit(0, numBins - 1, highBin);
     
-    if (highBin <= lowBin || currentSpectrum.empty())
+    if (highBin <= lowBin)
         return -1.0f;
     
     float minMag = 100.0f;
@@ -1689,11 +1713,11 @@ float AIEngine::findLowestInRange(float lowFreq, float highFreq)
     
     for (int i = lowBin; i <= highBin; ++i)
     {
-        if (i >= 0 && i < static_cast<int>(currentSpectrum.size()))
+        if (i >= 0 && i < numBins)
         {
-            if (currentSpectrum[i] < minMag)
+            if (snapshot.bins[static_cast<size_t>(i)] < minMag)
             {
-                minMag = currentSpectrum[i];
+                minMag = snapshot.bins[static_cast<size_t>(i)];
                 minBin = i;
             }
         }
@@ -1702,11 +1726,30 @@ float AIEngine::findLowestInRange(float lowFreq, float highFreq)
     return binToFrequency(minBin);
 }
 
-// Thread-safe version - acquires lock
+// LOCK-FREE version - reads from triple-buffer
 float AIEngine::calculateBandEnergy(float lowFreq, float highFreq)
 {
-    std::lock_guard<std::mutex> lock(spectrumMutex);
-    return calculateBandEnergyUnlocked(lowFreq, highFreq);
+    const auto snapshot = readSpectrumSnapshot();
+    if (snapshot.version == 0)
+        return -100.0f;
+    
+    const int lowBin = std::max(0, static_cast<int>(lowFreq * static_cast<float>(fftSize) / static_cast<float>(currentSampleRate)));
+    const int highBin = std::min(numBins - 1, static_cast<int>(highFreq * static_cast<float>(fftSize) / static_cast<float>(currentSampleRate)));
+    
+    if (lowBin >= highBin)
+        return -100.0f;
+    
+    float sum = 0.0f;
+    int count = 0;
+    for (int i = lowBin; i <= highBin; ++i)
+    {
+        if (snapshot.bins[static_cast<size_t>(i)] > -100.0f)
+        {
+            sum += snapshot.bins[static_cast<size_t>(i)];
+            ++count;
+        }
+    }
+    return (count > 0) ? (sum / static_cast<float>(count)) : -100.0f;
 }
 
 // Internal version - caller must hold spectrumMutex
@@ -1873,21 +1916,25 @@ float AIEngine::calculateAdaptiveThreshold(float baseThreshold) const
 
 float AIEngine::calculateAdaptiveThresholdPercentile(float baseThreshold) const
 {
-    std::lock_guard<std::mutex> lock(spectrumMutex);
+    // LOCK-FREE: Read spectrum from triple-buffer
+    const auto snapshot = readSpectrumSnapshot();
     
-    if (currentSpectrum.empty())
+    if (snapshot.version == 0)
     {
-        // Fallback to RMS-based if spectrum is empty
+        // Fallback to RMS-based if spectrum not yet written
         float rmsOffset = (averageRMS - (-40.0f)) * 0.15f;
         float adaptedThreshold = baseThreshold + rmsOffset;
         float sensMultiplier = getSensitivityMultiplier();
         return adaptedThreshold * sensMultiplier;
     }
     
+    // Convert to vector for percentile calculation
+    std::vector<float> spectrumCopy(snapshot.bins.begin(), snapshot.bins.end());
+    
     // Calculate percentiles for robust threshold adaptation
-    float percentile95 = calculatePercentile(currentSpectrum, 0.95f);
-    float percentile50 = calculatePercentile(currentSpectrum, 0.50f);
-    float percentile5 = calculatePercentile(currentSpectrum, 0.05f);
+    float percentile95 = calculatePercentile(spectrumCopy, 0.95f);
+    float percentile50 = calculatePercentile(spectrumCopy, 0.50f);
+    float percentile5 = calculatePercentile(spectrumCopy, 0.05f);
     
     // Dynamic range: difference between 95th and 50th percentile
     float dynamicRange = percentile95 - percentile50;
@@ -1990,16 +2037,20 @@ float AIEngine::computeZScore(const std::vector<float>& spectrum, int centerBin,
     return (centerVal - mean) / juce::jmax(1e-6f, stddev);
 }
 
-// Thread-safe z-score at frequency
+// LOCK-FREE z-score at frequency
 float AIEngine::computeZScoreAtFrequency(float frequency, int window) const
 {
-    std::lock_guard<std::mutex> lock(spectrumMutex);
-    if (currentSpectrum.empty())
+    // LOCK-FREE: Read spectrum from triple-buffer
+    const auto snapshot = readSpectrumSnapshot();
+    if (snapshot.version == 0)
         return 0.0f;
     
+    // Convert to vector for computeZScore
+    std::vector<float> spectrumCopy(snapshot.bins.begin(), snapshot.bins.end());
+    
     int bin = frequencyToBin(frequency);
-    bin = juce::jlimit(0, static_cast<int>(currentSpectrum.size()) - 1, bin);
-    return computeZScore(currentSpectrum, bin, window);
+    bin = juce::jlimit(0, numBins - 1, bin);
+    return computeZScore(spectrumCopy, bin, window);
 }
 
 // Require multi-frame consensus for stability (spread in last frames must be small)
@@ -2201,14 +2252,12 @@ void AIEngine::updatePersistentPeaks(const std::vector<PeakCandidate>& newPeaks)
 //==============================================================================
 void AIEngine::detectProblemsWithML()
 {
-    std::vector<float> spectrumCopy;
-    {
-        std::lock_guard<std::mutex> lock(spectrumMutex);
-        spectrumCopy = currentSpectrum;
-    }
-    
-    if (spectrumCopy.empty())
+    // LOCK-FREE: Read spectrum from triple-buffer
+    const auto snapshot = readSpectrumSnapshot();
+    if (snapshot.version == 0)
         return;
+    
+    std::vector<float> spectrumCopy(snapshot.bins.begin(), snapshot.bins.end());
     
     // Set ML context based on source profile
     MLEngine::GenreType mlContext = MLEngine::GenreType::Unknown;
@@ -2585,10 +2634,12 @@ void AIEngine::analyzeTemporalPattern(PeakCandidate& peak) const
 
 float AIEngine::crossValidateDetection(ProblemType type, float frequency, float magnitude) const
 {
-    std::lock_guard<std::mutex> lock(spectrumMutex);
-    
-    if (currentSpectrum.empty())
+    // LOCK-FREE: Read spectrum from triple-buffer
+    const auto snapshot = readSpectrumSnapshot();
+    if (snapshot.version == 0)
         return 0.5f;  // Neutral confidence if no spectrum
+    
+    std::vector<float> spectrumCopy(snapshot.bins.begin(), snapshot.bins.end());
     
     // Find bin for this frequency
     int bin = frequencyToBin(frequency);
@@ -2659,7 +2710,7 @@ float AIEngine::crossValidateDetection(ProblemType type, float frequency, float 
     validationCount++;
     
     // Method 3: Check if magnitude is above noise floor (more lenient)
-    float noiseFloor = calculatePercentile(currentSpectrum, 0.10f);  // 10th percentile as noise floor
+    float noiseFloor = calculatePercentile(spectrumCopy, 0.10f);  // 10th percentile as noise floor
     float aboveNoise = magnitude - noiseFloor;
     float method3Conf = juce::jlimit(0.0f, 1.0f, aboveNoise / 10.0f);  // 10dB above noise = full confidence (was 15dB)
     confidenceSum += method3Conf;
@@ -2678,9 +2729,9 @@ float AIEngine::crossValidateDetection(ProblemType type, float frequency, float 
 
 float AIEngine::findFundamentalFrequency(float minFreq, float maxFreq) const
 {
-    std::lock_guard<std::mutex> lock(spectrumMutex);
-    
-    if (currentSpectrum.empty())
+    // LOCK-FREE: Read spectrum from triple-buffer
+    const auto snapshot = readSpectrumSnapshot();
+    if (snapshot.version == 0)
         return -1.0f;
     
     // Convert frequency range to bins
@@ -2699,13 +2750,13 @@ float AIEngine::findFundamentalFrequency(float minFreq, float maxFreq) const
     // Find local maxima in the range
     for (int i = minBin + 2; i < maxBin - 2; ++i)
     {
-        if (currentSpectrum[i] > currentSpectrum[i-1] && 
-            currentSpectrum[i] > currentSpectrum[i+1] &&
-            currentSpectrum[i] > currentSpectrum[i-2] && 
-            currentSpectrum[i] > currentSpectrum[i+2])
+        if (snapshot.bins[static_cast<size_t>(i)] > snapshot.bins[static_cast<size_t>(i-1)] && 
+            snapshot.bins[static_cast<size_t>(i)] > snapshot.bins[static_cast<size_t>(i+1)] &&
+            snapshot.bins[static_cast<size_t>(i)] > snapshot.bins[static_cast<size_t>(i-2)] && 
+            snapshot.bins[static_cast<size_t>(i)] > snapshot.bins[static_cast<size_t>(i+2)])
         {
             float freq = binToFrequency(i);
-            float mag = currentSpectrum[i];
+            float mag = snapshot.bins[static_cast<size_t>(i)];
             if (mag > -80.0f)  // Above noise floor
             {
                 peaks.push_back({freq, mag});
@@ -2799,19 +2850,22 @@ bool AIEngine::isHarmonicPeak(float peakFreq, float fundamentalFreq, float toler
 
 float AIEngine::calculateDynamicRange() const
 {
-    std::lock_guard<std::mutex> lock(spectrumMutex);
-    
-    if (currentSpectrum.empty())
+    // LOCK-FREE: Read spectrum from triple-buffer
+    const auto snapshot = readSpectrumSnapshot();
+    if (snapshot.version == 0)
         return 0.0f;
     
+    // Convert to vector for percentile calculation
+    std::vector<float> spectrumCopy(snapshot.bins.begin(), snapshot.bins.end());
+    
     // Calculate dynamic range as difference between 95th and 5th percentile
-    float percentile95 = calculatePercentile(currentSpectrum, 0.95f);
-    float percentile5 = calculatePercentile(currentSpectrum, 0.05f);
+    float percentile95 = calculatePercentile(spectrumCopy, 0.95f);
+    float percentile5 = calculatePercentile(spectrumCopy, 0.05f);
     
     float dynamicRange = percentile95 - percentile5;
     
     // Also consider RMS for additional context
-    float rmsContribution = (averageRMS - (-60.0f)) * 0.1f;  // Normalize RMS contribution
+    float rmsContribution = (snapshot.avgRmsLevel - (-60.0f)) * 0.1f;  // Normalize RMS contribution
     
     return juce::jmax(0.0f, dynamicRange + rmsContribution);
 }
@@ -2834,10 +2888,12 @@ float AIEngine::normalizeThresholdByDynamicRange(float baseThreshold, float dyna
 
 float AIEngine::analyzeSpectralCoherence(ProblemType type, float frequency, float bandwidth) const
 {
-    std::lock_guard<std::mutex> lock(spectrumMutex);
-    
-    if (currentSpectrum.empty())
+    // LOCK-FREE: Read spectrum from triple-buffer
+    const auto snapshot = readSpectrumSnapshot();
+    if (snapshot.version == 0)
         return 0.0f;
+    
+    std::vector<float> spectrumCopy(snapshot.bins.begin(), snapshot.bins.end());
     
     // Pattern matching for different problem types
     switch (type)

@@ -379,10 +379,90 @@ private:
     float analyzeSpectralCoherence(ProblemType type, float frequency, float bandwidth) const;  // Pattern matching for problem types
     float getSpectralPatternScore(ProblemType type, float centerFreq, float bandwidth) const;  // Score how well pattern matches problem type
     
-    // FIX #2: DISABLED - Triple-buffering removed to debug crash
-    // Original mutex-protected spectrum access (reverted)
+    //==========================================================================
+    // LOCK-FREE TRIPLE-BUFFERED SPECTRUM ACCESS
+    //==========================================================================
+    // Triple-buffer pattern for lock-free producer/consumer:
+    // - Writer (AI thread) writes to writeIndex buffer
+    // - Writer swaps writeIndex with readyIndex when done
+    // - Reader (GUI/other threads) swaps readyIndex with readIndex to get latest
+    // - No locks required, all operations are atomic
+    //
+    // This replaces std::mutex spectrumMutex for RT-safe spectrum access.
+    //==========================================================================
+    
+    struct SpectrumSnapshot
+    {
+        std::array<float, numBins> bins {};
+        float rmsLevel = -60.0f;
+        float avgRmsLevel = -40.0f;
+        uint64_t version = 0;  // Non-atomic for copy, version stored in separate atomic
+        
+        void fill(const std::vector<float>& data, float rms, float avgRms) noexcept
+        {
+            const size_t copySize = std::min(data.size(), bins.size());
+            std::copy_n(data.begin(), copySize, bins.begin());
+            // Zero remaining bins if input is smaller
+            if (copySize < bins.size())
+                std::fill(bins.begin() + static_cast<long>(copySize), bins.end(), -100.0f);
+            rmsLevel = rms;
+            avgRmsLevel = avgRms;
+            ++version;
+        }
+        
+        // Make copyable
+        SpectrumSnapshot() = default;
+        SpectrumSnapshot(const SpectrumSnapshot& other) = default;
+        SpectrumSnapshot& operator=(const SpectrumSnapshot& other) = default;
+    };
+    
+    // Triple-buffer: indices are always 0, 1, or 2
+    std::array<SpectrumSnapshot, 3> spectrumBuffers;
+    mutable std::atomic<int> spectrumReadIndex { 0 };
+    std::atomic<int> spectrumWriteIndex { 1 };
+    mutable std::atomic<int> spectrumReadyIndex { 2 };
+    
+    // Publish new spectrum (called from AI/analysis thread)
+    void publishSpectrum(const std::vector<float>& spectrum, float rms, float avgRms) noexcept
+    {
+        const int writeIdx = spectrumWriteIndex.load(std::memory_order_relaxed);
+        spectrumBuffers[static_cast<size_t>(writeIdx)].fill(spectrum, rms, avgRms);
+        
+        // Swap write buffer with ready buffer (atomic exchange)
+        int expected = spectrumReadyIndex.load(std::memory_order_relaxed);
+        while (!spectrumReadyIndex.compare_exchange_weak(expected, writeIdx,
+                                                          std::memory_order_release,
+                                                          std::memory_order_relaxed)) {}
+        spectrumWriteIndex.store(expected, std::memory_order_relaxed);
+    }
+    
+    // Read latest spectrum snapshot (lock-free, can be called from any thread)
+    [[nodiscard]] SpectrumSnapshot readSpectrumSnapshot() const noexcept
+    {
+        // Swap read buffer with ready buffer to get latest
+        int expected = spectrumReadyIndex.load(std::memory_order_relaxed);
+        int readIdx = spectrumReadIndex.load(std::memory_order_relaxed);
+        
+        while (!spectrumReadyIndex.compare_exchange_weak(expected, readIdx,
+                                                          std::memory_order_acquire,
+                                                          std::memory_order_relaxed)) {}
+        spectrumReadIndex.store(expected, std::memory_order_relaxed);
+        
+        return spectrumBuffers[static_cast<size_t>(expected)];
+    }
+    
+    // Legacy compatibility: get spectrum as vector (allocates, not RT-safe but convenient)
+    [[nodiscard]] std::vector<float> getCurrentSpectrumCopy() const
+    {
+        const auto snapshot = readSpectrumSnapshot();
+        return std::vector<float>(snapshot.bins.begin(), snapshot.bins.end());
+    }
+    
+    // Internal spectrum storage for functions that need direct access
+    // (e.g., updateSpectrumHistory, calculateBandEnergyUnlocked)
+    // This is updated from the triple-buffer during analysis
     std::vector<float> currentSpectrum;
-    mutable std::mutex spectrumMutex;
+    mutable std::mutex spectrumMutex;  // Only for internal updateSpectrumHistory access
     
     std::vector<Correction> pendingCorrections;
     
