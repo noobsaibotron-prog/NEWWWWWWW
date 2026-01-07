@@ -463,6 +463,10 @@ private:
     
     void updateEQFromState()
     {
+        // SAFETY: Only update if panel is visible and ready
+        if (!isVisible())
+            return;
+            
         // Generate EQ adjustments from current semantic state
         auto adjustments = semanticEngine.generateEQFromState({}, 44100.0);
         

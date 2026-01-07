@@ -20,6 +20,16 @@
 AIEngine::AIEngine()
 {
     currentSpectrum.resize(numBins, -100.0f);
+    
+    // EXPLICITLY initialize triple-buffer to prevent uninitialized access
+    for (auto& buf : spectrumBuffers)
+    {
+        buf.bins.fill(-100.0f);
+        buf.rmsLevel = -60.0f;
+        buf.avgRmsLevel = -40.0f;
+        buf.version = 0;
+    }
+    
     applyProfileThresholds();
     
     // Initialize filter states for dynamic correction (per-channel, per-correction)
@@ -1571,15 +1581,25 @@ void AIEngine::detectGenre()
     
     // Calculate band energies from snapshot
     auto calcBandEnergy = [&](float lowFreq, float highFreq) -> float {
-        const int lowBin = std::max(0, static_cast<int>(lowFreq * static_cast<float>(fftSize) / static_cast<float>(currentSampleRate)));
-        const int highBin = std::min(numBins - 1, static_cast<int>(highFreq * static_cast<float>(fftSize) / static_cast<float>(currentSampleRate)));
+        // SAFETY: Validate sample rate to prevent division issues
+        if (currentSampleRate <= 0.0)
+            return -100.0f;
+        
+        int lowBin = static_cast<int>(lowFreq * static_cast<float>(fftSize) / static_cast<float>(currentSampleRate));
+        int highBin = static_cast<int>(highFreq * static_cast<float>(fftSize) / static_cast<float>(currentSampleRate));
+        
+        // BOUNDS CHECK: Clamp to valid array indices
+        lowBin = std::max(0, std::min(lowBin, static_cast<int>(snapshot.bins.size()) - 1));
+        highBin = std::max(0, std::min(highBin, static_cast<int>(snapshot.bins.size()) - 1));
+        
         if (lowBin >= highBin) return -100.0f;
         
         float sum = 0.0f;
         int count = 0;
         for (int i = lowBin; i <= highBin; ++i)
         {
-            if (snapshot.bins[static_cast<size_t>(i)] > -100.0f)
+            // Double-check bounds (defensive)
+            if (i >= 0 && i < static_cast<int>(snapshot.bins.size()) && snapshot.bins[static_cast<size_t>(i)] > -100.0f)
             {
                 sum += snapshot.bins[static_cast<size_t>(i)];
                 ++count;
@@ -1733,8 +1753,17 @@ float AIEngine::calculateBandEnergy(float lowFreq, float highFreq)
     if (snapshot.version == 0)
         return -100.0f;
     
-    const int lowBin = std::max(0, static_cast<int>(lowFreq * static_cast<float>(fftSize) / static_cast<float>(currentSampleRate)));
-    const int highBin = std::min(numBins - 1, static_cast<int>(highFreq * static_cast<float>(fftSize) / static_cast<float>(currentSampleRate)));
+    // SAFETY: Validate sample rate
+    if (currentSampleRate <= 0.0)
+        return -100.0f;
+    
+    int lowBin = static_cast<int>(lowFreq * static_cast<float>(fftSize) / static_cast<float>(currentSampleRate));
+    int highBin = static_cast<int>(highFreq * static_cast<float>(fftSize) / static_cast<float>(currentSampleRate));
+    
+    // BOUNDS CHECK: Clamp to valid array indices
+    const int maxIdx = static_cast<int>(snapshot.bins.size()) - 1;
+    lowBin = std::max(0, std::min(lowBin, maxIdx));
+    highBin = std::max(0, std::min(highBin, maxIdx));
     
     if (lowBin >= highBin)
         return -100.0f;
@@ -1743,7 +1772,8 @@ float AIEngine::calculateBandEnergy(float lowFreq, float highFreq)
     int count = 0;
     for (int i = lowBin; i <= highBin; ++i)
     {
-        if (snapshot.bins[static_cast<size_t>(i)] > -100.0f)
+        // Double-check bounds (defensive)
+        if (i >= 0 && i < static_cast<int>(snapshot.bins.size()) && snapshot.bins[static_cast<size_t>(i)] > -100.0f)
         {
             sum += snapshot.bins[static_cast<size_t>(i)];
             ++count;
@@ -2742,8 +2772,11 @@ float AIEngine::findFundamentalFrequency(float minFreq, float maxFreq) const
     // Convert frequency range to bins
     int minBin = frequencyToBin(minFreq);
     int maxBin = frequencyToBin(maxFreq);
-    minBin = juce::jlimit(0, numBins - 1, minBin);
-    maxBin = juce::jlimit(0, numBins - 1, maxBin);
+    
+    // BOUNDS CHECK: Clamp to valid array indices
+    const int arrSize = static_cast<int>(snapshot.bins.size());
+    minBin = juce::jlimit(0, arrSize - 1, minBin);
+    maxBin = juce::jlimit(0, arrSize - 1, maxBin);
     
     if (maxBin <= minBin || maxBin - minBin < 4)
         return -1.0f;
@@ -2753,7 +2786,11 @@ float AIEngine::findFundamentalFrequency(float minFreq, float maxFreq) const
     std::vector<std::pair<float, float>> peaks;  // (frequency, magnitude)
     
     // Find local maxima in the range
-    for (int i = minBin + 2; i < maxBin - 2; ++i)
+    // BOUNDS CHECK: Ensure i-2 and i+2 are within valid range
+    const int loopStart = std::max(2, minBin + 2);
+    const int loopEnd = std::min(arrSize - 3, maxBin - 2);
+    
+    for (int i = loopStart; i < loopEnd; ++i)
     {
         if (snapshot.bins[static_cast<size_t>(i)] > snapshot.bins[static_cast<size_t>(i-1)] && 
             snapshot.bins[static_cast<size_t>(i)] > snapshot.bins[static_cast<size_t>(i+1)] &&

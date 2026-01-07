@@ -744,7 +744,12 @@ SemanticEQEngine::generateEQForQuality(SemanticQuality quality,
 {
     std::vector<SemanticEQAdjustment> adjustments;
     
-    const auto& def = qualityDefinitions[static_cast<int>(quality)];
+    // BOUNDS CHECK: Ensure quality is valid
+    const int qualityIdx = static_cast<int>(quality);
+    if (qualityIdx < 0 || qualityIdx >= numQualities)
+        return adjustments;  // Return empty for invalid quality
+    
+    const auto& def = qualityDefinitions[static_cast<size_t>(qualityIdx)];
     
     // Scale by global intensity
     float scaledAmount = amount * globalIntensity;
@@ -778,8 +783,13 @@ SemanticEQEngine::generateEQForQuality(SemanticQuality quality,
     // Add complementary adjustments
     for (const auto& comp : def.complementary)
     {
+        // BOUNDS CHECK: Ensure complementary quality is valid
+        const int compIdx = static_cast<int>(comp.quality);
+        if (compIdx < 0 || compIdx >= numQualities)
+            continue;  // Skip invalid complementary quality
+            
         float compAmount = amount * comp.factor;
-        const auto& compDef = qualityDefinitions[static_cast<int>(comp.quality)];
+        const auto& compDef = qualityDefinitions[static_cast<size_t>(compIdx)];
         
         for (const auto& band : compDef.bands)
         {
@@ -975,7 +985,11 @@ void SemanticEQEngine::setQuality(SemanticQuality quality, float amount)
     currentState.setQuality(quality, amount);
     
     // Handle opposite qualities
-    const auto& def = qualityDefinitions[static_cast<int>(quality)];
+    // BOUNDS CHECK
+    const int qIdx = static_cast<int>(quality);
+    if (qIdx < 0 || qIdx >= numQualities)
+        return;
+    const auto& def = qualityDefinitions[static_cast<size_t>(qIdx)];
     if (def.opposite != SemanticQuality::NumQualities && std::abs(amount) > 0.3f)
     {
         // Reduce opposite quality
@@ -1028,8 +1042,13 @@ void SemanticEQEngine::learnFromUserAdjustment(SemanticQuality quality,
                                                 float userGain, 
                                                 float userQ)
 {
-    const auto& def = qualityDefinitions[static_cast<int>(quality)];
-    auto& offset = learnedOffsets[static_cast<int>(quality)];
+    // BOUNDS CHECK
+    const int qIdx = static_cast<int>(quality);
+    if (qIdx < 0 || qIdx >= numQualities)
+        return;
+        
+    const auto& def = qualityDefinitions[static_cast<size_t>(qIdx)];
+    auto& offset = learnedOffsets[static_cast<size_t>(qIdx)];
     
     if (def.bands.empty()) return;
     
@@ -1073,13 +1092,21 @@ void SemanticEQEngine::learnFromUserAdjustment(SemanticQuality quality,
 SemanticEQEngine::LearnedOffset 
 SemanticEQEngine::getLearnedOffset(SemanticQuality quality) const
 {
-    return learnedOffsets[static_cast<int>(quality)];
+    // BOUNDS CHECK
+    const int qIdx = static_cast<int>(quality);
+    if (qIdx < 0 || qIdx >= numQualities)
+        return LearnedOffset{};  // Return default
+    return learnedOffsets[static_cast<size_t>(qIdx)];
 }
 
 void SemanticEQEngine::setLearnedOffset(SemanticQuality quality, 
                                          const LearnedOffset& offset)
 {
-    learnedOffsets[static_cast<int>(quality)] = offset;
+    // BOUNDS CHECK
+    const int qIdx = static_cast<int>(quality);
+    if (qIdx < 0 || qIdx >= numQualities)
+        return;
+    learnedOffsets[static_cast<size_t>(qIdx)] = offset;
 }
 
 //==============================================================================
@@ -1090,7 +1117,12 @@ SemanticEQEngine::adjustForContext(const SemanticEQAdjustment& base,
 {
     SemanticEQAdjustment adj = base;
     
-    const auto& def = qualityDefinitions[static_cast<int>(base.sourceQuality)];
+    // BOUNDS CHECK
+    const int qIdx = static_cast<int>(base.sourceQuality);
+    if (qIdx < 0 || qIdx >= numQualities)
+        return adj;  // Return unadjusted
+        
+    const auto& def = qualityDefinitions[static_cast<size_t>(qIdx)];
     
     // Analyze current spectrum
     float bassProportion = analyzeBassProportion(spectrum, sampleRate);
@@ -1132,7 +1164,12 @@ SemanticEQEngine::SemanticEQAdjustment
 SemanticEQEngine::applyLearnedOffsets(const SemanticEQAdjustment& base,
                                        SemanticQuality quality) const
 {
-    const auto& offset = learnedOffsets[static_cast<int>(quality)];
+    // BOUNDS CHECK: Ensure quality is valid
+    const int qIdx = static_cast<int>(quality);
+    if (qIdx < 0 || qIdx >= numQualities)
+        return base;
+    
+    const auto& offset = learnedOffsets[static_cast<size_t>(qIdx)];
     
     // Only apply if we have enough samples
     if (offset.sampleCount < 3) return base;
@@ -1294,6 +1331,11 @@ juce::StringArray SemanticEQEngine::getAllQualityNames()
 const SemanticEQEngine::QualityDefinition& 
 SemanticEQEngine::getQualityDefinition(SemanticQuality quality) const
 {
-    return qualityDefinitions[static_cast<int>(quality)];
+    // BOUNDS CHECK - return static empty definition for invalid quality
+    static const QualityDefinition emptyDef{};
+    const int qIdx = static_cast<int>(quality);
+    if (qIdx < 0 || qIdx >= numQualities)
+        return emptyDef;
+    return qualityDefinitions[static_cast<size_t>(qIdx)];
 }
 

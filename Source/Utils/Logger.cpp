@@ -8,10 +8,11 @@ AIEQLogger::AIEQLogger()
     auto tempDir = juce::File::getSpecialLocation(juce::File::tempDirectory);
     logFilePath = tempDir.getChildFile("AIEqualizerPro.log").getFullPathName();
     
-    // Try to open log file
+    // Try to open log file - use toStdString() instead of toRawUTF8() for safety
     if (logToFile)
     {
-        logFile.open(logFilePath.toRawUTF8(), std::ios::app);
+        // Use toStdString() which properly handles UTF-8 encoding
+        logFile.open(logFilePath.toStdString(), std::ios::app);
         if (!logFile.is_open())
         {
             logToFile = false;  // Graceful degradation
@@ -69,7 +70,7 @@ void AIEQLogger::writeToFile(const juce::String& logLine)
             logFile.close();
             auto backupPath = logFilePath + ".old";
             file.moveFileTo(juce::File(backupPath));
-            logFile.open(logFilePath.toRawUTF8(), std::ios::app);
+            logFile.open(logFilePath.toStdString(), std::ios::app);
         }
     }
 }

@@ -528,7 +528,12 @@ MLEngine::TrainingSample MLEngine::createSyntheticSample(ProblemType type,
 {
     TrainingSample sample;
     
-    const auto& range = problemFreqRanges[static_cast<size_t>(type)];
+    // BOUNDS CHECK: Ensure type is valid before accessing array
+    const int typeIdx = static_cast<int>(type);
+    if (typeIdx < 0 || typeIdx >= numProblemTypes)
+        return sample;  // Return empty sample for invalid type
+    
+    const auto& range = problemFreqRanges[static_cast<size_t>(typeIdx)];
     
     std::random_device rd;
     std::mt19937 rng(rd());

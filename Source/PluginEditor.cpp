@@ -1035,7 +1035,10 @@ void AIEqualizerAudioProcessorEditor::timerCallback()
             p.filterType = state.type;
             p.enabled = state.enabled;
             bands[i]->setParameters(p);
-            bandToggles[i].setToggleState(state.enabled, juce::dontSendNotification);
+            
+            // BOUNDS CHECK: bandToggles has only 8 elements
+            if (i < 8)
+                bandToggles[i].setToggleState(state.enabled, juce::dontSendNotification);
         }
         updateBandPositions();
 

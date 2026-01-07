@@ -1235,7 +1235,8 @@ private:
         //----------------------------------------------------------------------
         // Draw info tooltip for selected band
         //----------------------------------------------------------------------
-        if (selectedBandIndex >= 0)
+        // BOUNDS CHECK: Ensure selectedBandIndex is valid before accessing bandColors array
+        if (selectedBandIndex >= 0 && selectedBandIndex < AIEqualizerAudioProcessor::maxBands)
         {
             auto state = processor.getBandState(selectedBandIndex);
             float x = freqToX(state.frequency);
@@ -1260,7 +1261,7 @@ private:
             g.setColour(ModernLookAndFeel::Colors::bgLight.withAlpha(0.95f));
             g.fillRoundedRectangle(static_cast<float>(tx), static_cast<float>(ty), 
                                    static_cast<float>(tw), static_cast<float>(th), 4.0f);
-            g.setColour(bandColors[selectedBandIndex]);
+            g.setColour(bandColors[static_cast<size_t>(selectedBandIndex)]);
             g.drawRoundedRectangle(static_cast<float>(tx), static_cast<float>(ty), 
                                    static_cast<float>(tw), static_cast<float>(th), 4.0f, 1.5f);
             

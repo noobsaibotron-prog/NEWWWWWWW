@@ -425,14 +425,25 @@ private:
     // Publish new spectrum (called from AI/analysis thread)
     void publishSpectrum(const std::vector<float>& spectrum, float rms, float avgRms) noexcept
     {
-        const int writeIdx = spectrumWriteIndex.load(std::memory_order_relaxed);
+        int writeIdx = spectrumWriteIndex.load(std::memory_order_relaxed);
+        
+        // SAFETY: Clamp to valid range (0-2)
+        writeIdx = (writeIdx < 0 || writeIdx > 2) ? 1 : writeIdx;
+        
         spectrumBuffers[static_cast<size_t>(writeIdx)].fill(spectrum, rms, avgRms);
         
         // Swap write buffer with ready buffer (atomic exchange)
         int expected = spectrumReadyIndex.load(std::memory_order_relaxed);
+        expected = (expected < 0 || expected > 2) ? 2 : expected;
+        
         while (!spectrumReadyIndex.compare_exchange_weak(expected, writeIdx,
                                                           std::memory_order_release,
-                                                          std::memory_order_relaxed)) {}
+                                                          std::memory_order_relaxed)) {
+            expected = (expected < 0 || expected > 2) ? 2 : expected;
+        }
+        
+        // Clamp before storing
+        expected = (expected < 0 || expected > 2) ? 1 : expected;
         spectrumWriteIndex.store(expected, std::memory_order_relaxed);
     }
     
@@ -443,12 +454,21 @@ private:
         int expected = spectrumReadyIndex.load(std::memory_order_relaxed);
         int readIdx = spectrumReadIndex.load(std::memory_order_relaxed);
         
+        // SAFETY: Clamp indices to valid range (0-2)
+        expected = (expected < 0 || expected > 2) ? 0 : expected;
+        readIdx = (readIdx < 0 || readIdx > 2) ? 1 : readIdx;
+        
         while (!spectrumReadyIndex.compare_exchange_weak(expected, readIdx,
                                                           std::memory_order_acquire,
-                                                          std::memory_order_relaxed)) {}
+                                                          std::memory_order_relaxed)) {
+            // Re-clamp expected after failed exchange
+            expected = (expected < 0 || expected > 2) ? 0 : expected;
+        }
         spectrumReadIndex.store(expected, std::memory_order_relaxed);
         
-        return spectrumBuffers[static_cast<size_t>(expected)];
+        // Final bounds check before access
+        const size_t safeIdx = static_cast<size_t>(expected < 0 || expected > 2 ? 0 : expected);
+        return spectrumBuffers[safeIdx];
     }
     
     // Legacy compatibility: get spectrum as vector (allocates, not RT-safe but convenient)
