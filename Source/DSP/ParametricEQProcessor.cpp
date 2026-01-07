@@ -9,7 +9,176 @@ inline float fastTanhApprox(float x) noexcept
     const float x2 = x * x;
     return x * (27.0f + x2) / (27.0f + 9.0f * x2);
 }
+
+//==============================================================================
+// RT-SAFE BIQUAD COEFFICIENT CALCULATION (ZERO HEAP ALLOCATION)
+// Computes coefficients in-place, no malloc/new calls
+//==============================================================================
+struct RawBiquadCoeffs
+{
+    float b0 = 1.0f, b1 = 0.0f, b2 = 0.0f;
+    float a0 = 1.0f, a1 = 0.0f, a2 = 0.0f;
+};
+
+inline void computeBiquadCoeffsInPlace(
+    RawBiquadCoeffs& coeffs,
+    int filterType,
+    float freq,
+    float gain,
+    float q,
+    double sampleRate) noexcept
+{
+    // Safety clamps
+    if (sampleRate <= 0.0 || sampleRate > 192000.0)
+    {
+        coeffs = { 1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f };
+        return;
+    }
+
+    freq = juce::jlimit(20.0f, static_cast<float>(sampleRate * 0.49), freq);
+    q = juce::jlimit(0.1f, 18.0f, q);
+
+    const float sr = static_cast<float>(sampleRate);
+    const float omega = juce::MathConstants<float>::twoPi * freq / sr;
+    const float sinOmega = std::sin(omega);
+    const float cosOmega = std::cos(omega);
+    const float alpha = sinOmega / (2.0f * q);
+    const float A = std::pow(10.0f, gain / 40.0f);  // For peak/shelf filters
+
+    float b0 = 1.0f, b1 = 0.0f, b2 = 0.0f;
+    float a0 = 1.0f, a1 = 0.0f, a2 = 0.0f;
+
+    // Filter type enum values from ParametricEQProcessor
+    enum { LowCut = 0, LowShelf, Peak, HighShelf, HighCut, Notch, BandPass, VintageLowShelf, VintageHighShelf };
+
+    switch (filterType)
+    {
+        case LowCut: // High-pass
+        {
+            b0 = (1.0f + cosOmega) * 0.5f;
+            b1 = -(1.0f + cosOmega);
+            b2 = (1.0f + cosOmega) * 0.5f;
+            a0 = 1.0f + alpha;
+            a1 = -2.0f * cosOmega;
+            a2 = 1.0f - alpha;
+            break;
+        }
+
+        case LowShelf:
+        case VintageLowShelf:
+        {
+            const float sqrtA = std::sqrt(A);
+            const float sqrtA2alpha = 2.0f * sqrtA * alpha;
+            b0 = A * ((A + 1.0f) - (A - 1.0f) * cosOmega + sqrtA2alpha);
+            b1 = 2.0f * A * ((A - 1.0f) - (A + 1.0f) * cosOmega);
+            b2 = A * ((A + 1.0f) - (A - 1.0f) * cosOmega - sqrtA2alpha);
+            a0 = (A + 1.0f) + (A - 1.0f) * cosOmega + sqrtA2alpha;
+            a1 = -2.0f * ((A - 1.0f) + (A + 1.0f) * cosOmega);
+            a2 = (A + 1.0f) + (A - 1.0f) * cosOmega - sqrtA2alpha;
+            break;
+        }
+
+        case Peak:
+        {
+            if (std::abs(gain) < 0.01f)
+            {
+                // All-pass for zero gain
+                b0 = 1.0f - alpha;
+                b1 = -2.0f * cosOmega;
+                b2 = 1.0f + alpha;
+                a0 = 1.0f + alpha;
+                a1 = -2.0f * cosOmega;
+                a2 = 1.0f - alpha;
+            }
+            else
+            {
+                b0 = 1.0f + alpha * A;
+                b1 = -2.0f * cosOmega;
+                b2 = 1.0f - alpha * A;
+                a0 = 1.0f + alpha / A;
+                a1 = -2.0f * cosOmega;
+                a2 = 1.0f - alpha / A;
+            }
+            break;
+        }
+
+        case HighShelf:
+        case VintageHighShelf:
+        {
+            const float sqrtA = std::sqrt(A);
+            const float sqrtA2alpha = 2.0f * sqrtA * alpha;
+            b0 = A * ((A + 1.0f) + (A - 1.0f) * cosOmega + sqrtA2alpha);
+            b1 = -2.0f * A * ((A - 1.0f) + (A + 1.0f) * cosOmega);
+            b2 = A * ((A + 1.0f) + (A - 1.0f) * cosOmega - sqrtA2alpha);
+            a0 = (A + 1.0f) - (A - 1.0f) * cosOmega + sqrtA2alpha;
+            a1 = 2.0f * ((A - 1.0f) - (A + 1.0f) * cosOmega);
+            a2 = (A + 1.0f) - (A - 1.0f) * cosOmega - sqrtA2alpha;
+            break;
+        }
+
+        case HighCut: // Low-pass
+        {
+            b0 = (1.0f - cosOmega) * 0.5f;
+            b1 = 1.0f - cosOmega;
+            b2 = (1.0f - cosOmega) * 0.5f;
+            a0 = 1.0f + alpha;
+            a1 = -2.0f * cosOmega;
+            a2 = 1.0f - alpha;
+            break;
+        }
+
+        case Notch:
+        {
+            b0 = 1.0f;
+            b1 = -2.0f * cosOmega;
+            b2 = 1.0f;
+            a0 = 1.0f + alpha;
+            a1 = -2.0f * cosOmega;
+            a2 = 1.0f - alpha;
+            break;
+        }
+
+        case BandPass:
+        {
+            b0 = alpha;
+            b1 = 0.0f;
+            b2 = -alpha;
+            a0 = 1.0f + alpha;
+            a1 = -2.0f * cosOmega;
+            a2 = 1.0f - alpha;
+            break;
+        }
+
+        default: // All-pass fallback
+        {
+            b0 = 1.0f - alpha;
+            b1 = -2.0f * cosOmega;
+            b2 = 1.0f + alpha;
+            a0 = 1.0f + alpha;
+            a1 = -2.0f * cosOmega;
+            a2 = 1.0f - alpha;
+            break;
+        }
+    }
+
+    // Normalize by a0
+    if (std::abs(a0) > 1e-10f)
+    {
+        const float invA0 = 1.0f / a0;
+        coeffs.b0 = b0 * invA0;
+        coeffs.b1 = b1 * invA0;
+        coeffs.b2 = b2 * invA0;
+        coeffs.a0 = 1.0f;
+        coeffs.a1 = a1 * invA0;
+        coeffs.a2 = a2 * invA0;
+    }
+    else
+    {
+        coeffs = { 1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f };
+    }
 }
+
+} // anonymous namespace
 
 //==============================================================================
 ParametricEQProcessor::ParametricEQProcessor()
@@ -114,16 +283,32 @@ void ParametricEQProcessor::process(juce::AudioBuffer<float>& buffer)
             const float gain = params.gain.load(std::memory_order_relaxed);
             const float q = params.q.load(std::memory_order_relaxed);
             const int type = params.type.load(std::memory_order_relaxed);
-            
-            // Update coefficients
-            state.coefficients = makeCoefficients(static_cast<FilterType>(type), freq, gain, q, sr);
-            
-            if (state.coefficients != nullptr)
+
+            // RT-SAFE FIX: Compute coefficients in-place without heap allocation
+            // This was the source of the crackling bug - makeCoefficients() allocated memory
+            RawBiquadCoeffs rawCoeffs;
+            computeBiquadCoeffsInPlace(rawCoeffs, type, freq, gain, q, sr);
+
+            // Update existing filter coefficients in-place (zero allocation)
+            // JUCE IIR::Coefficients for biquad: [b0, b1, b2, a1, a2]
+            if (state.filterL.coefficients != nullptr && state.filterR.coefficients != nullptr)
             {
-                *state.filterL.coefficients = *state.coefficients;
-                *state.filterR.coefficients = *state.coefficients;
+                auto* coeffsL = state.filterL.coefficients->getRawCoefficients();
+                auto* coeffsR = state.filterR.coefficients->getRawCoefficients();
+
+                coeffsL[0] = rawCoeffs.b0;
+                coeffsL[1] = rawCoeffs.b1;
+                coeffsL[2] = rawCoeffs.b2;
+                coeffsL[3] = rawCoeffs.a1;
+                coeffsL[4] = rawCoeffs.a2;
+
+                coeffsR[0] = rawCoeffs.b0;
+                coeffsR[1] = rawCoeffs.b1;
+                coeffsR[2] = rawCoeffs.b2;
+                coeffsR[3] = rawCoeffs.a1;
+                coeffsR[4] = rawCoeffs.a2;
             }
-            
+
             state.lastVersion = currentVersion;
         }
         
