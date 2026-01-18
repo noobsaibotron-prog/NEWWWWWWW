@@ -71,9 +71,13 @@ void LinearPhaseProcessor::updateImpulseResponse(const std::vector<float>& magni
     for (size_t n = 0; n < fftSize; ++n)
         irBuf[n] = timeDomainBuf[n].real() * ifftScale;
 
-    // Center the zero-phase IR (circular shift by fftSize/2)
-    // CRITICAL FIX: Work directly on irBuf (no resize needed, we only use first irSize elements)
-    std::rotate(irBuf.begin(), irBuf.begin() + static_cast<long>(halfSize), irBuf.end());
+    // Center the zero-phase IR so that the peak lands at irSize/2 (within the portion we actually use).
+    // If we rotate by halfSize (fftSize/2), the peak ends at index halfSize (4096) and is then discarded
+    // when we load only the first irSize (0..4095). Instead, rotate so index 0 -> irSize/2 (2048).
+    // std::rotate moves 'middle' to the beginning, so we need middle = fftSize - targetIndex.
+    const size_t peakTargetIndex = irSize / 2;              // 2048
+    const size_t rotateOffset   = fftSize - peakTargetIndex; // 8192 - 2048 = 6144
+    std::rotate(irBuf.begin(), irBuf.begin() + static_cast<long>(rotateOffset), irBuf.end());
 
     // Apply Hann window (only to first irSize elements)
     // Apply Hann window (only to first irSize elements) with gain compensation (~2.0 for Hann average 0.5)

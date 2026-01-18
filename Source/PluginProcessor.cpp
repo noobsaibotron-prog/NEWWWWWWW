@@ -97,6 +97,8 @@ AIEqualizerAudioProcessor::AIEqualizerAudioProcessor()
 //==============================================================================
 void AIEqualizerAudioProcessor::irBuilderThreadFunc(std::stop_token st)
 {
+    try
+    {
     juce::dsp::FFT fft(LinearPhaseProcessor::fftOrder);
     const size_t fftSize = LinearPhaseProcessor::fftSize;
     const size_t halfSize = fftSize / 2;
@@ -316,9 +318,10 @@ void AIEqualizerAudioProcessor::irBuilderThreadFunc(std::stop_token st)
                 // When to apply: Only when peak < threshold (very quiet IR)
                 // Effect: Brings quiet IRs up to audible level
                 //==============================================================
-                constexpr float minReasonableIR = 1e-04f;   // -80dBFS threshold
-                constexpr float targetIR = 0.1f;            // -20dBFS target
-                constexpr float maxScaleBoost = 1.0e4f;     // +80dB max (reduced from 1e6)
+                // Bump minimum peak threshold to avoid excessively quiet IR after band tweaks
+                constexpr float minReasonableIR = 1e-02f;   // -40 dBFS threshold
+                constexpr float targetIR = 0.1f;            // -20 dBFS target
+                constexpr float maxScaleBoost = 1.0e4f;     // +80 dB max
                 
                 float irScale = 1.0f;
                 if (maxAbs > 0.0f && maxAbs < minReasonableIR)
@@ -339,6 +342,15 @@ void AIEqualizerAudioProcessor::irBuilderThreadFunc(std::stop_token st)
             }
         }
     }
+    }
+    catch (const std::exception& e)
+    {
+        AIEQ_LOG_ERROR("IR builder thread exception: " + juce::String(e.what()));
+    }
+    catch (...)
+    {
+        AIEQ_LOG_ERROR("IR builder thread unknown exception");
+    }
 }
 
 //==============================================================================
@@ -346,6 +358,8 @@ void AIEqualizerAudioProcessor::irBuilderThreadFunc(std::stop_token st)
 //==============================================================================
 void AIEqualizerAudioProcessor::aiAnalysisThreadFunc(std::stop_token st)
 {
+    try
+    {
     AISpectrumFrame frame;
     std::vector<float> spectrum;
     spectrum.reserve(aiSpectrumBins);
@@ -365,6 +379,15 @@ void AIEqualizerAudioProcessor::aiAnalysisThreadFunc(std::stop_token st)
         
         aiEngine.analyzeSpectrum(spectrum);
         aiProblemsChanged.store(true, std::memory_order_release);
+    }
+    }
+    catch (const std::exception& e)
+    {
+        AIEQ_LOG_ERROR("AI analysis thread exception: " + juce::String(e.what()));
+    }
+    catch (...)
+    {
+        AIEQ_LOG_ERROR("AI analysis thread unknown exception");
     }
 }
 
@@ -809,6 +832,7 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     }
     for (auto& loaded : linearIRLoaded)
         loaded.store(false, std::memory_order_relaxed);
+    consecutiveIRReadyBlocks = 0;
     activeIRIndex.store(0);
     readyIRIndex.store(-1);
     
@@ -969,6 +993,13 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         crossfadeSamplesRemaining = 0;
         for (auto& loaded : linearIRLoaded)
             loaded.store(false, std::memory_order_relaxed);
+
+        // If we reset while in Linear Phase, force an IR rebuild immediately
+        if (currentPhaseMode.load(std::memory_order_relaxed) == PhaseMode::LinearPhase)
+        {
+            consecutiveIRReadyBlocks = 0;
+            triggerEQCurveUpdate();
+        }
     }
 
     // Defensive clamp: if host delivers a block bigger than we pre-allocated for,
@@ -1127,17 +1158,6 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     {
         updateEQFromParameters();
         lastProcessedParameterChangeCounter = currentParamCounter;
-        
-        // FIX LINEAR PHASE BUG: Reset all processors to clear filter states
-        // This prevents corrupted internal states when coefficients change
-        eqProcessor.reset();
-        eqProcessorHQ.reset();
-        dynamicEQProcessor.reset();
-        dynamicEQProcessorHQ.reset();
-        eqProcessorMid.reset();
-        eqProcessorSide.reset();
-        dynamicEQProcessorMid.reset();
-        dynamicEQProcessorSide.reset();
     }
 
     // Apply smoothed band params (anti-zippering) before processing
@@ -1401,27 +1421,19 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         const bool hasPrev = (prevIR != currentIR) && prevIR >= 0 && prevIR < static_cast<int>(linearPhaseProcessors.size());
         const bool doCrossfade = hasPrev && crossfadeSamplesRemaining > 0 && crossfadeBuffer.getNumSamples() >= blockSamples;
         
-        // If IR not yet loaded OR unstable, fall back to zero-latency EQ to avoid silence
-        const bool irReady = (currentIR >= 0 && currentIR < static_cast<int>(linearIRLoaded.size()))
+        // Determine if current IR is actually loaded
+        const bool irLoaded = (currentIR >= 0 && currentIR < static_cast<int>(linearIRLoaded.size()))
                               ? linearIRLoaded[static_cast<size_t>(currentIR)].load(std::memory_order_acquire)
                               : false;
-        
-        // FIX: Track IR stability - only use LP when IR has been ready for N consecutive blocks
-        static int consecutiveIRReadyBlocks = 0;
-        static const int minConsecutiveBlocks = 10; // Require 10 blocks of stable IR
-        
-        if (irReady)
-            consecutiveIRReadyBlocks++;
-        else
-            consecutiveIRReadyBlocks = 0;
-        
-        const bool irStable = irReady && (consecutiveIRReadyBlocks >= minConsecutiveBlocks);
-        
-        if (!irStable)  // Changed from !irReady to !irStable
+        // Consider LP unusable while a new IR is being requested or staged
+        const bool pendingIR = eqCurveNeedsUpdate.load(std::memory_order_relaxed)
+                               || readyIRIndex.load(std::memory_order_relaxed) >= 0;
+
+        // Early fallback: if IR not loaded or a rebuild is pending, stay on zero-latency path
+        if (!irLoaded || pendingIR)
         {
-            // FIX BUG LINEAR PHASE SILENCE:
-            // Process with zero-latency EQ instead of silence delay buffer
-            // This ensures audio is heard immediately while IR is being built
+            consecutiveIRReadyBlocks = 0;
+            crossfadeSamplesRemaining = 0;
             eqProcessor.process(buffer);
             
             if (dynEqEnabledLocal)
@@ -1434,7 +1446,7 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
             // DO NOT return early!
         }
 
-        else if (irStable && doCrossfade)  // Only crossfade if IR is stable
+        else if (doCrossfade)  // Only crossfade if IR is ready and we have a previous IR
         {
             // Copy input for new IR path (RT-safe, no realloc)
             const int chs = juce::jmin(buffer.getNumChannels(), crossfadeBuffer.getNumChannels());
@@ -1478,7 +1490,7 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
 
             crossfadeSamplesRemaining = remainingAfterBlock;
         }
-        else if (irStable)  // Only use LP processor if IR is stable
+        else  // IR loaded and no crossfade needed: process LP directly
         {
             auto* lp = (currentIR >= 0 && currentIR < static_cast<int>(linearPhaseProcessors.size())) 
                        ? linearPhaseProcessors[static_cast<size_t>(currentIR)].get() 
@@ -1505,17 +1517,6 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
             }
             crossfadeSamplesRemaining = 0;
         }
-        else
-        {
-            // FIX: If neither ready nor stable, use zero-latency fallback
-            eqProcessor.process(buffer);
-            
-            if (dynEqEnabledLocal)
-            {
-                dynamicEQProcessor.process(buffer);
-                updateDynamicMeterCacheFrom(dynamicEQProcessor);
-            }
-        }
     }
 
     // Decode back to L/R if we processed in M/S domain
@@ -1536,7 +1537,7 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     }
     
     // === SOLO ACOUSTIC MONITOR ===
-    constexpr bool enableSoloMonitor = false; // Disabled to avoid coloration/distortion during solo
+    constexpr bool enableSoloMonitor = true; // Enabled: allow band audition in Solo mode
     if (hasSolo && enableSoloMonitor)
     {
         float soloFreq = 1000.0f;
@@ -1641,7 +1642,12 @@ void AIEqualizerAudioProcessor::parameterChanged(const juce::String& parameterID
         
         // Ensure linear-phase IR build kicks off immediately when entering LinearPhase
         if (newMode == PhaseMode::LinearPhase)
+        {
+            consecutiveIRReadyBlocks = 0;
+            readyIRIndex.store(-1, std::memory_order_relaxed);
+            crossfadeSamplesRemaining = 0;
             triggerEQCurveUpdate();
+        }
         return;
     }
     

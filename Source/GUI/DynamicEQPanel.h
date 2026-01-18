@@ -190,7 +190,7 @@ public:
     
     void setBandIndex(int newIndex)
     {
-        if (newIndex == bandIndex || newIndex < 0 || newIndex >= 8)
+        if (newIndex == bandIndex || newIndex < 0 || newIndex >= DynamicEQProcessor::maxBands)
             return;
         
         bandIndex = newIndex;
@@ -243,25 +243,23 @@ private:
         g.setColour(juce::Colour(0xFF2D2D2D));
         g.fillRoundedRectangle(bounds, 3.0f);
         
-        // GR meter (shows negative values as reduction)
-        if (std::abs(currentGainReduction) > 0.1f)
-        {
-            float normalizedGR = juce::jlimit(0.0f, 1.0f, std::abs(currentGainReduction) / 24.0f);
-            float meterWidth = bounds.getWidth() * normalizedGR;
-            
-            // Color based on reduction amount
-            juce::Colour grColor;
-            if (normalizedGR < 0.3f)
-                grColor = juce::Colour(0xFF4A90D9); // Blue for light reduction
-            else if (normalizedGR < 0.6f)
-                grColor = juce::Colour(0xFFE6A23C); // Orange for medium
-            else
-                grColor = juce::Colour(0xFFF56C6C); // Red for heavy
-            
-            g.setColour(grColor);
-            g.fillRoundedRectangle(bounds.getX(), bounds.getY(), 
-                                   meterWidth, bounds.getHeight(), 3.0f);
-        }
+        // GR meter (shows negative values as reduction) - always draw even for small GR
+        float absGR = std::abs(currentGainReduction);
+        float normalizedGR = juce::jlimit(0.0f, 1.0f, absGR / 24.0f);
+        float meterWidth = bounds.getWidth() * normalizedGR;
+        
+        // Color based on reduction amount
+        juce::Colour grColor;
+        if (normalizedGR < 0.3f)
+            grColor = juce::Colour(0xFF4A90D9); // Blue for light reduction
+        else if (normalizedGR < 0.6f)
+            grColor = juce::Colour(0xFFE6A23C); // Orange for medium
+        else
+            grColor = juce::Colour(0xFFF56C6C); // Red for heavy
+        
+        g.setColour(grColor.withAlpha(normalizedGR > 0.0f ? 1.0f : 0.2f));
+        g.fillRoundedRectangle(bounds.getX(), bounds.getY(), 
+                               meterWidth, bounds.getHeight(), 3.0f);
         
         // Text
         juce::String grText = "GR: " + juce::String(currentGainReduction, 1) + " dB";
