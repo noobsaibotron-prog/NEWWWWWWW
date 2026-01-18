@@ -10,6 +10,10 @@ PresetManager::PresetManager(juce::AudioProcessorValueTreeState& apvts_)
 
 void PresetManager::loadFactoryPresets()
 {
+    // Avoid reloading if already populated to prevent repeated IO/work
+    if (!factoryPresets.empty())
+        return;
+
     factoryPresets.clear();
     createDefaultFactoryPresets();
     AIEQ_LOG_INFO("Loaded " + juce::String(factoryPresets.size()) + " factory presets");

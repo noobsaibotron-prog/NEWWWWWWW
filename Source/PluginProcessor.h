@@ -455,6 +455,7 @@ private:
     std::atomic<int> readyIRIndex { -1 };
     int pendingIRIndex = -1;
     std::array<std::atomic<bool>, 2> linearIRLoaded { false, false };
+    int consecutiveIRReadyBlocks = 0;
     
     // IR crossfade for click-free transitions
     static constexpr int irCrossfadeSamples = 128;

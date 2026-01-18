@@ -108,6 +108,7 @@ private:
     double currentSampleRate = 44100.0;
     Resolution resolution = Resolution::High;
     Speed speedMode = Speed::Medium;
+    double lastProcessMs = 0.0; // per-instance throttle for Max resolution
     int fftOrder = static_cast<int>(Resolution::High);
     int fftSize = 1 << fftOrder;
     int numBins = fftSize / 2;
