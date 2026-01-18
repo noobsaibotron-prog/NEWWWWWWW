@@ -688,6 +688,10 @@ void DynamicEQProcessor::updateAttackReleaseCoeffs(int bandIndex)
     auto& state = bandStates[bandIndex];
     const double sr = currentSampleRate.load(std::memory_order_relaxed);
     
+    // Safety guard: avoid division/exp on invalid sample rate
+    if (sr <= 0.0)
+        return;
+    
     const float attackMs = params.attackMs.load(std::memory_order_relaxed);
     const float releaseMs = params.releaseMs.load(std::memory_order_relaxed);
     

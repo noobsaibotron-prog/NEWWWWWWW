@@ -433,7 +433,7 @@ private:
         spectrumBuffers[static_cast<size_t>(writeIdx)].fill(spectrum, rms, avgRms);
         
         // Swap write buffer with ready buffer (atomic exchange)
-        int expected = spectrumReadyIndex.load(std::memory_order_relaxed);
+        int expected = spectrumReadyIndex.load(std::memory_order_acquire);
         expected = (expected < 0 || expected > 2) ? 2 : expected;
         
         while (!spectrumReadyIndex.compare_exchange_weak(expected, writeIdx,
@@ -451,8 +451,8 @@ private:
     [[nodiscard]] SpectrumSnapshot readSpectrumSnapshot() const noexcept
     {
         // Swap read buffer with ready buffer to get latest
-        int expected = spectrumReadyIndex.load(std::memory_order_relaxed);
-        int readIdx = spectrumReadIndex.load(std::memory_order_relaxed);
+        int expected = spectrumReadyIndex.load(std::memory_order_acquire);
+        int readIdx = spectrumReadIndex.load(std::memory_order_acquire);
         
         // SAFETY: Clamp indices to valid range (0-2)
         expected = (expected < 0 || expected > 2) ? 0 : expected;

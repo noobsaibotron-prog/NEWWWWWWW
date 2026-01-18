@@ -148,7 +148,7 @@ private:
     
     // Control Panel
     juce::Label logoLabel, subtitleLabel;
-    std::array<juce::ToggleButton, 8> bandToggles;
+    std::vector<juce::ToggleButton> bandToggles;
     juce::ComboBox bandSelectCombo;
     juce::Label gainLabel, sensitivityLabel, strengthLabel, outLabel, mixLabel, slopeLabel, qualityLabel, phaseModeLabel;
     juce::Label oversamplingLabel;

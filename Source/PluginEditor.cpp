@@ -220,10 +220,10 @@ void AIEqualizerAudioProcessorEditor::createControlPanel()
     addAndMakeVisible(subtitleLabel);
     
     // Band toggles - click to select, right-click or checkbox to enable/disable
-    const char* labels[] = {"I", "II", "III", "IV", "V", "VI", "VII", "VIII"};
-    for (int i = 0; i < 8; ++i)
+    bandToggles.resize(AIEqualizerAudioProcessor::maxBands);
+    for (int i = 0; i < AIEqualizerAudioProcessor::maxBands; ++i)
     {
-        bandToggles[i].setButtonText(labels[i]);
+        bandToggles[i].setButtonText(juce::String(i + 1));
         bandToggles[i].setToggleState(processor.getBandState(i).enabled, juce::dontSendNotification);
         bandToggles[i].setTooltip("Click to select Band " + juce::String(i + 1) + "\nToggle checkbox to enable/disable");
         bandToggles[i].onClick = [this, i]() {
@@ -908,30 +908,35 @@ void AIEqualizerAudioProcessorEditor::resized()
     dividerPositions.push_back(cpanel.getX());
     cpanel.removeFromLeft(gapW);
 
-    // BANDS toggles
+    // BANDS toggles (grid for all bands)
     auto bandsSection = cpanel.removeFromLeft(bandsW);
     const int btnW = 32;
     const int btnH = 26;
     const int comboH = 24;
-    int topPad = (bandsSection.getHeight() - (btnH * 2 + 4 + comboH + 4)) / 2;
+    const int cols = 8;
+    const int rows = (AIEqualizerAudioProcessor::maxBands + cols - 1) / cols;
+    const int totalGridH = rows * btnH + (rows - 1) * 4;
+    int topPad = (bandsSection.getHeight() - (totalGridH + comboH + 4)) / 2;
+    topPad = std::max(0, topPad);
     bandsSection.removeFromTop(topPad);
     bandSelectCombo.setBounds(bandsSection.removeFromTop(comboH).reduced(4, 0));
     bandsSection.removeFromTop(4);
-    auto rowB1 = bandsSection.removeFromTop(btnH);
-    int startX = (bandsSection.getWidth() - btnW * 4 - 6) / 2;
-    rowB1.removeFromLeft(startX);
-    for (int i = 0; i < 4; ++i)
+
+    int startX = (bandsSection.getWidth() - (cols * btnW + (cols - 1) * 2)) / 2;
+    for (int r = 0; r < rows; ++r)
     {
-        bandToggles[i].setBounds(rowB1.removeFromLeft(btnW).reduced(1));
-        rowB1.removeFromLeft(2);
-    }
-    bandsSection.removeFromTop(4);
-    auto rowB2 = bandsSection.removeFromTop(btnH);
-    rowB2.removeFromLeft(startX);
-    for (int i = 4; i < 8; ++i)
-    {
-        bandToggles[i].setBounds(rowB2.removeFromLeft(btnW).reduced(1));
-        rowB2.removeFromLeft(2);
+        auto rowArea = bandsSection.removeFromTop(btnH);
+        rowArea.removeFromLeft(startX);
+        for (int c = 0; c < cols; ++c)
+        {
+            int idx = r * cols + c;
+            if (idx >= static_cast<int>(bandToggles.size()))
+                break;
+            bandToggles[(size_t)idx].setBounds(rowArea.removeFromLeft(btnW).reduced(1));
+            rowArea.removeFromLeft(2);
+        }
+        if (r < rows - 1)
+            bandsSection.removeFromTop(4);
     }
 
     dividerPositions.push_back(cpanel.getX());
@@ -1017,7 +1022,8 @@ void AIEqualizerAudioProcessorEditor::timerCallback()
         int activeBands = processor.getNumActiveBands();
         if (activeBands > 0 && selectedBand >= activeBands)
             selectBand(activeBands - 1);
-        for (int i = 0; i < 8; ++i)
+        const int toggleCount = static_cast<int>(bandToggles.size());
+        for (int i = 0; i < toggleCount; ++i)
         {
             bool shouldShow = (i < activeBands);
             bandToggles[i].setEnabled(shouldShow);
@@ -1036,8 +1042,7 @@ void AIEqualizerAudioProcessorEditor::timerCallback()
             p.enabled = state.enabled;
             bands[i]->setParameters(p);
             
-            // BOUNDS CHECK: bandToggles has only 8 elements
-            if (i < 8)
+            if (i < toggleCount)
                 bandToggles[i].setToggleState(state.enabled, juce::dontSendNotification);
         }
         updateBandPositions();
@@ -1191,18 +1196,12 @@ void AIEqualizerAudioProcessorEditor::selectBand(int bandIndex)
         dynamicEQPanel->setBandIndex(bandIndex);
     
     // Update band toggle highlight
-    for (int i = 0; i < 8; ++i)
+    for (size_t i = 0; i < bandToggles.size(); ++i)
     {
-        if (i == bandIndex)
-        {
-            bandToggles[i].setColour(juce::ToggleButton::textColourId, 
-                                     ModernLookAndFeel::Colors::accentBlue);
-        }
+        if (static_cast<int>(i) == bandIndex)
+            bandToggles[i].setColour(juce::ToggleButton::textColourId, ModernLookAndFeel::Colors::accentBlue);
         else
-        {
-            bandToggles[i].setColour(juce::ToggleButton::textColourId, 
-                                     ModernLookAndFeel::Colors::textPrimary);
-        }
+            bandToggles[i].setColour(juce::ToggleButton::textColourId, ModernLookAndFeel::Colors::textPrimary);
     }
     
     resized();
