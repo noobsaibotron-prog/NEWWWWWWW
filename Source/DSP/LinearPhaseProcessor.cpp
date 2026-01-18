@@ -7,8 +7,15 @@ void LinearPhaseProcessor::prepare(const juce::dsp::ProcessSpec& spec)
 {
     currentSampleRate = spec.sampleRate;
     ensureConvolutionCount(spec.numChannels);
-    for (auto& c : convolvers)
-        c->prepare(spec);
+    maxPreparedChannels = std::max(maxPreparedChannels, static_cast<size_t>(spec.numChannels));
+    maxPreparedSamples  = std::max<size_t>(maxPreparedSamples, static_cast<size_t>(spec.maximumBlockSize));
+    ensureScratchBuffer(maxPreparedChannels, maxPreparedSamples);
+
+    for (auto& set : convolverSets)
+    {
+        for (auto& c : set)
+            c->prepare(spec);
+    }
     
     // CRITICAL FIX: Pre-allocate buffers as class members to avoid dynamic allocation in audio path
     // These buffers are reused across updateImpulseResponse() calls, preventing allocations during IR rebuild
@@ -19,8 +26,11 @@ void LinearPhaseProcessor::prepare(const juce::dsp::ProcessSpec& spec)
 
 void LinearPhaseProcessor::reset()
 {
-    for (auto& c : convolvers)
-        c->reset();
+    for (auto& set : convolverSets)
+    {
+        for (auto& c : set)
+            c->reset();
+    }
 }
 
 void LinearPhaseProcessor::process(const juce::dsp::ProcessContextReplacing<float>& context)
@@ -29,11 +39,74 @@ void LinearPhaseProcessor::process(const juce::dsp::ProcessContextReplacing<floa
     const auto numChannels = block.getNumChannels();
     ensureConvolutionCount(numChannels);
 
+    auto& activeSet = convolverSets[activeSetIndex];
+    auto& pendingSet = convolverSets[pendingSetIndex];
+
+    // No crossfade: process once with active set.
+    if (crossfadeSamplesRemaining <= 0 || !pendingSetValid)
+    {
+        for (size_t ch = 0; ch < numChannels; ++ch)
+        {
+            auto channelBlock = block.getSingleChannelBlock(ch);
+            juce::dsp::ProcessContextReplacing<float> channelContext(channelBlock);
+            activeSet[ch]->process(channelContext);
+        }
+        return;
+    }
+
+    // Crossfade: process active into output, pending into scratch, then blend.
+    const auto numSamples = block.getNumSamples();
+    ensureScratchBuffer(numChannels, numSamples);
+
+    // Copy input to scratch for second pass
+    for (size_t ch = 0; ch < numChannels; ++ch)
+    {
+        scratchBuffer.copyFrom(static_cast<int>(ch), 0,
+                               block.getChannelPointer(ch),
+                               static_cast<int>(numSamples));
+    }
+
+    // Process active set (in-place in the output block)
     for (size_t ch = 0; ch < numChannels; ++ch)
     {
         auto channelBlock = block.getSingleChannelBlock(ch);
         juce::dsp::ProcessContextReplacing<float> channelContext(channelBlock);
-        convolvers[ch]->process(channelContext);
+        activeSet[ch]->process(channelContext);
+    }
+
+    // Process pending set into scratch buffer
+    for (size_t ch = 0; ch < numChannels; ++ch)
+    {
+        auto scratchBlock = juce::dsp::AudioBlock<float>(scratchBuffer).getSingleChannelBlock(ch);
+        juce::dsp::ProcessContextReplacing<float> scratchContext(scratchBlock);
+        pendingSet[ch]->process(scratchContext);
+    }
+
+    const int fadeLen = crossfadeLengthSamples;
+    const int startPos = fadeLen - crossfadeSamplesRemaining;
+
+    // Blend per channel
+    for (size_t ch = 0; ch < numChannels; ++ch)
+    {
+        float* out = block.getChannelPointer(ch);
+        const float* alt = scratchBuffer.getReadPointer(static_cast<int>(ch));
+
+        for (size_t n = 0; n < numSamples; ++n)
+        {
+            const int pos = startPos + static_cast<int>(n);
+            const float t = pos < fadeLen ? static_cast<float>(pos) / static_cast<float>(fadeLen) : 1.0f;
+            const float fadeIn  = t;
+            const float fadeOut = 1.0f - t;
+            out[n] = out[n] * fadeOut + alt[n] * fadeIn;
+        }
+    }
+
+    crossfadeSamplesRemaining = std::max(0, crossfadeSamplesRemaining - static_cast<int>(numSamples));
+    if (crossfadeSamplesRemaining == 0)
+    {
+        activeSetIndex = pendingSetIndex;
+        activeSetValid = true;
+        pendingSetValid = false;
     }
 }
 
@@ -88,17 +161,36 @@ void LinearPhaseProcessor::updateImpulseResponse(const std::vector<float>& magni
         irBuf[n] *= (w * hannGainComp);
     }
 
-    // Load into convolvers (one per channel)
-    // FIX 1: Create NEW buffer for each channel - never reuse after move
-    for (auto& c : convolvers)
+    // Load into the inactive set, then trigger crossfade.
+    auto targetSet = 1 - activeSetIndex;
+    const size_t channels = std::max({ maxPreparedChannels,
+                                       convolverSets[activeSetIndex].size(),
+                                       convolverSets[targetSet].size() });
+    ensureConvolutionCount(channels);
+
+    for (auto& c : convolverSets[targetSet])
     {
         juce::AudioBuffer<float> channelIR(1, static_cast<int>(irSize));
         std::copy(irBuf.begin(), irBuf.begin() + irSize, channelIR.getWritePointer(0));
-        
+
         c->loadImpulseResponse(std::move(channelIR), static_cast<double>(currentSampleRate),
                                juce::dsp::Convolution::Stereo::no,
                                juce::dsp::Convolution::Trim::no,
                                juce::dsp::Convolution::Normalise::no);
+    }
+
+    if (!activeSetValid)
+    {
+        activeSetIndex = targetSet;
+        activeSetValid = true;
+        pendingSetValid = false;
+        crossfadeSamplesRemaining = 0;
+    }
+    else
+    {
+        pendingSetIndex = targetSet;
+        pendingSetValid = true;
+        crossfadeSamplesRemaining = crossfadeLengthSamples;
     }
 }
 
@@ -106,33 +198,55 @@ void LinearPhaseProcessor::loadImpulseResponse(const std::vector<float>& ir, dou
 {
     currentSampleRate = sampleRate;
 
-    // Ensure we have enough convolvers for current channels (will be set in prepare)
-    ensureConvolutionCount(convolvers.size());
+    const size_t channels = std::max({ maxPreparedChannels,
+                                       convolverSets[activeSetIndex].size(),
+                                       convolverSets[pendingSetIndex].size() });
+    ensureConvolutionCount(channels);
 
     const int irLen = static_cast<int>(std::min(ir.size(), irSize));
 
-    // FIX 1: Create NEW buffer for each channel - never reuse after move
-    for (auto& c : convolvers)
+    for (auto& c : convolverSets[activeSetIndex])
     {
         juce::AudioBuffer<float> channelIR(1, irLen);
         std::copy(ir.begin(), ir.begin() + irLen, channelIR.getWritePointer(0));
-        
+
         c->loadImpulseResponse(std::move(channelIR),
                                currentSampleRate,
                                juce::dsp::Convolution::Stereo::no,
                                juce::dsp::Convolution::Trim::no,
                                juce::dsp::Convolution::Normalise::no);
     }
+
+    // Mirror into both sets to avoid uninitialised pending set.
+    pendingSetIndex = activeSetIndex;
+    activeSetValid = true;
+    pendingSetValid = false;
+    crossfadeSamplesRemaining = 0;
 }
 
 void LinearPhaseProcessor::ensureConvolutionCount(size_t channels)
 {
-    if (convolvers.size() < channels)
+    for (auto& set : convolverSets)
     {
-        const auto oldSize = convolvers.size();
-        convolvers.resize(channels);
-        for (size_t i = oldSize; i < channels; ++i)
-            convolvers[i] = std::make_unique<juce::dsp::Convolution>();
+        if (set.size() < channels)
+        {
+            const auto oldSize = set.size();
+            set.resize(channels);
+            for (size_t i = oldSize; i < channels; ++i)
+                set[i] = std::make_unique<juce::dsp::Convolution>();
+        }
     }
 }
 
+void LinearPhaseProcessor::ensureScratchBuffer(size_t channels, size_t samples)
+{
+    if (scratchBuffer.getNumChannels() < static_cast<int>(channels) ||
+        scratchBuffer.getNumSamples() < static_cast<int>(samples))
+    {
+        scratchBuffer.setSize(static_cast<int>(channels),
+                              static_cast<int>(samples),
+                              false,  // keep existing content
+                              false,  // clear extra space
+                              true);  // avoid realloc if possible
+    }
+}

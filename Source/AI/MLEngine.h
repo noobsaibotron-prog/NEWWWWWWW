@@ -153,6 +153,7 @@ private:
         
         int getInputSize() const { return inputSize; }
         int getOutputSize() const { return outputSize; }
+        bool hasBias() const { return useBias; }
         
         void randomize(std::mt19937& rng);
         void applyGradients(const std::vector<float>& gradWeights,

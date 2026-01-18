@@ -123,6 +123,14 @@ public:
         if (newIndex == bandIndex)
             return;
 
+        // Disconnect existing attachments first to avoid side-effects on param update
+        freqAtt.reset();
+        gainAtt.reset();
+        qAtt.reset();
+        typeAtt.reset();
+        enableAtt.reset();
+        soloAtt.reset();
+
         bandIndex = newIndex;
         juce::String prefix = "band" + juce::String(bandIndex);
         bandColor = ModernLookAndFeel::Colors::getBandColor(bandIndex);

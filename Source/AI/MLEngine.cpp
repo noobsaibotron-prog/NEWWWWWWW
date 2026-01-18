@@ -1,6 +1,7 @@
 #include "MLEngine.h"
 #include <algorithm>
 #include <numeric>
+#include "../Utils/Logger.h"
 
 //==============================================================================
 // DenseLayer Implementation
@@ -849,9 +850,9 @@ bool MLEngine::loadWeights(const juce::File& modelFile)
             auto addLayer = [&](const DenseLayer* layer)
             {
                 if (!layer) return;
-                total += static_cast<size_t>(layer->outputSize * layer->inputSize);
-                if (layer->useBias)
-                    total += static_cast<size_t>(layer->outputSize);
+                total += static_cast<size_t>(layer->getOutputSize()) * static_cast<size_t>(layer->getInputSize());
+                if (layer->hasBias())
+                    total += static_cast<size_t>(layer->getOutputSize());
             };
             addLayer(problemNet_fc1.get()); addLayer(problemNet_fc2.get()); addLayer(problemNet_fc3.get());
             addLayer(genreNet_fc1.get());   addLayer(genreNet_fc2.get());

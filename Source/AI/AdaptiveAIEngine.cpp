@@ -6,6 +6,15 @@
 //==============================================================================
 AdaptiveAIEngine::AdaptiveAIEngine()
 {
+    // Preallocate FFT buffers for transient frequency estimation
+    transientFftBuffer.assign(static_cast<size_t>(transientFftSize * 2), 0.0f);
+    transientWindow.resize(static_cast<size_t>(transientFftSize));
+    for (size_t n = 0; n < transientWindow.size(); ++n)
+    {
+        transientWindow[n] = 0.5f * (1.0f - std::cos(2.0f * juce::MathConstants<float>::pi *
+                                                     static_cast<float>(n) /
+                                                     static_cast<float>(transientFftSize - 1)));
+    }
 }
 
 //==============================================================================
@@ -216,6 +225,7 @@ std::vector<AdaptiveAIEngine::Transient> AdaptiveAIEngine::detectTransients(
     // Simple transient detection: look for rapid amplitude changes
     const float threshold = transientThreshold;
     const int windowSize = static_cast<int>(sampleRate * 0.01f);  // 10ms window
+    const int fftSize    = transientFftSize;
     
     for (int ch = 0; ch < numChannels; ++ch)
     {
@@ -248,21 +258,39 @@ std::vector<AdaptiveAIEngine::Transient> AdaptiveAIEngine::detectTransients(
                 transient.samplePosition = i;
                 transient.amplitude = std::sqrt(energyAfter);
                 transient.duration = static_cast<float>(windowSize) / static_cast<float>(sampleRate);
-                
-                // Estimate dominant frequency (simplified)
-                float maxFreq = 0.0f;
-                float maxMag = 0.0f;
-                for (int j = i; j < juce::jmin(i + windowSize, numSamples); ++j)
+
+                // FFT-based dominant frequency estimation on a local window
+                const int start = juce::jlimit(0, numSamples, i - fftSize / 2);
+                const int available = juce::jmin(fftSize, numSamples - start);
+
+                // Clear FFT buffer and copy windowed samples (real/imag interleaved expected by JUCE FFT real-only)
+                std::fill(transientFftBuffer.begin(), transientFftBuffer.end(), 0.0f);
+                for (int n = 0; n < available; ++n)
                 {
-                    float sample = channelData[j];
-                    if (std::abs(sample) > maxMag)
+                    const float w = transientWindow[static_cast<size_t>(n)];
+                    transientFftBuffer[2 * n] = channelData[start + n] * w;     // real
+                    transientFftBuffer[2 * n + 1] = 0.0f;                       // imag
+                }
+
+                transientFft.performRealOnlyForwardTransform(transientFftBuffer.data());
+
+                float maxMag = 0.0f;
+                int maxBin = 0;
+                const int nyquistBin = fftSize / 2;
+                for (int k = 1; k < nyquistBin; ++k) // skip DC
+                {
+                    const float re = transientFftBuffer[2 * k];
+                    const float im = transientFftBuffer[2 * k + 1];
+                    const float mag = re * re + im * im;
+                    if (mag > maxMag)
                     {
-                        maxMag = std::abs(sample);
-                        maxFreq = static_cast<float>(j - i) * static_cast<float>(sampleRate) / static_cast<float>(numSamples);
+                        maxMag = mag;
+                        maxBin = k;
                     }
                 }
-                transient.frequency = maxFreq;
-                
+
+                transient.frequency = static_cast<float>(maxBin) * static_cast<float>(sampleRate) / static_cast<float>(fftSize);
+
                 transients.push_back(transient);
                 
                 // Skip ahead to avoid duplicate detections

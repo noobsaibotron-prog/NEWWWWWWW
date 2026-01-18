@@ -2,6 +2,7 @@
 
 #include <juce_dsp/juce_dsp.h>
 #include <vector>
+#include <array>
 #include <complex>
 
 /**
@@ -37,8 +38,24 @@ public:
 
 private:
     void ensureConvolutionCount(size_t channels);
+    void ensureScratchBuffer(size_t channels, size_t samples);
 
-    std::vector<std::unique_ptr<juce::dsp::Convolution>> convolvers;
+    // Two convolver sets to allow crossfade between IRs without clicks.
+    std::array<std::vector<std::unique_ptr<juce::dsp::Convolution>>, 2> convolverSets;
+    size_t activeSetIndex = 0;
+    size_t pendingSetIndex = 0;
+    bool   activeSetValid = false;
+    bool   pendingSetValid = false;
+
+    // Crossfade state (sample-accurate ramp).
+    static constexpr int crossfadeLengthSamples = 64; // 1.45 ms @44.1k
+    int crossfadeSamplesRemaining = 0;
+
+    // Scratch buffer for dual-processing during crossfade.
+    juce::AudioBuffer<float> scratchBuffer;
+    size_t maxPreparedChannels = 0;
+    size_t maxPreparedSamples  = 0;
+
     juce::dsp::FFT fft { static_cast<int>(fftOrder) };
     double currentSampleRate = 44100.0;
     // CRITICAL FIX: Pre-allocated buffers to avoid dynamic allocation in audio path

@@ -150,6 +150,13 @@ private:
     float transientThreshold = 0.3f;         // Threshold for transient detection
     float transientMinDuration = 0.001f;     // Minimum transient duration (1ms)
     float transientMaxDuration = 0.1f;      // Maximum transient duration (100ms)
+
+    // FFT resources for transient frequency estimation (preallocated).
+    static constexpr int transientFftOrder = 10;            // 1024-point FFT
+    static constexpr int transientFftSize  = 1 << transientFftOrder;
+    juce::dsp::FFT transientFft { transientFftOrder };
+    std::vector<float> transientFftBuffer;  // size 2 * transientFftSize (real+imag)
+    std::vector<float> transientWindow;     // Hann window
     
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AdaptiveAIEngine)
 };

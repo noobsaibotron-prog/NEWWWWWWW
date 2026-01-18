@@ -253,13 +253,17 @@ public:
         if (!graphBounds.contains(e.position))
             return;
         
+        // Prevent re-entrancy if a drag is already active
+        if (isDraggingBand)
+            return;
+
         // Check if clicking on a band
-        int clickedBand = getBandAtPosition(e.position);
+        const int clickedBand = getBandAtPosition(e.position);
         
         if (clickedBand >= 0)
         {
-            // Select this band
-            selectedBandIndex = clickedBand;
+            selectedBandIndex = clickedBand;          // UI selection
+            draggedBandIndex = clickedBand;           // locked drag target
             isDraggingBand = true;
             dragStartPos = e.position;
             
@@ -289,7 +293,9 @@ public:
     
     void mouseDrag(const juce::MouseEvent& e) override
     {
-        if (isDraggingBand && selectedBandIndex >= 0)
+        const int targetBand = draggedBandIndex;
+
+        if (isDraggingBand && targetBand >= 0)
         {
             auto delta = e.position - dragStartPos;
             
@@ -309,15 +315,15 @@ public:
             }
             
             // Update processor
-            auto state = processor.getBandState(selectedBandIndex);
+            auto state = processor.getBandState(targetBand);
             state.frequency = newFreq;
             state.gain = newGain;
             state.q = newQ;
-            processor.setBandState(selectedBandIndex, state);
+            processor.setBandState(targetBand, state);
             
             // Notify callback
             if (onBandDragged)
-                onBandDragged(selectedBandIndex, newFreq, newGain, newQ);
+                onBandDragged(targetBand, newFreq, newGain, newQ);
             
             repaint();
         }
@@ -326,6 +332,7 @@ public:
     void mouseUp(const juce::MouseEvent&) override
     {
         isDraggingBand = false;
+        draggedBandIndex = -1;
     }
     
     void mouseDoubleClick(const juce::MouseEvent& e) override
@@ -1099,59 +1106,39 @@ private:
     {
         const int active = processor.getNumActiveBands();
         const int maxBands = AIEqualizerAudioProcessor::maxBands;
-        for (int i = 0; i < std::min(active, maxBands); ++i)
+        const int limit = std::min(active, maxBands);
+
+        auto drawOne = [&](int i)
         {
             auto state = processor.getBandState(i);
-            
             float x = freqToX(state.frequency);
             float y = gainToY(state.gain);
-            
-            // Skip if outside bounds
+
             if (x < graphBounds.getX() - 20 || x > graphBounds.getRight() + 20)
-                continue;
-            
+                return;
+
             juce::Colour col = bandColors[i];
-            bool isSelected = (i == selectedBandIndex);
-            bool isHovered = (i == hoveredBandIndex);
-            bool isDragging = (isDraggingBand && i == selectedBandIndex);
-            
+            const bool isSelected = (i == selectedBandIndex);
+            const bool isHovered = (i == hoveredBandIndex);
+            const bool isDragging = (isDraggingBand && i == draggedBandIndex);
+
             float baseRadius = state.enabled ? 13.0f : 6.0f;
-            float radius = baseRadius;
-            
-            if (isSelected || isHovered || isDragging)
-                radius = baseRadius + 3.0f;
-            
-            //------------------------------------------------------------------
-            // Draw Q indicator (width of the band)
-            //------------------------------------------------------------------
+            float radius = (isSelected || isHovered || isDragging) ? baseRadius + 3.0f : baseRadius;
+
             if (state.enabled && std::abs(state.gain) > 0.5f)
             {
                 float bandwidth = state.frequency / state.q;
                 float x1 = freqToX(state.frequency - bandwidth * 0.5f);
                 float x2 = freqToX(state.frequency + bandwidth * 0.5f);
-                
-                // Draw bandwidth area
                 g.setColour(col.withAlpha(0.08f));
                 g.fillRect(x1, graphBounds.getY(), x2 - x1, graphBounds.getHeight());
-                
-                // Draw vertical line at center
                 g.setColour(col.withAlpha(0.3f));
                 g.drawVerticalLine(static_cast<int>(x), graphBounds.getY(), graphBounds.getBottom());
-            }
-            
-            //------------------------------------------------------------------
-            // Draw connection line from 0dB to current gain
-            //------------------------------------------------------------------
-            if (state.enabled && std::abs(state.gain) > 0.5f)
-            {
                 float zeroY = gainToY(0.0f);
                 g.setColour(col.withAlpha(0.4f));
                 g.drawLine(x, zeroY, x, y, 2.0f);
             }
-            
-            //------------------------------------------------------------------
-            // Draw selection ring
-            //------------------------------------------------------------------
+
             if (isSelected || isDragging)
             {
                 g.setColour(col.withAlpha(0.3f));
@@ -1160,22 +1147,16 @@ private:
                 g.drawEllipse(x - radius - 4, y - radius - 4, (radius + 4) * 2, (radius + 4) * 2, 2.0f);
             }
 
-            //------------------------------------------------------------------
-            // SOLO indicator (badge + outline)
-            //------------------------------------------------------------------
             if (state.solo)
             {
                 juce::Rectangle<float> badge(x - radius - 10.0f, y - radius - 18.0f, 20.0f, 14.0f);
                 g.setColour(ModernLookAndFeel::Colors::accentYellow.withAlpha(0.9f));
                 g.fillRoundedRectangle(badge, 3.0f);
                 g.setColour(ModernLookAndFeel::Colors::bgDark);
-                {
-                    juce::Font font(9.0f);
-                    font.setBold(true);
-                    g.setFont(font);
-                }
+                juce::Font font(9.0f);
+                font.setBold(true);
+                g.setFont(font);
                 g.drawText("S", badge, juce::Justification::centred);
-
                 g.setColour(ModernLookAndFeel::Colors::accentYellow);
                 g.drawEllipse(x - radius - 3, y - radius - 3, (radius + 3) * 2, (radius + 3) * 2, 2.0f);
             }
@@ -1184,25 +1165,16 @@ private:
                 g.setColour(col.withAlpha(0.2f));
                 g.fillEllipse(x - radius - 4, y - radius - 4, (radius + 4) * 2, (radius + 4) * 2);
             }
-            
-            //------------------------------------------------------------------
-            // Draw main circle
-            //------------------------------------------------------------------
+
             if (state.enabled)
             {
-                // Filled circle
                 g.setColour(col.withAlpha(0.9f));
                 g.fillEllipse(x - radius, y - radius, radius * 2, radius * 2);
-                
-                // Border
                 g.setColour(col.brighter(isDragging ? 0.4f : 0.1f));
                 g.drawEllipse(x - radius, y - radius, radius * 2, radius * 2, 2.0f);
-                
-                // Inner highlight
                 g.setColour(juce::Colours::white.withAlpha(0.25f));
                 g.fillEllipse(x - radius * 0.4f, y - radius * 0.7f, radius * 0.6f, radius * 0.3f);
-                
-                // Band number (Roman numerals for 1-4)
+
                 juce::String label;
                 switch (i)
                 {
@@ -1216,58 +1188,58 @@ private:
                     case 7: label = "VIII"; break;
                     default: label = juce::String(i + 1); break;
                 }
-                
                 g.setColour(ModernLookAndFeel::Colors::bgDark);
                 const float fontHeight = (i < 4 ? 10.0f : 9.0f);
-                g.setFont(juce::Font(juce::FontOptions().withHeight(fontHeight)
-                                                          .withStyle("Bold")));
+                g.setFont(juce::Font(juce::FontOptions().withHeight(fontHeight).withStyle("Bold")));
                 g.drawText(label, static_cast<int>(x - radius), static_cast<int>(y - radius),
                           static_cast<int>(radius * 2), static_cast<int>(radius * 2),
                           juce::Justification::centred);
             }
             else
             {
-                // Disabled: small dim circle
                 g.setColour(col.withAlpha(0.3f));
                 g.fillEllipse(x - 5, y - 5, 10, 10);
                 g.setColour(col.withAlpha(0.5f));
                 g.drawEllipse(x - 5, y - 5, 10, 10, 1.0f);
             }
+        };
+
+        for (int i = 0; i < limit; ++i)
+        {
+            if (i == selectedBandIndex)
+                continue;
+            drawOne(i);
         }
-        
-        //----------------------------------------------------------------------
-        // Draw info tooltip for selected band
-        //----------------------------------------------------------------------
-        // BOUNDS CHECK: Ensure selectedBandIndex is valid before accessing bandColors array
+        if (selectedBandIndex >= 0 && selectedBandIndex < limit)
+            drawOne(selectedBandIndex);
+
+        // Tooltip for selected band
         if (selectedBandIndex >= 0 && selectedBandIndex < AIEqualizerAudioProcessor::maxBands)
         {
             auto state = processor.getBandState(selectedBandIndex);
             float x = freqToX(state.frequency);
             float y = gainToY(state.gain);
-            
-            // Format frequency
-            juce::String freqStr = state.frequency >= 1000 
+
+            juce::String freqStr = state.frequency >= 1000
                 ? juce::String(state.frequency / 1000.0f, 1) + " kHz"
                 : juce::String(static_cast<int>(state.frequency)) + " Hz";
-            
-            // Format info
+
             juce::String info = "Band " + juce::String(selectedBandIndex + 1) + ": " + freqStr;
             info += "  " + juce::String(state.gain, 1) + " dB";
             info += "  Q:" + juce::String(state.q, 1);
-            
-            // Draw tooltip background
+
             int tw = 180, th = 18;
             int tx = static_cast<int>(juce::jlimit(graphBounds.getX(), graphBounds.getRight() - tw, x - tw / 2));
             int ty = static_cast<int>(y) - 35;
             if (ty < graphBounds.getY() + 30) ty = static_cast<int>(y) + 25;
-            
+
             g.setColour(ModernLookAndFeel::Colors::bgLight.withAlpha(0.95f));
-            g.fillRoundedRectangle(static_cast<float>(tx), static_cast<float>(ty), 
+            g.fillRoundedRectangle(static_cast<float>(tx), static_cast<float>(ty),
                                    static_cast<float>(tw), static_cast<float>(th), 4.0f);
             g.setColour(bandColors[static_cast<size_t>(selectedBandIndex)]);
-            g.drawRoundedRectangle(static_cast<float>(tx), static_cast<float>(ty), 
+            g.drawRoundedRectangle(static_cast<float>(tx), static_cast<float>(ty),
                                    static_cast<float>(tw), static_cast<float>(th), 4.0f, 1.5f);
-            
+
             g.setColour(ModernLookAndFeel::Colors::textBright);
             g.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
             g.drawText(info, tx, ty, tw, th, juce::Justification::centred);
@@ -1433,8 +1405,6 @@ public:
     int getBandAtPosition(juce::Point<float> pos) const
     {
         const float hitRadius = 10.0f;
-        const float stickyRadius = hitRadius * 2.0f;
-        
         const int active = processor.getNumActiveBands();
         const int maxBands = AIEqualizerAudioProcessor::maxBands;
 
@@ -1448,10 +1418,6 @@ public:
             float by = gainToY(state.gain);
             
             float dist = std::sqrt((pos.x - bx) * (pos.x - bx) + (pos.y - by) * (pos.y - by));
-            
-            // Keep current selection sticky when bands overlap
-            if (i == selectedBandIndex && dist < stickyRadius)
-                return i;
 
             if (dist < bestDist)
             {
@@ -1576,6 +1542,7 @@ private:
     bool hasCaptured = false;
     int captureTextTimer = 0;
     // Spectrum buffers are grown on demand; no shrinking to avoid per-frame realloc
+    int draggedBandIndex = -1;
     
     // Band interaction
     int selectedBandIndex = 0;      // Currently selected band
