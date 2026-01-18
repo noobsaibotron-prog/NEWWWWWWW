@@ -619,8 +619,11 @@ private:
     {
         juce::PopupMenu menu;
 
-        bool showPre = processor.getAPVTS().getRawParameterValue("showPreSpectrum")->load() > 0.5f;
-        bool showPost = processor.getAPVTS().getRawParameterValue("showPostSpectrum")->load() > 0.5f;
+        // Defensive: guard against missing params (should always exist)
+        auto* preParam = processor.getAPVTS().getRawParameterValue("showPreSpectrum");
+        auto* postParam = processor.getAPVTS().getRawParameterValue("showPostSpectrum");
+        bool showPre = preParam ? preParam->load() > 0.5f : false;
+        bool showPost = postParam ? postParam->load() > 0.5f : false;
         bool showDelta = isDeltaEnabled();
         const float slope = getAnalyzerSlopeDbPerOct();
         bool pianoRoll = isPianoRollEnabled();
