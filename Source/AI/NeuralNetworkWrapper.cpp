@@ -209,6 +209,8 @@ NeuralNetworkWrapper::~NeuralNetworkWrapper()
 bool NeuralNetworkWrapper::loadModel(const juce::File& modelFile, ModelType type)
 {
     std::lock_guard<std::mutex> lock(modelMutex);
+    // Also serialize with inference mutex to prevent races with concurrent runInference
+    std::lock_guard<std::mutex> infLock(inferenceMutex);
     
     if (!modelFile.existsAsFile())
         return false;
@@ -251,6 +253,8 @@ void NeuralNetworkWrapper::unloadModel()
 //==============================================================================
 NeuralNetworkWrapper::InferenceResult NeuralNetworkWrapper::runInference(const std::vector<float>& input)
 {
+    // Serialize inference to guard non-thread-safe interpreters (TFLite/libtorch)
+    std::lock_guard<std::mutex> infLock(inferenceMutex);
     std::lock_guard<std::mutex> lock(modelMutex);
     
     if (!currentModel.isLoaded)

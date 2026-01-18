@@ -836,7 +836,10 @@ void AIEngine::detectResonances(float threshold)
         return;
     
     // Convert array to vector for compatibility with existing code
-    std::vector<float> spectrumCopy(snapshot.bins.begin(), snapshot.bins.end());
+    // Reuse scratch buffer to avoid per-call allocations
+    scratchTemp.resize(snapshot.bins.size());
+    std::copy(snapshot.bins.begin(), snapshot.bins.end(), scratchTemp.begin());
+    const auto& spectrumCopy = scratchTemp;
     
     // Use temporally smoothed spectrum for more stable detection
     std::vector<float> smoothedSpectrum = getTemporallySmoothedSpectrum();
@@ -1958,8 +1961,10 @@ float AIEngine::calculateAdaptiveThresholdPercentile(float baseThreshold) const
         return adaptedThreshold * sensMultiplier;
     }
     
-    // Convert to vector for percentile calculation
-    std::vector<float> spectrumCopy(snapshot.bins.begin(), snapshot.bins.end());
+    // Convert to vector for percentile calculation (reuse scratch buffer)
+    scratchTemp.resize(snapshot.bins.size());
+    std::copy(snapshot.bins.begin(), snapshot.bins.end(), scratchTemp.begin());
+    auto& spectrumCopy = scratchTemp;
     
     // Calculate percentiles for robust threshold adaptation
     float percentile95 = calculatePercentile(spectrumCopy, 0.95f);
@@ -2075,8 +2080,10 @@ float AIEngine::computeZScoreAtFrequency(float frequency, int window) const
     if (snapshot.version == 0)
         return 0.0f;
     
-    // Convert to vector for computeZScore
-    std::vector<float> spectrumCopy(snapshot.bins.begin(), snapshot.bins.end());
+    // Convert to vector for computeZScore (reuse scratch buffer)
+    scratchTemp.resize(snapshot.bins.size());
+    std::copy(snapshot.bins.begin(), snapshot.bins.end(), scratchTemp.begin());
+    auto& spectrumCopy = scratchTemp;
     
     int bin = frequencyToBin(frequency);
     bin = juce::jlimit(0, numBins - 1, bin);
@@ -2291,7 +2298,9 @@ void AIEngine::detectProblemsWithML()
     if (snapshot.version == 0)
         return;
     
-    std::vector<float> spectrumCopy(snapshot.bins.begin(), snapshot.bins.end());
+    scratchTemp.resize(snapshot.bins.size());
+    std::copy(snapshot.bins.begin(), snapshot.bins.end(), scratchTemp.begin());
+    auto& spectrumCopy = scratchTemp;
     
     // Set ML context based on source profile
     MLEngine::GenreType mlContext = MLEngine::GenreType::Unknown;
@@ -2673,7 +2682,9 @@ float AIEngine::crossValidateDetection(ProblemType type, float frequency, float 
     if (snapshot.version == 0)
         return 0.5f;  // Neutral confidence if no spectrum
     
-    std::vector<float> spectrumCopy(snapshot.bins.begin(), snapshot.bins.end());
+    scratchTemp.resize(snapshot.bins.size());
+    std::copy(snapshot.bins.begin(), snapshot.bins.end(), scratchTemp.begin());
+    auto& spectrumCopy = scratchTemp;
     
     // Find bin for this frequency
     int bin = frequencyToBin(frequency);
@@ -2897,8 +2908,9 @@ float AIEngine::calculateDynamicRange() const
     if (snapshot.version == 0)
         return 0.0f;
     
-    // Convert to vector for percentile calculation
-    std::vector<float> spectrumCopy(snapshot.bins.begin(), snapshot.bins.end());
+    scratchTemp.resize(snapshot.bins.size());
+    std::copy(snapshot.bins.begin(), snapshot.bins.end(), scratchTemp.begin());
+    auto& spectrumCopy = scratchTemp;
     
     // Calculate dynamic range as difference between 95th and 5th percentile
     float percentile95 = calculatePercentile(spectrumCopy, 0.95f);
@@ -2935,7 +2947,9 @@ float AIEngine::analyzeSpectralCoherence(ProblemType type, float frequency, floa
     if (snapshot.version == 0)
         return 0.0f;
     
-    std::vector<float> spectrumCopy(snapshot.bins.begin(), snapshot.bins.end());
+    scratchTemp.resize(snapshot.bins.size());
+    std::copy(snapshot.bins.begin(), snapshot.bins.end(), scratchTemp.begin());
+    auto& spectrumCopy = scratchTemp;
     
     // Pattern matching for different problem types
     switch (type)

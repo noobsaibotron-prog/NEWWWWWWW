@@ -841,6 +841,31 @@ bool MLEngine::loadWeights(const juce::File& modelFile)
         juce::FileInputStream stream(modelFile);
         if (!stream.openedOk())
             return false;
+
+        // Quick sanity check on expected size (weights + bias) before reading
+        auto expectedLengthFloats = [&]() -> size_t
+        {
+            size_t total = 0;
+            auto addLayer = [&](const DenseLayer* layer)
+            {
+                if (!layer) return;
+                total += static_cast<size_t>(layer->outputSize * layer->inputSize);
+                if (layer->useBias)
+                    total += static_cast<size_t>(layer->outputSize);
+            };
+            addLayer(problemNet_fc1.get()); addLayer(problemNet_fc2.get()); addLayer(problemNet_fc3.get());
+            addLayer(genreNet_fc1.get());   addLayer(genreNet_fc2.get());
+            addLayer(freqNet_fc1.get());    addLayer(freqNet_fc2.get());
+            return total;
+        }();
+        const auto totalBytes = stream.getTotalLength();
+        const auto expectedBytes = static_cast<juce::int64>(expectedLengthFloats * sizeof(float));
+        if (totalBytes > 0 && expectedBytes > 0 && totalBytes < expectedBytes)
+        {
+            AIEQ_LOG_ERROR("ML weights file too small: expected at least " + juce::String(expectedBytes) +
+                           " bytes, got " + juce::String(totalBytes));
+            return false;
+        }
         
         // Read magic number
         uint32_t magic = static_cast<uint32_t>(stream.readInt());

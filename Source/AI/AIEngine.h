@@ -482,6 +482,12 @@ private:
     // (e.g., updateSpectrumHistory, calculateBandEnergyUnlocked)
     // This is updated from the triple-buffer during analysis
     std::vector<float> currentSpectrum;
+    // Preallocated scratch buffers to reduce per-frame allocations
+    mutable std::vector<float> scratchMelBands;
+    mutable std::vector<float> scratchTemp;
+    mutable std::vector<Correction> scratchCorrections;
+    mutable std::vector<Correction> scratchMergedCorrections;
+    mutable std::vector<float> scratchHistoryFrame;
     mutable std::mutex spectrumMutex;  // Only for internal updateSpectrumHistory access
     
     std::vector<Correction> pendingCorrections;

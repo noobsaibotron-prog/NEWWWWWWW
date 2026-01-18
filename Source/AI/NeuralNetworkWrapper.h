@@ -129,6 +129,8 @@ private:
     // Internal implementation
     class Impl;
     std::unique_ptr<Impl> pImpl;
+    // Serialize model load and inference across UI/worker threads (never call from audio thread)
+    std::mutex inferenceMutex;
     
     //==========================================================================
     // State
