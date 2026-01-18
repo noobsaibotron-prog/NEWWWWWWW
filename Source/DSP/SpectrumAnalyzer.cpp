@@ -84,6 +84,10 @@ void SpectrumAnalyzer::resetPeakHold()
 //==============================================================================
 void SpectrumAnalyzer::pushSamples(const juce::AudioBuffer<float>& buffer)
 {
+    // If we are reconfiguring resolution/FIFO, drop incoming audio block to avoid races
+    if (reconfiguring.load(std::memory_order_acquire))
+        return;
+
     const int numSamples = buffer.getNumSamples();
     const int numChannels = buffer.getNumChannels();
     
@@ -240,6 +244,9 @@ void SpectrumAnalyzer::setFFTResolution(Resolution res)
     int newIndex = newOrder - 10; // Map: 10→0(Low), 11→1(Medium), 12→2(High), 13→3(Max)
     newIndex = juce::jlimit(0, 3, newIndex);
     
+    // Block audio writes while we swap state/reset FIFO
+    reconfiguring.store(true, std::memory_order_release);
+
     activeStateIndex.store(newIndex, std::memory_order_release);
     
     // Update cached values from new state
@@ -253,6 +260,8 @@ void SpectrumAnalyzer::setFFTResolution(Resolution res)
     fifo.reset();
     std::fill(fifoBuffer.begin(), fifoBuffer.end(), 0.0f);
     newDataAvailable.store(false, std::memory_order_release);
+
+    reconfiguring.store(false, std::memory_order_release);
 }
 
 void SpectrumAnalyzer::rebuildFFT(int newOrder)

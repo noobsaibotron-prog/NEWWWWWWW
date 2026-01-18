@@ -135,6 +135,7 @@ private:
     
     // State
     std::atomic<bool> newDataAvailable { false };
+    std::atomic<bool> reconfiguring { false }; // blocks push while swapping resolution/FIFO
     bool peakHoldEnabled = true;
     float peakHoldDecayTime = 2.0f;  // seconds
     
