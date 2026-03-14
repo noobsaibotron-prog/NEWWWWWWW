@@ -151,6 +151,7 @@ public:
     void mouseDoubleClick(const juce::MouseEvent&) override
     {
         params.gain = 0.0f;
+        params.filterType = 2; // Reset to Peak — LowCut/HighCut with gain=0 still filters!
         if (onParametersChanged) onParametersChanged(bandIndex, params);
     }
 
