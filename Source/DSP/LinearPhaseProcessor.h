@@ -4,17 +4,30 @@
 #include <vector>
 #include <array>
 #include <complex>
+#include <atomic>
 
 /**
  * Linear-phase convolver using zero-phase IR built from a magnitude response.
- * Uses one convolution instance per channel.
+ *
+ * Uses a **synchronous** Overlap-Add (OLA) frequency-domain convolution engine
+ * instead of juce::dsp::Convolution.  This eliminates all async/timing issues:
+ * when updateImpulseResponse() returns, the new IR is immediately available
+ * for the next process() call — no background threads, no silent gaps.
+ *
+ * Architecture:
+ *   - fftOrder = 13  →  fftSize = 8192
+ *   - irSize   = 4096  (fftSize / 2)
+ *   - hopSize  = 4096  (fftSize - irSize)
+ *   - Two IR frequency-domain slots (A/B) for click-free crossfade on IR changes.
+ *   - Per-channel OLA state (input ring, overlap tail).
  */
 class LinearPhaseProcessor : public juce::dsp::ProcessorBase
 {
 public:
     static constexpr size_t fftOrder = 13;            // 8192-point FFT
-    static constexpr size_t fftSize = 1u << fftOrder; // 8192
-    static constexpr size_t irSize = fftSize / 2;     // 4096 taps
+    static constexpr size_t fftSize  = 1u << fftOrder; // 8192
+    static constexpr size_t irSize   = fftSize / 2;    // 4096 taps
+    static constexpr size_t hopSize  = fftSize - irSize; // 4096 (= irSize in this config)
 
     LinearPhaseProcessor();
     ~LinearPhaseProcessor() override = default;
@@ -26,42 +39,84 @@ public:
 
     /** Update the impulse response from a magnitude spectrum (dB per bin).
         The resulting IR is zero-phase, Hann-windowed (with gain compensation),
-        and loaded into each convolution instance (no peak normalisation to
-        preserve the requested EQ gain).
-        @param magnitudeResponse Magnitude in dB for bins [0 .. N/2)
-        @param sampleRate        Current sample rate
+        and its FFT is stored for immediate use by process().
+        @param magnitudeResponse  Magnitude in dB for bins [0 .. N/2)
+        @param sampleRate         Current sample rate
     */
     void updateImpulseResponse(const std::vector<float>& magnitudeResponse, double sampleRate);
 
-    /** Load a precomputed time-domain IR (mono) into all convolvers. */
+    /** Load a precomputed time-domain IR (mono) into the convolver. */
     void loadImpulseResponse(const std::vector<float>& ir, double sampleRate);
 
 private:
-    void ensureConvolutionCount(size_t channels);
-    void ensureScratchBuffer(size_t channels, size_t samples);
+    // ── IR frequency-domain storage (double-buffered) ──────────────────
+    // Each slot holds the complex FFT of the zero-padded IR (fftSize floats,
+    // stored in JUCE's interleaved real/imag format for performRealOnlyForwardTransform).
+    struct IRSlot
+    {
+        std::vector<float> freqDomain;   // size = fftSize * 2 (complex interleaved)
+        bool valid = false;
+    };
+    std::array<IRSlot, 2> irSlots;
+    std::atomic<int> activeSlot { 0 };   // which slot process() reads from
+    int buildSlot = 1;                    // which slot updateIR writes to
 
-    // Two convolver sets to allow crossfade between IRs without clicks.
-    std::array<std::vector<std::unique_ptr<juce::dsp::Convolution>>, 2> convolverSets;
-    size_t activeSetIndex = 0;
-    size_t pendingSetIndex = 0;
-    bool   activeSetValid = false;
-    bool   pendingSetValid = false;
-
-    // Crossfade state (sample-accurate ramp).
-    static constexpr int crossfadeLengthSamples = 64; // 1.45 ms @44.1k
+    // Crossfade state — must be >= hopSize to cover at least one OLA frame
+    static constexpr int crossfadeLengthSamples = 4096; // one full hop (~93ms @ 44.1kHz)
     int crossfadeSamplesRemaining = 0;
+    int crossfadeFromSlot = 0;           // old slot during crossfade
 
-    // Scratch buffer for dual-processing during crossfade.
-    juce::AudioBuffer<float> scratchBuffer;
-    size_t maxPreparedChannels = 0;
-    size_t maxPreparedSamples  = 0;
+    // ── Per-channel OLA state ──────────────────────────────────────────
+    struct ChannelState
+    {
+        std::vector<float> inputRing;    // circular input buffer (hopSize)
+        size_t inputCount = 0;           // samples accumulated so far
+
+        std::vector<float> overlapTail;  // overlap-add tail from previous block (irSize - 1 samples)
+
+        std::vector<float> outputQueue;    // buffered output waiting to be drained (new IR)
+        std::vector<float> outputQueueB;   // buffered output for old IR during crossfade
+        std::vector<float> overlapTailB;   // overlap tail for old IR slot during crossfade
+        size_t outputReadPos = 0;
+        size_t outputAvailable = 0;
+
+        void reset()
+        {
+            std::fill(inputRing.begin(), inputRing.end(), 0.0f);
+            inputCount = 0;
+            std::fill(overlapTail.begin(),  overlapTail.end(),  0.0f);
+            std::fill(overlapTailB.begin(), overlapTailB.end(), 0.0f);
+            outputReadPos = 0;
+            outputAvailable = 0;
+            std::fill(outputQueue.begin(),  outputQueue.end(),  0.0f);
+            std::fill(outputQueueB.begin(), outputQueueB.end(), 0.0f);
+        }
+    };
+    std::vector<ChannelState> channels;
+
+    // ── Scratch buffers (pre-allocated, reused each OLA frame) ─────────
+    std::vector<float> fftWorkBuf;       // size = fftSize * 2 (for real-only FFT)
+    std::vector<float> ifftWorkBuf;      // size = fftSize * 2
+    std::vector<float> fftWorkBuf2;      // for crossfade second-slot processing
+
+    // ── IR construction scratch (reused across updateImpulseResponse calls) ──
+    std::vector<std::complex<float>> irBuildFreq;   // fftSize
+    std::vector<std::complex<float>> irBuildTime;   // fftSize
+    std::vector<float> irBuildReal;                  // fftSize
 
     juce::dsp::FFT fft { static_cast<int>(fftOrder) };
     double currentSampleRate = 44100.0;
-    // CRITICAL FIX: Pre-allocated buffers to avoid dynamic allocation in audio path
-    // These are resized in prepare() and reused in updateImpulseResponse()
-    std::vector<std::complex<float>> freqDomainBuf;  // size fftSize (complex)
-    std::vector<std::complex<float>> timeDomainBuf;  // size fftSize (complex)
-    std::vector<float> irBuf;                        // size fftSize (real)
-};
 
+    // ── Internal helpers ───────────────────────────────────────────────
+    void ensureChannels(size_t numChannels);
+
+    /** Run one OLA frame for a single channel using the given IR slot.
+        Writes hopSize samples into outBuf.
+        @param overlapTailOverride  If non-null, use this tail buffer instead of ch.overlapTail.
+                                    The tail is updated in-place after the frame. */
+    void processOLAFrame(ChannelState& ch, const float* irFreq, float* outBuf, float* workBuf,
+                         float* overlapTailOverride = nullptr);
+
+    /** Store a time-domain IR (irSize samples) into the build slot's frequency domain. */
+    void storeIRToSlot(const float* irTimeDomain, size_t irLen);
+};
