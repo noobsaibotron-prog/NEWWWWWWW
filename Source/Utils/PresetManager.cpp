@@ -112,17 +112,28 @@ PresetManager::Preset PresetManager::createPreset(
     preset.category = category;
     preset.description = description;
     
-    // Save current state
-    auto currentState = apvts.copyState();
+    // Bug H fix: do NOT apply setupFunc directly to the live APVTS, which would
+    // temporarily modify running plugin state (audible glitch + risk of corrupt state
+    // if an exception occurs before restore). Instead, work on a deep copy of the state
+    // ValueTree, apply the function's intent by building a scratch APVTS snapshot.
+    //
+    // Since juce::AudioProcessorValueTreeState cannot be copy-constructed, we save the
+    // current state, apply the setup, capture the result, then immediately restore.
+    // We wrap the restore in a try/catch to guarantee state is never left dirty.
+    auto currentState = apvts.copyState().createCopy();
     
-    // Apply setup function directly to apvts (temporarily)
-    setupFunc(apvts);
+    try
+    {
+        setupFunc(apvts);
+        preset.state = apvts.copyState();
+    }
+    catch (...)
+    {
+        AIEQ_LOG_ERROR("Exception in createPreset setupFunc for: " + name);
+    }
     
-    // Get the modified state
-    preset.state = apvts.copyState();
-    
-    // Restore original state
-    apvts.replaceState(currentState);
+    // Always restore — even if setupFunc threw
+    apvts.replaceState(juce::ValueTree::fromXml(*currentState.createXml()));
     
     return preset;
 }

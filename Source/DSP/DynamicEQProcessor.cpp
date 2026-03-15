@@ -158,6 +158,13 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
     // LOCK-FREE: Copy dry signal for mix (no allocations)
     //==========================================================================
     const float mix = globalMix.load(std::memory_order_relaxed);
+
+    // Bug G fix: if host delivers a larger block than pre-allocated (e.g. Reaper dynamic block),
+    // grow dryBuffer now. This is a safe path: it only allocates when strictly necessary,
+    // and the call is on the audio thread which is acceptable for a one-time resize.
+    if (mix < 0.999f && numSamples > dryBuffer.getNumSamples())
+        dryBuffer.setSize(channels, numSamples * 2, false, false, true); // *2 to amortize future grows
+
     const int safeSamples = juce::jmin(numSamples, dryBuffer.getNumSamples());
     
     if (mix < 0.999f)
@@ -295,17 +302,16 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
                                 : detectL;
                 
                 // Sidechain filtering
+                // When sidechain is enabled: filter the detect signal with the sidechain bandpass.
+                // When disabled: use the raw detect signal directly for level detection.
+                // NOTE: do NOT use eqFiltersL[1] here — that cascades a second EQ stage onto
+                // the detector signal, which distorts the gain-reduction curve. The second filter
+                // slot in the array is reserved for future 2nd-order (12dB) filter support.
                 float scL = detectL, scR = detectR;
                 if (scEnabled && state.scCoeffs != nullptr)
                 {
                     scL = state.scFilterL.processSample(detectL);
                     scR = state.scFilterR.processSample(detectR);
-                }
-                else
-                {
-                    // Use band-filtered signal for detection
-                    scL = state.eqFiltersL[1].processSample(detectL);
-                    scR = channels > 1 ? state.eqFiltersR[1].processSample(detectR) : scL;
                 }
                 
                 // Calculate input level
