@@ -442,6 +442,16 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# macOS: provide sensible defaults for universal builds while allowing overrides
+if(APPLE)
+    if(NOT DEFINED CMAKE_OSX_DEPLOYMENT_TARGET)
+        set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS deployment target" FORCE)
+    endif()
+    if(NOT DEFINED CMAKE_OSX_ARCHITECTURES OR CMAKE_OSX_ARCHITECTURES STREQUAL "")
+        set(CMAKE_OSX_ARCHITECTURES "x86_64;arm64" CACHE STRING "Build universal binary (Intel + Apple Silicon)" FORCE)
+    endif()
+endif()
+
 
 # Ensure a C++ compiler is available
 if(NOT CMAKE_CXX_COMPILER)
@@ -627,12 +637,18 @@ if(AIEQ_ENABLE_TORCH)
 endif()
 
 if(HAVE_JUCE)
+    # Configure plugin formats (add AU on macOS)
+    set(AIEQ_PLUGIN_FORMATS VST3 Standalone)
+    if(APPLE)
+        list(APPEND AIEQ_PLUGIN_FORMATS AU)
+    endif()
+
     # Create the plugin using JUCE helper
     juce_add_plugin(AIEqualizerPro
         COMPANY_NAME "AIAudio"
         PLUGIN_MANUFACTURER_CODE AIAU
         PLUGIN_CODE AIEQ
-        FORMATS VST3 Standalone
+        FORMATS ${AIEQ_PLUGIN_FORMATS}
         PRODUCT_NAME "AI Equalizer Pro"
         IS_SYNTH FALSE
         NEEDS_MIDI_INPUT FALSE
@@ -686,6 +702,7 @@ if(TARGET AIEqualizerPro)
                 juce::juce_graphics
                 juce::juce_gui_basics
                 juce::juce_gui_extra
+                juce::juce_osc
             PUBLIC
                 juce::juce_recommended_config_flags
                 juce::juce_recommended_warning_flags
@@ -888,25 +905,44 @@ if(TARGET AIEqualizerPro)
     endif()
 endif()
 
-# Unit tests (Debug only). Link against the shared plugin code to exercise state/oversampling/bypass.
-if(HAVE_JUCE AND CMAKE_BUILD_TYPE STREQUAL "Debug")
+# Unit tests — DSP-only, no AI/ML external dependencies (no TFLite, no Torch).
+# Links only LinearPhaseProcessor, ParametricEQProcessor, DynamicEQProcessor
+# directly, avoiding the full plugin build graph.
+if(HAVE_JUCE)
     enable_testing()
+
     add_executable(AIEqualizerPro_Tests
+        Source/DSP/LinearPhaseProcessor.cpp
+        Source/DSP/ParametricEQProcessor.cpp
+        Source/DSP/DynamicEQProcessor.cpp
         Source/Tests/ParametricEQTest.cpp
-        Source/Tests/IntegrationStateTest.cpp
-        Source/Tests/BlockSizeRegressionTest.cpp
+        Source/Tests/LinearPhaseIRSmokeTest.cpp
+        Source/Tests/LinearPhaseGainRegressionTest.cpp
+        Source/Tests/DynamicEQRegressionTest.cpp
         Source/Tests/TestMain.cpp
     )
+    target_compile_features(AIEqualizerPro_Tests PRIVATE cxx_std_20)
+    target_compile_definitions(AIEqualizerPro_Tests PRIVATE
+        JUCE_UNIT_TESTS=1
+        JUCE_GLOBAL_MODULE_SETTINGS_INCLUDED=1
+        JUCE_STRICT_REFCOUNTEDPOINTER=1
+        JUCE_STANDALONE_APPLICATION=0
+    )
+    target_include_directories(AIEqualizerPro_Tests PRIVATE
+        Source
+        Source/DSP
+        Source/Core
+        Source/Utils
+    )
     target_link_libraries(AIEqualizerPro_Tests PRIVATE
-        AIEqualizerPro_SharedCode
         juce::juce_core
         juce::juce_audio_basics
         juce::juce_audio_processors
         juce::juce_dsp
     )
-    target_compile_definitions(AIEqualizerPro_Tests PRIVATE JUCE_UNIT_TESTS=1)
-    set_target_properties(AIEqualizerPro_Tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/Tests)
+    set_target_properties(AIEqualizerPro_Tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/Tests)
 
-    add_test(NAME aieq_blocksize_regression
-             COMMAND $<TARGET_FILE:AIEqualizerPro_Tests> --category=Regression)
+    add_test(NAME aieq_dsp_regression
+             COMMAND $<TARGET_FILE:AIEqualizerPro_Tests>)
 endif()

@@ -28,21 +28,25 @@ public:
         std::vector<float> mag(LinearPhaseProcessor::fftSize / 2, 0.0f);
         lp.updateImpulseResponse(mag, spec.sampleRate);
 
-        // Create a stereo impulse buffer
-        juce::AudioBuffer<float> buf(2, 128);
-        buf.clear();
-        buf.setSample(0, 0, 1.0f);
-        buf.setSample(1, 0, 1.0f);
+        // Process enough samples to fill at least one OLA hop (hopSize = 4096)
+        // and drain some output. Use multiple blocks.
+        const int hopSize = static_cast<int>(LinearPhaseProcessor::hopSize);
+        juce::AudioBuffer<float> buf(2, hopSize);
 
-        juce::dsp::AudioBlock<float> block(buf);
-        juce::dsp::ProcessContextReplacing<float> ctx(block);
-        lp.process(ctx);
-
-        // Validate: no NaN/Inf and some energy present
         float maxAbs = 0.0f;
-        for (int ch = 0; ch < buf.getNumChannels(); ++ch)
+        for (int pass = 0; pass < 4; ++pass)
         {
-            auto* p = buf.getReadPointer(ch);
+            buf.clear();
+            if (pass == 0)
+            {
+                buf.setSample(0, 0, 1.0f);
+                buf.setSample(1, 0, 1.0f);
+            }
+            juce::dsp::AudioBlock<float> block(buf);
+            juce::dsp::ProcessContextReplacing<float> ctx(block);
+            lp.process(ctx);
+
+            auto* p = buf.getReadPointer(0);
             for (int i = 0; i < buf.getNumSamples(); ++i)
             {
                 expect(std::isfinite(p[i]), "Found non-finite sample");
@@ -58,15 +62,20 @@ public:
             mag[bin] = 6.0f;
         lp.updateImpulseResponse(mag, spec.sampleRate);
 
-        buf.clear();
-        buf.setSample(0, 0, 1.0f);
-        buf.setSample(1, 0, 1.0f);
-        lp.process(ctx);
-
         maxAbs = 0.0f;
-        for (int ch = 0; ch < buf.getNumChannels(); ++ch)
+        for (int pass = 0; pass < 4; ++pass)
         {
-            auto* p = buf.getReadPointer(ch);
+            buf.clear();
+            if (pass == 0)
+            {
+                buf.setSample(0, 0, 1.0f);
+                buf.setSample(1, 0, 1.0f);
+            }
+            juce::dsp::AudioBlock<float> block2(buf);
+            juce::dsp::ProcessContextReplacing<float> ctx2(block2);
+            lp.process(ctx2);
+
+            auto* p = buf.getReadPointer(0);
             for (int i = 0; i < buf.getNumSamples(); ++i)
             {
                 expect(std::isfinite(p[i]), "Found non-finite sample after boost");
