@@ -150,33 +150,49 @@ public:
     void paint(juce::Graphics& g) override
     {
         g.setImageResamplingQuality(juce::Graphics::ResamplingQuality::highResamplingQuality);
-        g.reduceClipRegion(getLocalBounds()); // ensure crisp edges
+        g.reduceClipRegion(getLocalBounds());
 
         auto bounds = getLocalBounds().toFloat();
         
-        // Background
-        g.setColour(ModernLookAndFeel::Colors::bgDark);
-        g.fillRoundedRectangle(bounds, 6.0f);
+        // === PREMIUM BACKGROUND — subtle vertical gradient ===
+        {
+            juce::ColourGradient bgGrad(
+                juce::Colour(0xFF101018), bounds.getX(), bounds.getY(),
+                juce::Colour(0xFF0A0A12), bounds.getX(), bounds.getBottom(), false);
+            bgGrad.addColour(0.5, juce::Colour(0xFF0E0E16));
+            g.setGradientFill(bgGrad);
+            g.fillRoundedRectangle(bounds, 4.0f);
+        }
         
         // Graph area
         graphBounds = bounds.reduced(45, 25);
         graphBounds.removeFromBottom(22);
         graphBounds.removeFromLeft(5);
+
+        // Subtle inner shadow at top of graph area
+        {
+            juce::ColourGradient shadowGrad(
+                juce::Colour(0x18000000), graphBounds.getX(), graphBounds.getY(),
+                juce::Colours::transparentBlack, graphBounds.getX(), graphBounds.getY() + 30, false);
+            g.setGradientFill(shadowGrad);
+            g.fillRect(graphBounds.getX(), graphBounds.getY(), graphBounds.getWidth(), 30.0f);
+        }
         
         drawGrid(g);
         drawSpectrum(g);
         drawSpectrumGrab(g);
-        drawProblemHighlight(g);  // Draw AI problem highlight BEFORE EQ curve
+        drawProblemHighlight(g);
+        drawEQCurveFill(g);   // Per-band colored fill under EQ curve
         drawEQCurve(g);
-        drawEQBands(g);      // Draw EQ band controls on spectrum
+        drawEQBands(g);
         drawAIMarkers(g);
         drawLabels(g);
         
         if (hoverX >= 0) drawHover(g);
         
-        // Border
-        g.setColour(ModernLookAndFeel::Colors::bgLighter);
-        g.drawRoundedRectangle(bounds.reduced(0.5f), 6.0f, 1.0f);
+        // Subtle border
+        g.setColour(juce::Colour(0xFF222230));
+        g.drawRoundedRectangle(bounds.reduced(0.5f), 4.0f, 1.0f);
     }
 
     void resized() override 
@@ -689,7 +705,9 @@ private:
 
     void drawSpectrumGrab(juce::Graphics& g)
     {
-        bool showPre = processor.getAPVTS().getRawParameterValue("showPreSpectrum")->load() > 0.5f;
+        // Bug L fix: null-check before deref (parameter may not exist during teardown)
+        auto* preP = processor.getAPVTS().getRawParameterValue("showPreSpectrum");
+        bool showPre = preP ? preP->load() > 0.5f : false;
         if (!showPre || detectedPeaks.empty())
             return;
 
@@ -820,34 +838,58 @@ private:
 
     void drawGrid(juce::Graphics& g)
     {
-        // Vertical frequency lines
-        const float freqs[] = { 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000 };
+        // === Ultra-subtle frequency grid lines ===
+        const float freqs[] = { 20, 30, 40, 50, 60, 80, 100, 200, 300, 400, 500, 600, 800,
+                                1000, 2000, 3000, 4000, 5000, 6000, 8000, 10000, 20000 };
         for (float f : freqs)
         {
             float x = freqToX(f);
             if (x < graphBounds.getX() || x > graphBounds.getRight()) continue;
             
             bool major = (f == 100 || f == 1000 || f == 10000);
-            g.setColour(major ? ModernLookAndFeel::Colors::gridMajor 
-                              : ModernLookAndFeel::Colors::grid);
+            bool decade = (f == 20 || f == 200 || f == 2000 || f == 20000);
+            
+            if (major || decade)
+                g.setColour(juce::Colour(0xFF1E1E2A));  // Slightly visible
+            else
+                g.setColour(juce::Colour(0xFF151520));  // Nearly invisible
+            
             g.drawVerticalLine((int)x, graphBounds.getY(), graphBounds.getBottom());
         }
         
-        // Horizontal dB lines
-        for (float db = spectrumMinDb; db <= spectrumMaxDb; db += 12.0f)
+        // === Horizontal dB lines — finer grid ===
+        for (float db = spectrumMinDb; db <= spectrumMaxDb; db += 6.0f)
         {
             float y = dbToY(db);
             bool isZero = std::abs(db) < 0.01f;
-            g.setColour(isZero ? ModernLookAndFeel::Colors::textMuted.withAlpha(0.4f)
-                               : ModernLookAndFeel::Colors::grid);
-            g.drawHorizontalLine((int)y, graphBounds.getX(), graphBounds.getRight());
+            bool isMajor = (std::fmod(std::abs(db), 12.0f) < 0.01f);
+            
+            if (isZero)
+            {
+                // 0 dB line — slightly brighter, dashed feel
+                g.setColour(juce::Colour(0xFF2A2A3A));
+                g.drawHorizontalLine((int)y, graphBounds.getX(), graphBounds.getRight());
+            }
+            else if (isMajor)
+            {
+                g.setColour(juce::Colour(0xFF1A1A28));
+                g.drawHorizontalLine((int)y, graphBounds.getX(), graphBounds.getRight());
+            }
+            else
+            {
+                g.setColour(juce::Colour(0xFF131320));
+                g.drawHorizontalLine((int)y, graphBounds.getX(), graphBounds.getRight());
+            }
         }
     }
 
     void drawSpectrum(juce::Graphics& g)
     {
-        bool showPre = processor.getAPVTS().getRawParameterValue("showPreSpectrum")->load() > 0.5f;
-        bool showPost = processor.getAPVTS().getRawParameterValue("showPostSpectrum")->load() > 0.5f;
+        // Bug L fix: null-check before deref (parameter may not exist during teardown)
+        auto* preP  = processor.getAPVTS().getRawParameterValue("showPreSpectrum");
+        auto* postP = processor.getAPVTS().getRawParameterValue("showPostSpectrum");
+        bool showPre  = preP  ? preP->load()  > 0.5f : false;
+        bool showPost = postP ? postP->load() > 0.5f : false;
         bool showDelta = isDeltaEnabled();
         bool showCaptured = showCapturedButton.getToggleState() && hasCaptured;
 
@@ -1049,20 +1091,91 @@ private:
         }
     }
 
+    /** Per-band colored gradient fill under the EQ curve */
+    void drawEQCurveFill(juce::Graphics& g)
+    {
+        if (!processor.isProcessorReady() || graphBounds.isEmpty())
+            return;
+
+        rebuildEQCurvePath();
+
+        auto& eq = processor.getEQProcessor();
+        double sr = processor.getSampleRate();
+        if (sr <= 0) sr = 44100.0;
+
+        const int active = processor.getNumActiveBands();
+        const float zeroY = dbToY(0.0f);
+        const float yScale = graphBounds.getHeight() * 0.45f;
+
+        // Draw a colored fill for each active band's contribution
+        for (int b = 0; b < std::min(active, AIEqualizerAudioProcessor::maxBands); ++b)
+        {
+            auto state = processor.getBandState(b);
+            if (!state.enabled || std::abs(state.gain) < 0.3f)
+                continue;
+
+            juce::Colour col = bandColors[b];
+            
+            // Build a fill path for this band's region
+            float bandwidth = state.frequency / juce::jmax(0.1f, state.q);
+            float lowF = juce::jmax(20.0f, state.frequency - bandwidth * 1.5f);
+            float highF = juce::jmin(20000.0f, state.frequency + bandwidth * 1.5f);
+            float x1 = freqToX(lowF);
+            float x2 = freqToX(highF);
+            float centerX = freqToX(state.frequency);
+
+            juce::Path bandFill;
+            bandFill.startNewSubPath(x1, zeroY);
+
+            for (float x = x1; x <= x2; x += 2.0f)
+            {
+                float freq = xToFreq(x);
+                float mag = eq.getMagnitudeForFrequency(static_cast<double>(freq), sr);
+                float db = juce::Decibels::gainToDecibels(mag, -48.0f);
+                db = juce::jlimit(-24.0f, 24.0f, db);
+                float y = zeroY - (db / 24.0f) * yScale;
+                bandFill.lineTo(x, y);
+            }
+            bandFill.lineTo(x2, zeroY);
+            bandFill.closeSubPath();
+
+            // Gradient from band color (at curve) to transparent (at zero line)
+            bool isBoost = state.gain > 0;
+            juce::ColourGradient fillGrad(
+                col.withAlpha(0.25f),
+                centerX, isBoost ? (zeroY - std::abs(state.gain) / 24.0f * yScale) : zeroY,
+                col.withAlpha(0.02f),
+                centerX, isBoost ? zeroY : (zeroY + std::abs(state.gain) / 24.0f * yScale),
+                false);
+            g.setGradientFill(fillGrad);
+            g.fillPath(bandFill);
+        }
+    }
+
     void drawEQCurve(juce::Graphics& g)
     {
-        // SAFETY: Skip if processor not ready
         if (!processor.isProcessorReady())
             return;
 
         rebuildEQCurvePath();
 
-        // EQ curve (white/gray like TDR Nova)
-        g.setColour(ModernLookAndFeel::Colors::eqCurve.withAlpha(0.15f));
-        g.strokePath(cachedEQCurve, juce::PathStrokeType(4.0f));
+        if (cachedEQCurve.isEmpty())
+            return;
+
+        // === GLOW LAYER 1: Wide soft outer glow ===
+        g.setColour(juce::Colour(0xFFB0C8E8).withAlpha(0.06f));
+        g.strokePath(cachedEQCurve, juce::PathStrokeType(8.0f, juce::PathStrokeType::curved,
+                                                           juce::PathStrokeType::rounded));
         
-        g.setColour(ModernLookAndFeel::Colors::eqCurve);
-        g.strokePath(cachedEQCurve, juce::PathStrokeType(2.0f));
+        // === GLOW LAYER 2: Medium glow ===
+        g.setColour(juce::Colour(0xFFB0C8E8).withAlpha(0.12f));
+        g.strokePath(cachedEQCurve, juce::PathStrokeType(4.0f, juce::PathStrokeType::curved,
+                                                           juce::PathStrokeType::rounded));
+
+        // === MAIN CURVE: Bright crisp line ===
+        g.setColour(juce::Colour(0xFFD8E4F0));
+        g.strokePath(cachedEQCurve, juce::PathStrokeType(1.8f, juce::PathStrokeType::curved,
+                                                           juce::PathStrokeType::rounded));
     }
 
     void drawAIMarkers(juce::Graphics& g)
@@ -1122,85 +1235,73 @@ private:
             const bool isHovered = (i == hoveredBandIndex);
             const bool isDragging = (isDraggingBand && i == draggedBandIndex);
 
-            float baseRadius = state.enabled ? 13.0f : 6.0f;
-            float radius = (isSelected || isHovered || isDragging) ? baseRadius + 3.0f : baseRadius;
+            // === FabFilter-style band node ===
+            float baseRadius = state.enabled ? 11.0f : 5.0f;
+            float radius = baseRadius;
+            if (isDragging) radius = baseRadius + 4.0f;
+            else if (isSelected) radius = baseRadius + 2.0f;
+            else if (isHovered) radius = baseRadius + 2.0f;
 
-            if (state.enabled && std::abs(state.gain) > 0.5f)
+            // Vertical guide line from 0dB to node (subtle)
+            if (state.enabled && std::abs(state.gain) > 0.3f)
             {
-                float bandwidth = state.frequency / state.q;
-                float x1 = freqToX(state.frequency - bandwidth * 0.5f);
-                float x2 = freqToX(state.frequency + bandwidth * 0.5f);
-                g.setColour(col.withAlpha(0.08f));
-                g.fillRect(x1, graphBounds.getY(), x2 - x1, graphBounds.getHeight());
-                g.setColour(col.withAlpha(0.3f));
-                g.drawVerticalLine(static_cast<int>(x), graphBounds.getY(), graphBounds.getBottom());
                 float zeroY = gainToY(0.0f);
-                g.setColour(col.withAlpha(0.4f));
-                g.drawLine(x, zeroY, x, y, 2.0f);
+                g.setColour(col.withAlpha(0.15f));
+                g.drawLine(x, zeroY, x, y, 1.0f);
             }
 
+            // === GLOW (selected/hovered/dragging) ===
             if (isSelected || isDragging)
             {
-                g.setColour(col.withAlpha(0.3f));
-                g.fillEllipse(x - radius - 6, y - radius - 6, (radius + 6) * 2, (radius + 6) * 2);
-                g.setColour(col.withAlpha(0.7f));
-                g.drawEllipse(x - radius - 4, y - radius - 4, (radius + 4) * 2, (radius + 4) * 2, 2.0f);
-            }
-
-            if (state.solo)
-            {
-                juce::Rectangle<float> badge(x - radius - 10.0f, y - radius - 18.0f, 20.0f, 14.0f);
-                g.setColour(ModernLookAndFeel::Colors::accentYellow.withAlpha(0.9f));
-                g.fillRoundedRectangle(badge, 3.0f);
-                g.setColour(ModernLookAndFeel::Colors::bgDark);
-                juce::Font font(9.0f);
-                font.setBold(true);
-                g.setFont(font);
-                g.drawText("S", badge, juce::Justification::centred);
-                g.setColour(ModernLookAndFeel::Colors::accentYellow);
-                g.drawEllipse(x - radius - 3, y - radius - 3, (radius + 3) * 2, (radius + 3) * 2, 2.0f);
+                // Soft outer glow
+                g.setColour(col.withAlpha(0.10f));
+                g.fillEllipse(x - radius - 10, y - radius - 10, (radius + 10) * 2, (radius + 10) * 2);
+                g.setColour(col.withAlpha(0.18f));
+                g.fillEllipse(x - radius - 5, y - radius - 5, (radius + 5) * 2, (radius + 5) * 2);
             }
             else if (isHovered)
             {
-                g.setColour(col.withAlpha(0.2f));
-                g.fillEllipse(x - radius - 4, y - radius - 4, (radius + 4) * 2, (radius + 4) * 2);
+                g.setColour(col.withAlpha(0.12f));
+                g.fillEllipse(x - radius - 6, y - radius - 6, (radius + 6) * 2, (radius + 6) * 2);
+            }
+
+            // Solo badge
+            if (state.solo)
+            {
+                juce::Rectangle<float> badge(x + radius, y - radius - 4, 16.0f, 12.0f);
+                g.setColour(ModernLookAndFeel::Colors::accentYellow.withAlpha(0.9f));
+                g.fillRoundedRectangle(badge, 3.0f);
+                g.setColour(ModernLookAndFeel::Colors::bgDark);
+                g.setFont(juce::Font(juce::FontOptions().withHeight(8.0f).withStyle("Bold")));
+                g.drawText("S", badge, juce::Justification::centred);
             }
 
             if (state.enabled)
             {
-                g.setColour(col.withAlpha(0.9f));
+                // === SEMI-TRANSPARENT FILL (Pro-Q style — not fully opaque) ===
+                g.setColour(col.withAlpha(isDragging ? 0.65f : (isSelected ? 0.55f : 0.40f)));
                 g.fillEllipse(x - radius, y - radius, radius * 2, radius * 2);
-                g.setColour(col.brighter(isDragging ? 0.4f : 0.1f));
-                g.drawEllipse(x - radius, y - radius, radius * 2, radius * 2, 2.0f);
-                g.setColour(juce::Colours::white.withAlpha(0.25f));
-                g.fillEllipse(x - radius * 0.4f, y - radius * 0.7f, radius * 0.6f, radius * 0.3f);
+                
+                // Luminous border ring
+                g.setColour(col.withAlpha(isDragging ? 1.0f : (isSelected ? 0.9f : 0.7f)));
+                g.drawEllipse(x - radius, y - radius, radius * 2, radius * 2,
+                             isDragging ? 2.5f : 1.8f);
 
-                juce::String label;
-                switch (i)
-                {
-                    case 0: label = "I"; break;
-                    case 1: label = "II"; break;
-                    case 2: label = "III"; break;
-                    case 3: label = "IV"; break;
-                    case 4: label = "V"; break;
-                    case 5: label = "VI"; break;
-                    case 6: label = "VII"; break;
-                    case 7: label = "VIII"; break;
-                    default: label = juce::String(i + 1); break;
-                }
-                g.setColour(ModernLookAndFeel::Colors::bgDark);
-                const float fontHeight = (i < 4 ? 10.0f : 9.0f);
-                g.setFont(juce::Font(juce::FontOptions().withHeight(fontHeight).withStyle("Bold")));
-                g.drawText(label, static_cast<int>(x - radius), static_cast<int>(y - radius),
+                // Band number (simple, clean)
+                g.setColour(juce::Colours::white.withAlpha(0.9f));
+                g.setFont(juce::Font(juce::FontOptions().withHeight(10.0f).withStyle("Bold")));
+                g.drawText(juce::String(i + 1),
+                          static_cast<int>(x - radius), static_cast<int>(y - radius),
                           static_cast<int>(radius * 2), static_cast<int>(radius * 2),
                           juce::Justification::centred);
             }
             else
             {
-                g.setColour(col.withAlpha(0.3f));
-                g.fillEllipse(x - 5, y - 5, 10, 10);
-                g.setColour(col.withAlpha(0.5f));
-                g.drawEllipse(x - 5, y - 5, 10, 10, 1.0f);
+                // Disabled: tiny ring only
+                g.setColour(col.withAlpha(0.20f));
+                g.fillEllipse(x - 4, y - 4, 8, 8);
+                g.setColour(col.withAlpha(0.40f));
+                g.drawEllipse(x - 4, y - 4, 8, 8, 1.0f);
             }
         };
 
@@ -1249,15 +1350,16 @@ private:
 public:
     void drawLabels(juce::Graphics& g)
     {
-        g.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
-        g.setColour(ModernLookAndFeel::Colors::textMuted);
+        // === dB labels (left side, small and subtle) ===
+        g.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
         
-        // dB labels
         for (float db = spectrumMinDb; db <= spectrumMaxDb; db += 12.0f)
         {
             float y = dbToY(db);
+            bool isZero = std::abs(db) < 0.01f;
+            g.setColour(isZero ? juce::Colour(0xFF606078) : juce::Colour(0xFF3A3A4A));
             juce::String txt = juce::String((int)db);
-            g.drawText(txt, 5, (int)y - 7, 32, 14, juce::Justification::centredRight);
+            g.drawText(txt, 4, (int)y - 6, 34, 12, juce::Justification::centredRight);
         }
 
         if (isPianoRollEnabled())
@@ -1266,7 +1368,9 @@ public:
             return;
         }
 
-        // Frequency labels
+        // === Frequency labels (bottom, refined) ===
+        g.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
+        
         const std::pair<float, const char*> freqLabels[] = {
             {20.0f,"20"}, {50.0f,"50"}, {100.0f,"100"}, {200.0f,"200"}, {500.0f,"500"},
             {1000.0f,"1k"}, {2000.0f,"2k"}, {5000.0f,"5k"}, {10000.0f,"10k"}, {20000.0f,"20k"}
@@ -1275,8 +1379,12 @@ public:
         {
             float x = freqToX(f);
             if (x >= graphBounds.getX() && x <= graphBounds.getRight())
-                g.drawText(lbl, (int)x - 15, (int)graphBounds.getBottom() + 3, 30, 14, 
+            {
+                bool isMajor = (f == 100 || f == 1000 || f == 10000);
+                g.setColour(isMajor ? juce::Colour(0xFF505068) : juce::Colour(0xFF3A3A4A));
+                g.drawText(lbl, (int)x - 15, (int)graphBounds.getBottom() + 3, 30, 12, 
                           juce::Justification::centred);
+            }
         }
     }
 
