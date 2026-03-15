@@ -67,78 +67,41 @@ void LinearPhaseProcessor::process(const juce::dsp::ProcessContextReplacing<floa
         return;
     }
 
-    const float* irFreqA = irSlots[currentActive].freqDomain.data();
-
-    // During crossfade, we also need the old slot
-    const bool doCrossfade = (crossfadeSamplesRemaining > 0 && irSlots[crossfadeFromSlot].valid);
-    const float* irFreqB = doCrossfade ? irSlots[crossfadeFromSlot].freqDomain.data() : nullptr;
-
-    // Crossfade is tracked per-sample; grab a mutable copy for the loop
-    int xfadeRemaining = crossfadeSamplesRemaining;
-
     for (size_t ch = 0; ch < numChannels; ++ch)
     {
         float* data = block.getChannelPointer(ch);
         auto&  state = channels[ch];
-        int localXfade = xfadeRemaining; // reset per-channel (both see same crossfade window)
 
         for (size_t i = 0; i < numSamples; ++i)
         {
-            // ALWAYS accumulate input — independent of output draining
+            // Accumulate input into hop buffer
             state.inputRing[state.inputCount++] = data[i];
 
-            // When we have a full hop, run OLA frame(s) and blend if crossfading
+            // When we have a full hop, run one OLA frame
             if (state.inputCount >= hopSize)
             {
                 state.inputCount = 0;
 
-                if (doCrossfade && irFreqB != nullptr && localXfade > 0)
-                {
-                    // Run OLA with both IRs — use separate overlap tails to avoid contamination
-                    processOLAFrame(state, irFreqA, state.outputQueue.data(),  fftWorkBuf.data());
-                    processOLAFrame(state, irFreqB, state.outputQueueB.data(), fftWorkBuf2.data(),
-                                    state.overlapTailB.data());
-
-                    // Blend: new IR ramps in, old IR ramps out over crossfadeLengthSamples
-                    const float newWeight = 1.0f - static_cast<float>(localXfade) / static_cast<float>(crossfadeLengthSamples);
-                    const float oldWeight = 1.0f - newWeight;
-                    for (size_t n = 0; n < hopSize; ++n)
-                        state.outputQueue[n] = newWeight * state.outputQueue[n]
-                                             + oldWeight * state.outputQueueB[n];
-                }
-                else
-                {
-                    processOLAFrame(state, irFreqA, state.outputQueue.data(), fftWorkBuf.data());
-                }
+                // Always read the latest active IR for this hop.
+                // OLA overlap tail from previous hop naturally blends old→new IR.
+                const float* currentIR = irSlots[activeSlot.load(std::memory_order_acquire)].freqDomain.data();
+                processOLAFrame(state, currentIR, state.outputQueue.data(), fftWorkBuf.data());
 
                 state.outputReadPos  = 0;
                 state.outputAvailable = hopSize;
             }
 
-            // ALWAYS drain output — if available, emit the convolved sample; else zero (initial latency)
+            // Drain output
             if (state.outputAvailable > 0)
             {
-                data[i] = state.outputQueue[state.outputReadPos];
-                state.outputReadPos++;
+                data[i] = state.outputQueue[state.outputReadPos++];
                 state.outputAvailable--;
             }
             else
             {
                 data[i] = 0.0f;
             }
-
-            // Advance crossfade counter sample-by-sample
-            if (localXfade > 0)
-                --localXfade;
         }
-    }
-
-    // Update shared crossfade counter (advance by numSamples, clamp to 0)
-    if (crossfadeSamplesRemaining > 0)
-    {
-        crossfadeSamplesRemaining -= static_cast<int>(numSamples);
-        if (crossfadeSamplesRemaining <= 0)
-            crossfadeSamplesRemaining = 0;
     }
 }
 
@@ -237,8 +200,13 @@ void LinearPhaseProcessor::updateImpulseResponse(const std::vector<float>& magni
                 irBuildReal.begin() + static_cast<long>(rotateOffset),
                 irBuildReal.end());
 
-    // Apply Hann window with gain compensation (first irSize samples only)
-    constexpr float hannGainComp = 2.0f;
+    // Apply Hann window (first irSize samples only)
+    // No gain compensation needed: the Hann window is applied to the IR for anti-ringing
+    // (smoothing time-domain truncation), not for OLA synthesis reconstruction.
+    // The coherent-gain-of-0.5 compensation only applies to OLA analysis/synthesis windows
+    // (e.g. phase vocoder), not to convolution IRs. For flat EQ the peak of the Hann window
+    // at centre (n = irSize/2) is exactly 1.0, so no scaling is required to preserve unity gain.
+    constexpr float hannGainComp = 1.0f;
     for (size_t n = 0; n < irSize; ++n)
     {
         const float w = 0.5f * (1.0f - std::cos(2.0f * juce::MathConstants<float>::pi
@@ -265,6 +233,24 @@ void LinearPhaseProcessor::loadImpulseResponse(const std::vector<float>& ir, dou
     std::copy(ir.begin(), ir.begin() + irLen, irBuildReal.begin());
 
     storeIRToSlot(irBuildReal.data(), irSize);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// storeFreqIRDirect  — accept pre-computed freq-domain IR (no FFT needed)
+// ═══════════════════════════════════════════════════════════════════════════
+
+void LinearPhaseProcessor::storeFreqIRDirect(const float* freqDomainData)
+{
+    // Write to the inactive slot, then atomically swap.
+    // No crossfade needed: OLA overlap tail naturally smooths the transition
+    // because the tail from the previous hop (old IR) is added to the output
+    // of the next hop (new IR), creating a gradual blend over irSize samples.
+    auto& slot = irSlots[buildSlot];
+    std::copy(freqDomainData, freqDomainData + fftSize * 2, slot.freqDomain.begin());
+    slot.valid = true;
+
+    activeSlot.store(buildSlot, std::memory_order_release);
+    buildSlot = 1 - buildSlot;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

@@ -69,6 +69,10 @@ AIEqualizerAudioProcessor::AIEqualizerAudioProcessor()
     
     // Initialize history manager with APVTS reference
     historyManager.initialize(apvts);
+
+    // OSC parameter server created here but started in prepareToPlay
+    // (starting in constructor crashes during VST3 plugin scan)
+    oscParamServer = std::make_unique<OSCParameterServer>(apvts, 11100);
     
     // Start IR builder thread (RAII with std::jthread)
     irBuilderThread = std::jthread([this](std::stop_token st) {
@@ -216,8 +220,9 @@ void AIEqualizerAudioProcessor::irBuilderThreadFunc(std::stop_token st)
         //   - Maximum IR sample value: ±10.0 (clamped for safety)
         //======================================================================
         
-        // STAGE 1: IFFT normalization (1/N)
-        const float ifftScale = 1.0f / static_cast<float>(fftSize);
+        // STAGE 1: IFFT normalization
+        // NOTE: JUCE's fft.perform(inverse=true) already applies 1/N scaling internally.
+        // Do NOT apply an additional 1/N here — that was causing the IR to be ~N times too quiet.
         
         // STAGE 2: Global attenuation compensation
         // Calculate average linear magnitude across all bins
@@ -233,14 +238,29 @@ void AIEqualizerAudioProcessor::irBuilderThreadFunc(std::stop_token st)
                                          ? std::min(1.0f / avgMag, 100.0f) 
                                          : 1.0f;
         
-        // Apply STAGE 1 + STAGE 2 scaling
+        // Apply STAGE 2 scaling only (STAGE 1 already handled by JUCE IFFT)
         for (size_t n = 0; n < LinearPhaseProcessor::fftSize; ++n)
-            irBuf[n] = timeDomain[n].real() * ifftScale * globalCompensation;
+            irBuf[n] = timeDomain[n].real() * globalCompensation;
 
         // Center (circular shift to create zero-phase / linear-phase IR)
-        // This places the IR peak at the center, creating symmetric linear-phase response
+        // 
+        // BUG FIX: The previous rotation by halfSize (4096) placed the IR peak at index 4096,
+        // which is then EXCLUDED when we load only the first irSize=4096 samples (indices 0..4095).
+        // The result: only the tail of the IR was loaded, causing near-zero volume in linear phase mode.
+        //
+        // CORRECT rotation: shift so the peak lands at irSize/2 = 2048 (center of the loaded window).
+        // The IFFT of a real-symmetric spectrum has its peak at index 0.
+        // To move it to position irSize/2 within the first irSize samples, we rotate by:
+        //   rotateOffset = fftSize - irSize/2 = 8192 - 2048 = 6144
+        // After rotate, element that was at index 6144 becomes index 0,
+        // so index 0 (the peak) ends up at position fftSize-6144 = 2048. ✓
+        //
         // Reference: Oppenheim & Schafer, "Discrete-Time Signal Processing", Chapter 5
-        std::rotate(irBuf.begin(), irBuf.begin() + static_cast<long>(halfSize), irBuf.end());
+        {
+            const size_t peakTargetIndex = LinearPhaseProcessor::irSize / 2;              // 2048
+            const size_t rotateOffset    = LinearPhaseProcessor::fftSize - peakTargetIndex; // 6144
+            std::rotate(irBuf.begin(), irBuf.begin() + static_cast<long>(rotateOffset), irBuf.end());
+        }
 
         //======================================================================
         // HANN WINDOW APPLICATION
@@ -248,15 +268,19 @@ void AIEqualizerAudioProcessor::irBuilderThreadFunc(std::stop_token st)
         // Purpose: Smooth time-domain truncation to reduce frequency ripple
         // The Hann (raised cosine) window provides -31dB sidelobe suppression
         // 
-        // Gain factor: Hann window has coherent gain of 0.5
-        // This is NOT compensated here - the gain is preserved in the EQ curve
+        // Gain compensation: Hann window has coherent gain of 0.5.
+        // We compensate with hannGainComp = 2.0f to preserve correct output level,
+        // consistent with LinearPhaseProcessor::updateImpulseResponse().
         // Do NOT normalize to maxAbs=1.0 - this would destroy EQ gain information!
         //======================================================================
+        // hannGainComp = 1.0: Hann window applied to IR for anti-ringing only, no gain compensation needed.
+        // See LinearPhaseProcessor.cpp for full explanation.
+        constexpr float hannGainComp = 1.0f;
         for (size_t n = 0; n < LinearPhaseProcessor::irSize; ++n)
         {
             const float w = 0.5f * (1.0f - std::cos(2.0f * juce::MathConstants<float>::pi * static_cast<float>(n)
                                                     / static_cast<float>(LinearPhaseProcessor::irSize - 1)));
-            irBuf[n] *= w;
+            irBuf[n] *= (w * hannGainComp);
         }
         
         //======================================================================
@@ -287,59 +311,40 @@ void AIEqualizerAudioProcessor::irBuilderThreadFunc(std::stop_token st)
         if (!finiteIR)
             continue;
 
-        // Load IR into back processor (double-buffered)
-        const int backIdx = 1 - activeIRIndex.load(std::memory_order_relaxed);
-        if (backIdx >= 0 && backIdx < static_cast<int>(linearPhaseProcessors.size()))
+        // Measure IR magnitude for STAGE 3 decision
         {
-            if (auto* back = linearPhaseProcessors[static_cast<size_t>(backIdx)].get())
+            float maxAbs = 0.0f;
+            for (size_t n = 0; n < LinearPhaseProcessor::irSize; ++n)
+                maxAbs = std::max(maxAbs, std::abs(irBuf[n]));
+
+            constexpr float minReasonableIR = 1e-02f;   // -40 dBFS threshold
+            constexpr float targetIR = 0.1f;            // -20 dBFS target
+            constexpr float maxScaleBoost = 1.0e4f;     // +80 dB max
+
+            float irScale = 1.0f;
+            if (maxAbs > 0.0f && maxAbs < minReasonableIR)
             {
-                // Measure IR magnitude for STAGE 3 decision
-                float maxAbs = 0.0f;
-                float rms = 0.0f;
-                for (size_t n = 0; n < LinearPhaseProcessor::irSize; ++n)
-                {
-                    maxAbs = std::max(maxAbs, std::abs(irBuf[n]));
-                    rms += irBuf[n] * irBuf[n];
-                }
-                rms = std::sqrt(rms / static_cast<float>(LinearPhaseProcessor::irSize));
-                juce::ignoreUnused(rms, backIdx); // RMS available for future diagnostics
-                
-                //==============================================================
-                // STAGE 3: Final Safety Scaling
-                //==============================================================
-                // After IFFT + global compensation, IR may still be too quiet.
-                // This happens with extreme cuts or numerical precision loss.
-                //
-                // Thresholds (empirically validated):
-                //   minReasonableIR = 1e-04 (-80dBFS): Below this, IR is inaudible
-                //   targetIR = 0.1 (-20dBFS): Reasonable working level
-                //   maxScaleBoost = 1e4 (+80dB): Prevents runaway amplification
-                //
-                // When to apply: Only when peak < threshold (very quiet IR)
-                // Effect: Brings quiet IRs up to audible level
-                //==============================================================
-                // Bump minimum peak threshold to avoid excessively quiet IR after band tweaks
-                constexpr float minReasonableIR = 1e-02f;   // -40 dBFS threshold
-                constexpr float targetIR = 0.1f;            // -20 dBFS target
-                constexpr float maxScaleBoost = 1.0e4f;     // +80 dB max
-                
-                float irScale = 1.0f;
-                if (maxAbs > 0.0f && maxAbs < minReasonableIR)
-                {
-                    irScale = targetIR / maxAbs;
-                    irScale = std::min(irScale, maxScaleBoost);
-                }
-                
-                // Apply STAGE 3 scaling and create final IR
-                std::vector<float> scaledIR(LinearPhaseProcessor::irSize);
-                for (size_t n = 0; n < LinearPhaseProcessor::irSize; ++n)
-                    scaledIR[n] = irBuf[n] * irScale;
-                
-                back->loadImpulseResponse(scaledIR, sr);
-                linearIRLoaded[static_cast<size_t>(backIdx)].store(true, std::memory_order_release);
-                readyIRIndex.store(backIdx, std::memory_order_release);
-                std::atomic_thread_fence(std::memory_order_release);
+                irScale = targetIR / maxAbs;
+                irScale = std::min(irScale, maxScaleBoost);
             }
+
+            // Apply STAGE 3 scaling
+            std::vector<float> scaledIR(LinearPhaseProcessor::irSize);
+            for (size_t n = 0; n < LinearPhaseProcessor::irSize; ++n)
+                scaledIR[n] = irBuf[n] * irScale;
+
+            // Pre-compute FFT of the IR here (builder thread, NOT audio thread)
+            // Then hand off the freq-domain data for the audio thread to pick up.
+            std::vector<float> freqBuf(LinearPhaseProcessor::fftSize * 2, 0.0f);
+            std::copy(scaledIR.begin(), scaledIR.end(), freqBuf.begin());
+            fft.performRealOnlyForwardTransform(freqBuf.data());
+
+            {
+                std::lock_guard<std::mutex> lock(pendingFreqIR.mutex);
+                pendingFreqIR.freqDomain = std::move(freqBuf);
+                pendingFreqIR.valid = true;
+            }
+            pendingIRReady.store(true, std::memory_order_release);
         }
     }
     }
@@ -840,7 +845,19 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     crossfadeBuffer.setSize(getTotalNumInputChannels(), preallocatedMaxSamples);
     crossfadeBuffer.clear();
     crossfadeSamplesRemaining = 0;
+
+    // Pre-allocate pending freq-domain IR buffer (builder thread → audio thread handoff)
+    {
+        std::lock_guard<std::mutex> lock(pendingFreqIR.mutex);
+        pendingFreqIR.freqDomain.resize(LinearPhaseProcessor::fftSize * 2, 0.0f);
+        pendingFreqIR.valid = false;
+    }
+    pendingIRReady.store(false, std::memory_order_relaxed);
     previousIRIndex = 0;
+
+    // Start OSC parameter server (deferred from constructor to avoid crash during plugin scan)
+    if (oscParamServer && !oscParamServer->isRunning())
+        oscParamServer->start();
 
     // Prime band smoothers
     primeBandSmoothers(sampleRate);
@@ -906,7 +923,7 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     aiAnalysisSamples = 0;
     
     // Set worst-case latency once to avoid host reconfiguration during automation
-    const int linearPhaseLatency = static_cast<int>(LinearPhaseProcessor::irSize / 2);
+    const int linearPhaseLatency = static_cast<int>(LinearPhaseProcessor::hopSize);
     int oversamplingLatency = naturalPhaseLatency;
     if (oversampler4x)
         oversamplingLatency = std::max(oversamplingLatency, static_cast<int>(oversampler4x->getLatencyInSamples()));
@@ -1413,109 +1430,36 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     // Linear Phase processing (applied only here, zero-latency path skipped above)
     if (mode == PhaseMode::LinearPhase)
     {
-        // RE-ENABLED Linear Phase with proper shadow processor initialization
-        updateLinearPhaseIRIfNeeded(); // swap in pre-built IR if ready
-        
-        const int currentIR = activeIRIndex.load();
-        const int prevIR = previousIRIndex;
-        const bool hasPrev = (prevIR != currentIR) && prevIR >= 0 && prevIR < static_cast<int>(linearPhaseProcessors.size());
-        const bool doCrossfade = hasPrev && crossfadeSamplesRemaining > 0 && crossfadeBuffer.getNumSamples() >= blockSamples;
-        
-        // Determine if current IR is actually loaded
-        const bool irLoaded = (currentIR >= 0 && currentIR < static_cast<int>(linearIRLoaded.size()))
-                              ? linearIRLoaded[static_cast<size_t>(currentIR)].load(std::memory_order_acquire)
-                              : false;
-        // Consider LP unusable while a new IR is being requested or staged
-        const bool pendingIR = eqCurveNeedsUpdate.load(std::memory_order_relaxed)
-                               || readyIRIndex.load(std::memory_order_relaxed) >= 0;
+        updateLinearPhaseIRIfNeeded();
 
-        // Early fallback: if IR not loaded or a rebuild is pending, stay on zero-latency path
-        if (!irLoaded || pendingIR)
+        const bool irLoaded = linearIRLoaded[0].load(std::memory_order_acquire);
+
+        if (!irLoaded)
         {
-            consecutiveIRReadyBlocks = 0;
-            crossfadeSamplesRemaining = 0;
+            // No IR yet: fall back to zero-latency EQ
             eqProcessor.process(buffer);
-            
             if (dynEqEnabledLocal)
             {
                 dynamicEQProcessor.process(buffer);
                 updateDynamicMeterCacheFrom(dynamicEQProcessor);
             }
-            
-            // Continue to rest of processBlock (M/S decode, output gain, etc.)
-            // DO NOT return early!
         }
-
-        else if (doCrossfade)  // Only crossfade if IR is ready and we have a previous IR
+        else
         {
-            // Copy input for new IR path (RT-safe, no realloc)
-            const int chs = juce::jmin(buffer.getNumChannels(), crossfadeBuffer.getNumChannels());
-            for (int ch = 0; ch < chs; ++ch)
-                crossfadeBuffer.copyFrom(ch, 0, buffer, ch, 0, blockSamples);
-
-            // FIX: Extra bounds check for safety (prevIR already validated by hasPrev/doCrossfade)
-            if (prevIR >= 0 && prevIR < static_cast<int>(linearPhaseProcessors.size()))
-            if (auto* lpPrev = linearPhaseProcessors[static_cast<size_t>(prevIR)].get())
-            {
-                juce::dsp::AudioBlock<float> blockPrev(buffer.getArrayOfWritePointers(),
-                                                      static_cast<size_t>(buffer.getNumChannels()),
-                                                      static_cast<size_t>(blockSamples));
-                juce::dsp::ProcessContextReplacing<float> ctxPrev(blockPrev);
-                lpPrev->process(ctxPrev);
-            }
-
-            // FIX: Extra bounds check for currentIR
-            if (currentIR >= 0 && currentIR < static_cast<int>(linearPhaseProcessors.size()))
-            if (auto* lpNew = linearPhaseProcessors[static_cast<size_t>(currentIR)].get())
-            {
-                juce::dsp::AudioBlock<float> blockNew(crossfadeBuffer.getArrayOfWritePointers(),
-                                                      static_cast<size_t>(crossfadeBuffer.getNumChannels()),
-                                                      static_cast<size_t>(blockSamples));
-                juce::dsp::ProcessContextReplacing<float> ctxNew(blockNew);
-                lpNew->process(ctxNew);
-            }
-
-            const float fadeOutStart = static_cast<float>(crossfadeSamplesRemaining) / static_cast<float>(irCrossfadeSamples);
-            const int remainingAfterBlock = std::max(0, crossfadeSamplesRemaining - blockSamples);
-            const float fadeOutEnd = static_cast<float>(remainingAfterBlock) / static_cast<float>(irCrossfadeSamples);
-            const float fadeInStart = 1.0f - fadeOutStart;
-            const float fadeInEnd = 1.0f - fadeOutEnd;
-
-            for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
-            {
-                buffer.applyGainRamp(ch, 0, blockSamples, fadeOutStart, fadeOutEnd);
-                crossfadeBuffer.applyGainRamp(ch, 0, blockSamples, fadeInStart, fadeInEnd);
-                buffer.addFrom(ch, 0, crossfadeBuffer, ch, 0, blockSamples);
-            }
-
-            crossfadeSamplesRemaining = remainingAfterBlock;
-        }
-        else  // IR loaded and no crossfade needed: process LP directly
-        {
-            auto* lp = (currentIR >= 0 && currentIR < static_cast<int>(linearPhaseProcessors.size())) 
-                       ? linearPhaseProcessors[static_cast<size_t>(currentIR)].get() 
-                       : nullptr;
-            
+            // Single LP processor with internal OLA crossfade (4096-sample, hop-aligned)
+            auto* lp = linearPhaseProcessors[0].get();
             if (lp != nullptr)
             {
                 juce::dsp::AudioBlock<float> block(buffer.getArrayOfWritePointers(),
-                                                  static_cast<size_t>(buffer.getNumChannels()),
-                                                  static_cast<size_t>(blockSamples));
+                                                   static_cast<size_t>(buffer.getNumChannels()),
+                                                   static_cast<size_t>(blockSamples));
                 juce::dsp::ProcessContextReplacing<float> ctx(block);
                 lp->process(ctx);
             }
             else
             {
-                // FIX: If processor is nullptr, use zero-latency EQ fallback
                 eqProcessor.process(buffer);
-                
-                if (dynEqEnabledLocal)
-                {
-                    dynamicEQProcessor.process(buffer);
-                    updateDynamicMeterCacheFrom(dynamicEQProcessor);
-                }
             }
-            crossfadeSamplesRemaining = 0;
         }
     }
 
@@ -1681,21 +1625,26 @@ void AIEqualizerAudioProcessor::triggerEQCurveUpdate()
 
 void AIEqualizerAudioProcessor::updateLinearPhaseIRIfNeeded()
 {
-    // Check if IR builder has a new IR ready
-    const int readyIdx = readyIRIndex.exchange(-1);
-    if (readyIdx >= 0 && readyIdx < static_cast<int>(linearPhaseProcessors.size()))
-    {
-        // If a crossfade is ongoing, defer the swap to avoid glitches
-        if (crossfadeSamplesRemaining > 0)
-        {
-            readyIRIndex.store(readyIdx, std::memory_order_relaxed);
-            return;
-        }
+    if (!pendingIRReady.load(std::memory_order_acquire))
+        return;
 
-        previousIRIndex = activeIRIndex.load(std::memory_order_relaxed);
-        pendingIRIndex = readyIdx;
-        crossfadeSamplesRemaining = irCrossfadeSamples;
-        activeIRIndex.store(readyIdx, std::memory_order_relaxed);
+    std::unique_lock<std::mutex> lock(pendingFreqIR.mutex, std::try_to_lock);
+    if (!lock.owns_lock())
+        return;  // builder is writing, try next block
+
+    if (pendingFreqIR.valid)
+    {
+        // Feed pre-computed freq-domain IR directly into LP processor 0.
+        // LinearPhaseProcessor handles the internal A/B crossfade (4096 samples, hop-aligned).
+        auto* lp = linearPhaseProcessors[0].get();
+        if (lp != nullptr)
+            lp->storeFreqIRDirect(pendingFreqIR.freqDomain.data());
+
+        linearIRLoaded[0].store(true, std::memory_order_release);
+        activeIRIndex.store(0, std::memory_order_relaxed);
+
+        pendingFreqIR.valid = false;
+        pendingIRReady.store(false, std::memory_order_release);
     }
 }
 
