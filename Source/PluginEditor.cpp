@@ -102,8 +102,9 @@ AIEqualizerAudioProcessorEditor::AIEqualizerAudioProcessorEditor(AIEqualizerAudi
     // Ensure a band is selected so the detail panel shows controls (including filter type)
     selectBand(0);
     
-    // FIX 9: 30Hz is sufficient for smooth UI, reduces CPU load
-    startTimerHz(30);
+    // FIX: 20Hz is sufficient for smooth UI and reduces risk of message thread starvation
+    // in Ableton (which can freeze the DAW if the message thread is overloaded at 30Hz).
+    startTimerHz(20);
 }
 
 AIEqualizerAudioProcessorEditor::~AIEqualizerAudioProcessorEditor()
@@ -171,6 +172,7 @@ void AIEqualizerAudioProcessorEditor::createHeader()
     phaseModeLabel.setJustificationType(juce::Justification::centredLeft);
     phaseModeLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textPrimary);
     addAndMakeVisible(phaseModeLabel);
+    phaseModeLabel.setVisible(false);
     
     phaseModeCombo.setJustificationType(juce::Justification::centredLeft);
     phaseModeCombo.setTextWhenNothingSelected("Select");
@@ -204,20 +206,34 @@ void AIEqualizerAudioProcessorEditor::createHeader()
     addAndMakeVisible(bypassBtn);
     bypassAtt = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
         processor.getAPVTS(), "bypass", bypassBtn);
+
+    // AI Panel toggle
+    aiPanelToggle.setButtonText("AI");
+    aiPanelToggle.setClickingTogglesState(true);
+    aiPanelToggle.setTooltip("Toggle AI panel");
+    aiPanelToggle.setColour(juce::TextButton::buttonColourId, ModernLookAndFeel::Colors::bgLighter);
+    aiPanelToggle.setColour(juce::TextButton::buttonOnColourId, ModernLookAndFeel::Colors::accentBlue);
+    aiPanelToggle.onClick = [this]() {
+        aiPanelVisible = aiPanelToggle.getToggleState();
+        resized();
+    };
+    addAndMakeVisible(aiPanelToggle);
 }
 
 void AIEqualizerAudioProcessorEditor::createControlPanel()
 {
-    // Logo
+    // Logo (hidden in new layout)
     logoLabel.setText("AI EQ PRO", juce::dontSendNotification);
     logoLabel.setFont(juce::Font(juce::FontOptions().withHeight(20.0f).withStyle("Bold")));
     logoLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textPrimary);
     addAndMakeVisible(logoLabel);
+    logoLabel.setVisible(false);
     
     subtitleLabel.setText("Intelligent Equalizer", juce::dontSendNotification);
     subtitleLabel.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
     subtitleLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::accentBlue);
     addAndMakeVisible(subtitleLabel);
+    subtitleLabel.setVisible(false);
     
     // Band toggles - click to select, right-click or checkbox to enable/disable
     bandToggles.resize(AIEqualizerAudioProcessor::maxBands);
@@ -254,27 +270,31 @@ void AIEqualizerAudioProcessorEditor::createControlPanel()
     };
     addAndMakeVisible(bandSelectCombo);
     
-    // Sensitivity knob (connected to APVTS for save/restore)
+    // Sensitivity knob (connected to APVTS for save/restore, hidden in new layout)
     sensitivityLabel.setText("SENSITIVITY", juce::dontSendNotification);
     sensitivityLabel.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
     sensitivityLabel.setJustificationType(juce::Justification::centred);
     sensitivityLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted);
     addAndMakeVisible(sensitivityLabel);
+    sensitivityLabel.setVisible(false);
     
     sensitivityKnob.setTooltip("AI Sensitivity - Higher values detect more subtle problems\nLower values only flag obvious issues");
     addAndMakeVisible(sensitivityKnob);
+    sensitivityKnob.setVisible(false);
     sensitivityAtt = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         processor.getAPVTS(), "aiSensitivity", sensitivityKnob);
     
-    // Strength knob (connected to APVTS for save/restore)
+    // Strength knob (connected to APVTS for save/restore, hidden in new layout)
     strengthLabel.setText("STRENGTH", juce::dontSendNotification);
     strengthLabel.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
     strengthLabel.setJustificationType(juce::Justification::centred);
     strengthLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted);
     addAndMakeVisible(strengthLabel);
+    strengthLabel.setVisible(false);
     
     strengthKnob.setTooltip("AI Strength - Controls how aggressively corrections are applied\n100% = Full suggested correction, 50% = Half correction");
     addAndMakeVisible(strengthKnob);
+    strengthKnob.setVisible(false);
     strengthAtt = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         processor.getAPVTS(), "aiStrength", strengthKnob);
     
@@ -284,19 +304,21 @@ void AIEqualizerAudioProcessorEditor::createControlPanel()
     autoAtt = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
         processor.getAPVTS(), "autoGain", autoBtn);
 
-    // Quality mode toggle (Zero Latency / High Quality)
+    // Quality mode toggle (Zero Latency / High Quality, hidden in new layout)
     qualityLabel.setText("QUALITY", juce::dontSendNotification);
     qualityLabel.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
     qualityLabel.setJustificationType(juce::Justification::centred);
     qualityLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted);
     addAndMakeVisible(qualityLabel);
+    qualityLabel.setVisible(false);
 
-    qualityBtn.setTooltip("Quality Mode: HQ abilita 5ms di lookahead (più latenza), ZL = zero-latency");
+    qualityBtn.setTooltip("Quality Mode: HQ abilita 5ms di lookahead (piÃ¹ latenza), ZL = zero-latency");
     qualityBtn.setClickingTogglesState(true);
     qualityBtn.setComponentID("qualityToggle");
     qualityBtn.setColour(juce::TextButton::buttonColourId, ModernLookAndFeel::Colors::bgLight);
     qualityBtn.setColour(juce::TextButton::buttonOnColourId, ModernLookAndFeel::Colors::accentBlue);
     qualityBtn.setColour(juce::TextButton::textColourOffId, ModernLookAndFeel::Colors::textPrimary);
+    qualityBtn.setVisible(false);
     qualityBtn.setColour(juce::TextButton::textColourOnId, ModernLookAndFeel::Colors::textBright);
     qualityBtn.setConnectedEdges(juce::Button::ConnectedOnLeft | juce::Button::ConnectedOnRight);
     qualityBtn.onClick = [this]() {
@@ -306,12 +328,13 @@ void AIEqualizerAudioProcessorEditor::createControlPanel()
     };
     addAndMakeVisible(qualityBtn);
 
-    // Oversampling selector (Off / 2x / 4x / Auto)
+    // Oversampling selector (Off / 2x / 4x / Auto, hidden in new layout)
     oversamplingLabel.setText("OVERSAMP", juce::dontSendNotification);
     oversamplingLabel.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
     oversamplingLabel.setJustificationType(juce::Justification::centred);
     oversamplingLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted);
     addAndMakeVisible(oversamplingLabel);
+    oversamplingLabel.setVisible(false);
 
     oversamplingCombo.setJustificationType(juce::Justification::centredLeft);
     oversamplingCombo.setTextWhenNothingSelected("Off");
@@ -319,12 +342,13 @@ void AIEqualizerAudioProcessorEditor::createControlPanel()
     oversamplingCombo.addItem("2x", 2);
     oversamplingCombo.addItem("4x", 3);
     oversamplingCombo.addItem("Auto", 4);
-    oversamplingCombo.setTooltip("Oversampling: Off/2x/4x or Auto (sceglie 2x/4x in base al Q e modalità HQ)");
+    oversamplingCombo.setTooltip("Oversampling: Off/2x/4x or Auto (sceglie 2x/4x in base al Q e modalitÃ  HQ)");
     addAndMakeVisible(oversamplingCombo);
+    oversamplingCombo.setVisible(false);
     oversamplingAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
         processor.getAPVTS(), "oversamplingFactor", oversamplingCombo);
 
-    // Capture & analyze button (retroactive: records last N seconds and runs AI analysis)
+    // Capture & analyze button (retroactive, hidden in new layout)
     captureAnalyzeBtn.setButtonText("CAPTURE LAST");
     captureAnalyzeBtn.setTooltip("Capture last N seconds (retroactive) and analyze");
     captureAnalyzeBtn.onClick = [this]() {
@@ -336,11 +360,17 @@ void AIEqualizerAudioProcessorEditor::createControlPanel()
         captureStatusLabel.setText("Analyzing...", juce::dontSendNotification);
         captureStatusLabel.setColour(juce::Label::textColourId, juce::Colours::yellow);
 
+        // Bug I fix: capture safeThis by value (not raw this) so the thread body is safe
+        // if the editor is destroyed before the thread finishes.
         juce::Component::SafePointer<AIEqualizerAudioProcessorEditor> safeThis(this);
-        std::thread([this, safeThis]() {
-            const bool ok = processor.analyzeCapturedAudioSnapshot();
-            const float sec = processor.getCaptureLengthMs() / 1000.0f;
-            isAnalyzing.store(false, std::memory_order_release);
+        std::thread([safeThis]() {
+            // Bail out immediately if editor was destroyed before thread started
+            auto* ed = safeThis.getComponent();
+            if (ed == nullptr) return;
+
+            const bool ok = ed->processor.analyzeCapturedAudioSnapshot();
+            const float sec = ed->processor.getCaptureLengthMs() / 1000.0f;
+            ed->isAnalyzing.store(false, std::memory_order_release);
 
             juce::MessageManager::callAsync([safeThis, ok, sec]() {
                 if (auto* editor = safeThis.getComponent())
@@ -358,6 +388,7 @@ void AIEqualizerAudioProcessorEditor::createControlPanel()
         }).detach();
     };
     addAndMakeVisible(captureAnalyzeBtn);
+    captureAnalyzeBtn.setVisible(false);
     
     // Manual capture START button
     startCaptureBtn.setButtonText("START LIVE");
@@ -378,6 +409,7 @@ void AIEqualizerAudioProcessorEditor::createControlPanel()
         }
     };
     addAndMakeVisible(startCaptureBtn);
+    startCaptureBtn.setVisible(false);
     
     // Manual capture STOP button
     stopCaptureBtn.setButtonText("STOP + ANALYZE");
@@ -395,13 +427,17 @@ void AIEqualizerAudioProcessorEditor::createControlPanel()
         startCaptureBtn.setEnabled(false);
         stopCaptureBtn.setEnabled(false);
 
+        // Bug I fix: capture safeThis by value so thread body is safe if editor is destroyed.
         juce::Component::SafePointer<AIEqualizerAudioProcessorEditor> safeThis(this);
-        std::thread([this, safeThis]() {
-            const bool ok = processor.analyzeCapturedAudioSnapshot();
-            const auto& mono = processor.getCapturedAudioMono();
-            const double sr = processor.getCapturedSampleRate();
+        std::thread([safeThis]() {
+            auto* ed = safeThis.getComponent();
+            if (ed == nullptr) return;
+
+            const bool ok = ed->processor.analyzeCapturedAudioSnapshot();
+            const auto& mono = ed->processor.getCapturedAudioMono();
+            const double sr = ed->processor.getCapturedSampleRate();
             const double secs = (sr > 0.0) ? static_cast<double>(mono.size()) / sr : 0.0;
-            isAnalyzing.store(false, std::memory_order_release);
+            ed->isAnalyzing.store(false, std::memory_order_release);
 
             juce::MessageManager::callAsync([safeThis, ok, secs]() {
                 if (auto* editor = safeThis.getComponent())
@@ -428,6 +464,7 @@ void AIEqualizerAudioProcessorEditor::createControlPanel()
         }).detach();
     };
     addAndMakeVisible(stopCaptureBtn);
+    stopCaptureBtn.setVisible(false);
     
     // Auto-capture toggle (triggers on energy peak)
     autoCaptureBtn.setButtonText("AUTO PEAK");
@@ -438,6 +475,7 @@ void AIEqualizerAudioProcessorEditor::createControlPanel()
         processor.setAutoCaptureEnabled(autoCaptureBtn.getToggleState());
     };
     addAndMakeVisible(autoCaptureBtn);
+    autoCaptureBtn.setVisible(false);
     
     // Capture length slider (1-20s)
     captureLenLabel.setText("CAP LEN", juce::dontSendNotification);
@@ -445,6 +483,7 @@ void AIEqualizerAudioProcessorEditor::createControlPanel()
     captureLenLabel.setJustificationType(juce::Justification::centred);
     captureLenLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted);
     addAndMakeVisible(captureLenLabel);
+    captureLenLabel.setVisible(false);
 
     captureLenSlider.setSliderStyle(juce::Slider::LinearHorizontal);
     captureLenSlider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 40, 16);
@@ -455,6 +494,7 @@ void AIEqualizerAudioProcessorEditor::createControlPanel()
         processor.setCaptureLengthMs(ms);
     };
     addAndMakeVisible(captureLenSlider);
+    captureLenSlider.setVisible(false);
     
     captureStatusLabel.setText("Retro: CAPTURE LAST. Live: START/STOP. Auto: peaks.",
                                juce::dontSendNotification);
@@ -463,9 +503,11 @@ void AIEqualizerAudioProcessorEditor::createControlPanel()
     captureStatusLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted);
     captureStatusLabel.setMinimumHorizontalScale(0.7f);
     addAndMakeVisible(captureStatusLabel);
+    captureStatusLabel.setVisible(false);
     
     captureWaveform = std::make_unique<CaptureWaveformView>();
     addAndMakeVisible(*captureWaveform);
+    captureWaveform->setVisible(false);
 
     // Number of active bands selector (1-24)
     numBandsLabel.setText("BANDS", juce::dontSendNotification);
@@ -506,12 +548,13 @@ void AIEqualizerAudioProcessorEditor::createControlPanel()
     mixAtt = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         processor.getAPVTS(), "dryWet", mixKnob);
 
-    // Analyzer slope (visual)
+    // Analyzer slope (visual, hidden in new layout)
     slopeLabel.setText("SLOPE", juce::dontSendNotification);
     slopeLabel.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
     slopeLabel.setJustificationType(juce::Justification::centred);
     slopeLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted);
     addAndMakeVisible(slopeLabel);
+    slopeLabel.setVisible(false);
 
     slopeCombo.addItem("Flat", 1);
     slopeCombo.addItem("3 dB/oct", 2);
@@ -519,6 +562,7 @@ void AIEqualizerAudioProcessorEditor::createControlPanel()
     slopeCombo.setJustificationType(juce::Justification::centred);
     slopeCombo.setTooltip("Analyzer visual slope compensation");
     addAndMakeVisible(slopeCombo);
+    slopeCombo.setVisible(false);
     slopeAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
         processor.getAPVTS(), "analyzerSlope", slopeCombo);
 }
@@ -704,306 +748,198 @@ void AIEqualizerAudioProcessorEditor::showOptionsMenu()
         menu.addItem(makeItem(90, "User Learning Enabled", learning, [=]() { setBool("learningEnabled", !learning); }));
     }
 
+    menu.addSeparator();
+
+    // Quality & Oversampling
+    {
+        juce::PopupMenu qualityMenu;
+        const int curQuality = getChoice("qualityMode");
+        qualityMenu.addItem(makeItem(100, "Zero Latency", curQuality == 0, [=]() { setChoice("qualityMode", 0); }));
+        qualityMenu.addItem(makeItem(101, "High Quality", curQuality == 1, [=]() { setChoice("qualityMode", 1); }));
+        menu.addSubMenu("Quality Mode", qualityMenu);
+
+        juce::PopupMenu osMenu;
+        const int curOS = getChoice("oversamplingFactor");
+        osMenu.addItem(makeItem(110, "Off", curOS == 0, [=]() { setChoice("oversamplingFactor", 0); }));
+        osMenu.addItem(makeItem(111, "2x", curOS == 1, [=]() { setChoice("oversamplingFactor", 1); }));
+        osMenu.addItem(makeItem(112, "4x", curOS == 2, [=]() { setChoice("oversamplingFactor", 2); }));
+        osMenu.addItem(makeItem(113, "Auto", curOS == 3, [=]() { setChoice("oversamplingFactor", 3); }));
+        menu.addSubMenu("Oversampling", osMenu);
+    }
+
+    // Analyzer Slope
+    {
+        juce::PopupMenu slopeMenu;
+        const int curSlope = getChoice("analyzerSlope");
+        slopeMenu.addItem(makeItem(120, "Flat", curSlope == 0, [=]() { setChoice("analyzerSlope", 0); }));
+        slopeMenu.addItem(makeItem(121, "3 dB/oct", curSlope == 1, [=]() { setChoice("analyzerSlope", 1); }));
+        slopeMenu.addItem(makeItem(122, "4.5 dB/oct", curSlope == 2, [=]() { setChoice("analyzerSlope", 2); }));
+        menu.addSubMenu("Analyzer Slope", slopeMenu);
+    }
+
+    menu.addSeparator();
+
+    // AI Sensitivity & Strength (show current values, click to reset)
+    {
+        const float sens = getFloat("aiSensitivity");
+        const float str = getFloat("aiStrength");
+        menu.addItem(makeItem(130, "AI Sensitivity: " + juce::String(sens, 0) + "% (click to reset)", false,
+                              [=]() { setFloat("aiSensitivity", 50.0f); }));
+        menu.addItem(makeItem(131, "AI Strength: " + juce::String(str, 0) + "% (click to reset)", false,
+                              [=]() { setFloat("aiStrength", 100.0f); }));
+    }
+
+    menu.addSeparator();
+
+    // Capture controls
+    {
+        juce::PopupMenu captureMenu;
+        captureMenu.addItem(makeItem(140, "Capture Last (Retroactive)", false, [this]() {
+            captureAnalyzeBtn.triggerClick();
+        }));
+        captureMenu.addItem(makeItem(141, "Start Live Capture", false, [this]() {
+            startCaptureBtn.triggerClick();
+        }));
+        captureMenu.addItem(makeItem(142, "Stop + Analyze", false, [this]() {
+            stopCaptureBtn.triggerClick();
+        }));
+        const bool autoCapture = autoCaptureBtn.getToggleState();
+        captureMenu.addItem(makeItem(143, "Auto Peak Capture", autoCapture, [this]() {
+            autoCaptureBtn.triggerClick();
+        }));
+        menu.addSubMenu("Capture", captureMenu);
+    }
+
     menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&optionsBtn));
 }
 
 void AIEqualizerAudioProcessorEditor::paint(juce::Graphics& g)
 {
-    // Background
-    g.fillAll(ModernLookAndFeel::Colors::bgMid);
-    
-    // Header
+    g.fillAll(ModernLookAndFeel::Colors::bgDark);
+
+    // Header bar
     g.setColour(ModernLookAndFeel::Colors::bgLight);
     g.fillRect(0, 0, getWidth(), headerH);
     g.setColour(ModernLookAndFeel::Colors::bgLighter);
-    g.drawHorizontalLine(headerH - 1, 0, (float)getWidth());
-    
-    // Control panel
+    g.drawHorizontalLine(headerH - 1, 0.0f, (float)getWidth());
+
+    // Bottom bar
     int cpY = getHeight() - controlH;
     g.setColour(ModernLookAndFeel::Colors::bgPanel);
     g.fillRect(0, cpY, getWidth(), controlH);
     g.setColour(ModernLookAndFeel::Colors::bgLighter);
-    g.drawHorizontalLine(cpY, 0, (float)getWidth());
-
-    // Dividers (gradient fade)
-    for (int x : dividerPositions)
-    {
-        juce::ColourGradient grad(
-            juce::Colours::transparentBlack, (float)x, (float)(cpY + 12),
-            juce::Colour(0xFF3a3a42),         (float)x, (float)(cpY + controlH / 2),
-            false);
-        grad.addColour(0.5, juce::Colour(0xFF3a3a42));
-        grad.addColour(1.0, juce::Colours::transparentBlack);
-        g.setGradientFill(grad);
-        g.fillRect(x, cpY + 12, 1, controlH - 24);
-    }
+    g.drawHorizontalLine(cpY, 0.0f, (float)getWidth());
 }
 
 void AIEqualizerAudioProcessorEditor::resized()
 {
     auto bounds = getLocalBounds();
-    
-    // === HEADER ===
-    auto header = bounds.removeFromTop(headerH).reduced(pad, 5);
-    
-    prevBtn.setBounds(header.removeFromLeft(28).reduced(2));
-    nextBtn.setBounds(header.removeFromLeft(28).reduced(2));
+
+    // === HEADER (32px) ===
+    auto header = bounds.removeFromTop(headerH).reduced(4, 2);
+    // Left group: nav + preset
+    prevBtn.setBounds(header.removeFromLeft(24).reduced(1));
+    nextBtn.setBounds(header.removeFromLeft(24).reduced(1));
+    header.removeFromLeft(6);
+    presetBox.setBounds(header.removeFromLeft(130).reduced(0, 2));
     header.removeFromLeft(8);
-    presetBox.setBounds(header.removeFromLeft(140).reduced(0, 2));
-    header.removeFromLeft(10);
-    optionsBtn.setBounds(header.removeFromLeft(80).reduced(2));
-    header.removeFromLeft(10);
-    
-    // A/B
-    btnA.setBounds(header.removeFromLeft(28).reduced(2));
-    btnB.setBounds(header.removeFromLeft(28).reduced(2));
+    // Center group: A/B + phase
+    btnA.setBounds(header.removeFromLeft(24).reduced(1));
+    btnB.setBounds(header.removeFromLeft(24).reduced(1));
     header.removeFromLeft(4);
-    copyBtn.setBounds(header.removeFromLeft(40).reduced(2));
-    header.removeFromLeft(14);
-    
-    auto phaseLabelArea = header.removeFromLeft(88);
-    phaseModeLabel.setBounds(phaseLabelArea.reduced(2, 6));
-    
-    auto phaseComboArea = header.removeFromLeft(150);
-    phaseModeCombo.setBounds(phaseComboArea.reduced(2));
-    
-    header.removeFromLeft(10);
-    
-    // Pre/Post
-    btnPre.setBounds(header.removeFromLeft(40).reduced(2));
-    header.removeFromLeft(4);
-    btnPost.setBounds(header.removeFromLeft(45).reduced(2));
-    header.removeFromLeft(4);
-    btnDelta.setBounds(header.removeFromLeft(55).reduced(2));
-    
-    // Bypass (right)
-    bypassBtn.setBounds(header.removeFromRight(70).reduced(2));
-    
-    // === RIGHT SIDE PANELS ===
-    auto rightSide = bounds.removeFromRight(aiPanelW).reduced(pad);
-    
-    // Tab buttons at top of right side
-    auto tabRow = rightSide.removeFromTop(28);
-    int tabW = tabRow.getWidth() / 2;
-    aiTabBtn.setBounds(tabRow.removeFromLeft(tabW).reduced(2));
-    semanticTabBtn.setBounds(tabRow.reduced(2));
-    rightSide.removeFromTop(4);
-    
-    // Main panel area (for AI Detect or Semantic panel)
-    int mainPanelHeight = static_cast<int>(rightSide.getHeight() * 0.65f);
-    auto mainPanel = rightSide.removeFromTop(mainPanelHeight);
-    aiProblemPanel->setBounds(mainPanel);
-    semanticPanel->setBounds(mainPanel);  // Same bounds, visibility controlled by tabs
-    
-    rightSide.removeFromTop(pad);
-    
-    // Dynamic EQ Panel (smaller portion - 35%)
-    dynamicEQPanel->setBounds(rightSide);
-    
-    // === CONTROL PANEL (bottom) — premium, 140px high ===
-    auto cpanel = bounds.removeFromBottom(controlH).reduced(pad, 4);
-    dividerPositions.clear();
+    copyBtn.setBounds(header.removeFromLeft(36).reduced(1));
+    header.removeFromLeft(8);
+    phaseModeCombo.setBounds(header.removeFromLeft(120).reduced(0, 2));
+    header.removeFromLeft(8);
+    // Spectrum toggles
+    btnPre.setBounds(header.removeFromLeft(36).reduced(1));
+    btnPost.setBounds(header.removeFromLeft(40).reduced(1));
+    btnDelta.setBounds(header.removeFromLeft(48).reduced(1));
+    // Right group
+    bypassBtn.setBounds(header.removeFromRight(60).reduced(1));
+    header.removeFromRight(4);
+    aiPanelToggle.setBounds(header.removeFromRight(32).reduced(1));
+    optionsBtn.setBounds(header.removeFromRight(60).reduced(1));
 
-    // Section widths
-    constexpr int logoW = 65;
-    constexpr int captureW = 200;   // with waveform
-    constexpr int aiW = 110;
-    constexpr int qualityW = 130;   // includes num bands
-    constexpr int bandsW = 150;
-    constexpr int outputW = 110;
-    constexpr int dynMasterW = 85;
-    constexpr int gapW = 6;
-
-    // LOGO
-    auto logoSection = cpanel.removeFromLeft(logoW);
-    logoLabel.setFont(juce::Font(juce::FontOptions().withHeight(14.0f).withStyle("Bold")));
-    logoLabel.setBounds(logoSection.removeFromTop(20).reduced(2));
-    subtitleLabel.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
-    subtitleLabel.setBounds(logoSection.removeFromTop(14).reduced(2, 0));
-
-    dividerPositions.push_back(cpanel.getX());
-    cpanel.removeFromLeft(gapW);
-
-    // CAPTURE with waveform
-    auto captureSection = cpanel.removeFromLeft(captureW);
+    // === RIGHT PANEL (collapsible) ===
+    int rightW = aiPanelVisible ? 300 : 0;
+    if (aiPanelVisible)
     {
-        auto leftCol = captureSection.removeFromLeft(110);
-
-        auto row1 = leftCol.removeFromTop(22);
-        captureLenLabel.setBounds(row1.removeFromLeft(48));
-        captureLenSlider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 36, 16);
-        captureLenSlider.setBounds(row1);
-
-        leftCol.removeFromTop(2);
-        auto row2 = leftCol.removeFromTop(24);
-        int btnW = row2.getWidth() / 2;
-        captureAnalyzeBtn.setBounds(row2.removeFromLeft(btnW).reduced(1));
-        autoCaptureBtn.setBounds(row2.reduced(1));
-
-        leftCol.removeFromTop(2);
-        auto row3 = leftCol.removeFromTop(24);
-        btnW = row3.getWidth() / 2;
-        startCaptureBtn.setBounds(row3.removeFromLeft(btnW).reduced(1));
-        stopCaptureBtn.setBounds(row3.reduced(1));
-
-        leftCol.removeFromTop(2);
-        captureStatusLabel.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
-        captureStatusLabel.setBounds(leftCol.removeFromTop(16));
-
-        captureSection.removeFromLeft(6);
-        if (captureWaveform)
-        {
-            captureWaveform->setVisible(true);
-            captureWaveform->setBounds(captureSection.reduced(2));
-        }
+        auto rightSide = bounds.removeFromRight(rightW).reduced(4);
+        auto tabRow = rightSide.removeFromTop(26);
+        int tabW = tabRow.getWidth() / 2;
+        aiTabBtn.setBounds(tabRow.removeFromLeft(tabW).reduced(2));
+        semanticTabBtn.setBounds(tabRow.reduced(2));
+        rightSide.removeFromTop(4);
+        int mainH = static_cast<int>(rightSide.getHeight() * 0.6f);
+        aiProblemPanel->setBounds(rightSide.removeFromTop(mainH));
+        semanticPanel->setBounds(aiProblemPanel->getBounds());
+        rightSide.removeFromTop(4);
+        dynamicEQPanel->setBounds(rightSide);
     }
+    aiProblemPanel->setVisible(aiPanelVisible);
+    semanticPanel->setVisible(aiPanelVisible && activeRightTab == 1);
+    dynamicEQPanel->setVisible(aiPanelVisible);
+    aiTabBtn.setVisible(aiPanelVisible);
+    semanticTabBtn.setVisible(aiPanelVisible);
 
-    dividerPositions.push_back(cpanel.getX());
-    cpanel.removeFromLeft(gapW);
+    // === BOTTOM BAR (55px) ===
+    auto bottom = bounds.removeFromBottom(controlH).reduced(4, 4);
 
-    // AI (premium knobs)
-    auto aiSection = cpanel.removeFromLeft(aiW);
-    {
-        const int knobW = 46;
-        auto row = aiSection.withTrimmedTop(6).withTrimmedBottom(6);
-        int startX = (row.getWidth() - knobW * 2 - 6) / 2;
-        row.removeFromLeft(startX);
-        auto sensArea = row.removeFromLeft(knobW);
-        sensitivityKnob.setBounds(sensArea);
-        row.removeFromLeft(6);
-        auto strArea = row.removeFromLeft(knobW);
-        strengthKnob.setBounds(strArea);
-    }
+    // Band selector (left)
+    numBandsLabel.setBounds(bottom.removeFromLeft(40));
+    numBandsCombo.setBounds(bottom.removeFromLeft(50).reduced(0, 4));
+    bottom.removeFromLeft(8);
+    bandSelectCombo.setBounds(bottom.removeFromLeft(80).reduced(0, 4));
+    bottom.removeFromLeft(8);
 
-    dividerPositions.push_back(cpanel.getX());
-    cpanel.removeFromLeft(gapW);
+    // Output section (right of bottom bar)
+    auto rightControls = bottom.removeFromRight(140);
+    auto mixArea = rightControls.removeFromLeft(46);
+    mixLabel.setBounds(mixArea.removeFromTop(12));
+    mixKnob.setBounds(mixArea);
+    rightControls.removeFromLeft(4);
+    auto outArea = rightControls.removeFromLeft(46);
+    outLabel.setBounds(outArea.removeFromTop(12));
+    outKnob.setBounds(outArea);
+    rightControls.removeFromLeft(4);
+    autoBtn.setBounds(rightControls.removeFromLeft(40).reduced(0, 8));
 
-    // QUALITY (HQ, oversampling, bands, auto gain, slope)
-    auto qualitySection = cpanel.removeFromLeft(qualityW);
-    {
-        auto row1 = qualitySection.removeFromTop(26);
-        qualityLabel.setBounds(row1.removeFromLeft(55));
-        qualityBtn.setBounds(row1.reduced(2));
-
-        qualitySection.removeFromTop(2);
-        auto row2 = qualitySection.removeFromTop(24);
-        oversamplingLabel.setBounds(row2.removeFromLeft(55));
-        oversamplingCombo.setBounds(row2.reduced(2));
-
-        qualitySection.removeFromTop(2);
-        auto row3 = qualitySection.removeFromTop(24);
-        numBandsLabel.setText("BANDS", juce::dontSendNotification);
-        numBandsLabel.setBounds(row3.removeFromLeft(55));
-        numBandsCombo.setVisible(true);
-        numBandsCombo.setBounds(row3.reduced(2));
-
-        qualitySection.removeFromTop(2);
-        auto row4 = qualitySection.removeFromTop(22);
-        autoBtn.setBounds(row4.reduced(4, 0));
-
-        qualitySection.removeFromTop(2);
-        auto row5 = qualitySection.removeFromTop(24);
-        slopeLabel.setBounds(row5.removeFromLeft(55));
-        slopeCombo.setBounds(row5.reduced(2));
-    }
-
-    dividerPositions.push_back(cpanel.getX());
-    cpanel.removeFromLeft(gapW);
-
-    // BANDS toggles (grid for all bands)
-    auto bandsSection = cpanel.removeFromLeft(bandsW);
-    int btnW = 32;
-    const int btnH = 26;
-    const int comboH = 24;
-    const int cols = 8;
-    const int rows = (AIEqualizerAudioProcessor::maxBands + cols - 1) / cols;
-    int spacing = 2;
-    int totalGridH = rows * btnH + (rows - 1) * 4;
-    int topPad = (bandsSection.getHeight() - (totalGridH + comboH + 4)) / 2;
-    topPad = std::max(0, topPad);
-    bandsSection.removeFromTop(topPad);
-    bandSelectCombo.setBounds(bandsSection.removeFromTop(comboH).reduced(4, 0));
-    bandsSection.removeFromTop(4);
-
-    // If space is tight, scale buttons and spacing to avoid overlap.
-    {
-        const int availableW = bandsSection.getWidth();
-        int totalW = cols * btnW + (cols - 1) * spacing;
-        if (totalW > availableW)
-        {
-            const float scale = static_cast<float>(availableW) / static_cast<float>(totalW);
-            btnW = std::max(22, static_cast<int>(std::floor(btnW * scale)));
-            spacing = std::max(1, static_cast<int>(std::floor(spacing * scale)));
-            totalW = cols * btnW + (cols - 1) * spacing;
-        }
-    }
-
-    int startX = (bandsSection.getWidth() - (cols * btnW + (cols - 1) * spacing)) / 2;
-    startX = std::max(0, startX);
-    for (int r = 0; r < rows; ++r)
-    {
-        auto rowArea = bandsSection.removeFromTop(btnH);
-        rowArea.removeFromLeft(startX);
-        for (int c = 0; c < cols; ++c)
-        {
-            int idx = r * cols + c;
-            if (idx >= static_cast<int>(bandToggles.size()))
-                break;
-            if (bandToggles[(size_t)idx])
-                bandToggles[(size_t)idx]->setBounds(rowArea.removeFromLeft(btnW).reduced(1));
-            rowArea.removeFromLeft(spacing);
-        }
-        if (r < rows - 1)
-            bandsSection.removeFromTop(4);
-    }
-
-    dividerPositions.push_back(cpanel.getX());
-    cpanel.removeFromLeft(gapW);
-
-    // OUTPUT knobs (premium)
-    auto outputSection = cpanel.removeFromRight(outputW);
-    {
-        const int knobW = 46;
-        auto row = outputSection.withTrimmedTop(6).withTrimmedBottom(6);
-        mixKnob.setBounds(row.removeFromLeft(knobW));
-        row.removeFromLeft(6);
-        outKnob.setBounds(row.removeFromLeft(knobW));
-    }
-
-    dividerPositions.push_back(cpanel.getX());
-    cpanel.removeFromRight(gapW);
-
-    // Dyn master at right of band params
-    auto dynArea = cpanel.removeFromRight(dynMasterW);
-    dynamicEQMasterPanel->setBounds(dynArea.reduced(2));
-
-    // Band detail fills remaining
-    auto bandDetailArea = cpanel;
-    bandViewport->setBounds(bandDetailArea);
+    // Band detail fills center
     if (selectedBandPanel)
     {
-        selectedBandPanel->setBounds(bandDetailArea);
-        selectedBandPanel->toFront(false);
+        selectedBandPanel->setBounds(bottom);
+        selectedBandPanel->setVisible(true);
     }
-    
-    // === SPECTRUM (main area) ===
-    bounds.reduce(pad, pad);
+
+    // Hide moved items
+    bandViewport->setVisible(false);
+    dynamicEQMasterPanel->setVisible(false);
+    for (auto& t : bandToggles) if (t) t->setVisible(false);
+    captureWaveform->setVisible(false);
+
+    // === SPECTRUM (everything remaining) ===
+    bounds.reduce(4, 4);
     spectrumBounds = bounds;
     spectrum->setBounds(spectrumBounds);
-    
     graphBounds = spectrumBounds.reduced(45, 25);
     graphBounds.removeFromBottom(22);
     graphBounds.removeFromLeft(5);
-    
+
     updateBandPositions();
 }
-
 void AIEqualizerAudioProcessorEditor::timerCallback()
 {
-    // Drain RT-safe logger queue on message thread
+    ++timerTickCount;
+
+    // Bug K fix: guard against timer firing during processor teardown
+    if (!processor.isProcessorReady())
+        return;
+
+    // Drain RT-safe logger queue on message thread (every tick, cheap)
     AIEQLogger::getInstance().flushRTLogs();
 
-    // Spectrum - process only when audio flagged new data
+    // Spectrum - process only when audio flagged new data (every tick)
     if (processor.consumeSpectrumDataReady())
     {
         processor.getSpectrumAnalyzer().processFFT();
@@ -1013,11 +949,14 @@ void AIEqualizerAudioProcessorEditor::timerCallback()
             spectrum->repaint();
     }
 
-    // AI problems update
-    if (processor.consumeAIProblemsChanged())
+    // AI problems update - every other tick (10Hz effective) to reduce message thread load
+    if ((timerTickCount & 1) == 0)
     {
-        if (aiProblemPanel)
-            aiProblemPanel->refreshFromProcessor();
+        if (processor.consumeAIProblemsChanged())
+        {
+            if (aiProblemPanel)
+                aiProblemPanel->refreshFromProcessor();
+        }
     }
 
     // Diagnostics: log block clamp events when they change (message thread safe)
@@ -1029,8 +968,11 @@ void AIEqualizerAudioProcessorEditor::timerCallback()
     }
 
     // Parameter-driven UI updates (bands, toggles, A/B, quality)
+    // Throttled to every 2nd tick (~10Hz) - reduces message thread load in Ableton.
+    // Parameter changes are still detected via counter so nothing is lost, just
+    // applied slightly later (50ms max delay is imperceptible to the user).
     uint64_t currentChange = processor.getParameterChangeCounter();
-    if (currentChange != lastParameterChangeCount)
+    if (currentChange != lastParameterChangeCount && (timerTickCount & 1) == 0)
     {
         lastParameterChangeCount = currentChange;
 
@@ -1267,9 +1209,9 @@ void AIEqualizerAudioProcessorEditor::switchRightTab(int tab)
 {
     activeRightTab = tab;
     
-    // Update visibility
-    aiProblemPanel->setVisible(tab == 0);
-    semanticPanel->setVisible(tab == 1);
+    // Update visibility (only show if panel is visible)
+    aiProblemPanel->setVisible(aiPanelVisible && tab == 0);
+    semanticPanel->setVisible(aiPanelVisible && tab == 1);
     
     // Update button styles
     if (tab == 0)
