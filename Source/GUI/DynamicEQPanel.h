@@ -178,7 +178,20 @@ public:
         if (bandMeterProvider)
         {
             auto meter = bandMeterProvider(bandIndex);
-            currentGainReduction = meter.gainReduction;
+            const float newGR = meter.gainReduction;
+
+            // Smooth the meter: fast attack (instantaneous), slow release (~300ms decay)
+            // This prevents the meter from flickering due to processBlock/GUI rate mismatch.
+            constexpr float releaseCoeff = 0.85f; // per tick at 30Hz ≈ 300ms to -20dB
+            if (std::abs(newGR) > std::abs(currentGainReduction))
+                currentGainReduction = newGR; // fast attack
+            else
+                currentGainReduction = currentGainReduction * releaseCoeff + newGR * (1.0f - releaseCoeff);
+
+            // Clamp to near-zero to avoid meter never fully reaching 0
+            if (std::abs(currentGainReduction) < 0.05f)
+                currentGainReduction = 0.0f;
+
             repaint(gainReductionBounds);
         }
     }

@@ -1123,7 +1123,10 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     const bool autoGainEnabledLocal = loadParam(cachedAutoGain, 0.0f) > 0.5f;
     autoGainEnabled.store(autoGainEnabledLocal, std::memory_order_relaxed);
     const bool dynEqEnabledLocal = paramsSnapshot.dynamicEQEnabled;
-    clearDynamicMeterCache(); // reset meters each block; updated only when DynEQ runs
+    // NOTE: do NOT clear the meter cache here — the GUI reads at 30Hz while processBlock
+    // runs at ~86Hz. Clearing every block means the GUI almost always reads 0.
+    // Instead, let updateDynamicMeterCacheFrom() overwrite on each block where DynEQ runs,
+    // and let the GUI meter decay visually on its own timer when no new data arrives.
     const bool aiEnabledLocal = loadParam(cachedAIEnabled, 1.0f) > 0.5f;
     const int sourceProfileIndex = static_cast<int>(std::round(loadParam(cachedSourceProfile, 0.0f)));
     const bool showPost = loadParam(cachedShowPostSpectrum, 0.0f) > 0.5f;
@@ -1143,7 +1146,10 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     
     // Check bypass
     if (bypassed)
+    {
+        clearDynamicMeterCache(); // reset GR meters when bypassed
         return;
+    }
 
     // Handle quality/latency mode (adjust lookahead dynamically)
     int qualityMode = juce::jlimit(0, 1, qualityModeParam);
