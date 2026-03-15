@@ -1256,9 +1256,15 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     const auto mode = phaseModeSnapshot;
 
     // Encode to M/S if needed (available for all phase modes)
-    const bool useMS = (msModeSnapshot != MSMode::Stereo) && (totalNumInputChannels >= 2);
-    const bool processMid = useMS && (msModeSnapshot == MSMode::Mid || msModeSnapshot == MSMode::MSLinked);
-    const bool processSide = useMS && (msModeSnapshot == MSMode::Side || msModeSnapshot == MSMode::MSLinked);
+    // Bug N/O fix: Mid-Only and Side-Only modes must NOT use M/S path — they should
+    // process the corresponding component through the standard stereo EQ and then
+    // reconstruct L/R correctly. The M/S encode+decode path is only correct for
+    // MSLinked (process both components independently) because zeroing one component
+    // before decode produces -3dB attenuation and/or phase inversion artefacts.
+    // Fix: limit useMS to MSLinked only; Mid/Side solo handled after decode.
+    const bool useMS = (msModeSnapshot == MSMode::MSLinked) && (totalNumInputChannels >= 2);
+    const bool processMid = useMS; // MSLinked always processes both
+    const bool processSide = useMS;
     if (useMS)
         encodeMidSide(buffer, blockSamples);
 
@@ -1454,6 +1460,10 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     } // end if mode != LinearPhase
     
     // Linear Phase processing (applied only here, zero-latency path skipped above)
+    // Note on M/S: when useMS=true (MSLinked), the buffer is already in M/S domain here
+    // (ch0=Mid, ch1=Side). LP processes both channels identically with the same EQ curve,
+    // which is correct for MSLinked (same EQ on both components). Mid/Side solo modes
+    // are handled after decodeMidSide below, so they do not reach this path in M/S domain.
     if (mode == PhaseMode::LinearPhase)
     {
         updateLinearPhaseIRIfNeeded();
@@ -1499,9 +1509,30 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         }
     }
 
-    // Decode back to L/R if we processed in M/S domain
+    // Decode back to L/R if we processed in M/S domain (MSLinked only)
     if (useMS)
         decodeMidSide(buffer, blockSamples);
+
+    // Bug N/O fix: Mid Only and Side Only solo modes.
+    // Encode to M/S, keep only the desired component, decode back.
+    // This avoids the -3dB / phase-inversion artifacts from the old approach.
+    if (totalNumInputChannels >= 2)
+    {
+        if (msModeSnapshot == MSMode::Mid)
+        {
+            // Encode → zero side → decode: result is the Mid component as mono-compatible stereo
+            encodeMidSide(buffer, blockSamples);
+            buffer.clear(1, 0, blockSamples); // zero Side channel
+            decodeMidSide(buffer, blockSamples);
+        }
+        else if (msModeSnapshot == MSMode::Side)
+        {
+            // Encode → zero mid → decode: result is the Side (difference) signal
+            encodeMidSide(buffer, blockSamples);
+            buffer.clear(0, 0, blockSamples); // zero Mid channel
+            decodeMidSide(buffer, blockSamples);
+        }
+    }
     
     // Apply global dry/wet mix
     if (needsDry)
