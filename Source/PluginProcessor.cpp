@@ -684,6 +684,15 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
 
     // FIX 3: Use atomic store
     currentSampleRate.store(sampleRate);
+
+    // Known limitation: LinearPhaseProcessor uses a fixed irSize=4096 / fftSize=8192.
+    // At 96 kHz the latency is ~42 ms and frequency resolution halves (2.34 Hz/bin vs 1.17 Hz/bin at 44.1 kHz).
+    // At 192 kHz latency is ~21 ms but resolution degrades further.
+    // This is acceptable for current release; adaptive irSize is planned for a future version.
+    if (sampleRate > 48001.0)
+        AIEQ_LOG_WARNING("Sample rate " + juce::String(sampleRate) + " Hz: linear phase IR resolution "
+                         "is reduced (fixed irSize=4096). Latency = "
+                         + juce::String(static_cast<int>(LinearPhaseProcessor::hopSize * 1000.0 / sampleRate)) + " ms.");
     currentBlockSize = samplesPerBlock;
     preparedNumInputChannels = getTotalNumInputChannels();
     preallocatedMaxSamples = juce::jmax(samplesPerBlock * 4, 32768);
@@ -981,7 +990,15 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
                                               juce::MidiBuffer& /*midiMessages*/)
 {
     juce::ScopedNoDenormals noDenormals;
-    
+
+    // Guard: if prepareToPlay has not completed yet (e.g. host calls processBlock
+    // during plugin scan before prepareToPlay), pass audio through silently and return.
+    if (!processorReady.load(std::memory_order_acquire))
+    {
+        buffer.clear();
+        return;
+    }
+
     auto totalNumInputChannels = getTotalNumInputChannels();
     auto totalNumOutputChannels = getTotalNumOutputChannels();
     const int inputBlockSamples = buffer.getNumSamples();
@@ -1019,11 +1036,20 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         }
     }
 
-    // Defensive clamp: if host delivers a block bigger than we pre-allocated for,
-    // process only the safe portion and silence the remainder to avoid overruns.
+    // Defensive clamp: if host delivers a block bigger than we pre-allocated for
+    // (e.g. Reaper with dynamic block sizes), process the safe portion and silence
+    // the remainder to avoid buffer overruns.
+    // NOTE: this should never happen in a correctly configured session — if it fires
+    // frequently the host is not honouring the maximumBlockSize passed to prepareToPlay.
     if (inputBlockSamples > blockSamples)
     {
         blockClampEvents.fetch_add(1, std::memory_order_relaxed);
+        AIEQ_LOG_WARNING("processBlock: host delivered " + juce::String(inputBlockSamples)
+                         + " samples, pre-allocated max is " + juce::String(preallocatedMaxSamples)
+                         + ". Silencing overflow region.");
+       #if JUCE_DEBUG
+        jassertfalse; // host is sending blocks larger than maximumBlockSize — investigate
+       #endif
         for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
             buffer.clear(ch, blockSamples, inputBlockSamples - blockSamples);
     }
@@ -3110,9 +3136,38 @@ void AIEqualizerAudioProcessor::setStateInformation(const void* data, int sizeIn
             restoreSlot("SlotC", slotC);
             restoreSlot("SlotD", slotD);
 
-            // Make sure the active slot struct reflects the APVTS state (for legacy presets)
-            if (auto* mm = juce::MessageManager::getInstance(); mm != nullptr && mm->isThisTheMessageThread())
-                saveCurrentStateToSlot(currentABState.load(std::memory_order_relaxed));
+            // Make sure the active slot struct reflects the APVTS state (for legacy presets).
+            // setStateInformation can be called from any thread (Pro Tools, some VST3 hosts call
+            // it off the message thread). Use callAsync to always run on the message thread.
+            // Also trigger an IR rebuild if the loaded state has Linear Phase active — without
+            // this the LP processor starts silent until the user touches a parameter.
+            {
+                const int slotIdx = static_cast<int>(currentABState.load(std::memory_order_relaxed));
+                const bool needsIRRebuild = (currentPhaseMode.load(std::memory_order_relaxed) == PhaseMode::LinearPhase);
+
+                auto doRestore = [this, slotIdx, needsIRRebuild]()
+                {
+                    if (!processorReady.load(std::memory_order_acquire))
+                        return;
+                    saveCurrentStateToSlot(static_cast<ABState>(slotIdx));
+
+                    // Bug E fix: trigger IR rebuild after state load in Linear Phase mode
+                    if (needsIRRebuild)
+                    {
+                        for (auto& loaded : linearIRLoaded)
+                            loaded.store(false, std::memory_order_relaxed);
+                        triggerEQCurveUpdate();
+                    }
+                };
+
+                if (auto* mm = juce::MessageManager::getInstance())
+                {
+                    if (mm->isThisTheMessageThread())
+                        doRestore();
+                    else
+                        juce::MessageManager::callAsync(doRestore);
+                }
+            }
         }
     }
 }
