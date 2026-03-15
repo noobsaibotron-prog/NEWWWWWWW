@@ -1486,6 +1486,16 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
             {
                 eqProcessor.process(buffer);
             }
+
+            // Bug fix: Dynamic EQ must run after LP convolution in Linear Phase mode.
+            // Previously it was skipped entirely when irLoaded=true, causing:
+            // 1. Dynamic compression not applied in LP mode
+            // 2. GR meter always showing 0 in LP mode
+            if (dynEqEnabledLocal)
+            {
+                dynamicEQProcessor.process(buffer);
+                updateDynamicMeterCacheFrom(dynamicEQProcessor);
+            }
         }
     }
 
