@@ -215,16 +215,36 @@ public:
     //==============================================================================
     
     // Feature flags - public getters/setters
-    void setMultiTrackUnmaskingEnabled(bool isEnabled) { enableMultiTrackUnmasking = isEnabled; }
+    void setMultiTrackUnmaskingEnabled(bool isEnabled)
+    {
+        enableMultiTrackUnmasking = isEnabled;
+        if (isEnabled && !multiTrackUnmasking)
+            multiTrackUnmasking = std::make_unique<MultiTrackUnmasking>();
+    }
     bool isMultiTrackUnmaskingEnabled() const { return enableMultiTrackUnmasking; }
-    
-    void setNeuralNetworksEnabled(bool isEnabled) { enableNeuralNetworks = isEnabled; }
+
+    void setNeuralNetworksEnabled(bool isEnabled)
+    {
+        enableNeuralNetworks = isEnabled;
+        if (isEnabled && !neuralNetwork)
+            neuralNetwork = std::make_unique<NeuralNetworkWrapper>();
+    }
     bool isNeuralNetworksEnabled() const { return enableNeuralNetworks; }
-    
-    void setAdaptiveProcessingEnabled(bool isEnabled) { enableAdaptiveProcessing = isEnabled; }
+
+    void setAdaptiveProcessingEnabled(bool isEnabled)
+    {
+        enableAdaptiveProcessing = isEnabled;
+        if (isEnabled && !adaptiveEngine)
+            adaptiveEngine = std::make_unique<AdaptiveAIEngine>();
+    }
     bool isAdaptiveProcessingEnabled() const { return enableAdaptiveProcessing; }
-    
-    void setOnlineLearningEnabled(bool isEnabled) { enableOnlineLearning = isEnabled; }
+
+    void setOnlineLearningEnabled(bool isEnabled)
+    {
+        enableOnlineLearning = isEnabled;
+        if (isEnabled && !onlineLearning)
+            onlineLearning = std::make_unique<OnlineLearningSystem>();
+    }
     bool isOnlineLearningEnabled() const { return enableOnlineLearning; }
     
     // Multi-track unmasking

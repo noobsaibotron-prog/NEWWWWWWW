@@ -52,11 +52,9 @@ AIEngine::AIEngine()
     // Initialize ML Engine
     mlEngine.initialize();
     
-    // Initialize Advanced AI Systems
-    multiTrackUnmasking = std::make_unique<MultiTrackUnmasking>();
-    neuralNetwork = std::make_unique<NeuralNetworkWrapper>();
-    adaptiveEngine = std::make_unique<AdaptiveAIEngine>();
-    onlineLearning = std::make_unique<OnlineLearningSystem>();
+    // Advanced AI systems are lazy-initialized when enabled via their respective setters.
+    // This avoids allocating unused subsystems and reduces startup time / memory footprint.
+    // See setMultiTrackUnmaskingEnabled(), setNeuralNetworksEnabled(), etc.
     
     // Initialize spectrum history for temporal smoothing
     spectrumHistory.resize(temporalFrames);
