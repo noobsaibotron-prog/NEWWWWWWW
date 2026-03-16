@@ -7,12 +7,11 @@
 #include "../DSP/LinearPhaseProcessor.h"
 
 /**
- * Fuzz test: stress-test DSP processors with varied block sizes and sample rates.
+ * Fuzz test: stress all DSP processors with varied block sizes and sample rates.
  *
- * Tests:
+ * Covers:
  *   - Block sizes: 1, 32, 64, 128, 256, 512, 1024, 2048, 4096
  *   - Sample rates: 44100, 48000, 88200, 96000
- *   - All three processors individually
  *   - Mid-session block size change without re-prepare
  *   - 1-sample edge case
  */
@@ -26,85 +25,60 @@ public:
         const int blockSizes[]     = { 1, 32, 64, 128, 256, 512, 1024, 2048, 4096 };
         const double sampleRates[] = { 44100.0, 48000.0, 88200.0, 96000.0 };
 
-        // ── ParametricEQ ─────────────────────────────────────────────────────
         beginTest("ParametricEQ: varied block sizes and sample rates");
         for (double sr : sampleRates)
             for (int bs : blockSizes)
                 runParametricEQ(sr, bs);
 
-        // ── DynamicEQ ────────────────────────────────────────────────────────
         beginTest("DynamicEQ: varied block sizes and sample rates");
         for (double sr : sampleRates)
             for (int bs : blockSizes)
                 runDynamicEQ(sr, bs);
 
-        // ── LinearPhase ──────────────────────────────────────────────────────
         beginTest("LinearPhase: varied block sizes and sample rates");
-        // Skip 1-sample for LP (hopSize >> 1 sample, meaningless to test)
         const int lpBlockSizes[] = { 32, 64, 128, 256, 512, 1024 };
         for (double sr : sampleRates)
             for (int bs : lpBlockSizes)
                 runLinearPhase(sr, bs);
 
-        // ── Mid-session block size change ─────────────────────────────────────
         beginTest("ParametricEQ: mid-session block size change without re-prepare");
         testMidSessionChange();
-
-        // ── 1-sample edge case ────────────────────────────────────────────────
-        beginTest("ParametricEQ: 1-sample block edge case");
-        runParametricEQ(48000.0, 1);
-        beginTest("DynamicEQ: 1-sample block edge case");
-        runDynamicEQ(48000.0, 1);
     }
 
 private:
-    // ─── ParametricEQ ─────────────────────────────────────────────────────────
     void runParametricEQ(double sr, int blockSize)
     {
         ParametricEQProcessor eq;
-        juce::dsp::ProcessSpec spec;
-        spec.sampleRate       = sr;
-        spec.maximumBlockSize = static_cast<juce::uint32>(blockSize);
-        spec.numChannels      = 2;
-        eq.prepare(spec);
+        eq.prepare(sr, blockSize, 2);
 
-        // Enable a few bands with different types
         eq.setBandEnabled(0, true);
         eq.setBandFrequency(0, 1000.0f);
         eq.setBandGain(0, -6.0f);
-        eq.setBandQ(0, 2.0f);
 
         juce::AudioBuffer<float> buf(2, blockSize);
-        fillNoise(buf, blockSize + static_cast<int>(sr));
-        processBuffer(eq, buf);
+        for (int i = 0; i < 3; ++i)
+        {
+            fillNoise(buf, i * 100 + blockSize);
+            eq.process(buf);
+        }
 
         juce::String label = "ParametricEQ sr=" + juce::String(static_cast<int>(sr))
                            + " bs=" + juce::String(blockSize);
         expect(checkFinite(buf), label + " produced NaN/Inf");
     }
 
-    // ─── DynamicEQ ────────────────────────────────────────────────────────────
     void runDynamicEQ(double sr, int blockSize)
     {
         DynamicEQProcessor deq;
-        juce::dsp::ProcessSpec spec;
-        spec.sampleRate       = sr;
-        spec.maximumBlockSize = static_cast<juce::uint32>(blockSize);
-        spec.numChannels      = 2;
-        deq.prepare(spec);
+        deq.prepare(sr, blockSize, 2);
 
-        deq.setDynamicMode(0, DynamicEQProcessor::DynamicMode::Compress);
-        deq.setThreshold(0, -20.0f);
-        deq.setRatio(0, 4.0f);
+        deq.setDynamicMode(0, DynamicEQProcessor::DynamicMode_Compress);
 
         juce::AudioBuffer<float> buf(2, blockSize);
-        fillNoise(buf, blockSize + static_cast<int>(sr) + 1);
-
-        // Process 3 blocks to warm up lookahead and smoothers
         for (int i = 0; i < 3; ++i)
         {
-            fillNoise(buf, i * 1000 + blockSize);
-            processBuffer(deq, buf);
+            fillNoise(buf, i * 200 + blockSize);
+            deq.process(buf);
         }
 
         juce::String label = "DynamicEQ sr=" + juce::String(static_cast<int>(sr))
@@ -112,7 +86,6 @@ private:
         expect(checkFinite(buf), label + " produced NaN/Inf");
     }
 
-    // ─── LinearPhase ──────────────────────────────────────────────────────────
     void runLinearPhase(double sr, int blockSize)
     {
         LinearPhaseProcessor lp;
@@ -122,22 +95,16 @@ private:
         spec.numChannels      = 2;
         lp.prepare(spec);
 
-        // Build a flat IR (identity-ish response)
-        std::vector<double> freqs, mags;
-        for (int i = 1; i <= 20; ++i)
-        {
-            freqs.push_back(1000.0 * i);
-            mags.push_back(1.0);
-        }
-        lp.updateImpulseResponse(freqs, mags);
+        // Flat magnitude response (identity)
+        std::vector<float> mags(512, 1.0f);
+        lp.updateImpulseResponse(mags, sr);
 
         juce::AudioBuffer<float> buf(2, blockSize);
-
-        // Warm up (LP needs several blocks to fill the convolution pipeline)
+        // Warm up: LP needs several blocks to fill convolution pipeline
         for (int i = 0; i < 8; ++i)
         {
             fillNoise(buf, i + blockSize);
-            processBuffer(lp, buf);
+            lp.process(buf);
         }
 
         juce::String label = "LinearPhase sr=" + juce::String(static_cast<int>(sr))
@@ -145,47 +112,39 @@ private:
         expect(checkFinite(buf), label + " produced NaN/Inf");
     }
 
-    // ─── Mid-session block size change ────────────────────────────────────────
     void testMidSessionChange()
     {
         ParametricEQProcessor eq;
-        juce::dsp::ProcessSpec spec;
-        spec.sampleRate       = 48000.0;
-        spec.maximumBlockSize = 512;
-        spec.numChannels      = 2;
-        eq.prepare(spec);
-
+        eq.prepare(48000.0, 512, 2);
         eq.setBandEnabled(0, true);
         eq.setBandFrequency(0, 500.0f);
         eq.setBandGain(0, 3.0f);
 
-        juce::MidiBuffer midi;
-
-        // Warm up
+        // Warm up at prepared size
         {
             juce::AudioBuffer<float> buf(2, 512);
             fillNoise(buf, 1);
-            processBuffer(eq, buf);
+            eq.process(buf);
         }
 
-        // Deliver 3x the prepared size without re-prepare
+        // 3× the prepared size without re-prepare
         {
-            juce::AudioBuffer<float> bigBuf(2, 1536);
-            fillNoise(bigBuf, 2);
-            processBuffer(eq, bigBuf);
-            expect(checkFinite(bigBuf), "NaN/Inf after mid-session block size increase");
+            juce::AudioBuffer<float> big(2, 1536);
+            fillNoise(big, 2);
+            eq.process(big);
+            expect(checkFinite(big), "NaN/Inf after block size increase mid-session");
         }
 
-        // Tiny block
+        // 1-sample block
         {
-            juce::AudioBuffer<float> tinyBuf(2, 1);
-            fillNoise(tinyBuf, 3);
-            processBuffer(eq, tinyBuf);
-            expect(checkFinite(tinyBuf), "NaN/Inf on 1-sample block after mid-session change");
+            juce::AudioBuffer<float> tiny(2, 1);
+            fillNoise(tiny, 3);
+            eq.process(tiny);
+            expect(checkFinite(tiny), "NaN/Inf on 1-sample block after mid-session change");
         }
     }
 
-    // ─── helpers ──────────────────────────────────────────────────────────────
+    // ─── helpers ─────────────────────────────────────────────────────────────
     static void fillNoise(juce::AudioBuffer<float>& buf, int seed)
     {
         std::mt19937 rng(static_cast<unsigned>(seed));
@@ -205,14 +164,6 @@ private:
                 if (!std::isfinite(buf.getReadPointer(ch)[i]))
                     return false;
         return true;
-    }
-
-    template<typename Processor>
-    static void processBuffer(Processor& proc, juce::AudioBuffer<float>& buf)
-    {
-        juce::dsp::AudioBlock<float> block(buf);
-        juce::dsp::ProcessContextReplacing<float> ctx(block);
-        proc.process(ctx);
     }
 };
 
