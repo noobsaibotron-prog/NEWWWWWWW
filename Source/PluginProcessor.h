@@ -435,8 +435,11 @@ private:
     juce::IIRFilter soloMonitorFilterL;
     juce::IIRFilter soloMonitorFilterR;
     juce::AudioBuffer<float> preProcessingInputCopy;
-    float lastSoloFreq = -1.0f;   // cached to skip setCoefficients when unchanged
-    float lastSoloQ    = -1.0f;
+    float lastSoloFreq  = -1.0f;   // cached to skip setCoefficients when unchanged
+    float lastSoloQ     = -1.0f;
+    bool  wasSoloed     = false;   // track transition to crossfade on enable/disable
+    int   soloCrossfadeRemaining = 0;
+    static constexpr int   soloCrossfadeSamples = 256;  // ~5ms @ 48kHz
     static constexpr float soloMakeupGainDB = 6.0f;
 
     // IR build debounce: accumulate rapid drag events, rebuild only after silence

@@ -1137,13 +1137,7 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         }
     }
 
-    // Reset cached solo filter params when no band is soloed,
-    // so re-enabling solo forces a fresh setCoefficients call.
-    if (!hasSolo)
-    {
-        lastSoloFreq = -1.0f;
-        lastSoloQ    = -1.0f;
-    }
+    // (solo state reset handled after solo monitor block below)
 
     if (hasSolo)
     {
@@ -1637,30 +1631,103 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
 
         if (foundSolo)
         {
-            // Restore original input and apply band-pass for audition
-            buffer.makeCopyOf(preProcessingInputCopy, true);
-
             const double sr = currentSampleRate.load(std::memory_order_relaxed);
-            // Only update coefficients when freq/Q actually change — avoids
-            // resetting IIR state every block which causes a click on each drag.
-            if (std::abs(soloFreq - lastSoloFreq) > 0.5f || std::abs(soloQ - lastSoloQ) > 0.01f)
+            const int numSamples = buffer.getNumSamples();
+
+            // Update coefficients only when freq/Q actually change.
+            // Also reset filter state on first use (wasSoloed == false)
+            // to avoid stale IIR state producing a click on first block.
+            const bool freqChanged = std::abs(soloFreq - lastSoloFreq) > 0.5f
+                                  || std::abs(soloQ    - lastSoloQ)    > 0.01f;
+            if (freqChanged || !wasSoloed)
             {
                 auto coeffs = juce::IIRCoefficients::makeBandPass(sr, soloFreq, soloQ);
+                soloMonitorFilterL.reset();
+                soloMonitorFilterR.reset();
                 soloMonitorFilterL.setCoefficients(coeffs);
                 soloMonitorFilterR.setCoefficients(coeffs);
                 lastSoloFreq = soloFreq;
                 lastSoloQ    = soloQ;
+
+                // Warm up filter with pre-EQ input to avoid transient on enable
+                if (!wasSoloed && preProcessingInputCopy.getNumSamples() >= numSamples)
+                {
+                    // Run a few dummy blocks to prime the IIR state
+                    constexpr int warmupBlocks = 4;
+                    juce::AudioBuffer<float> warmup(preProcessingInputCopy.getNumChannels(), numSamples);
+                    for (int wb = 0; wb < warmupBlocks; ++wb)
+                    {
+                        warmup.makeCopyOf(preProcessingInputCopy);
+                        if (warmup.getNumChannels() > 0)
+                            soloMonitorFilterL.processSamples(warmup.getWritePointer(0), numSamples);
+                        if (warmup.getNumChannels() > 1)
+                            soloMonitorFilterR.processSamples(warmup.getWritePointer(1), numSamples);
+                    }
+                }
+
+                soloCrossfadeRemaining = soloCrossfadeSamples;
             }
 
-            const int numSamples = buffer.getNumSamples();
-            if (buffer.getNumChannels() > 0)
-                soloMonitorFilterL.processSamples(buffer.getWritePointer(0), numSamples);
-            if (buffer.getNumChannels() > 1)
-                soloMonitorFilterR.processSamples(buffer.getWritePointer(1), numSamples);
+            // Build solo output buffer (pre-EQ signal + bandpass)
+            juce::AudioBuffer<float> soloOut(buffer.getNumChannels(), numSamples);
+            if (preProcessingInputCopy.getNumChannels() >= buffer.getNumChannels()
+                && preProcessingInputCopy.getNumSamples() >= numSamples)
+            {
+                soloOut.makeCopyOf(preProcessingInputCopy);
+                soloOut.setSize(buffer.getNumChannels(), numSamples, true, false, true);
+            }
+            else
+            {
+                soloOut.makeCopyOf(buffer);
+            }
 
-            // Makeup gain to compensate narrow band level drop
-            buffer.applyGain(juce::Decibels::decibelsToGain(soloMakeupGainDB));
+            if (soloOut.getNumChannels() > 0)
+                soloMonitorFilterL.processSamples(soloOut.getWritePointer(0), numSamples);
+            if (soloOut.getNumChannels() > 1)
+                soloMonitorFilterR.processSamples(soloOut.getWritePointer(1), numSamples);
+
+            soloOut.applyGain(juce::Decibels::decibelsToGain(soloMakeupGainDB));
+
+            // Crossfade from wet EQ output → solo bandpass output to avoid click on enable
+            if (soloCrossfadeRemaining > 0)
+            {
+                const int fadeLen = juce::jmin(soloCrossfadeRemaining, numSamples);
+                for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+                {
+                    float* wet  = buffer.getWritePointer(ch);
+                    const float* dry = soloOut.getReadPointer(ch);
+                    for (int s = 0; s < fadeLen; ++s)
+                    {
+                        const float t = static_cast<float>(soloCrossfadeSamples - soloCrossfadeRemaining + s)
+                                      / static_cast<float>(soloCrossfadeSamples);
+                        wet[s] = wet[s] * (1.0f - t) + dry[s] * t;
+                    }
+                    // Rest of block: pure solo
+                    for (int s = fadeLen; s < numSamples; ++s)
+                        wet[s] = dry[s];
+                }
+                soloCrossfadeRemaining = juce::jmax(0, soloCrossfadeRemaining - numSamples);
+            }
+            else
+            {
+                // Full solo — copy directly
+                for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+                    buffer.copyFrom(ch, 0, soloOut, ch, 0, numSamples);
+            }
+
+            wasSoloed = true;
         }
+    }
+
+    // Solo was active last block but not now — crossfade back to normal
+    if (!hasSolo && wasSoloed)
+    {
+        wasSoloed = false;
+        soloCrossfadeRemaining = 0;
+        lastSoloFreq = -1.0f;
+        lastSoloQ    = -1.0f;
+        soloMonitorFilterL.reset();
+        soloMonitorFilterR.reset();
     }
 
     // Feed post-EQ spectrum analyzer
