@@ -39,12 +39,15 @@ void ParametricEQProcessor::prepare(double sampleRate, int samplesPerBlock, int 
     spec.maximumBlockSize = static_cast<juce::uint32>(samplesPerBlock);
     spec.numChannels = 1;  // Each filter processes mono
     
-    // Prepare all band filter states
+    // Prepare all band filter states (all stages)
     for (int i = 0; i < getMaxBands(); ++i)
     {
         auto& state = bandStates[i];
-        state.filterL.prepare(spec);
-        state.filterR.prepare(spec);
+        for (int s = 0; s < BandProcessingState::maxFilterStages; ++s)
+        {
+            state.filtersL[s].prepare(spec);
+            state.filtersR[s].prepare(spec);
+        }
         state.lastVersion = 0;  // Force coefficient update
         state.prepared = true;
     }
@@ -63,8 +66,11 @@ void ParametricEQProcessor::reset()
 {
     for (int i = 0; i < getMaxBands(); ++i)
     {
-        bandStates[i].filterL.reset();
-        bandStates[i].filterR.reset();
+        for (int s = 0; s < BandProcessingState::maxFilterStages; ++s)
+        {
+            bandStates[i].filtersL[s].reset();
+            bandStates[i].filtersR[s].reset();
+        }
     }
 }
 
@@ -114,15 +120,29 @@ void ParametricEQProcessor::process(juce::AudioBuffer<float>& buffer)
             const float gain = params.gain.load(std::memory_order_relaxed);
             const float q = params.q.load(std::memory_order_relaxed);
             const int type = params.type.load(std::memory_order_relaxed);
+            const int slope = params.slope.load(std::memory_order_relaxed);
             
             // Update coefficients
-            state.coefficients = makeCoefficients(static_cast<FilterType>(type), freq, gain, q, sr);
+            auto coeff = makeCoefficients(static_cast<FilterType>(type), freq, gain, q, sr);
             
-            if (state.coefficients != nullptr)
+            // Determine number of stages based on slope (only for LowCut/HighCut)
+            int numStages = 1;
+            if ((type == static_cast<int>(LowCut) || type == static_cast<int>(HighCut)) && slope > 0)
+                numStages = (slope == 1) ? 2 : 4;  // 24dB=2 stages, 48dB=4 stages
+            state.numActiveStages = numStages;
+            
+            for (int s = 0; s < numStages; ++s)
             {
-                *state.filterL.coefficients = *state.coefficients;
-                *state.filterR.coefficients = *state.coefficients;
+                state.coefficients[s] = coeff;
+                if (coeff != nullptr)
+                {
+                    *state.filtersL[s].coefficients = *coeff;
+                    *state.filtersR[s].coefficients = *coeff;
+                }
             }
+            // Clear unused stages
+            for (int s = numStages; s < BandProcessingState::maxFilterStages; ++s)
+                state.coefficients[s] = nullptr;
             
             state.lastVersion = currentVersion;
         }
@@ -156,9 +176,11 @@ void ParametricEQProcessor::process(juce::AudioBuffer<float>& buffer)
         if (hasSolo && !solo)
             continue;
         
-        // Skip if no valid coefficients
-        if (state.coefficients == nullptr)
+        // Skip if no valid coefficients (check first stage)
+        if (state.coefficients[0] == nullptr)
             continue;
+        
+        const int numStages = state.numActiveStages;
         
         // Check for vintage modes that need soft clipping
         const bool applyVintage = vintage && 
@@ -177,7 +199,9 @@ void ParametricEQProcessor::process(juce::AudioBuffer<float>& buffer)
                 
                 for (int i = 0; i < numSamples; ++i)
                 {
-                    float sample = state.filterL.processSample(channelData[i]);
+                    float sample = channelData[i];
+                    for (int s = 0; s < numStages; ++s)
+                        sample = state.filtersL[s].processSample(sample);
                     sample = fastTanhApprox(sample * drive) * invDrive;
                     channelData[i] = sample;
                 }
@@ -187,7 +211,10 @@ void ParametricEQProcessor::process(juce::AudioBuffer<float>& buffer)
                 // Standard processing
                 for (int i = 0; i < numSamples; ++i)
                 {
-                    channelData[i] = state.filterL.processSample(channelData[i]);
+                    float sample = channelData[i];
+                    for (int s = 0; s < numStages; ++s)
+                        sample = state.filtersL[s].processSample(sample);
+                    channelData[i] = sample;
                 }
             }
         }
@@ -204,7 +231,9 @@ void ParametricEQProcessor::process(juce::AudioBuffer<float>& buffer)
                 
                 for (int i = 0; i < numSamples; ++i)
                 {
-                    float sample = state.filterR.processSample(channelData[i]);
+                    float sample = channelData[i];
+                    for (int s = 0; s < numStages; ++s)
+                        sample = state.filtersR[s].processSample(sample);
                     sample = fastTanhApprox(sample * drive) * invDrive;
                     channelData[i] = sample;
                 }
@@ -213,7 +242,10 @@ void ParametricEQProcessor::process(juce::AudioBuffer<float>& buffer)
             {
                 for (int i = 0; i < numSamples; ++i)
                 {
-                    channelData[i] = state.filterR.processSample(channelData[i]);
+                    float sample = channelData[i];
+                    for (int s = 0; s < numStages; ++s)
+                        sample = state.filtersR[s].processSample(sample);
+                    channelData[i] = sample;
                 }
             }
         }
@@ -261,17 +293,24 @@ int ParametricEQProcessor::addBand(float freq, float gainDb, float q, int type)
         spec.maximumBlockSize = static_cast<juce::uint32>(currentBlockSize.load(std::memory_order_relaxed));
         spec.numChannels = 1;
         
-        state.filterL.prepare(spec);
-        state.filterR.prepare(spec);
+        for (int s = 0; s < BandProcessingState::maxFilterStages; ++s)
+        {
+            state.filtersL[s].prepare(spec);
+            state.filtersR[s].prepare(spec);
+        }
+        state.numActiveStages = 1;
         state.prepared = true;
         
         // Create coefficients
-        state.coefficients = makeCoefficients(static_cast<FilterType>(type), freq, gainDb, q, sr);
-        if (state.coefficients != nullptr)
+        auto coeff = makeCoefficients(static_cast<FilterType>(type), freq, gainDb, q, sr);
+        state.coefficients[0] = coeff;
+        if (coeff != nullptr)
         {
-            *state.filterL.coefficients = *state.coefficients;
-            *state.filterR.coefficients = *state.coefficients;
+            *state.filtersL[0].coefficients = *coeff;
+            *state.filtersR[0].coefficients = *coeff;
         }
+        for (int s = 1; s < BandProcessingState::maxFilterStages; ++s)
+            state.coefficients[s] = nullptr;
         state.lastVersion = params.version.load(std::memory_order_acquire);
     }
     
@@ -302,10 +341,13 @@ void ParametricEQProcessor::removeBand(int index)
         dest.enabled.store(src.enabled.load(std::memory_order_relaxed), std::memory_order_relaxed);
         dest.solo.store(src.solo.load(std::memory_order_relaxed), std::memory_order_relaxed);
         dest.vintageMode.store(src.vintageMode.load(std::memory_order_relaxed), std::memory_order_relaxed);
+        dest.slope.store(src.slope.load(std::memory_order_relaxed), std::memory_order_relaxed);
         dest.version.fetch_add(1, std::memory_order_release);
         
         // Copy filter state
-        bandStates[i].coefficients = bandStates[i + 1].coefficients;
+        for (int s = 0; s < BandProcessingState::maxFilterStages; ++s)
+            bandStates[i].coefficients[s] = bandStates[i + 1].coefficients[s];
+        bandStates[i].numActiveStages = bandStates[i + 1].numActiveStages;
         bandStates[i].lastVersion = 0;  // Force update
     }
     
@@ -404,6 +446,13 @@ void ParametricEQProcessor::setBandParameters(int index, float freq, float gain,
     params.version.fetch_add(1, std::memory_order_release);
 }
 
+void ParametricEQProcessor::setBandSlope(int index, int s)
+{
+    if (index < 0 || index >= getMaxBands()) return;
+    bandParams[index].slope.store(juce::jlimit(0, 2, s), std::memory_order_relaxed);
+    bandParams[index].version.fetch_add(1, std::memory_order_release);
+}
+
 //==============================================================================
 float ParametricEQProcessor::getBandFrequency(int index) const
 {
@@ -445,6 +494,12 @@ bool ParametricEQProcessor::isBandSolo(int index) const
     if (index < 0 || index >= numActiveBands.load(std::memory_order_acquire))
         return false;
     return bandParams[index].solo.load(std::memory_order_relaxed);
+}
+
+int ParametricEQProcessor::getBandSlope(int index) const
+{
+    if (index < 0 || index >= getMaxBands()) return 0;
+    return bandParams[index].slope.load(std::memory_order_relaxed);
 }
 
 ParametricEQProcessor::BandInfo ParametricEQProcessor::getBandInfo(int index) const
@@ -489,12 +544,21 @@ float ParametricEQProcessor::getMagnitudeForFrequency(float freq, double sampleR
         const float bGain = bandParams[i].gain.load(std::memory_order_relaxed);
         const float bQ    = bandParams[i].q.load(std::memory_order_relaxed);
         const int   bType = bandParams[i].type.load(std::memory_order_relaxed);
+        const int   bSlope = bandParams[i].slope.load(std::memory_order_relaxed);
 
         auto coefs = makeCoefficients(static_cast<FilterType>(bType), bFreq, bGain, bQ, sampleRate);
         if (coefs == nullptr)
             continue;
 
-        magnitude *= coefs->getMagnitudeForFrequency(static_cast<double>(freq), sampleRate);
+        double singleMag = coefs->getMagnitudeForFrequency(static_cast<double>(freq), sampleRate);
+        
+        // Apply cascaded stages for LowCut/HighCut with slope > 12dB/oct
+        int numStages = 1;
+        if ((bType == static_cast<int>(LowCut) || bType == static_cast<int>(HighCut)) && bSlope > 0)
+            numStages = (bSlope == 1) ? 2 : 4;
+        
+        for (int s = 0; s < numStages; ++s)
+            magnitude *= singleMag;
     }
 
     return static_cast<float>(magnitude) * outputGain.load(std::memory_order_relaxed);
@@ -530,16 +594,26 @@ void ParametricEQProcessor::getMagnitudeForFrequencyArray(const float* frequenci
         const float bGain = bandParams[bandIdx].gain.load(std::memory_order_relaxed);
         const float bQ    = bandParams[bandIdx].q.load(std::memory_order_relaxed);
         const int   bType = bandParams[bandIdx].type.load(std::memory_order_relaxed);
+        const int   bSlope = bandParams[bandIdx].slope.load(std::memory_order_relaxed);
 
         auto coefs = makeCoefficients(static_cast<FilterType>(bType), bFreq, bGain, bQ, sampleRate);
         if (coefs == nullptr)
             continue;
 
+        // Determine number of cascaded stages for LowCut/HighCut
+        int numStages = 1;
+        if ((bType == static_cast<int>(LowCut) || bType == static_cast<int>(HighCut)) && bSlope > 0)
+            numStages = (bSlope == 1) ? 2 : 4;
+
         for (size_t i = 0; i < numPoints; ++i)
         {
             double mag = coefs->getMagnitudeForFrequency(
                 static_cast<double>(frequencies[i]), sampleRate);
-            magnitudes[i] *= static_cast<float>(mag);
+            // Apply cascaded stages
+            double totalMag = 1.0;
+            for (int s = 0; s < numStages; ++s)
+                totalMag *= mag;
+            magnitudes[i] *= static_cast<float>(totalMag);
         }
     }
 
@@ -562,15 +636,28 @@ void ParametricEQProcessor::updateCoefficientsForBand(int index)
     const float gain = params.gain.load(std::memory_order_relaxed);
     const float q = params.q.load(std::memory_order_relaxed);
     const int type = params.type.load(std::memory_order_relaxed);
+    const int slope = params.slope.load(std::memory_order_relaxed);
     const double sr = currentSampleRate.load(std::memory_order_relaxed);
     
-    state.coefficients = makeCoefficients(static_cast<FilterType>(type), freq, gain, q, sr);
+    auto coeff = makeCoefficients(static_cast<FilterType>(type), freq, gain, q, sr);
     
-    if (state.coefficients != nullptr && state.prepared)
+    // Determine number of stages based on slope (only for LowCut/HighCut)
+    int numStages = 1;
+    if ((type == static_cast<int>(LowCut) || type == static_cast<int>(HighCut)) && slope > 0)
+        numStages = (slope == 1) ? 2 : 4;
+    state.numActiveStages = numStages;
+    
+    for (int s = 0; s < numStages; ++s)
     {
-        *state.filterL.coefficients = *state.coefficients;
-        *state.filterR.coefficients = *state.coefficients;
+        state.coefficients[s] = coeff;
+        if (coeff != nullptr && state.prepared)
+        {
+            *state.filtersL[s].coefficients = *coeff;
+            *state.filtersR[s].coefficients = *coeff;
+        }
     }
+    for (int s = numStages; s < BandProcessingState::maxFilterStages; ++s)
+        state.coefficients[s] = nullptr;
     
     state.lastVersion = params.version.load(std::memory_order_acquire);
 }
@@ -586,10 +673,19 @@ juce::dsp::IIR::Coefficients<float>::Ptr ParametricEQProcessor::makeCoefficients
     freq = juce::jlimit(20.0f, static_cast<float>(sampleRate * 0.49), freq);
     const float sr = static_cast<float>(sampleRate);
     
+    // Anti-cramping: prewarp frequency using bilinear transform compensation
+    // This corrects frequency warping near Nyquist for all filter types
+    const float prewarpedFreq = static_cast<float>(
+        2.0 * sampleRate * std::tan(juce::MathConstants<double>::pi * static_cast<double>(freq) / sampleRate)
+        / (2.0 * juce::MathConstants<double>::pi));
+    // Use prewarped frequency for LowCut, HighCut, and Peak filters
+    const float effectiveFreq = (type == LowCut || type == HighCut || type == Peak)
+                                ? prewarpedFreq : freq;
+    
     switch (type)
     {
         case LowCut:
-            return juce::dsp::IIR::Coefficients<float>::makeHighPass(sr, freq, q);
+            return juce::dsp::IIR::Coefficients<float>::makeHighPass(sr, effectiveFreq, q);
             
         case LowShelf:
             return juce::dsp::IIR::Coefficients<float>::makeLowShelf(
@@ -597,16 +693,16 @@ juce::dsp::IIR::Coefficients<float>::Ptr ParametricEQProcessor::makeCoefficients
             
         case Peak:
             if (std::abs(gain) < 0.01f)
-                return juce::dsp::IIR::Coefficients<float>::makeAllPass(sr, freq, q);
+                return juce::dsp::IIR::Coefficients<float>::makeAllPass(sr, effectiveFreq, q);
             return juce::dsp::IIR::Coefficients<float>::makePeakFilter(
-                sr, freq, q, juce::Decibels::decibelsToGain(gain));
+                sr, effectiveFreq, q, juce::Decibels::decibelsToGain(gain));
             
         case HighShelf:
             return juce::dsp::IIR::Coefficients<float>::makeHighShelf(
                 sr, freq, q, juce::Decibels::decibelsToGain(gain));
             
         case HighCut:
-            return juce::dsp::IIR::Coefficients<float>::makeLowPass(sr, freq, q);
+            return juce::dsp::IIR::Coefficients<float>::makeLowPass(sr, effectiveFreq, q);
             
         case Notch:
             return juce::dsp::IIR::Coefficients<float>::makeNotch(sr, freq, q);

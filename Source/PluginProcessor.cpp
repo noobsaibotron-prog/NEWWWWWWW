@@ -37,6 +37,7 @@ AIEqualizerAudioProcessor::AIEqualizerAudioProcessor()
         eqParameterIDs.push_back(prefix + "Q");
         eqParameterIDs.push_back(prefix + "Type");
         eqParameterIDs.push_back(prefix + "Enabled");
+        eqParameterIDs.push_back(prefix + "Slope");
 
         // FIX: Also listen to Dynamic EQ parameters so that tweaking
         // threshold/ratio/attack/release from the GUI triggers parameterChanged()
@@ -590,6 +591,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout AIEqualizerAudioProcessor::c
         params.push_back(std::make_unique<juce::AudioParameterBool>(
             juce::ParameterID{prefix + "Solo", 1}, "Band " + juce::String(i + 1) + " Solo", false));
         
+        // Slope (per-band, LowCut/HighCut only)
+        params.push_back(std::make_unique<juce::AudioParameterChoice>(
+            juce::ParameterID{prefix + "Slope", 1}, "Band " + juce::String(i + 1) + " Slope",
+            juce::StringArray{"12 dB/oct", "24 dB/oct", "48 dB/oct"}, 0));
+        
         //----------------------------------------------------------------------
         // DYNAMIC EQ Parameters (FabFilter Pro-Q / TDR Nova style)
         //----------------------------------------------------------------------
@@ -667,6 +673,7 @@ void AIEqualizerAudioProcessor::cacheParameterPointers()
         cachedParams[i].dynRelease = apvts.getRawParameterValue(prefix + "Release");
         cachedParams[i].dynKnee = apvts.getRawParameterValue(prefix + "Knee");
         cachedParams[i].dynRange = apvts.getRawParameterValue(prefix + "Range");
+        cachedParams[i].slope = apvts.getRawParameterValue(prefix + "Slope");
     }
 
     cachedOutputGain = apvts.getRawParameterValue("outputGain");
@@ -2079,6 +2086,15 @@ void AIEqualizerAudioProcessor::updateEQFromParameters()
             eqProcessorSide.setBandSolo(i, solo);
         }
         
+        // Sync slope parameter for all processors
+        {
+            int slopeVal = static_cast<int>(loadParam(p.slope, 0.0f));
+            eqProcessor.setBandSlope(i, slopeVal);
+            eqProcessorHQ.setBandSlope(i, slopeVal);
+            eqProcessorMid.setBandSlope(i, slopeVal);
+            eqProcessorSide.setBandSlope(i, slopeVal);
+        }
+        
         //----------------------------------------------------------------------
         // Update Dynamic EQ band parameters
         //----------------------------------------------------------------------
@@ -2138,6 +2154,7 @@ void AIEqualizerAudioProcessor::updateEQFromParameters()
             eqProcessorForIR.setBandParameters(i, freq, gain, q, type);
             eqProcessorForIR.setBandEnabled(i, enabledFiltered);
             eqProcessorForIR.setBandSolo(i, solo);
+            eqProcessorForIR.setBandSlope(i, static_cast<int>(loadParam(p.slope, 0.0f)));
         }
         dynamicEQProcessorForIR.setBandParams(i, dynParams);
     }

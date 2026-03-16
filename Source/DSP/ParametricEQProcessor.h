@@ -52,9 +52,10 @@ public:
         std::atomic<bool> enabled { false };
         std::atomic<bool> solo { false };
         std::atomic<bool> vintageMode { false };
+        std::atomic<int> slope { 0 };  // 0=12dB/oct, 1=24dB/oct, 2=48dB/oct (LowCut/HighCut only)
         std::atomic<uint64_t> version { 0 };  // Incremented on any change
         
-        void set(float freq, float g, float qVal, int t, bool en, bool s = false, bool vintage = false) noexcept
+        void set(float freq, float g, float qVal, int t, bool en, bool s = false, bool vintage = false, int sl = 0) noexcept
         {
             frequency.store(freq, std::memory_order_relaxed);
             gain.store(g, std::memory_order_relaxed);
@@ -63,6 +64,7 @@ public:
             enabled.store(en, std::memory_order_relaxed);
             solo.store(s, std::memory_order_relaxed);
             vintageMode.store(vintage, std::memory_order_relaxed);
+            slope.store(juce::jlimit(0, 2, sl), std::memory_order_relaxed);
             version.fetch_add(1, std::memory_order_release);
         }
     };
@@ -71,9 +73,11 @@ public:
     // Processing state for each band (audio thread only, no sharing)
     struct BandProcessingState
     {
-        juce::dsp::IIR::Filter<float> filterL;
-        juce::dsp::IIR::Filter<float> filterR;
-        juce::dsp::IIR::Coefficients<float>::Ptr coefficients;
+        static constexpr int maxFilterStages = 4;
+        std::array<juce::dsp::IIR::Filter<float>, maxFilterStages> filtersL;
+        std::array<juce::dsp::IIR::Filter<float>, maxFilterStages> filtersR;
+        std::array<juce::dsp::IIR::Coefficients<float>::Ptr, maxFilterStages> coefficients;
+        int numActiveStages = 1;
         uint64_t lastVersion = 0;  // Track when coefficients need update
         bool prepared = false;
     };
@@ -120,6 +124,7 @@ public:
     void setBandVintageMode(int index, bool vintage);
     
     void setBandParameters(int index, float freq, float gain, float q, int type);
+    void setBandSlope(int index, int slope);  // 0=12, 1=24, 2=48 dB/oct (LowCut/HighCut only)
     
     [[nodiscard]] float getBandFrequency(int index) const;
     [[nodiscard]] float getBandGain(int index) const;
@@ -127,6 +132,7 @@ public:
     [[nodiscard]] int getBandType(int index) const;
     [[nodiscard]] bool isBandEnabled(int index) const;
     [[nodiscard]] bool isBandSolo(int index) const;
+    [[nodiscard]] int getBandSlope(int index) const;
     
     // Get complete band info (for GUI display)
     [[nodiscard]] BandInfo getBandInfo(int index) const;

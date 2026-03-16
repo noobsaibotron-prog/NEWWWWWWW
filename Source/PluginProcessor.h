@@ -588,6 +588,7 @@ private:
         std::atomic<float>* dynRelease = nullptr;
         std::atomic<float>* dynKnee = nullptr;
         std::atomic<float>* dynRange = nullptr;
+        std::atomic<float>* slope = nullptr;
     };
     
     std::array<CachedBandParams, maxBands> cachedParams {};
