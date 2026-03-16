@@ -104,7 +104,9 @@ private:
         for (int i = 0; i < 8; ++i)
         {
             fillNoise(buf, i + blockSize);
-            lp.process(buf);
+            juce::dsp::AudioBlock<float> block(buf);
+            juce::dsp::ProcessContextReplacing<float> ctx(block);
+            lp.process(ctx);
         }
 
         juce::String label = "LinearPhase sr=" + juce::String(static_cast<int>(sr))
