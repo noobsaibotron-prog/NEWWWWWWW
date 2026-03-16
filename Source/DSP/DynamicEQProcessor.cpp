@@ -345,8 +345,13 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
                 state.currentGain = gainCoeff * state.currentGain + (1.0f - gainCoeff) * dynamicGainDb;
                 
                 // Update metering (atomic)
+                // IMPORTANT: store dynamicGainDb (instantaneous, pre-smooth) rather than
+                // state.currentGain (audio-smoothed). The GUI meter has its own visual
+                // smoothing (DynamicEQPanel::timerCallback). Storing the audio-smoothed
+                // value here caused the meter to lag 100ms behind parameter changes —
+                // it was effectively double-smoothed (audio + GUI decay).
                 state.meterInputLevel.store(smoothedEnv, std::memory_order_relaxed);
-                state.meterGainReduction.store(state.currentGain, std::memory_order_relaxed);
+                state.meterGainReduction.store(dynamicGainDb, std::memory_order_relaxed);
                 
                 // Apply EQ
                 float outL = state.eqFiltersL[0].processSample(inL);
