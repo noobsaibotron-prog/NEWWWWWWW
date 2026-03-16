@@ -174,32 +174,41 @@ public:
     
     void timerCallback() override
     {
-        // Update gain reduction display
-        if (bandMeterProvider)
+        if (!bandMeterProvider)
+            return;
+
+        auto meter = bandMeterProvider(bandIndex);
+
+        // Compute GR directly from current knob values + audio-thread input level.
+        // This guarantees instant meter response when threshold/ratio/mode are tweaked,
+        // instead of waiting for the audio thread to pick up the param change and
+        // recalculate via smoothedEnv (which doesn't move when signal is static).
+        //
+        // meter.inputLevel = smoothedEnv in dB from audio thread (updates while audio flows).
+        // knob values        = always current (read directly here).
+        const int modeId = modeCombo.getSelectedId(); // 1=Off, 2=Compress, 3=Expand, 4=Gate
+        float newGR = 0.0f;
+
+        if (modeId > 1 && meter.inputLevel > -99.0f)
         {
-            auto meter = bandMeterProvider(bandIndex);
-            const float newGR = meter.gainReduction;
-
-            // Smooth the meter:
-            // - Attack: instantaneous (show peak GR immediately)
-            // - Release: fast enough to respond to threshold changes in real-time (~80ms)
-            constexpr float releaseCoeff = 0.6f; // per tick at 30Hz ≈ 80ms release
-            if (std::abs(newGR) > std::abs(currentGainReduction))
-                currentGainReduction = newGR; // fast attack
-            else
-                currentGainReduction = currentGainReduction * releaseCoeff + newGR * (1.0f - releaseCoeff);
-
-            // Snap immediately if GR changed significantly (e.g. threshold/ratio knob tweaked)
-            // Lowered threshold from 2.0 to 0.5 dB so small parameter changes feel instant.
-            if (std::abs(newGR - currentGainReduction) > 0.5f)
-                currentGainReduction = newGR;
-
-            // Clamp to near-zero to avoid meter never fully reaching 0
-            if (std::abs(currentGainReduction) < 0.05f)
-                currentGainReduction = 0.0f;
-
-            repaint(gainReductionBounds);
+            const float thresh = static_cast<float>(thresholdKnob.getValue());
+            const float ratio  = static_cast<float>(ratioKnob.getValue());
+            const float range  = static_cast<float>(rangeKnob.getValue());
+            const float knee   = static_cast<float>(kneeKnob.getValue());
+            newGR = computeExpectedGR(meter.inputLevel, modeId - 1, thresh, ratio, knee, range);
         }
+
+        // Smooth for display: instant attack, fast release (~80ms at 30Hz)
+        constexpr float releaseCoeff = 0.6f;
+        if (std::abs(newGR) > std::abs(currentGainReduction))
+            currentGainReduction = newGR;
+        else
+            currentGainReduction = currentGainReduction * releaseCoeff + newGR * (1.0f - releaseCoeff);
+
+        if (std::abs(currentGainReduction) < 0.05f)
+            currentGainReduction = 0.0f;
+
+        repaint(gainReductionBounds);
     }
     
     void setBandMeterProvider(std::function<DynamicEQProcessor::BandMeter(int)> provider)
@@ -237,6 +246,46 @@ public:
     }
 
 private:
+    // Mirror of DynamicEQProcessor::calculateDynamicGain — called on GUI thread
+    // so the meter reflects current knob values instantly without waiting for audio thread.
+    static float computeExpectedGR(float inputDb, int dynMode,
+                                   float threshold, float ratio, float knee, float range)
+    {
+        // dynMode: 1=Compress, 2=Expand, 3=Gate  (matches DynamicMode_* constants)
+        if (dynMode == 1) // Compress
+        {
+            if (inputDb <= threshold - knee * 0.5f)
+                return 0.0f;
+            if (knee > 0.0f && inputDb < threshold + knee * 0.5f)
+            {
+                float x = inputDb - (threshold - knee * 0.5f);
+                float gr = (x * x) / (2.0f * knee) * (1.0f / ratio - 1.0f);
+                return juce::jlimit(-range, 0.0f, gr);
+            }
+            return juce::jlimit(-range, 0.0f, (threshold - inputDb) * (1.0f - 1.0f / ratio));
+        }
+        if (dynMode == 2) // Expand
+        {
+            if (inputDb <= threshold - knee * 0.5f)
+                return 0.0f;
+            float excess = inputDb - threshold;
+            if (knee > 0.0f && excess < knee * 0.5f)
+            {
+                float kneeRatio = (excess + knee * 0.5f) / knee;
+                return juce::jlimit(0.0f, range, kneeRatio * excess * (1.0f - 1.0f / ratio));
+            }
+            return juce::jlimit(0.0f, range, excess * (1.0f - 1.0f / ratio));
+        }
+        if (dynMode == 3) // Gate
+        {
+            if (inputDb >= threshold)
+                return 0.0f;
+            float below = threshold - inputDb;
+            return juce::jlimit(-range, 0.0f, -below * ratio);
+        }
+        return 0.0f;
+    }
+
     void setupKnob(juce::Slider& knob, const juce::String& name,
                    float min, float max, float defaultVal, const juce::String& suffix)
     {
