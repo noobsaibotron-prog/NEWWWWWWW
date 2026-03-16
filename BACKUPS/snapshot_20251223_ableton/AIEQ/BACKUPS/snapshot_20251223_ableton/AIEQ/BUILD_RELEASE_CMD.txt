@@ -1,8 +1,0 @@
-Comando per compilare in Release:
-
-cd C:\AIEQ\build
-cmake --build . --config Release --parallel
-
-Oppure per compilare solo il target VST3:
-cmake --build . --config Release --target AIEqualizerPro_VST3 --parallel
-
