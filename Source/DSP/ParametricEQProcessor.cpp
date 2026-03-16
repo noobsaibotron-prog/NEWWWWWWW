@@ -665,66 +665,67 @@ void ParametricEQProcessor::updateCoefficientsForBand(int index)
 juce::dsp::IIR::Coefficients<float>::Ptr ParametricEQProcessor::makeCoefficients(
     FilterType type, float freq, float gain, float q, double sampleRate) const
 {
-    // CRITICAL: Safety check - return nullptr if sample rate is invalid
     if (sampleRate <= 0.0 || sampleRate > 192000.0)
         return nullptr;
-    
-    // Clamp frequency to valid range
-    freq = juce::jlimit(20.0f, static_cast<float>(sampleRate * 0.49), freq);
-    const float sr = static_cast<float>(sampleRate);
-    
-    // Anti-cramping: prewarp frequency using bilinear transform compensation
-    // This corrects frequency warping near Nyquist for all filter types
-    const float prewarpedFreq = static_cast<float>(
-        2.0 * sampleRate * std::tan(juce::MathConstants<double>::pi * static_cast<double>(freq) / sampleRate)
-        / (2.0 * juce::MathConstants<double>::pi));
-    // Use prewarped frequency for LowCut, HighCut, and Peak filters
-    const float effectiveFreq = (type == LowCut || type == HighCut || type == Peak)
-                                ? prewarpedFreq : freq;
-    
+
+    // Clamp frequency safely below Nyquist
+    freq = juce::jlimit(20.0f, static_cast<float>(sampleRate * 0.499), freq);
+
+    // Clamp Q to a sane range (avoid degenerate filters)
+    q = juce::jlimit(0.1f, 40.0f, q);
+
+    // Use double-precision sample rate throughout — avoids rounding errors at 96/192 kHz
+    const double sr = sampleRate;
+
+    // NOTE: JUCE IIR coefficient functions already apply bilinear-transform prewarping
+    // internally, so we do NOT prewarp the frequency here. Doing it twice would shift
+    // the cutoff upward (audible above ~8 kHz) and is the cause of the previous
+    // "anti-cramping" regression introduced in the previous commit.
+
     switch (type)
     {
         case LowCut:
-            return juce::dsp::IIR::Coefficients<float>::makeHighPass(sr, effectiveFreq, q);
-            
+            return juce::dsp::IIR::Coefficients<float>::makeHighPass(sr, freq, q);
+
         case LowShelf:
             return juce::dsp::IIR::Coefficients<float>::makeLowShelf(
                 sr, freq, q, juce::Decibels::decibelsToGain(gain));
-            
+
         case Peak:
-            if (std::abs(gain) < 0.01f)
-                return juce::dsp::IIR::Coefficients<float>::makeAllPass(sr, effectiveFreq, q);
+            // Gain near zero: return identity (no phase shift, no allpass artifact)
+            if (std::abs(gain) < 0.05f)
+                return juce::dsp::IIR::Coefficients<float>::makeAllPass(sr, 20.0, 0.1);
             return juce::dsp::IIR::Coefficients<float>::makePeakFilter(
-                sr, effectiveFreq, q, juce::Decibels::decibelsToGain(gain));
-            
+                sr, freq, q, juce::Decibels::decibelsToGain(gain));
+
         case HighShelf:
             return juce::dsp::IIR::Coefficients<float>::makeHighShelf(
                 sr, freq, q, juce::Decibels::decibelsToGain(gain));
-            
+
         case HighCut:
-            return juce::dsp::IIR::Coefficients<float>::makeLowPass(sr, effectiveFreq, q);
-            
+            return juce::dsp::IIR::Coefficients<float>::makeLowPass(sr, freq, q);
+
         case Notch:
             return juce::dsp::IIR::Coefficients<float>::makeNotch(sr, freq, q);
-            
+
         case BandPass:
             return juce::dsp::IIR::Coefficients<float>::makeBandPass(sr, freq, q);
-        
+
         case VintageLowShelf:
         {
             float vintageQ = juce::jlimit(0.3f, 1.0f, q * 0.6f);
             return juce::dsp::IIR::Coefficients<float>::makeLowShelf(
                 sr, freq, vintageQ, juce::Decibels::decibelsToGain(gain));
         }
-        
+
         case VintageHighShelf:
         {
             float vintageQ = juce::jlimit(0.3f, 1.0f, q * 0.6f);
             return juce::dsp::IIR::Coefficients<float>::makeHighShelf(
                 sr, freq, vintageQ, juce::Decibels::decibelsToGain(gain));
         }
-            
+
         default:
-            return juce::dsp::IIR::Coefficients<float>::makeAllPass(sr, freq, q);
+            return juce::dsp::IIR::Coefficients<float>::makeAllPass(sr, 20.0, 0.1);
     }
 }

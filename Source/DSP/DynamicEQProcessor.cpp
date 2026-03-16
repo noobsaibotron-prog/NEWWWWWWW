@@ -741,12 +741,13 @@ juce::dsp::IIR::Coefficients<float>::Ptr DynamicEQProcessor::makeEQCoefficients(
     int filterType, float freq, float gain, float q) const
 {
     const double sr = currentSampleRate.load(std::memory_order_relaxed);
-    
+
     if (sr <= 0.0)
         return nullptr;
-    
-    freq = juce::jlimit(20.0f, static_cast<float>(sr * 0.49), freq);
-    
+
+    freq = juce::jlimit(20.0f, static_cast<float>(sr * 0.499), freq);
+    q    = juce::jlimit(0.1f, 40.0f, q);
+
     switch (filterType)
     {
         case 0: // LowCut
@@ -755,8 +756,8 @@ juce::dsp::IIR::Coefficients<float>::Ptr DynamicEQProcessor::makeEQCoefficients(
             return juce::dsp::IIR::Coefficients<float>::makeLowShelf(
                 sr, freq, q, juce::Decibels::decibelsToGain(gain));
         case 2: // Peak
-            if (std::abs(gain) < 0.01f)
-                return juce::dsp::IIR::Coefficients<float>::makeAllPass(sr, freq, q);
+            if (std::abs(gain) < 0.05f)
+                return juce::dsp::IIR::Coefficients<float>::makeAllPass(sr, 20.0, 0.1);
             return juce::dsp::IIR::Coefficients<float>::makePeakFilter(
                 sr, freq, q, juce::Decibels::decibelsToGain(gain));
         case 3: // HighShelf
@@ -769,7 +770,7 @@ juce::dsp::IIR::Coefficients<float>::Ptr DynamicEQProcessor::makeEQCoefficients(
         case 6: // BandPass
             return juce::dsp::IIR::Coefficients<float>::makeBandPass(sr, freq, q);
         default:
-            return juce::dsp::IIR::Coefficients<float>::makeAllPass(sr, freq, q);
+            return juce::dsp::IIR::Coefficients<float>::makeAllPass(sr, 20.0, 0.1);
     }
 }
 
