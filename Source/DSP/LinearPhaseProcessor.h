@@ -20,7 +20,13 @@
  *   - hopSize  = 4096  (fftSize - irSize)
  *   - Two IR frequency-domain slots (A/B) for click-free crossfade on IR changes.
  *   - Per-channel OLA state (input ring, overlap tail).
+ *
+ * When usePartitioned == true, delegates to PartitionedConvolver for 128-sample
+ * latency instead of the 4096-sample OLA path.
  */
+
+#include "PartitionedConvolver.h"
+
 class LinearPhaseProcessor : public juce::dsp::ProcessorBase
 {
 public:
@@ -28,6 +34,10 @@ public:
     static constexpr size_t fftSize  = 1u << fftOrder; // 8192
     static constexpr size_t irSize   = fftSize / 2;    // 4096 taps
     static constexpr size_t hopSize  = fftSize - irSize; // 4096 (= irSize in this config)
+
+    // ── Partitioned convolution toggle ─────────────────────────────────
+    static constexpr bool   usePartitioned = true;
+    static constexpr size_t partSize       = PartitionedConvolver::partSize; // 128
 
     LinearPhaseProcessor();
     ~LinearPhaseProcessor() override = default;
@@ -54,6 +64,9 @@ public:
     void storeFreqIRDirect(const float* freqDomainData);
 
 private:
+    // ── Partitioned convolver (used when usePartitioned == true) ───────
+    PartitionedConvolver partConvolver;
+
     // ── IR frequency-domain storage (double-buffered) ──────────────────
     // Each slot holds the complex FFT of the zero-padded IR (fftSize floats,
     // stored in JUCE's interleaved real/imag format for performRealOnlyForwardTransform).

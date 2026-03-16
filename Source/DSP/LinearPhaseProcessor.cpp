@@ -16,22 +16,24 @@ void LinearPhaseProcessor::prepare(const juce::dsp::ProcessSpec& spec)
 {
     currentSampleRate = spec.sampleRate;
 
-    // Pre-allocate IR slots
+    if constexpr (usePartitioned)
+    {
+        partConvolver.prepare(spec.numChannels, spec.sampleRate);
+    }
+
+    // Always prepare OLA buffers — needed for IR construction (updateImpulseResponse, etc.)
     for (auto& slot : irSlots)
     {
         slot.freqDomain.resize(fftSize * 2, 0.0f);
         slot.valid = false;
     }
 
-    // Pre-allocate per-channel OLA state
     ensureChannels(spec.numChannels);
 
-    // Pre-allocate FFT scratch buffers
     fftWorkBuf.resize(fftSize * 2, 0.0f);
     ifftWorkBuf.resize(fftSize * 2, 0.0f);
     fftWorkBuf2.resize(fftSize * 2, 0.0f);
 
-    // Pre-allocate IR construction scratch
     irBuildFreq.resize(fftSize, { 0.0f, 0.0f });
     irBuildTime.resize(fftSize, { 0.0f, 0.0f });
     irBuildReal.resize(fftSize, 0.0f);
@@ -41,17 +43,28 @@ void LinearPhaseProcessor::prepare(const juce::dsp::ProcessSpec& spec)
 
 void LinearPhaseProcessor::reset()
 {
+    if constexpr (usePartitioned)
+        partConvolver.reset();
+
     for (auto& ch : channels)
         ch.reset();
     crossfadeSamplesRemaining = 0;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// process  — sample-by-sample with internal OLA buffering
+// process  — delegates to partitioned or OLA path
 // ═══════════════════════════════════════════════════════════════════════════
 
 void LinearPhaseProcessor::process(const juce::dsp::ProcessContextReplacing<float>& context)
 {
+    if constexpr (usePartitioned)
+    {
+        auto block = context.getOutputBlock();
+        partConvolver.process(block);
+        return;
+    }
+
+    // ── Legacy OLA path (usePartitioned == false) ──────────────────────
     auto& block = context.getOutputBlock();
     const auto numChannels = block.getNumChannels();
     const auto numSamples  = block.getNumSamples();
@@ -60,7 +73,6 @@ void LinearPhaseProcessor::process(const juce::dsp::ProcessContextReplacing<floa
 
     const int currentActive = activeSlot.load(std::memory_order_acquire);
 
-    // If no valid IR loaded yet, pass through silence (zero output) to be safe
     if (!irSlots[currentActive].valid)
     {
         block.clear();
@@ -74,16 +86,12 @@ void LinearPhaseProcessor::process(const juce::dsp::ProcessContextReplacing<floa
 
         for (size_t i = 0; i < numSamples; ++i)
         {
-            // Accumulate input into hop buffer
             state.inputRing[state.inputCount++] = data[i];
 
-            // When we have a full hop, run one OLA frame
             if (state.inputCount >= hopSize)
             {
                 state.inputCount = 0;
 
-                // Always read the latest active IR for this hop.
-                // OLA overlap tail from previous hop naturally blends old→new IR.
                 const float* currentIR = irSlots[activeSlot.load(std::memory_order_acquire)].freqDomain.data();
                 processOLAFrame(state, currentIR, state.outputQueue.data(), fftWorkBuf.data());
 
@@ -91,7 +99,6 @@ void LinearPhaseProcessor::process(const juce::dsp::ProcessContextReplacing<floa
                 state.outputAvailable = hopSize;
             }
 
-            // Drain output
             if (state.outputAvailable > 0)
             {
                 data[i] = state.outputQueue[state.outputReadPos++];
@@ -106,25 +113,18 @@ void LinearPhaseProcessor::process(const juce::dsp::ProcessContextReplacing<floa
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// processOLAFrame  — one hop of Overlap-Add convolution
+// processOLAFrame  — one hop of Overlap-Add convolution (legacy path)
 // ═══════════════════════════════════════════════════════════════════════════
 
 void LinearPhaseProcessor::processOLAFrame(ChannelState& ch, const float* irFreq,
                                             float* outBuf, float* workBuf,
                                             float* overlapTailOverride)
 {
-    // workBuf is fftSize * 2 floats (for JUCE's real-only FFT format)
-
-    // 1. Zero the work buffer, then copy hopSize input samples into the first half
     std::memset(workBuf, 0, sizeof(float) * fftSize * 2);
     std::copy(ch.inputRing.begin(), ch.inputRing.begin() + hopSize, workBuf);
 
-    // 2. Forward FFT (real-only → half-complex)
     fft.performRealOnlyForwardTransform(workBuf);
 
-    // 3. Complex multiply with IR spectrum (in-place in workBuf)
-    //    JUCE real-only FFT stores [re0, im0, re1, im1, ...] for fftSize/2 + 1 bins
-    //    Total floats used = fftSize + 2, but buffer is fftSize * 2 so safe.
     for (size_t k = 0; k <= fftSize / 2; ++k)
     {
         const size_t idx = k * 2;
@@ -137,15 +137,12 @@ void LinearPhaseProcessor::processOLAFrame(ChannelState& ch, const float* irFreq
         workBuf[idx + 1] = aRe * bIm + aIm * bRe;
     }
 
-    // 4. Inverse FFT
     fft.performRealOnlyInverseTransform(workBuf);
 
-    // 5. Overlap-add: first hopSize samples = new output + tail from previous frame
     float* tail = (overlapTailOverride != nullptr) ? overlapTailOverride : ch.overlapTail.data();
     for (size_t n = 0; n < hopSize; ++n)
         outBuf[n] = workBuf[n] + tail[n];
 
-    // 6. Save new tail: the remaining (irSize - 1) samples
     const size_t tailLen = irSize - 1;
     for (size_t n = 0; n < tailLen; ++n)
     {
@@ -168,9 +165,6 @@ void LinearPhaseProcessor::updateImpulseResponse(const std::vector<float>& magni
     const size_t halfSize = fftSize / 2;
     const size_t bins = std::min(halfSize, magnitudeResponse.size());
 
-    // ── Build zero-phase IR using complex FFT (same algorithm as before) ──
-
-    // Clear frequency domain (complex)
     std::fill(irBuildFreq.begin(), irBuildFreq.end(), std::complex<float>{ 0.0f, 0.0f });
 
     for (size_t k = 0; k < bins; ++k)
@@ -185,27 +179,18 @@ void LinearPhaseProcessor::updateImpulseResponse(const std::vector<float>& magni
         }
     }
 
-    // IFFT to time domain
     std::fill(irBuildTime.begin(), irBuildTime.end(), std::complex<float>{ 0.0f, 0.0f });
     fft.perform(irBuildFreq.data(), irBuildTime.data(), true);
 
-    // Extract real part — JUCE's fft.perform(inverse=true) already applies 1/N scaling
     for (size_t n = 0; n < fftSize; ++n)
         irBuildReal[n] = irBuildTime[n].real();
 
-    // Rotate so the zero-phase peak lands at irSize/2
     const size_t peakTargetIndex = irSize / 2;
     const size_t rotateOffset    = fftSize - peakTargetIndex;
     std::rotate(irBuildReal.begin(),
                 irBuildReal.begin() + static_cast<long>(rotateOffset),
                 irBuildReal.end());
 
-    // Apply Hann window (first irSize samples only)
-    // No gain compensation needed: the Hann window is applied to the IR for anti-ringing
-    // (smoothing time-domain truncation), not for OLA synthesis reconstruction.
-    // The coherent-gain-of-0.5 compensation only applies to OLA analysis/synthesis windows
-    // (e.g. phase vocoder), not to convolution IRs. For flat EQ the peak of the Hann window
-    // at centre (n = irSize/2) is exactly 1.0, so no scaling is required to preserve unity gain.
     constexpr float hannGainComp = 1.0f;
     for (size_t n = 0; n < irSize; ++n)
     {
@@ -215,8 +200,15 @@ void LinearPhaseProcessor::updateImpulseResponse(const std::vector<float>& magni
         irBuildReal[n] *= (w * hannGainComp);
     }
 
-    // Store the IR's FFT into the build slot
-    storeIRToSlot(irBuildReal.data(), irSize);
+    if constexpr (usePartitioned)
+    {
+        // Feed time-domain IR directly to partitioned convolver
+        partConvolver.storeTimeDomainIR(irBuildReal.data(), irSize);
+    }
+    else
+    {
+        storeIRToSlot(irBuildReal.data(), irSize);
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -228,29 +220,39 @@ void LinearPhaseProcessor::loadImpulseResponse(const std::vector<float>& ir, dou
     currentSampleRate = sampleRate;
     const size_t irLen = std::min(ir.size(), irSize);
 
-    // Pad to irSize if shorter
     std::fill(irBuildReal.begin(), irBuildReal.end(), 0.0f);
     std::copy(ir.begin(), ir.begin() + irLen, irBuildReal.begin());
 
-    storeIRToSlot(irBuildReal.data(), irSize);
+    if constexpr (usePartitioned)
+    {
+        partConvolver.storeTimeDomainIR(irBuildReal.data(), irSize);
+    }
+    else
+    {
+        storeIRToSlot(irBuildReal.data(), irSize);
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// storeFreqIRDirect  — accept pre-computed freq-domain IR (no FFT needed)
+// storeFreqIRDirect  — accept pre-computed freq-domain IR
 // ═══════════════════════════════════════════════════════════════════════════
 
 void LinearPhaseProcessor::storeFreqIRDirect(const float* freqDomainData)
 {
-    // Write to the inactive slot, then atomically swap.
-    // No crossfade needed: OLA overlap tail naturally smooths the transition
-    // because the tail from the previous hop (old IR) is added to the output
-    // of the next hop (new IR), creating a gradual blend over irSize samples.
-    auto& slot = irSlots[buildSlot];
-    std::copy(freqDomainData, freqDomainData + fftSize * 2, slot.freqDomain.begin());
-    slot.valid = true;
+    if constexpr (usePartitioned)
+    {
+        // Partitioned convolver handles IFFT→partition→FFT internally
+        partConvolver.storeFreqIR(freqDomainData);
+    }
+    else
+    {
+        auto& slot = irSlots[buildSlot];
+        std::copy(freqDomainData, freqDomainData + fftSize * 2, slot.freqDomain.begin());
+        slot.valid = true;
 
-    activeSlot.store(buildSlot, std::memory_order_release);
-    buildSlot = 1 - buildSlot;
+        activeSlot.store(buildSlot, std::memory_order_release);
+        buildSlot = 1 - buildSlot;
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -261,21 +263,16 @@ void LinearPhaseProcessor::storeIRToSlot(const float* irTimeDomain, size_t irLen
 {
     auto& slot = irSlots[buildSlot];
 
-    // Zero-pad the IR to fftSize, then compute real-only forward FFT
     std::fill(slot.freqDomain.begin(), slot.freqDomain.end(), 0.0f);
     std::copy(irTimeDomain, irTimeDomain + std::min(irLen, irSize), slot.freqDomain.begin());
 
     fft.performRealOnlyForwardTransform(slot.freqDomain.data());
     slot.valid = true;
 
-    // Activate the new slot
     const int oldActive = activeSlot.load(std::memory_order_relaxed);
 
     if (irSlots[oldActive].valid)
     {
-        // Crossfade from old to new.
-        // Copy each channel's current overlapTail into overlapTailB so the old-IR
-        // OLA frames start from the correct state instead of silence.
         for (auto& ch : channels)
         {
             if (ch.overlapTailB.size() < ch.overlapTail.size())
@@ -308,7 +305,7 @@ void LinearPhaseProcessor::ensureChannels(size_t numChannels)
             ch.inputRing.resize(hopSize, 0.0f);
             ch.inputCount = 0;
         }
-        if (ch.overlapTail.size() < irSize)  // irSize - 1, but allocate irSize for safety
+        if (ch.overlapTail.size() < irSize)
         {
             ch.overlapTail.resize(irSize, 0.0f);
         }
