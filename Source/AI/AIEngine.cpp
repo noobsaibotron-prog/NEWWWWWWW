@@ -2149,7 +2149,8 @@ float AIEngine::getSensitivityMultiplier() const
 float AIEngine::calculateBandwidth(int peakBin) const
 {
     // Use lock-free snapshot to avoid deadlock when called while correctionsWriteMutex is held
-    const auto spectrum = readSpectrumSnapshot();
+    const auto snapshot = readSpectrumSnapshot();
+    const auto& spectrum = snapshot.bins;
 
     // Find -3dB points on either side of peak
     const int specSize = static_cast<int>(spectrum.size());
