@@ -17,8 +17,8 @@ $ErrorActionPreference = "Stop"
 
 $CMAKE     = "C:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe"
 $BUILD_DIR = "C:\AIEQ\build"
-$VST3_SRC  = "$BUILD_DIR\AIEqualizerPro_artefacts\Release\VST3\AI Equalizer Pro.vst3"
-$VST3_DST  = "C:\Program Files\Common Files\VST3\AI Equalizer Pro.vst3"
+$VST3_SRC  = "$BUILD_DIR\Release\lib\AI Equalizer Pro.vst3"
+$VST3_DST  = "C:\Program Files\Common Files\VST3\AI Equalizer Pro.vst3\Contents\x86_64-win\AI Equalizer Pro.vst3"
 $TESTS_EXE = "$BUILD_DIR\Release\bin\AIEqualizerPro_Tests.exe"
 
 function Write-Step { param($msg) Write-Host "`n==> $msg" -ForegroundColor Cyan }
@@ -81,7 +81,7 @@ if (-not (Test-Path $VST3_SRC)) {
     exit 1
 }
 
-Copy-Item -Recurse -Force $VST3_SRC $VST3_DST
+Copy-Item -Force $VST3_SRC $VST3_DST
 Write-Ok "Deployed to: $VST3_DST"
 
 # ── Summary ──────────────────────────────────────────────────────────────────
