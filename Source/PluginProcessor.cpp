@@ -135,6 +135,25 @@ void AIEqualizerAudioProcessor::irBuilderThreadFunc(std::stop_token st)
         if (st.stop_requested())
             break;
 
+        if (!eqCurveNeedsUpdate.load(std::memory_order_acquire))
+            continue;
+
+        // Debounce: wait until no new request has arrived for irBuildDebounceMs.
+        // This prevents rebuilding the IR on every mouse-drag event (which would
+        // produce rapid IR changes → audible glitches in Linear Phase mode).
+        {
+            int64_t lastRequest = irBuildRequestedAt.load(std::memory_order_acquire);
+            while (!st.stop_requested())
+            {
+                juce::Thread::sleep(irBuildDebounceMs);
+                int64_t nowRequest = irBuildRequestedAt.load(std::memory_order_acquire);
+                if (nowRequest == lastRequest)
+                    break;  // stable: no new request during the sleep window
+                lastRequest = nowRequest;
+            }
+            if (st.stop_requested()) break;
+        }
+
         if (!eqCurveNeedsUpdate.exchange(false))
             continue;
 
@@ -1118,6 +1137,14 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         }
     }
 
+    // Reset cached solo filter params when no band is soloed,
+    // so re-enabling solo forces a fresh setCoefficients call.
+    if (!hasSolo)
+    {
+        lastSoloFreq = -1.0f;
+        lastSoloQ    = -1.0f;
+    }
+
     if (hasSolo)
     {
         if (preProcessingInputCopy.getNumChannels() >= buffer.getNumChannels()
@@ -1614,9 +1641,16 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
             buffer.makeCopyOf(preProcessingInputCopy, true);
 
             const double sr = currentSampleRate.load(std::memory_order_relaxed);
-            auto coeffs = juce::IIRCoefficients::makeBandPass(sr, soloFreq, soloQ);
-            soloMonitorFilterL.setCoefficients(coeffs);
-            soloMonitorFilterR.setCoefficients(coeffs);
+            // Only update coefficients when freq/Q actually change — avoids
+            // resetting IIR state every block which causes a click on each drag.
+            if (std::abs(soloFreq - lastSoloFreq) > 0.5f || std::abs(soloQ - lastSoloQ) > 0.01f)
+            {
+                auto coeffs = juce::IIRCoefficients::makeBandPass(sr, soloFreq, soloQ);
+                soloMonitorFilterL.setCoefficients(coeffs);
+                soloMonitorFilterR.setCoefficients(coeffs);
+                lastSoloFreq = soloFreq;
+                lastSoloQ    = soloQ;
+            }
 
             const int numSamples = buffer.getNumSamples();
             if (buffer.getNumChannels() > 0)
@@ -1756,6 +1790,9 @@ void AIEqualizerAudioProcessor::updateLinearPhaseIRIfNeeded()
 
 void AIEqualizerAudioProcessor::requestIRBuild()
 {
+    // Record timestamp; the IR builder thread checks if debounce has elapsed
+    irBuildRequestedAt.store(juce::Time::currentTimeMillis(),
+                             std::memory_order_release);
     irBuildEvent.signal();
 }
 

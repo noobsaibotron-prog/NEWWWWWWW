@@ -435,7 +435,13 @@ private:
     juce::IIRFilter soloMonitorFilterL;
     juce::IIRFilter soloMonitorFilterR;
     juce::AudioBuffer<float> preProcessingInputCopy;
+    float lastSoloFreq = -1.0f;   // cached to skip setCoefficients when unchanged
+    float lastSoloQ    = -1.0f;
     static constexpr float soloMakeupGainDB = 6.0f;
+
+    // IR build debounce: accumulate rapid drag events, rebuild only after silence
+    std::atomic<int64_t> irBuildRequestedAt { 0 };    // ms timestamp of last request
+    static constexpr int64_t irBuildDebounceMs = 80;  // rebuild after 80ms of no changes
     
     //==============================================================================
     // Oversampling
