@@ -99,12 +99,10 @@ private:
         {
             std::fill(inputRing.begin(), inputRing.end(), 0.0f);
             inputCount = 0;
-            std::fill(overlapTail.begin(),  overlapTail.end(),  0.0f);
-            std::fill(overlapTailB.begin(), overlapTailB.end(), 0.0f);
+            std::fill(overlapTail.begin(), overlapTail.end(), 0.0f);
             outputReadPos = 0;
             outputAvailable = 0;
-            std::fill(outputQueue.begin(),  outputQueue.end(),  0.0f);
-            std::fill(outputQueueB.begin(), outputQueueB.end(), 0.0f);
+            std::fill(outputQueue.begin(), outputQueue.end(), 0.0f);
         }
     };
     std::vector<ChannelState> channels;
