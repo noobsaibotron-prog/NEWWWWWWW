@@ -227,7 +227,13 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
         
         // Read enabled flag atomically
         if (!params.enabled.load(std::memory_order_relaxed))
+        {
+            // FIX: zero the meter when band is disabled so it doesn't freeze at last value
+            state.meterGainReduction.store(0.0f, std::memory_order_relaxed);
+            state.meterInputLevel.store(-100.0f, std::memory_order_relaxed);
+            state.meterOutputLevel.store(-100.0f, std::memory_order_relaxed);
             continue;
+        }
         
         // Check if coefficients need update
         const uint64_t currentVersion = params.version.load(std::memory_order_acquire);
@@ -236,6 +242,24 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
             updateBandCoefficients(bandIdx);
             updateAttackReleaseCoeffs(bandIdx);
             state.lastVersion = currentVersion;
+
+            // FIX: When parameters change (threshold/ratio/range tweaked), immediately
+            // recalculate and store the GR that corresponds to the current envelope level.
+            // Without this, the meter freezes until the next audio block triggers the
+            // per-sample loop — which never updates if envelope is below threshold or
+            // if dynamic mode is off.
+            const int dynMode = params.dynamicMode.load(std::memory_order_relaxed);
+            if (dynMode != DynamicMode_Off)
+            {
+                const float currentEnv = (state.envelopeL + state.envelopeR) * 0.5f;
+                const float threshold = params.threshold.load(std::memory_order_relaxed);
+                const float ratio     = params.ratio.load(std::memory_order_relaxed);
+                const float knee      = params.knee.load(std::memory_order_relaxed);
+                const float range     = params.range.load(std::memory_order_relaxed);
+                const float freshGR   = calculateDynamicGain(currentEnv, dynMode, threshold, ratio, knee, range);
+                state.meterGainReduction.store(freshGR, std::memory_order_relaxed);
+                state.currentGain = freshGR; // snap audio-smoothed gain too
+            }
         }
         
         // Sidechain smoothing at control rate: advance to target, update coeffs if changed
