@@ -946,14 +946,21 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     aiAnalysisIntervalSamples = juce::jmax(static_cast<int>(std::round(sampleRate * 0.1)), samplesPerBlock);
     aiAnalysisSamples = 0;
     
-    // Set worst-case latency once to avoid host reconfiguration during automation
-    const int linearPhaseLatency = static_cast<int>(LinearPhaseProcessor::hopSize);
+    // Declare latency based on current phase mode:
+    // - LinearPhase: hopSize (4096) samples OLA latency
+    // - NaturalPhase: only oversampling latency (much lower, typically 32-64 samples)
+    // We must NOT declare hopSize in NaturalPhase — it would desync the DAW timeline.
+    const auto currentMode = currentPhaseMode.load(std::memory_order_relaxed);
+    const int linearPhaseLatency = (currentMode == PhaseMode::LinearPhase)
+                                   ? static_cast<int>(LinearPhaseProcessor::hopSize)
+                                   : 0;
     int oversamplingLatency = naturalPhaseLatency;
     if (oversampler4x)
         oversamplingLatency = std::max(oversamplingLatency, static_cast<int>(oversampler4x->getLatencyInSamples()));
     if (oversampler2x)
         oversamplingLatency = std::max(oversamplingLatency, static_cast<int>(oversampler2x->getLatencyInSamples()));
-    // Worst-case latency for potential 4x oversampling (even if currently off)
+    // Include worst-case 4x oversampling latency so host never needs reconfiguration
+    // when user switches oversampling rate during playback.
     {
         juce::dsp::Oversampling<float> tempOversampler(
             static_cast<size_t>(getTotalNumInputChannels()),

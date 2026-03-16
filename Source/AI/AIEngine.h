@@ -545,7 +545,10 @@ private:
     //==========================================================================
     // ML Engine for improved detection
     MLEngine mlEngine;
-    bool useMLDetection = true;  // Enable ML-based detection
+    // ML detection disabled: no trained weights are bundled (ml_weights.bin absent).
+    // The heuristic detector (detectProblems()) is production-ready; ML will be
+    // re-enabled once a real model is trained and shipped.
+    bool useMLDetection = false;
     
     void detectProblemsWithML();  // ML-enhanced detection
     

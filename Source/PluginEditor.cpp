@@ -109,9 +109,12 @@ AIEqualizerAudioProcessorEditor::AIEqualizerAudioProcessorEditor(AIEqualizerAudi
 
 AIEqualizerAudioProcessorEditor::~AIEqualizerAudioProcessorEditor()
 {
-    while (isAnalyzing.load(std::memory_order_acquire))
-        juce::Thread::sleep(5);
-    
+    // Join analysis threads before teardown to avoid use-after-free.
+    // Threads are short-lived (single analysis pass), so this returns quickly.
+    for (auto& t : analysisThreads)
+        if (t.joinable()) t.join();
+    analysisThreads.clear();
+
     stopTimer();
     setLookAndFeel(nullptr);
 }
@@ -363,8 +366,7 @@ void AIEqualizerAudioProcessorEditor::createControlPanel()
         // Bug I fix: capture safeThis by value (not raw this) so the thread body is safe
         // if the editor is destroyed before the thread finishes.
         juce::Component::SafePointer<AIEqualizerAudioProcessorEditor> safeThis(this);
-        std::thread([safeThis]() {
-            // Bail out immediately if editor was destroyed before thread started
+        analysisThreads.emplace_back([safeThis]() {
             auto* ed = safeThis.getComponent();
             if (ed == nullptr) return;
 
@@ -385,7 +387,7 @@ void AIEqualizerAudioProcessorEditor::createControlPanel()
                         ok ? juce::Colours::limegreen : juce::Colours::orange);
                 }
             });
-        }).detach();
+        });
     };
     addAndMakeVisible(captureAnalyzeBtn);
     captureAnalyzeBtn.setVisible(false);
@@ -429,7 +431,7 @@ void AIEqualizerAudioProcessorEditor::createControlPanel()
 
         // Bug I fix: capture safeThis by value so thread body is safe if editor is destroyed.
         juce::Component::SafePointer<AIEqualizerAudioProcessorEditor> safeThis(this);
-        std::thread([safeThis]() {
+        analysisThreads.emplace_back([safeThis]() {
             auto* ed = safeThis.getComponent();
             if (ed == nullptr) return;
 
@@ -461,7 +463,7 @@ void AIEqualizerAudioProcessorEditor::createControlPanel()
                     editor->stopCaptureBtn.setEnabled(false);
                 }
             });
-        }).detach();
+        });
     };
     addAndMakeVisible(stopCaptureBtn);
     stopCaptureBtn.setVisible(false);

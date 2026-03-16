@@ -958,16 +958,17 @@ void AIEngine::detectResonances(float threshold)
         
         float effectiveThreshold = adaptedThreshold * sensitivityFactor;
         
-        // FORCE DETECTION: Show ANY peak with height > 0.5dB (very lenient)
-        // OR if it's a local max and above noise floor
-        float minPeakHeight = 0.5f;  // Very low threshold
-        if (peakHeight > minPeakHeight || (isLocalMax && centerMag > -80.0f))
+        // Only detect genuine peaks: must exceed threshold AND be a meaningful resonance.
+        // 0.5dB was generating constant false positives on any non-flat material.
+        // 3dB is a perceptually meaningful threshold (just-noticeable difference for peaks).
+        float minPeakHeight = 3.0f;
+        if (peakHeight > minPeakHeight && peakHeight > effectiveThreshold)
         {
             PeakCandidate peak;
             peak.bin = i;
             peak.frequency = parabolicInterpolation(i);
             peak.magnitude = centerMag;
-            peak.peakHeight = juce::jmax(0.5f, peakHeight);  // Ensure at least 0.5dB
+            peak.peakHeight = peakHeight;
             peak.bandwidth = calculateBandwidth(i);
             peak.calculatedQ = bandwidthToQ(peak.frequency, peak.bandwidth);
             detectedPeaks.push_back(peak);
@@ -1101,9 +1102,8 @@ void AIEngine::detectHarshness(float threshold)
     float adjustedRelativeThreshold = 3.0f * sensitivityMultiplier;
     float adaptedThreshold = calculateAdaptiveThreshold(threshold);
     
-    // FORCE DETECTION: Show if ANY energy above noise floor (very lenient)
-    float minEnergy = -80.0f;  // Very low threshold
-    if (energy > minEnergy || relativeEnergy > 0.0f)  // Show if ANY energy
+    // Only flag harshness when relative energy is meaningfully elevated
+    if (relativeEnergy > adjustedRelativeThreshold && energy > adaptedThreshold)
     {
         // Find the peak frequency within the harshness range
         float peakFreq = findPeakInRange(thresholds.harshnessLow, thresholds.harshnessHigh);
@@ -1179,9 +1179,8 @@ void AIEngine::detectMuddiness(float threshold)
     float adjustedRelativeThreshold = 3.0f * sensitivityMultiplier;
     float adaptedThreshold = calculateAdaptiveThreshold(threshold);
     
-    // FORCE DETECTION: Always create correction if ANY energy
-    float minEnergy = -80.0f;
-    if (lowMidEnergy > minEnergy)  // Show if ANY energy in range
+    // Only flag muddiness when low-mid energy is genuinely elevated vs overall
+    if (relativeEnergy > adjustedRelativeThreshold && lowMidEnergy > adaptedThreshold)
     {
         // Find the peak frequency within the muddiness range
         float peakFreq = findPeakInRange(thresholds.muddinessLow, thresholds.muddinessHigh);

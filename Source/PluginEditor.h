@@ -183,6 +183,9 @@ private:
     int selectedBand = 0;
     std::unique_ptr<BandControlPanel> selectedBandPanel;
     std::atomic<bool> isAnalyzing { false };
+    // Analysis threads: stored so destructor can join them before teardown,
+    // avoiding detached threads that outlive the editor (use-after-free risk).
+    std::vector<std::thread> analysisThreads;
     
     // Dynamic EQ controls
     std::unique_ptr<DynamicEQPanel> dynamicEQPanel;
