@@ -1,6 +1,7 @@
 #pragma once
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <juce_audio_processors/juce_audio_processors.h>
+#include <juce_opengl/juce_opengl.h>
 #include "PluginProcessor.h"
 #include "GUI/ModernLookAndFeel.h"
 #include "GUI/AdvancedSpectrumDisplay.h"
@@ -173,6 +174,10 @@ private:
     juce::ComboBox numBandsCombo;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> numBandsAtt;
     
+    // OpenGL context — accelerates all JUCE software rendering via GPU compositing.
+    // Attach to the top-level editor so every child component benefits automatically.
+    juce::OpenGLContext openGLContext;
+
     // Main
     std::unique_ptr<AdvancedSpectrumDisplay> spectrum;
     std::unique_ptr<AIProblemPanel> aiProblemPanel;

@@ -9,20 +9,20 @@ if(NOT DEFINED CMAKE_TRY_COMPILE_TARGET_TYPE)
     # Before project(), CMAKE_GENERATOR might not be available yet
     # Check multiple sources to detect if NMake generator is being used
     set(IS_NMAKE_GENERATOR FALSE)
-    
+
     # Method 1: Check environment variable (set by scripts like BUILD_NOW.bat)
     if(DEFINED ENV{CMAKE_GENERATOR} AND "$ENV{CMAKE_GENERATOR}" MATCHES "NMake")
         set(IS_NMAKE_GENERATOR TRUE)
         message(STATUS "Detected NMake generator from environment variable: $ENV{CMAKE_GENERATOR}")
     endif()
-    
+
     # Method 2: Check cache variable (may be set via -G flag on command line)
     get_property(GENERATOR_FROM_CACHE CACHE CMAKE_GENERATOR PROPERTY VALUE)
     if(NOT IS_NMAKE_GENERATOR AND GENERATOR_FROM_CACHE AND "${GENERATOR_FROM_CACHE}" MATCHES "NMake")
         set(IS_NMAKE_GENERATOR TRUE)
         message(STATUS "Detected NMake generator from cache: ${GENERATOR_FROM_CACHE}")
     endif()
-    
+
     # Only set CMAKE_TRY_COMPILE_TARGET_TYPE for NMake Makefiles generator
     if(IS_NMAKE_GENERATOR)
         set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY CACHE INTERNAL "")
@@ -48,7 +48,7 @@ if(NOT DEFINED CMAKE_CXX_COMPILER OR CMAKE_CXX_COMPILER STREQUAL "")
         "C:/Program Files/Microsoft Visual Studio/2026/Community"
         "C:/Program Files/Microsoft Visual Studio/2024/Community"
     )
-    
+
     foreach(VS_PATH ${VS_PATHS})
         if(EXISTS "${VS_PATH}/VC/Tools/MSVC")
             file(GLOB MSVC_PATHS "${VS_PATH}/VC/Tools/MSVC/*")
@@ -70,7 +70,7 @@ if(NOT DEFINED CMAKE_CXX_COMPILER OR CMAKE_CXX_COMPILER STREQUAL "")
             endif()
         endif()
     endforeach()
-    
+
     # Fallback: Try MinGW if Visual Studio not found
     if(NOT CMAKE_CXX_COMPILER)
         find_program(MINGW_GXX
@@ -86,7 +86,7 @@ if(NOT DEFINED CMAKE_CXX_COMPILER OR CMAKE_CXX_COMPILER STREQUAL "")
             message(STATUS "Found MinGW compiler: ${CMAKE_CXX_COMPILER}")
         endif()
     endif()
-    
+
     # Fallback: Try Clang if available
     if(NOT CMAKE_CXX_COMPILER)
         find_program(CLANG_XX
@@ -189,7 +189,7 @@ if(CMAKE_CXX_COMPILER MATCHES "cl\\.exe$" OR CMAKE_C_COMPILER MATCHES "cl\\.exe$
             list(GET WINSDK_LIB_VERSIONS 0 WINSDK_LIB_VER_HIGHEST)
             # Extract Windows SDK version name from the path (e.g., "10.0.22621.0")
             get_filename_component(WINSDK_VER_NAME_DETECTED "${WINSDK_LIB_VER_HIGHEST}" NAME)
-            
+
             # Build library paths list (use all versions found)
             foreach(WINSDK_LIB_VER ${WINSDK_LIB_VERSIONS})
                 if(EXISTS "${WINSDK_LIB_VER}/ucrt/x64")
@@ -199,7 +199,7 @@ if(CMAKE_CXX_COMPILER MATCHES "cl\\.exe$" OR CMAKE_C_COMPILER MATCHES "cl\\.exe$
                     list(APPEND WINSDK_LIB_PATHS "${WINSDK_LIB_VER}/um/x64")
                 endif()
             endforeach()
-            
+
             # CRITICAL: Set CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION immediately after detection,
             # BEFORE project() call (which is at line 424), so it's available during compiler tests
             if(WINSDK_VER_NAME_DETECTED)
@@ -209,7 +209,7 @@ if(CMAKE_CXX_COMPILER MATCHES "cl\\.exe$" OR CMAKE_C_COMPILER MATCHES "cl\\.exe$
             endif()
         endif()
     endif()
-    
+
     # Trova il percorso delle librerie MSVC
     # Il compilatore è in: .../MSVC/version/bin/Hostx64/x64/cl.exe
     # Le librerie sono in: .../MSVC/version/lib/x64
@@ -220,10 +220,10 @@ if(CMAKE_CXX_COMPILER MATCHES "cl\\.exe$" OR CMAKE_C_COMPILER MATCHES "cl\\.exe$
         get_filename_component(MSVC_HOST_DIR "${MSVC_COMPILER_DIR}" DIRECTORY)
         get_filename_component(MSVC_BIN_DIR "${MSVC_HOST_DIR}" DIRECTORY)
         get_filename_component(MSVC_VERSION_DIR "${MSVC_BIN_DIR}" DIRECTORY)
-        
+
         # Costruisci il percorso delle librerie
         set(MSVC_LIB_DIR "${MSVC_VERSION_DIR}/lib/x64")
-        
+
         if(EXISTS "${MSVC_LIB_DIR}")
             list(APPEND WINSDK_LIB_PATHS "${MSVC_LIB_DIR}")
             message(STATUS "Found MSVC libs at: ${MSVC_LIB_DIR}")
@@ -233,12 +233,12 @@ if(CMAKE_CXX_COMPILER MATCHES "cl\\.exe$" OR CMAKE_C_COMPILER MATCHES "cl\\.exe$
             message(STATUS "  Version dir: ${MSVC_VERSION_DIR}")
         endif()
     endif()
-    
+
     # Imposta CMAKE_SYSTEM_LIBRARY_PATH per aiutare CMake a trovare le librerie durante il test del compilatore
     if(WINSDK_LIB_PATHS)
         set(CMAKE_SYSTEM_LIBRARY_PATH ${WINSDK_LIB_PATHS} CACHE STRING "Percorsi delle librerie di sistema" FORCE)
         message(STATUS "Impostazione percorsi librerie Windows SDK per il test del compilatore: ${CMAKE_SYSTEM_LIBRARY_PATH}")
-        
+
         # Imposta anche i flag iniziali del linker per includere i percorsi delle librerie
         # Questo aiuta durante la fase di test del compilatore
         # Preserva eventuali flag già impostati (ad esempio da un toolchain file)
@@ -264,7 +264,7 @@ endif()
 if(CMAKE_C_COMPILER)
     set(ENV{CC} "${CMAKE_C_COMPILER}")
     set(ENV{CMAKE_C_COMPILER} "${CMAKE_C_COMPILER}")
-    
+
     # Workaround per CMake 4.1: imposta CMAKE_C_COMPILE_OBJECT nella cache
     # prima di project() per evitare errori durante la generazione
     # Usa il formato standard di CMake per MSVC che gestisce correttamente le virgolette
@@ -289,14 +289,14 @@ if(CMAKE_CXX_COMPILER MATCHES "cl\\.exe$")
     get_filename_component(MSVC_HOST_DIR "${MSVC_COMPILER_DIR}" DIRECTORY)
     get_filename_component(MSVC_BIN_PARENT "${MSVC_HOST_DIR}" DIRECTORY)
     get_filename_component(MSVC_VERSION_DIR "${MSVC_BIN_PARENT}" DIRECTORY)
-    
+
     set(MSVC_INCLUDE_DIR "${MSVC_VERSION_DIR}/include")
     set(INCLUDE_PATHS_TO_SET "")
-    
+
     if(EXISTS "${MSVC_INCLUDE_DIR}")
         list(APPEND INCLUDE_PATHS_TO_SET "${MSVC_INCLUDE_DIR}")
     endif()
-    
+
     # Trova Windows SDK include paths
     if(EXISTS "C:/Program Files (x86)/Windows Kits/10/Include")
         file(GLOB WINSDK_INCLUDE_VERSIONS "C:/Program Files (x86)/Windows Kits/10/Include/*")
@@ -305,7 +305,7 @@ if(CMAKE_CXX_COMPILER MATCHES "cl\\.exe$")
             list(REVERSE WINSDK_INCLUDE_VERSIONS)
             list(GET WINSDK_INCLUDE_VERSIONS 0 WINSDK_INCLUDE_VER)
             get_filename_component(WINSDK_VER_NAME "${WINSDK_INCLUDE_VER}" NAME)
-            
+
             if(EXISTS "${WINSDK_INCLUDE_VER}/ucrt")
                 list(APPEND INCLUDE_PATHS_TO_SET "${WINSDK_INCLUDE_VER}/ucrt")
             endif()
@@ -315,14 +315,14 @@ if(CMAKE_CXX_COMPILER MATCHES "cl\\.exe$")
             if(EXISTS "${WINSDK_INCLUDE_VER}/shared")
                 list(APPEND INCLUDE_PATHS_TO_SET "${WINSDK_INCLUDE_VER}/shared")
             endif()
-            
+
             # Note: CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION is already set in the LIB paths section
             # (lines 186-204, immediately after Windows SDK version detection from Lib directory).
             # Setting it here would be redundant and ineffective because it must be set BEFORE project() call.
             # The SDK version detection happens in the LIB paths section where it's most appropriate.
         endif()
     endif()
-    
+
     # Imposta INCLUDE environment variable per i subprocessi CMake (incluso juceaide)
     if(INCLUDE_PATHS_TO_SET)
         string(JOIN ";" INCLUDE_STRING ${INCLUDE_PATHS_TO_SET})
@@ -337,7 +337,7 @@ if(CMAKE_CXX_COMPILER MATCHES "cl\\.exe$")
             set(ENV{INCLUDE} "${INCLUDE_STRING}")
             message(STATUS "Set INCLUDE environment variable: $ENV{INCLUDE}")
         endif()
-        
+
         # Aggiungi anche i percorsi INCLUDE ai flag del compilatore
         # Questo assicura che siano inclusi nei Makefile generati
         foreach(INCLUDE_PATH ${INCLUDE_PATHS_TO_SET})
@@ -391,7 +391,7 @@ if(CMAKE_CXX_COMPILER MATCHES "cl\\.exe$")
         endforeach()
         message(STATUS "Added LIB paths to linker flags")
     endif()
-    
+
     # Use nmake override ONLY when the chosen generator is NMake Makefiles.
     if(CMAKE_GENERATOR MATCHES "NMake")
         # Find nmake.exe and add it to PATH if not already there
@@ -402,13 +402,13 @@ if(CMAKE_CXX_COMPILER MATCHES "cl\\.exe$")
             "${MSVC_HOST_DIR}/nmake.exe"      # Host directory
             "${MSVC_BIN_PARENT}/nmake.exe"    # bin directory
         )
-        
+
         get_filename_component(MSVC_BIN_PARENT_PARENT "${MSVC_BIN_PARENT}" DIRECTORY)
         get_filename_component(VS_VC_DIR "${MSVC_BIN_PARENT_PARENT}" DIRECTORY)
         if(EXISTS "${VS_VC_DIR}/Auxiliary/Build/nmake.exe")
             list(APPEND NMAKE_PATHS "${VS_VC_DIR}/Auxiliary/Build/nmake.exe")
         endif()
-        
+
         foreach(NMAKE_PATH ${NMAKE_PATHS})
             if(EXISTS "${NMAKE_PATH}")
                 get_filename_component(NMAKE_DIR "${NMAKE_PATH}" DIRECTORY)
@@ -422,7 +422,7 @@ if(CMAKE_CXX_COMPILER MATCHES "cl\\.exe$")
                 break()
             endif()
         endforeach()
-        
+
         if(NOT NMAKE_FOUND)
             message(WARNING "nmake.exe not found for NMake generator. CMake may fail during compiler test.")
             message(STATUS "  Searched in: ${NMAKE_PATHS}")
@@ -455,7 +455,7 @@ endif()
 
 # Ensure a C++ compiler is available
 if(NOT CMAKE_CXX_COMPILER)
-    message(FATAL_ERROR 
+    message(FATAL_ERROR
         "No C++ compiler found!\n"
         "Please install one of the following:\n"
         "  1. Visual Studio 2019/2022/2024/2026 with 'Desktop development with C++' workload\n"
@@ -481,20 +481,20 @@ if(CMAKE_CXX_COMPILER MATCHES "cl\\.exe$" AND WIN32)
     get_filename_component(MSVC_BIN_PARENT "${MSVC_HOST_DIR}" DIRECTORY)
     get_filename_component(MSVC_VERSION_DIR "${MSVC_BIN_PARENT}" DIRECTORY)
     set(MSVC_INCLUDE_DIR "${MSVC_VERSION_DIR}/include")
-    
+
     # Find Windows SDK include paths
     set(RC_INCLUDE_FLAGS "")
     if(EXISTS "${MSVC_INCLUDE_DIR}")
         set(RC_INCLUDE_FLAGS "/I\"${MSVC_INCLUDE_DIR}\"")
     endif()
-    
+
     if(EXISTS "C:/Program Files (x86)/Windows Kits/10/Include")
         file(GLOB WINSDK_INCLUDE_VERSIONS "C:/Program Files (x86)/Windows Kits/10/Include/*")
         if(WINSDK_INCLUDE_VERSIONS)
             list(SORT WINSDK_INCLUDE_VERSIONS)
             list(REVERSE WINSDK_INCLUDE_VERSIONS)
             list(GET WINSDK_INCLUDE_VERSIONS 0 WINSDK_INCLUDE_VER)
-            
+
             if(EXISTS "${WINSDK_INCLUDE_VER}/um")
                 set(RC_INCLUDE_FLAGS "${RC_INCLUDE_FLAGS} /I\"${WINSDK_INCLUDE_VER}/um\"")
             endif()
@@ -506,7 +506,7 @@ if(CMAKE_CXX_COMPILER MATCHES "cl\\.exe$" AND WIN32)
             endif()
         endif()
     endif()
-    
+
     # Set Resource Compiler flags
     if(RC_INCLUDE_FLAGS)
         set(CMAKE_RC_FLAGS "${CMAKE_RC_FLAGS} ${RC_INCLUDE_FLAGS}" CACHE STRING "Flags for Windows Resource Compiler" FORCE)
@@ -566,7 +566,7 @@ set(PLUGIN_SOURCES
     Source/PluginProcessor.h
     Source/PluginEditor.cpp
     Source/PluginEditor.h
-    
+
     # DSP
     Source/DSP/SpectrumAnalyzer.cpp
     Source/DSP/SpectrumAnalyzer.h
@@ -576,7 +576,7 @@ set(PLUGIN_SOURCES
     Source/DSP/DynamicEQProcessor.h
     Source/DSP/LinearPhaseProcessor.cpp
     Source/DSP/LinearPhaseProcessor.h
-    
+
     # AI
     Source/AI/AIEngine.cpp
     Source/AI/AIEngine.h
@@ -597,7 +597,7 @@ set(PLUGIN_SOURCES
     Source/AI/AdaptiveAIEngine.h
     Source/AI/OnlineLearningSystem.cpp
     Source/AI/OnlineLearningSystem.h
-    
+
     # GUI
     Source/GUI/ModernLookAndFeel.h
     Source/GUI/AdvancedSpectrumDisplay.h
@@ -610,7 +610,7 @@ set(PLUGIN_SOURCES
     Source/GUI/BandViewport.h
     Source/GUI/DynamicEQPanel.h
     Source/GUI/SemanticControlPanel.h
-    
+
     # Utils
     Source/Utils/Logger.cpp
     Source/Utils/Logger.h
@@ -703,6 +703,7 @@ if(TARGET AIEqualizerPro)
                 juce::juce_gui_basics
                 juce::juce_gui_extra
                 juce::juce_osc
+                juce::juce_opengl
             PUBLIC
                 juce::juce_recommended_config_flags
                 juce::juce_recommended_warning_flags
@@ -768,7 +769,7 @@ if(TARGET AIEqualizerPro)
 
     # Compiler-specific optimizations
     if(MSVC)
-        target_compile_options(AIEqualizerPro PRIVATE 
+        target_compile_options(AIEqualizerPro PRIVATE
             /MP                          # Parallel compilation
             /W4                          # Warning level 4
             /permissive-                 # Standards conformance
@@ -776,11 +777,11 @@ if(TARGET AIEqualizerPro)
             $<$<CONFIG:Release>:/O2>    # Optimize for speed in Release
             $<$<CONFIG:Release>:/GL>    # Whole program optimization
         )
-        target_link_options(AIEqualizerPro PRIVATE 
+        target_link_options(AIEqualizerPro PRIVATE
             $<$<CONFIG:Release>:/LTCG>  # Link-time code generation
         )
     elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-        target_compile_options(AIEqualizerPro PRIVATE 
+        target_compile_options(AIEqualizerPro PRIVATE
             -Wall -Wextra -Wpedantic
             $<$<CONFIG:Release>:-O3>
             $<$<CONFIG:Release>:-march=native>
@@ -803,32 +804,32 @@ if(TARGET AIEqualizerPro)
             XCODE_ATTRIBUTE_GCC_OPTIMIZATION_LEVEL $<$<CONFIG:Release>:3>
         )
     endif()
-    
+
     # Windows: Copy VST3 plugin to standard VST3 directory for Ableton/DAW scanning
     if(HAVE_JUCE AND WIN32)
         # Try standard VST3 directory first, fallback to user directory if no admin rights
         # Most DAWs scan both locations automatically
         set(VST3_INSTALL_DIR_SYSTEM "$ENV{ProgramFiles}/Common Files/VST3")
         set(VST3_INSTALL_DIR_USER "$ENV{LOCALAPPDATA}/VST3")
-        
+
         # Use user directory by default (no admin required)
         # User can manually copy to Program Files if needed
         set(VST3_INSTALL_DIR "${VST3_INSTALL_DIR_USER}")
-        
+
         # Get the VST3 plugin path from JUCE
         # JUCE creates the plugin in: AIEqualizerPro_artefacts/Release/VST3/AI Equalizer Pro.vst3
         set(VST3_SOURCE_DIR "${CMAKE_BINARY_DIR}/AIEqualizerPro_artefacts/Release/VST3")
         set(VST3_PLUGIN_NAME "AI Equalizer Pro.vst3")
         set(VST3_SOURCE_PATH "${VST3_SOURCE_DIR}/${VST3_PLUGIN_NAME}")
         set(VST3_DEST_PATH "${VST3_INSTALL_DIR}/${VST3_PLUGIN_NAME}")
-        
+
         # Create a custom target to copy the plugin after build
         # Use PowerShell to handle directory copy with better error handling
         if(CMAKE_BUILD_TYPE STREQUAL "Release" OR CMAKE_CONFIGURATION_TYPES)
             set(VST3_COPY_SCRIPT "${CMAKE_BINARY_DIR}/copy_vst3.ps1")
             # Get the DLL source path (JUCE creates it in Release/lib as a file)
             set(VST3_DLL_SOURCE "${CMAKE_BINARY_DIR}/Release/lib/${VST3_PLUGIN_NAME}")
-            file(WRITE "${VST3_COPY_SCRIPT}" 
+            file(WRITE "${VST3_COPY_SCRIPT}"
                 "if (Test-Path \"${VST3_SOURCE_PATH}\") {\n"
                 "    # Fix: Ensure DLL is in the correct location within the bundle\n"
                 "    $dllSource = \"${VST3_DLL_SOURCE}\"\n"
@@ -877,7 +878,7 @@ if(TARGET AIEqualizerPro)
                 "    exit 1\n"
                 "}\n"
             )
-            
+
             add_custom_target(copy_vst3_to_common_files
                 COMMAND powershell.exe -ExecutionPolicy Bypass -File "${VST3_COPY_SCRIPT}"
                 COMMENT "Copying VST3 plugin to ${VST3_INSTALL_DIR} for DAW scanning"
@@ -894,10 +895,10 @@ if(TARGET AIEqualizerPro)
                 VERBATIM
             )
         endif()
-        
+
         # Make the copy happen automatically after VST3 build
         add_dependencies(copy_vst3_to_common_files AIEqualizerPro_VST3)
-        
+
         message(STATUS "VST3 plugin will be automatically copied to:")
         message(STATUS "  User directory: ${VST3_INSTALL_DIR_USER} (no admin required)")
         message(STATUS "  System directory: ${VST3_INSTALL_DIR_SYSTEM} (if admin available)")
@@ -905,7 +906,7 @@ if(TARGET AIEqualizerPro)
     endif()
 endif()
 
-# Unit tests — DSP-only, no AI/ML external dependencies (no TFLite, no Torch).
+# Unit tests - DSP-only, no AI/ML external dependencies (no TFLite, no Torch).
 # Links only LinearPhaseProcessor, ParametricEQProcessor, DynamicEQProcessor
 # directly, avoiding the full plugin build graph.
 if(HAVE_JUCE)

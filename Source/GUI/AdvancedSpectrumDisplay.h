@@ -198,7 +198,7 @@ public:
     void resized() override 
     {
         auto bounds = getLocalBounds();
-        
+
         // Buttons in top-right corner
         int btnW = 65, btnH = 20, gap = 4;
         int startX = bounds.getRight() - (btnW * 4 + gap * 3) - 10;
@@ -231,7 +231,8 @@ public:
             updateSmoothedSpectrum();
             refreshPeaks();
         }
-        repaint(); 
+
+        repaint();
     }
 
     void mouseMove(const juce::MouseEvent& e) override 

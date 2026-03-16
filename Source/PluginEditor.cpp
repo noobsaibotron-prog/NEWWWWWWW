@@ -7,7 +7,14 @@ AIEqualizerAudioProcessorEditor::AIEqualizerAudioProcessorEditor(AIEqualizerAudi
     : AudioProcessorEditor(&p), processor(p)
 {
     setLookAndFeel(&lookAndFeel);
-    
+
+    // Attach OpenGL context to this top-level component.
+    // All child component paint() calls are composited via GPU automatically.
+    // setContinuousRepainting(false): we drive repaints via our own Timer.
+    openGLContext.setComponentPaintingEnabled(true);
+    openGLContext.setContinuousRepainting(false);
+    openGLContext.attachTo(*this);
+
     createHeader();
     createControlPanel();
     createBands();
@@ -115,6 +122,7 @@ AIEqualizerAudioProcessorEditor::~AIEqualizerAudioProcessorEditor()
         if (t.joinable()) t.join();
     analysisThreads.clear();
 
+    openGLContext.detach();
     stopTimer();
     setLookAndFeel(nullptr);
 }
