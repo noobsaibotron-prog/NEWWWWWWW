@@ -340,7 +340,7 @@ public:
         if (row >= 0 && row < static_cast<int>(problems.size()))
         {
             juce::AccessibilityHandler::postAnnouncement(
-                tr("Riga selezionata: ", "Selected row: ") + getRowAnnouncementFromCorrection(problems[static_cast<size_t>(row)]),
+                tr("Selected row: ", "Selected row: ") + getRowAnnouncementFromCorrection(problems[static_cast<size_t>(row)]),
                 juce::AccessibilityHandler::AnnouncementPriority::medium);
         }
     }
@@ -837,10 +837,7 @@ private:
     
     void updateProblemList()
     {
-        // FORCE SHOW: Get ALL pending corrections - NO CONDITIONS
         auto raw = processor.getAIEngine().getPendingCorrections();
-        
-        // ALWAYS USE RAW - NO FILTERING, NO MERGING, NO CONDITIONS
         problems = raw;
         
         // Sort by priority (severity * confidence) for display
@@ -920,11 +917,11 @@ private:
                     processor.applyAICorrections();
                     updateProblemList();
                     juce::AccessibilityHandler::postAnnouncement(
-                        tr("Correzioni applicate", "Corrections applied"),
+                        tr("Corrections applied", "Corrections applied"),
                         juce::AccessibilityHandler::AnnouncementPriority::high);
                 } else {
                     juce::AccessibilityHandler::postAnnouncement(
-                        tr("Applicazione correttivi annullata", "Correction application cancelled"),
+                        tr("Correction application cancelled", "Correction application cancelled"),
                         juce::AccessibilityHandler::AnnouncementPriority::medium);
                 }
             }));
@@ -962,7 +959,7 @@ private:
         if (row >= 0 && row < static_cast<int>(problems.size()))
         {
             juce::AccessibilityHandler::postAnnouncement(
-                tr("Riga selezionata: ", "Selected row: ") + getRowAnnouncementFromCorrection(problems[static_cast<size_t>(row)]),
+                tr("Selected row: ", "Selected row: ") + getRowAnnouncementFromCorrection(problems[static_cast<size_t>(row)]),
                 juce::AccessibilityHandler::AnnouncementPriority::medium);
         }
     }

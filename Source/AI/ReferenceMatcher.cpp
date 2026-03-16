@@ -131,7 +131,7 @@ void ReferenceMatcher::captureFromSidechain(const juce::AudioBuffer<float>& buff
     {
         smoothSpectrum(referenceSpectrum, smoothingAmount);
         captureState.store(CaptureState::Ready);
-        calculateMatchCurve();
+        calculateMatchCurveUnlocked();  // lock already held
     }
 }
 
@@ -148,13 +148,18 @@ void ReferenceMatcher::startInputCapture()
 void ReferenceMatcher::stopInputCapture()
 {
     std::lock_guard<std::mutex> lock(spectrumMutex);
-    
+    stopInputCaptureUnlocked();
+}
+
+void ReferenceMatcher::stopInputCaptureUnlocked()
+{
+    // MUST be called with spectrumMutex already held
     if (inputCaptureCount > 0)
     {
         smoothSpectrum(averagedInputSpectrum, smoothingAmount);
-        calculateMatchCurve();
+        calculateMatchCurveUnlocked();  // lock already held
     }
-    
+
     captureState.store(hasReference() ? CaptureState::Ready : CaptureState::Idle);
 }
 
@@ -181,7 +186,7 @@ void ReferenceMatcher::captureInput(const juce::AudioBuffer<float>& buffer)
     
     if (inputCaptureCount >= targetCaptureCount)
     {
-        stopInputCapture();
+        stopInputCaptureUnlocked();  // lock already held
     }
 }
 
@@ -200,10 +205,10 @@ void ReferenceMatcher::setInputSpectrum(const std::vector<float>& spectrum)
         
         inputCaptureCount++;
         
-        // Recalculate match curve periodically
+        // Recalculate match curve periodically (lock already held)
         if (inputCaptureCount % 30 == 0 && hasReference())
         {
-            calculateMatchCurve();
+            calculateMatchCurveUnlocked();
         }
     }
 }
@@ -212,6 +217,12 @@ void ReferenceMatcher::setInputSpectrum(const std::vector<float>& spectrum)
 void ReferenceMatcher::calculateMatchCurve()
 {
     std::lock_guard<std::mutex> lock(spectrumMutex);
+    calculateMatchCurveUnlocked();
+}
+
+void ReferenceMatcher::calculateMatchCurveUnlocked()
+{
+    // MUST be called with spectrumMutex already held
     
     if (referenceSpectrum.empty() || averagedInputSpectrum.empty())
         return;
@@ -302,7 +313,7 @@ void ReferenceMatcher::loadPresetReference(const juce::String& presetName)
         std::lock_guard<std::mutex> lock(spectrumMutex);
         referenceSpectrum = it->second;
         captureState.store(CaptureState::Ready);
-        calculateMatchCurve();
+        calculateMatchCurveUnlocked();  // lock already held
     }
 }
 

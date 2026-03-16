@@ -34,6 +34,9 @@ public:
     // Callback to get generated EQ adjustments
     std::function<void(const std::vector<SemanticEQEngine::SemanticEQAdjustment>&)> onEQGenerated;
 
+    // Must be called when the host sample rate changes (e.g. from PluginEditor::prepareToPlay)
+    void setSampleRate(double sr) { currentSampleRate = sr; }
+
     //==========================================================================
     explicit SemanticControlPanel(SemanticEQEngine& engine)
         : semanticEngine(engine)
@@ -468,7 +471,7 @@ private:
             return;
             
         // Generate EQ adjustments from current semantic state
-        auto adjustments = semanticEngine.generateEQFromState({}, 44100.0);
+        auto adjustments = semanticEngine.generateEQFromState({}, currentSampleRate);
         
         if (onEQGenerated)
             onEQGenerated(adjustments);
@@ -531,6 +534,7 @@ private:
     
     //==========================================================================
     SemanticEQEngine& semanticEngine;
+    double currentSampleRate = 44100.0;
     
     juce::Label titleLabel, subtitleLabel, intensityLabel, statusLabel;
     juce::TextEditor commandInput;

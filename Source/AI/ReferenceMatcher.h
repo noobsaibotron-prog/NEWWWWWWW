@@ -67,6 +67,8 @@ public:
     //==============================================================================
     // Match curve generation
     void calculateMatchCurve();
+    void calculateMatchCurveUnlocked();   // Call only when spectrumMutex is already held
+    void stopInputCaptureUnlocked();      // Call only when spectrumMutex is already held
     void getMatchedMagnitudes(std::vector<float>& magnitudes,
                               const std::vector<float>& frequencies,
                               double sampleRate) const;

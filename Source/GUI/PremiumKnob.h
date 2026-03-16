@@ -14,7 +14,7 @@ class PremiumKnob : public juce::Slider, private juce::Timer
 {
 public:
     PremiumKnob() { init(); }
-    explicit PremiumKnob(const juce::String& labelTextIn) : labelText(labelTextIn) { init(); }
+    explicit PremiumKnob(const juce::String& /*labelText*/) { init(); }
 
     ~PremiumKnob() override = default;
 
@@ -106,7 +106,6 @@ private:
         setMouseDragSensitivity(300);
     }
 
-    juce::String labelText;
     void timerCallback() override { repaint(); }
 
     void mouseEnter(const juce::MouseEvent& e) override
