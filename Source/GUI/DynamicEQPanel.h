@@ -180,13 +180,22 @@ public:
             auto meter = bandMeterProvider(bandIndex);
             const float newGR = meter.gainReduction;
 
-            // Smooth the meter: fast attack (instantaneous), slow release (~300ms decay)
-            // This prevents the meter from flickering due to processBlock/GUI rate mismatch.
-            constexpr float releaseCoeff = 0.85f; // per tick at 30Hz ≈ 300ms to -20dB
+            // Smooth the meter:
+            // - Attack: instantaneous (show peak GR immediately)
+            // - Release: fast enough to respond to threshold changes in real-time (~80ms)
+            // Note: releaseCoeff was 0.85 (~300ms) which was too slow when tweaking threshold.
+            // At 30Hz: 0.5^30 ≈ snap to 0 in ~1s. Using 0.6 ≈ 80ms to -20dB which feels
+            // responsive while still smoothing out single-block dropouts.
+            constexpr float releaseCoeff = 0.6f; // per tick at 30Hz ≈ 80ms release
             if (std::abs(newGR) > std::abs(currentGainReduction))
                 currentGainReduction = newGR; // fast attack
             else
                 currentGainReduction = currentGainReduction * releaseCoeff + newGR * (1.0f - releaseCoeff);
+
+            // Snap to new GR if the difference is large (e.g. threshold jumped significantly)
+            // This ensures tweaking the threshold knob feels instant on the meter.
+            if (std::abs(newGR - currentGainReduction) > 2.0f)
+                currentGainReduction = newGR;
 
             // Clamp to near-zero to avoid meter never fully reaching 0
             if (std::abs(currentGainReduction) < 0.05f)
