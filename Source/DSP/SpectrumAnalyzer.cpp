@@ -160,8 +160,10 @@ void SpectrumAnalyzer::processFFT()
     if (state.fft)
         state.fft->performFrequencyOnlyForwardTransform(fftData.data());
     
-    const int writeIndex = 1 - activeBufferIndex.load();
-    const int readIndex = activeBufferIndex.load();
+    // Cache once to avoid TOCTOU: if activeBufferIndex changed between two loads,
+    // writeIndex and readIndex could alias the same buffer.
+    const int readIndex  = activeBufferIndex.load();
+    const int writeIndex = 1 - readIndex;
     
     auto& magOut = state.spectrumBuffers[writeIndex];
     auto& dbOut = state.spectrumDBBuffers[writeIndex];

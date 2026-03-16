@@ -79,10 +79,9 @@ private:
     std::atomic<int> activeSlot { 0 };   // which slot process() reads from
     int buildSlot = 1;                    // which slot updateIR writes to
 
-    // Crossfade state — must be >= hopSize to cover at least one OLA frame
-    static constexpr int crossfadeLengthSamples = 4096; // one full hop (~93ms @ 44.1kHz)
-    int crossfadeSamplesRemaining = 0;
-    int crossfadeFromSlot = 0;           // old slot during crossfade
+    // NOTE: Crossfade between IR slots is handled implicitly by the OLA overlap tail:
+    // when the active slot changes, the overlap tail from the previous IR naturally blends
+    // into the new IR output over irSize samples. No explicit crossfade needed.
 
     // ── Per-channel OLA state ──────────────────────────────────────────
     struct ChannelState
@@ -92,9 +91,7 @@ private:
 
         std::vector<float> overlapTail;  // overlap-add tail from previous block (irSize - 1 samples)
 
-        std::vector<float> outputQueue;    // buffered output waiting to be drained (new IR)
-        std::vector<float> outputQueueB;   // buffered output for old IR during crossfade
-        std::vector<float> overlapTailB;   // overlap tail for old IR slot during crossfade
+        std::vector<float> outputQueue;    // buffered output waiting to be drained
         size_t outputReadPos = 0;
         size_t outputAvailable = 0;
 
@@ -115,7 +112,6 @@ private:
     // ── Scratch buffers (pre-allocated, reused each OLA frame) ─────────
     std::vector<float> fftWorkBuf;       // size = fftSize * 2 (for real-only FFT)
     std::vector<float> ifftWorkBuf;      // size = fftSize * 2
-    std::vector<float> fftWorkBuf2;      // for crossfade second-slot processing
 
     // ── IR construction scratch (reused across updateImpulseResponse calls) ──
     std::vector<std::complex<float>> irBuildFreq;   // fftSize

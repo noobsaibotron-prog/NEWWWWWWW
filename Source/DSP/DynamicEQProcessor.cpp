@@ -31,8 +31,10 @@ void DynamicEQProcessor::prepare(double sampleRate, int samplesPerBlock, int cha
     spec.maximumBlockSize = static_cast<juce::uint32>(samplesPerBlock);
     spec.numChannels = 1;
 
-    // Pre-allocate dry buffer
-    dryBuffer.setSize(channels, samplesPerBlock * 4, false, false, true);
+    // Pre-allocate dry buffer with generous headroom so process() never needs to resize.
+    // 8x block size covers Reaper dynamic block sizes and any host that delivers
+    // larger-than-expected blocks without hitting the RT-unsafe setSize path.
+    dryBuffer.setSize(channels, samplesPerBlock * 8, false, false, true);
     dryBuffer.clear();
     
     // Prepare all band filters and calculate coefficients
@@ -159,11 +161,9 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
     //==========================================================================
     const float mix = globalMix.load(std::memory_order_relaxed);
 
-    // Bug G fix: if host delivers a larger block than pre-allocated (e.g. Reaper dynamic block),
-    // grow dryBuffer now. This is a safe path: it only allocates when strictly necessary,
-    // and the call is on the audio thread which is acceptable for a one-time resize.
-    if (mix < 0.999f && numSamples > dryBuffer.getNumSamples())
-        dryBuffer.setSize(channels, numSamples * 2, false, false, true); // *2 to amortize future grows
+    // Safety: if host delivers a block larger than the 8x headroom pre-allocated in prepare(),
+    // skip dry/wet mix rather than allocating on the audio thread.
+    // In practice this should never trigger with 8x headroom.
 
     const int safeSamples = juce::jmin(numSamples, dryBuffer.getNumSamples());
     

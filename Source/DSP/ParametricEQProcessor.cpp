@@ -692,9 +692,10 @@ juce::dsp::IIR::Coefficients<float>::Ptr ParametricEQProcessor::makeCoefficients
                 sr, freq, q, juce::Decibels::decibelsToGain(gain));
 
         case Peak:
-            // Gain near zero: return identity (no phase shift, no allpass artifact)
+            // Gain near zero: return nullptr so the caller skips processing entirely.
+            // Avoids phase shift from an AllPass at low freq that was incorrectly used before.
             if (std::abs(gain) < 0.05f)
-                return juce::dsp::IIR::Coefficients<float>::makeAllPass(sr, 20.0, 0.1);
+                return nullptr;
             return juce::dsp::IIR::Coefficients<float>::makePeakFilter(
                 sr, freq, q, juce::Decibels::decibelsToGain(gain));
 

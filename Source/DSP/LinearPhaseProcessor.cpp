@@ -32,13 +32,13 @@ void LinearPhaseProcessor::prepare(const juce::dsp::ProcessSpec& spec)
 
     fftWorkBuf.resize(fftSize * 2, 0.0f);
     ifftWorkBuf.resize(fftSize * 2, 0.0f);
-    fftWorkBuf2.resize(fftSize * 2, 0.0f);
+
 
     irBuildFreq.resize(fftSize, { 0.0f, 0.0f });
     irBuildTime.resize(fftSize, { 0.0f, 0.0f });
     irBuildReal.resize(fftSize, 0.0f);
 
-    crossfadeSamplesRemaining = 0;
+    
 }
 
 void LinearPhaseProcessor::reset()
@@ -48,7 +48,7 @@ void LinearPhaseProcessor::reset()
 
     for (auto& ch : channels)
         ch.reset();
-    crossfadeSamplesRemaining = 0;
+    
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -271,17 +271,8 @@ void LinearPhaseProcessor::storeIRToSlot(const float* irTimeDomain, size_t irLen
 
     const int oldActive = activeSlot.load(std::memory_order_relaxed);
 
-    if (irSlots[oldActive].valid)
-    {
-        for (auto& ch : channels)
-        {
-            if (ch.overlapTailB.size() < ch.overlapTail.size())
-                ch.overlapTailB.resize(ch.overlapTail.size(), 0.0f);
-            std::copy(ch.overlapTail.begin(), ch.overlapTail.end(), ch.overlapTailB.begin());
-        }
-        crossfadeFromSlot = oldActive;
-        crossfadeSamplesRemaining = crossfadeLengthSamples;
-    }
+    // IR transition: OLA overlap tail naturally blends old→new IR over irSize samples.
+    juce::ignoreUnused(oldActive);
 
     activeSlot.store(buildSlot, std::memory_order_release);
     buildSlot = 1 - buildSlot;
@@ -315,9 +306,6 @@ void LinearPhaseProcessor::ensureChannels(size_t numChannels)
             ch.outputReadPos = 0;
             ch.outputAvailable = 0;
         }
-        if (ch.outputQueueB.size() < hopSize)
-            ch.outputQueueB.resize(hopSize, 0.0f);
-        if (ch.overlapTailB.size() < irSize)
-            ch.overlapTailB.resize(irSize, 0.0f);
+
     }
 }

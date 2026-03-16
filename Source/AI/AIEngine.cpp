@@ -1256,9 +1256,7 @@ void AIEngine::detectBoxyness()
     float adjustedRelativeThreshold = 3.5f * sensitivityMultiplier;
     float adaptedThreshold = calculateAdaptiveThreshold(thresholds.boxyThreshold);
     
-    // FORCE DETECTION: Always create if ANY energy
-    float minEnergy = -80.0f;
-    if (boxEnergy > minEnergy)  // Show if ANY energy
+    if (relativeEnergy > adjustedRelativeThreshold && boxEnergy > adaptedThreshold)
     {
         // Find the peak frequency within the boxyness range
         float peakFreq = findPeakInRange(thresholds.boxyLow, thresholds.boxyHigh);
@@ -1321,9 +1319,7 @@ void AIEngine::detectSibilance()
     float adjustedRelativeThreshold = 2.0f * sensitivityMultiplier;
     float adaptedThreshold = calculateAdaptiveThreshold(thresholds.sibilanceThreshold);
     
-    // FORCE DETECTION: Always create if ANY energy
-    float minEnergy = -80.0f;
-    if (sibilanceEnergy > minEnergy)  // Show if ANY energy
+    if (relativeEnergy > adjustedRelativeThreshold && sibilanceEnergy > adaptedThreshold)
     {
         // Find the peak frequency within the sibilance range
         float peakFreq = findPeakInRange(thresholds.sibilanceLow, thresholds.sibilanceHigh);
@@ -1386,9 +1382,7 @@ void AIEngine::detectLowEndBoom()
     float adjustedRelativeThreshold = 5.0f * sensitivityMultiplier;
     float adaptedThreshold = calculateAdaptiveThreshold(thresholds.lowEndThreshold);
     
-    // FORCE DETECTION: Always create if ANY energy
-    float minEnergy = -80.0f;
-    if (subEnergy > minEnergy)  // Show if ANY energy
+    if (relativeEnergy > adjustedRelativeThreshold && subEnergy > adaptedThreshold)
     {
         // Find the peak frequency within the sub-bass range
         float peakFreq = findPeakInRange(30.0f, 100.0f);
@@ -1450,9 +1444,7 @@ void AIEngine::detectThinSound()
     float sensitivityMultiplier = getSensitivityMultiplier();
     float adjustedRelativeThreshold = 7.0f * sensitivityMultiplier;
     
-    // FORCE DETECTION: Always create if ANY signal
-    float minRMS = -100.0f;  // Very low threshold
-    if (averageRMS > minRMS)  // Show if ANY signal
+    if (relativeEnergy > adjustedRelativeThreshold)
     {
         // Find where the deficiency is most pronounced
         float deficientFreq = findLowestInRange(200.0f, 600.0f);
@@ -1516,9 +1508,7 @@ void AIEngine::detectDullSound()
     float sensitivityMultiplier = getSensitivityMultiplier();
     float adjustedRelativeThreshold = 9.0f * sensitivityMultiplier;
     
-    // FORCE DETECTION: Always create if ANY signal
-    float minRMS = -100.0f;  // Very low threshold
-    if (averageRMS > minRMS)  // Show if ANY signal
+    if (relativeEnergy > adjustedRelativeThreshold)
     {
         // Find where to apply the boost
         float airFreq = findLowestInRange(8000.0f, 14000.0f);
@@ -1998,30 +1988,34 @@ float AIEngine::calculatePercentile(const std::vector<float>& data, float percen
 {
     if (data.empty())
         return -100.0f;
-    
-    // Create a sorted copy
-    std::vector<float> sorted = data;
-    std::sort(sorted.begin(), sorted.end());
-    
-    // Remove invalid values (too low)
-    sorted.erase(std::remove_if(sorted.begin(), sorted.end(),
-                                [](float v) { return v < -99.0f; }),
-                 sorted.end());
-    
-    if (sorted.empty())
+
+    // Filter invalid values first, then use nth_element (O(n)) instead of sort (O(n log n))
+    std::vector<float> filtered;
+    filtered.reserve(data.size());
+    for (float v : data)
+        if (v >= -99.0f) filtered.push_back(v);
+
+    if (filtered.empty())
         return -100.0f;
-    
-    // Calculate index
-    float index = percentile * (sorted.size() - 1);
+
+    float index = percentile * static_cast<float>(filtered.size() - 1);
     int lowerIndex = static_cast<int>(std::floor(index));
-    int upperIndex = static_cast<int>(std::ceil(index));
-    
+    lowerIndex = juce::jlimit(0, static_cast<int>(filtered.size()) - 1, lowerIndex);
+    int upperIndex = juce::jlimit(0, static_cast<int>(filtered.size()) - 1, lowerIndex + 1);
+
+    // nth_element partially sorts so filtered[lowerIndex] is the correct percentile value
+    std::nth_element(filtered.begin(), filtered.begin() + lowerIndex, filtered.end());
+    float lower = filtered[static_cast<size_t>(lowerIndex)];
+
     if (lowerIndex == upperIndex)
-        return sorted[lowerIndex];
-    
-    // Linear interpolation
-    float weight = index - lowerIndex;
-    return sorted[lowerIndex] * (1.0f - weight) + sorted[upperIndex] * weight;
+        return lower;
+
+    // Need upper value too — nth_element again on the remaining range
+    std::nth_element(filtered.begin() + lowerIndex + 1, filtered.begin() + upperIndex, filtered.end());
+    float upper = filtered[static_cast<size_t>(upperIndex)];
+
+    float weight = index - static_cast<float>(lowerIndex);
+    return lower * (1.0f - weight) + upper * weight;
 }
 
 // Calculate local z-score for a bin within a sliding window
@@ -2154,34 +2148,34 @@ float AIEngine::getSensitivityMultiplier() const
 
 float AIEngine::calculateBandwidth(int peakBin) const
 {
-    // SAFETY: Acquire lock for currentSpectrum access
-    std::lock_guard<std::mutex> lock(spectrumMutex);
-    
+    // Use lock-free snapshot to avoid deadlock when called while correctionsWriteMutex is held
+    const auto spectrum = readSpectrumSnapshot();
+
     // Find -3dB points on either side of peak
-    const int specSize = static_cast<int>(currentSpectrum.size());
+    const int specSize = static_cast<int>(spectrum.size());
     if (specSize == 0 || peakBin < 2 || peakBin >= specSize - 2)
         return 100.0f;  // Default fallback
-    
-    float peakMag = currentSpectrum[static_cast<size_t>(peakBin)];
+
+    float peakMag = spectrum[static_cast<size_t>(peakBin)];
     float threshold3dB = peakMag - 3.0f;
-    
+
     // Search left for -3dB point
     int leftBin = peakBin;
     for (int i = peakBin - 1; i >= 0 && i >= peakBin - 50; --i)
     {
-        if (i >= 0 && i < specSize && currentSpectrum[static_cast<size_t>(i)] < threshold3dB)
+        if (i >= 0 && i < specSize && spectrum[static_cast<size_t>(i)] < threshold3dB)
         {
             leftBin = i;
             break;
         }
         leftBin = i;
     }
-    
+
     // Search right for -3dB point
     int rightBin = peakBin;
     for (int i = peakBin + 1; i < specSize && i <= peakBin + 50; ++i)
     {
-        if (currentSpectrum[static_cast<size_t>(i)] < threshold3dB)
+        if (spectrum[static_cast<size_t>(i)] < threshold3dB)
         {
             rightBin = i;
             break;
