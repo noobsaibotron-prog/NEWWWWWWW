@@ -208,9 +208,10 @@ NeuralNetworkWrapper::~NeuralNetworkWrapper()
 //==============================================================================
 bool NeuralNetworkWrapper::loadModel(const juce::File& modelFile, ModelType type)
 {
-    std::lock_guard<std::mutex> lock(modelMutex);
-    // Also serialize with inference mutex to prevent races with concurrent runInference
+    // FIX: lock ordering must be consistent to prevent deadlock.
+    // Rule: ALWAYS acquire inferenceMutex before modelMutex (same order as runInference).
     std::lock_guard<std::mutex> infLock(inferenceMutex);
+    std::lock_guard<std::mutex> lock(modelMutex);
     
     if (!modelFile.existsAsFile())
         return false;

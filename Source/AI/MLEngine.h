@@ -90,7 +90,7 @@ public:
     std::vector<ProblemDetection> detectProblems(const std::vector<float>& spectrum,
                                                   double sampleRate);
     
-    GenreDetection classifyGenre(const std::vector<float>& spectrum);
+    GenreDetection classifyGenre(const std::vector<float>& spectrum, double sampleRate = 44100.0);
     
     //==========================================================================
     // Model management

@@ -286,7 +286,7 @@ std::vector<MLEngine::ProblemDetection> MLEngine::detectProblems(
     return detections;
 }
 
-MLEngine::GenreDetection MLEngine::classifyGenre(const std::vector<float>& spectrum)
+MLEngine::GenreDetection MLEngine::classifyGenre(const std::vector<float>& spectrum, double sampleRate)
 {
     if (!isInitialized)
         initialize();
@@ -298,7 +298,7 @@ MLEngine::GenreDetection MLEngine::classifyGenre(const std::vector<float>& spect
     if (spectrum.empty())
         return result;
     
-    auto melSpectrum = extractMelBands(spectrum, 44100.0, melNumBands);
+    auto melSpectrum = extractMelBands(spectrum, sampleRate, melNumBands);
     
     if (melSpectrum.size() != static_cast<size_t>(melNumBands))
         return result;

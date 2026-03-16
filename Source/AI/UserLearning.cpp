@@ -225,6 +225,11 @@ float UserLearningSystem::interpolatePreference(const std::vector<FrequencyPrefe
     float logFreq = std::log2(freq);
     float logF1 = std::log2(p1.centerFreq);
     float logF2 = std::log2(p2.centerFreq);
+    // Guard against identical center frequencies (division by zero)
+    if (std::abs(logF2 - logF1) < 1e-6f)
+    {
+        return forGain ? p1.avgGainAdjustment * p1.confidence : p1.avgQPreference;
+    }
     float t = (logFreq - logF1) / (logF2 - logF1);
     t = juce::jlimit(0.0f, 1.0f, t);
     
@@ -278,22 +283,24 @@ juce::StringArray UserLearningSystem::getAvailableProfiles() const
 //==============================================================================
 void UserLearningSystem::saveToFile(const juce::File& file) const
 {
-    juce::var data;
-    
-    // Save current profile
-    data.getDynamicObject()->setProperty("currentProfile", profileToVar(currentProfile));
-    
+    // FIX: juce::var() is null by default — getDynamicObject() returns nullptr → crash.
+    // Must create the DynamicObject first and wrap it in a var.
+    auto* root = new juce::DynamicObject();
+
+    root->setProperty("currentProfile", profileToVar(currentProfile));
+
     // Save all profiles
     juce::var profilesArray;
     for (const auto& pair : savedProfiles)
     {
         juce::var profileData = profileToVar(pair.second);
-        profileData.getDynamicObject()->setProperty("name", pair.first);
+        if (auto* profileObj = profileData.getDynamicObject())
+            profileObj->setProperty("name", pair.first);
         profilesArray.append(profileData);
     }
-    data.getDynamicObject()->setProperty("profiles", profilesArray);
-    
-    // Write to file
+    root->setProperty("profiles", profilesArray);
+
+    juce::var data(root);
     juce::String json = juce::JSON::toString(data);
     file.replaceWithText(json);
 }

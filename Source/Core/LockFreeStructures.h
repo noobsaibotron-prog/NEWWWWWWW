@@ -61,7 +61,8 @@ public:
 
     /**
      * Publish new state (call from producer thread only)
-     * Wait-free: always completes in bounded time
+     * Lock-free: completes in bounded time on any single thread,
+     * but uses a CAS retry loop (not strictly wait-free).
      */
     void publish(const T& newState) noexcept
     {
@@ -458,7 +459,8 @@ struct AtomicBandState
      */
     void write(float freq, float g, float qVal, int t, bool en) noexcept
     {
-        version.fetch_add(1, std::memory_order_acquire);
+        // relaxed: we are not reading any shared data here, just incrementing the version
+        version.fetch_add(1, std::memory_order_relaxed);
         
         frequency.store(freq, std::memory_order_relaxed);
         gain.store(g, std::memory_order_relaxed);

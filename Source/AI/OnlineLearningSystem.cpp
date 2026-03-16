@@ -166,17 +166,32 @@ void OnlineLearningSystem::addAutoFeedback(const std::vector<float>& input,
                                           const std::vector<float>& actualOutput,
                                           float confidence)
 {
-    // Create target as difference between predicted and actual
+    // Target = actualOutput (what we want the model to produce).
+    // We also compute a residual-weighted confidence: if predicted and actual
+    // are already close, the sample carries less signal for training.
     std::vector<float> target = actualOutput;
-    
-    // Weight by confidence
+
+    float residualWeight = 1.0f;
+    if (!predictedOutput.empty() && predictedOutput.size() == actualOutput.size())
+    {
+        float mse = 0.0f;
+        for (size_t i = 0; i < actualOutput.size(); ++i)
+        {
+            float diff = actualOutput[i] - predictedOutput[i];
+            mse += diff * diff;
+        }
+        mse /= static_cast<float>(actualOutput.size());
+        // More error = more useful sample; cap between 0.1 and 1.0
+        residualWeight = juce::jlimit(0.1f, 1.0f, std::sqrt(mse) * 5.0f);
+    }
+
     LearningSample sample;
     sample.input = input;
     sample.target = target;
-    sample.weight = confidence;
+    sample.weight = confidence * residualWeight;
     sample.source = "auto";
     sample.timestamp = juce::Time::currentTimeMillis();
-    
+
     addSample(sample);
 }
 
