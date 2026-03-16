@@ -58,6 +58,15 @@ cmake .. -G "Xcode"
 cmake --build . --config Release
 ```
 
+#### Mac quickstart con gli script
+- Per creare lo zip da Windows (solo sorgenti necessari, senza artefatti):  
+  `powershell -ExecutionPolicy Bypass -File package_mac.ps1 [-IncludeJUCE] [-IncludeThirdParty] [-Output AIEQ-mac.zip]`
+- Su macOS (setup + build automatizzato):  
+  `chmod +x setup_mac.sh build_mac.sh`  
+  `./setup_mac.sh [Debug|Release]`  
+  (se hai già Homebrew/CMake/Xcode, puoi usare direttamente `./build_mac.sh [Debug|Release]`)  
+  Variabili opzionali: `JUCE_PATH=/percorso/JUCE`, `ARCHS="x86_64;arm64"`, `DEPLOY_TARGET=11.0`, `BUILD_DIR=build-mac`.
+
 ### Linux Build
 
 ```bash

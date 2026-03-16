@@ -48,6 +48,7 @@
 #include "DSP/ParametricEQProcessor.h"
 #include "DSP/DynamicEQProcessor.h"
 #include "DSP/LinearPhaseProcessor.h"
+#include "Core/OSCParameterServer.h"
 #include "AI/AIEngine.h"
 #include "AI/ReferenceMatcher.h"
 #include "AI/UserLearning.h"
@@ -462,6 +463,15 @@ private:
     int crossfadeSamplesRemaining = 0;
     int previousIRIndex = 0;
     alignas(64) juce::AudioBuffer<float> crossfadeBuffer;
+
+    // Pre-computed freq-domain IR handoff (builder thread → audio thread)
+    struct PendingFreqIR {
+        std::vector<float> freqDomain;   // fftSize * 2, pre-allocated
+        bool valid = false;
+        std::mutex mutex;
+    };
+    PendingFreqIR pendingFreqIR;
+    std::atomic<bool> pendingIRReady { false };
     
     //==============================================================================
     // AI Components
@@ -476,6 +486,9 @@ private:
     // Utilities
     //==============================================================================
     std::unique_ptr<PresetManager> presetManager;
+    
+    // OSC parameter server — exposes all APVTS parameters on port 11100
+    std::unique_ptr<OSCParameterServer> oscParamServer;
     
     //==============================================================================
     // State (atomic for thread-safe access)

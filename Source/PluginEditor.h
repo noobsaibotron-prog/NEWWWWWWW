@@ -129,17 +129,17 @@ private:
     ModernLookAndFeel lookAndFeel;
     
     // Layout
-    static constexpr int headerH = 38;
-    static constexpr int controlH = 140;   // Premium bar height with waveform + knobs
-    static constexpr int aiPanelW = 440;   // Larger panel for detailed AI problem display
+    static constexpr int headerH = 32;
+    static constexpr int controlH = 55;
     static constexpr int bandPanelH = 140;
     static constexpr int pad = 6;
-    std::vector<int> dividerPositions;
+    bool aiPanelVisible = false;
     
     // Header
     juce::TextButton prevBtn{"<"}, nextBtn{">"};
     juce::ComboBox presetBox;
     juce::TextButton optionsBtn{"Options"};
+    juce::TextButton aiPanelToggle{"AI"};
     juce::ComboBox phaseModeCombo;
     juce::ToggleButton btnA{"A"}, btnB{"B"};
     juce::TextButton copyBtn{"A>B"};
@@ -210,6 +210,11 @@ private:
 
     uint64_t lastParameterChangeCount = 0;
     uint32_t lastBlockClampEvents = 0;
+    
+    // Timer throttle: spread heavy UI work across multiple ticks to avoid
+    // message thread starvation (Ableton freeze). timerTickCount increments
+    // each timerCallback() call; heavy work runs only on selected ticks.
+    int timerTickCount = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AIEqualizerAudioProcessorEditor)
 };

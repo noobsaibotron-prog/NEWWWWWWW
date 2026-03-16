@@ -162,53 +162,109 @@ public:
     void paint(juce::Graphics& g) override
     {
         auto bounds = getLocalBounds().toFloat();
+        const bool compact = bounds.getHeight() < 80;
         
         // Background
         g.setColour(ModernLookAndFeel::Colors::bgPanel);
-        g.fillRoundedRectangle(bounds, 4.0f);
+        g.fillRoundedRectangle(bounds, compact ? 3.0f : 4.0f);
         
-        // Top accent bar
+        // Left accent bar (compact) or top accent bar (tall)
         g.setColour(bandColor.withAlpha(0.6f));
-        g.fillRoundedRectangle(bounds.removeFromTop(3.0f), 2.0f);
+        if (compact)
+            g.fillRoundedRectangle(bounds.removeFromLeft(3.0f), 2.0f);
+        else
+            g.fillRoundedRectangle(bounds.removeFromTop(3.0f), 2.0f);
         
         // Border
         g.setColour(ModernLookAndFeel::Colors::bgLighter);
-        g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(0.5f), 4.0f, 1.0f);
+        g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(0.5f), compact ? 3.0f : 4.0f, 1.0f);
     }
     
     void resized() override
     {
-        auto bounds = getLocalBounds().reduced(4);
-        bounds.removeFromTop(4); // Account for accent bar
+        auto bounds = getLocalBounds().reduced(4, 2);
+        const bool compact = bounds.getHeight() < 80;
         
-        // Band label at top
-        bandLabel.setBounds(bounds.removeFromTop(18));
-        bounds.removeFromTop(2);
-        
-        typeLabel.setBounds(bounds.removeFromTop(12));
-        typeCombo.setBounds(bounds.removeFromTop(26).reduced(2, 0));
-        bounds.removeFromTop(4);
-        
-        // Enable / Solo buttons row
-        auto btnRow = bounds.removeFromBottom(26);
-        enableBtn.setBounds(btnRow.removeFromLeft(btnRow.getWidth() / 2).reduced(4, 2));
-        soloBtn.setBounds(btnRow.reduced(4, 2));
-        bounds.removeFromBottom(2);
-        
-        // Three knobs in a row
-        int knobW = bounds.getWidth() / 3;
-        
-        auto freqArea = bounds.removeFromLeft(knobW);
-        freqLabel.setBounds(freqArea.removeFromTop(12));
-        freqKnob.setBounds(freqArea);
-        
-        auto gainArea = bounds.removeFromLeft(knobW);
-        gainLabel.setBounds(gainArea.removeFromTop(12));
-        gainKnob.setBounds(gainArea);
-        
-        auto qArea = bounds;
-        qLabel.setBounds(qArea.removeFromTop(12));
-        qKnob.setBounds(qArea);
+        if (compact)
+        {
+            // === HORIZONTAL COMPACT LAYOUT (for bottom bar ~55px) ===
+            // [B1] [ON] [SOLO] [Type▼] [Freq knob] [Gain knob] [Q knob]
+            
+            // Band label
+            bandLabel.setBounds(bounds.removeFromLeft(28));
+            bounds.removeFromLeft(2);
+            
+            // Enable + Solo buttons
+            enableBtn.setBounds(bounds.removeFromLeft(32).reduced(0, 4));
+            bounds.removeFromLeft(2);
+            soloBtn.setBounds(bounds.removeFromLeft(38).reduced(0, 4));
+            bounds.removeFromLeft(4);
+            
+            // Filter type combo
+            typeLabel.setVisible(false);
+            typeCombo.setBounds(bounds.removeFromLeft(90).reduced(0, 4));
+            bounds.removeFromLeft(4);
+            
+            // Three knobs side by side (with labels above)
+            int knobW = std::min(60, bounds.getWidth() / 3);
+            
+            auto freqArea = bounds.removeFromLeft(knobW);
+            freqLabel.setVisible(true);
+            freqLabel.setBounds(freqArea.removeFromTop(11));
+            freqKnob.setBounds(freqArea);
+            freqKnob.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 50, 12);
+            bounds.removeFromLeft(2);
+            
+            auto gainArea = bounds.removeFromLeft(knobW);
+            gainLabel.setVisible(true);
+            gainLabel.setBounds(gainArea.removeFromTop(11));
+            gainKnob.setBounds(gainArea);
+            gainKnob.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 50, 12);
+            bounds.removeFromLeft(2);
+            
+            auto qArea = bounds.removeFromLeft(knobW);
+            qLabel.setVisible(true);
+            qLabel.setBounds(qArea.removeFromTop(11));
+            qKnob.setBounds(qArea);
+            qKnob.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 50, 12);
+        }
+        else
+        {
+            // === ORIGINAL VERTICAL LAYOUT (for taller panels) ===
+            bounds.removeFromTop(4);
+            bandLabel.setBounds(bounds.removeFromTop(18));
+            bounds.removeFromTop(2);
+            
+            typeLabel.setVisible(true);
+            typeLabel.setBounds(bounds.removeFromTop(12));
+            typeCombo.setBounds(bounds.removeFromTop(26).reduced(2, 0));
+            bounds.removeFromTop(4);
+            
+            auto btnRow = bounds.removeFromBottom(26);
+            enableBtn.setBounds(btnRow.removeFromLeft(btnRow.getWidth() / 2).reduced(4, 2));
+            soloBtn.setBounds(btnRow.reduced(4, 2));
+            bounds.removeFromBottom(2);
+            
+            int knobW = bounds.getWidth() / 3;
+            
+            auto freqArea = bounds.removeFromLeft(knobW);
+            freqLabel.setVisible(true);
+            freqLabel.setBounds(freqArea.removeFromTop(12));
+            freqKnob.setBounds(freqArea);
+            freqKnob.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 16);
+            
+            auto gainArea = bounds.removeFromLeft(knobW);
+            gainLabel.setVisible(true);
+            gainLabel.setBounds(gainArea.removeFromTop(12));
+            gainKnob.setBounds(gainArea);
+            gainKnob.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 16);
+            
+            auto qArea = bounds;
+            qLabel.setVisible(true);
+            qLabel.setBounds(qArea.removeFromTop(12));
+            qKnob.setBounds(qArea);
+            qKnob.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 16);
+        }
     }
     
     int getBandIndex() const { return bandIndex; }

@@ -48,6 +48,11 @@ public:
     /** Load a precomputed time-domain IR (mono) into the convolver. */
     void loadImpulseResponse(const std::vector<float>& ir, double sampleRate);
 
+    /** Store a pre-computed frequency-domain IR directly (audio-thread safe).
+        Accepts fftSize*2 floats in JUCE real-only FFT interleaved format.
+        Triggers the internal A/B crossfade. No FFT is performed. */
+    void storeFreqIRDirect(const float* freqDomainData);
+
 private:
     // ── IR frequency-domain storage (double-buffered) ──────────────────
     // Each slot holds the complex FFT of the zero-padded IR (fftSize floats,
