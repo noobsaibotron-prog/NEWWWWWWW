@@ -37,8 +37,23 @@ AIEqualizerAudioProcessor::AIEqualizerAudioProcessor()
         eqParameterIDs.push_back(prefix + "Q");
         eqParameterIDs.push_back(prefix + "Type");
         eqParameterIDs.push_back(prefix + "Enabled");
+
+        // FIX: Also listen to Dynamic EQ parameters so that tweaking
+        // threshold/ratio/attack/release from the GUI triggers parameterChanged()
+        // and marks parametersNeedUpdate = true. Without this, updateEQFromParameters()
+        // was never called when the user moved a dynamic EQ knob, so setBandParams()
+        // never updated the SmoothedValues — causing the GR meter to freeze.
+        eqParameterIDs.push_back(prefix + "DynMode");
+        eqParameterIDs.push_back(prefix + "Threshold");
+        eqParameterIDs.push_back(prefix + "Ratio");
+        eqParameterIDs.push_back(prefix + "Attack");
+        eqParameterIDs.push_back(prefix + "Release");
+        eqParameterIDs.push_back(prefix + "Range");
+        eqParameterIDs.push_back(prefix + "Knee");
     }
     eqParameterIDs.push_back("numActiveBands");
+    eqParameterIDs.push_back("dynEqEnabled");
+    eqParameterIDs.push_back("dynEqMix");
     for (const auto& id : eqParameterIDs)
         apvts.addParameterListener(id, this);
 
