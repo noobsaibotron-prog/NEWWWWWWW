@@ -784,8 +784,14 @@ if(TARGET AIEqualizerPro)
         target_compile_options(AIEqualizerPro PRIVATE
             -Wall -Wextra -Wpedantic
             $<$<CONFIG:Release>:-O3>
-            $<$<CONFIG:Release>:-march=native>
         )
+        # -march=native is incompatible with macOS universal binaries (x86_64+arm64)
+        # because the native CPU (e.g. apple-m1) is not a valid x86_64 target
+        if(NOT APPLE OR NOT CMAKE_OSX_ARCHITECTURES MATCHES ";")
+            target_compile_options(AIEqualizerPro PRIVATE
+                $<$<CONFIG:Release>:-march=native>
+            )
+        endif()
     endif()
 
     # Platform-specific definitions
