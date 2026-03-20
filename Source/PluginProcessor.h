@@ -24,7 +24,7 @@
  *    - All GUI-accessed state uses relaxed atomics where appropriate
  * 
  * 4. MODERN C++20:
- *    - std::jthread with stop_token for safe thread lifecycle (RAII)
+ *    - std::thread with stop flags for safe thread lifecycle (RAII)
  *    - [[nodiscard]] on all query methods
  *    - std::span for buffer passing where beneficial
  * 
@@ -39,7 +39,7 @@
 #include <juce_dsp/juce_dsp.h>
 #include <array>
 #include <atomic>
-#include <thread>  // std::jthread and std::stop_token are in <thread> in C++20
+#include <thread>  // std::thread and std::stop flags are in <thread> in C++20
 
 #include "Core/LockFreeStructures.h"
 #include "Core/CaptureService.h"
@@ -331,7 +331,7 @@ private:
     void updateReportedLatency();
     void cacheParameterPointers();
     bool runCapturedAudioAnalysis();
-    void aiAnalysisThreadFunc(std::stop_token st);
+    void aiAnalysisThreadFunc();
     void enqueueAISpectrum(const std::vector<float>& spectrum);
     void clearDynamicMeterCache() noexcept;
     void updateDynamicMeterCacheFrom(const DynamicEQProcessor& src) noexcept;
@@ -367,7 +367,7 @@ private:
     std::atomic<bool> captureAnalysisInFlight { false };
     std::atomic<bool> captureAnalysisCompleted { false };
     std::atomic<bool> captureAnalysisResult { false };
-    std::jthread captureAnalysisThread;
+    std::thread captureAnalysisThread;
     
     //==============================================================================
     // APVTS (thread-safe parameter management)
@@ -552,10 +552,11 @@ private:
     int qualityModeCached = 0;
     
     //==============================================================================
-    // IR Builder Thread (RAII with std::jthread)
+    // IR Builder Thread (RAII with std::thread)
     // NOTE: WaitableEvent declared before jthread so event outlives thread during teardown
     juce::WaitableEvent irBuildEvent;
-    std::jthread irBuilderThread;
+    std::thread irBuilderThread;
+    std::atomic<bool> stopIRBuilder { false };
     
     // AI analysis offloaded from audio thread
     static constexpr size_t aiSpectrumBins = 2049; // 4096 FFT -> 2049 bins
@@ -563,10 +564,11 @@ private:
     using AISpectrumFrame = std::array<float, aiSpectrumBins>;
     AIEQCore::SPSCQueue<AISpectrumFrame, aiSpectrumQueueCapacity> aiSpectrumQueue;
     juce::WaitableEvent aiSpectrumEvent;
-    std::jthread aiAnalysisThread;
+    std::thread aiAnalysisThread;
+    std::atomic<bool> stopAIAnalysis { false };
     
     // IR builder thread function (runs in background)
-    void irBuilderThreadFunc(std::stop_token st);
+    void irBuilderThreadFunc();
     
     //==============================================================================
     // Dirty Flags for GUI Updates
