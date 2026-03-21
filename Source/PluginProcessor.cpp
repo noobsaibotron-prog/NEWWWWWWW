@@ -90,14 +90,16 @@ AIEqualizerAudioProcessor::AIEqualizerAudioProcessor()
     // (starting in constructor crashes during VST3 plugin scan)
     oscParamServer = std::make_unique<OSCParameterServer>(apvts, 11100);
 
-    // Start IR builder thread (RAII with std::jthread)
-    irBuilderThread = std::jthread([this](std::stop_token st) {
-        irBuilderThreadFunc(st);
+    // Start IR builder thread (RAII with std::thread)
+    stopIRBuilder.store(false);
+    irBuilderThread = std::thread([this]() {
+        irBuilderThreadFunc();
     });
 
     // Start AI analysis thread (off-audio-thread)
-    aiAnalysisThread = std::jthread([this](std::stop_token st) {
-        aiAnalysisThreadFunc(st);
+    stopAIAnalysis.store(false);
+    aiAnalysisThread = std::thread([this]() {
+        aiAnalysisThreadFunc();
     });
 
     // Initialize band targets with defaults (will be updated on first parameter sync)
@@ -115,7 +117,7 @@ AIEqualizerAudioProcessor::AIEqualizerAudioProcessor()
 //==============================================================================
 // IR Builder Thread Function (runs in background)
 //==============================================================================
-void AIEqualizerAudioProcessor::irBuilderThreadFunc(std::stop_token st)
+void AIEqualizerAudioProcessor::irBuilderThreadFunc()
 {
     try
     {
@@ -127,12 +129,12 @@ void AIEqualizerAudioProcessor::irBuilderThreadFunc(std::stop_token st)
     std::vector<float> irBuf(fftSize, 0.0f);
     std::vector<float> magDB(halfSize, -120.0f);
 
-    while (!st.stop_requested())
+    while (!stopIRBuilder.load())
     {
         irBuildEvent.wait(-1);
 
         // Check exit flag after wake
-        if (st.stop_requested())
+        if (stopIRBuilder.load())
             break;
 
         if (!eqCurveNeedsUpdate.load(std::memory_order_acquire))
@@ -143,7 +145,7 @@ void AIEqualizerAudioProcessor::irBuilderThreadFunc(std::stop_token st)
         // produce rapid IR changes → audible glitches in Linear Phase mode).
         {
             int64_t lastRequest = irBuildRequestedAt.load(std::memory_order_acquire);
-            while (!st.stop_requested())
+            while (!stopIRBuilder.load())
             {
                 juce::Thread::sleep(irBuildDebounceMs);
                 int64_t nowRequest = irBuildRequestedAt.load(std::memory_order_acquire);
@@ -151,7 +153,7 @@ void AIEqualizerAudioProcessor::irBuilderThreadFunc(std::stop_token st)
                     break;  // stable: no new request during the sleep window
                 lastRequest = nowRequest;
             }
-            if (st.stop_requested()) break;
+            if (stopIRBuilder.load()) break;
         }
 
         if (!eqCurveNeedsUpdate.exchange(false))
@@ -396,7 +398,7 @@ void AIEqualizerAudioProcessor::irBuilderThreadFunc(std::stop_token st)
 //==============================================================================
 // AI Analysis Thread Function (runs off the audio thread)
 //==============================================================================
-void AIEqualizerAudioProcessor::aiAnalysisThreadFunc(std::stop_token st)
+void AIEqualizerAudioProcessor::aiAnalysisThreadFunc()
 {
     try
     {
@@ -404,7 +406,7 @@ void AIEqualizerAudioProcessor::aiAnalysisThreadFunc(std::stop_token st)
     std::vector<float> spectrum;
     spectrum.reserve(aiSpectrumBins);
 
-    while (!st.stop_requested())
+    while (!stopAIAnalysis.load())
     {
         // Try to pop without blocking
         if (!aiSpectrumQueue.tryPop(frame))
@@ -436,13 +438,13 @@ AIEqualizerAudioProcessor::~AIEqualizerAudioProcessor()
     // Request threads to stop before member teardown
     if (irBuilderThread.joinable())
     {
-        irBuilderThread.request_stop();
+        stopIRBuilder.store(true);
         irBuildEvent.signal();
         irBuilderThread.join();
     }
     if (aiAnalysisThread.joinable())
     {
-        aiAnalysisThread.request_stop();
+        stopAIAnalysis.store(true);
         aiSpectrumEvent.signal();
         aiAnalysisThread.join();
     }
@@ -454,8 +456,8 @@ AIEqualizerAudioProcessor::~AIEqualizerAudioProcessor()
     for (const auto& id : eqParameterIDs)
         apvts.removeParameterListener(id, this);
 
-    // std::jthread automatically requests stop and joins on destruction (RAII)
-    // Signal the event to wake the thread so it can check stop_token
+    // std::thread automatically requests stop and joins on destruction (RAII)
+    // Signal the event to wake the thread so they can check stop flags
     irBuildEvent.signal();
     aiSpectrumEvent.signal();
 }
@@ -2614,10 +2616,9 @@ bool AIEqualizerAudioProcessor::analyzeCapturedAudioSnapshot()
     if (mm != nullptr && mm->isThisTheMessageThread())
     {
         juce::WeakReference<AIEqualizerAudioProcessor> weakThis(this);
-        captureAnalysisThread = std::jthread([this, weakThis, finish](std::stop_token st) mutable
+        captureAnalysisThread = std::thread([this, weakThis, finish]() mutable
         {
-            juce::ignoreUnused(st);
-            const bool ok = runCapturedAudioAnalysis();
+                        const bool ok = runCapturedAudioAnalysis();
             finish(ok);
 
             juce::MessageManager::callAsync([weakThis, ok]()
