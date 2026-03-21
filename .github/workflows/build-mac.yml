@@ -1,1 +1,94 @@
+name: Build macOS
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-macos:
+    runs-on: macos-14
+    timeout-minutes: 30
+
+    strategy:
+      matrix:
+        config: [Release]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          brew install cmake || true
+          cmake --version
+          xcodebuild -version
+
+      - name: Configure CMake (Xcode, Universal Binary)
+        run: |
+          cmake -S . -B build-mac -G "Xcode" \
+            -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64" \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET="11.0"
+
+      - name: Build (${{ matrix.config }})
+        run: |
+          cmake --build build-mac --config ${{ matrix.config }} -- -quiet
+
+      - name: Find and list build artifacts
+        id: find_artifacts
+        run: |
+          echo "=== All build artifacts ==="
+          find build-mac -type d \( -name "*.vst3" -o -name "*.component" -o -name "*.app" \) 2>/dev/null || true
+          echo ""
+          echo "=== Artefacts directory structure ==="
+          find build-mac/AIEqualizerPro_artefacts -type d 2>/dev/null | head -30 || true
+          echo ""
+          VST3_PATH=$(find build-mac -type d -name "*.vst3" | head -1)
+          echo "VST3 found at: $VST3_PATH"
+          if [ -n "$VST3_PATH" ]; then
+            VST3_DIR=$(dirname "$VST3_PATH")
+            echo "vst3_dir=$VST3_DIR" >> $GITHUB_OUTPUT
+          fi
+          echo ""
+          AU_PATH=$(find build-mac -type d -name "*.component" | head -1)
+          echo "AU found at: $AU_PATH"
+          if [ -n "$AU_PATH" ]; then
+            AU_DIR=$(dirname "$AU_PATH")
+            echo "au_dir=$AU_DIR" >> $GITHUB_OUTPUT
+          fi
+          echo ""
+          APP_PATH=$(find build-mac -type d -name "*.app" | grep -iv "Xcode" | head -1)
+          echo "Standalone found at: $APP_PATH"
+          if [ -n "$APP_PATH" ]; then
+            APP_DIR=$(dirname "$APP_PATH")
+            echo "app_dir=$APP_DIR" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Upload VST3
+        uses: actions/upload-artifact@v4
+        if: steps.find_artifacts.outputs.vst3_dir != ''
+        with:
+          name: AI-Equalizer-Pro-macOS-VST3
+          path: ${{ steps.find_artifacts.outputs.vst3_dir }}/
+          if-no-files-found: warn
+
+      - name: Upload AU
+        uses: actions/upload-artifact@v4
+        if: steps.find_artifacts.outputs.au_dir != ''
+        with:
+          name: AI-Equalizer-Pro-macOS-AU
+          path: ${{ steps.find_artifacts.outputs.au_dir }}/
+          if-no-files-found: warn
+
+      - name: Upload Standalone
+        uses: actions/upload-artifact@v4
+        if: steps.find_artifacts.outputs.app_dir != ''
+        with:
+          name: AI-Equalizer-Pro-macOS-Standalone
+          path: ${{ steps.find_artifacts.outputs.app_dir }}/
+          if-no-files-found: warn
 
