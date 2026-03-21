@@ -735,7 +735,7 @@ if(TARGET AIEqualizerPro)
     endif()
 
     # Optional TensorFlow Lite (C API) on Windows
-    if(WIN32)
+    if(WIN32 AND EXISTS "${PROJECT_SOURCE_DIR}/ThirdParty/TFLite/lib/tensorflowlite_c.lib")
         target_compile_definitions(AIEqualizerPro PRIVATE AIEQ_ENABLE_TFLITE)
         target_link_directories(AIEqualizerPro PRIVATE "${PROJECT_SOURCE_DIR}/ThirdParty/TFLite/lib")
         target_link_libraries(AIEqualizerPro PRIVATE tensorflowlite_c.lib)
@@ -753,6 +753,8 @@ if(TARGET AIEqualizerPro)
             target_link_directories(AIEqualizerPro_VST3 PRIVATE "${PROJECT_SOURCE_DIR}/ThirdParty/TFLite/lib")
             target_link_libraries(AIEqualizerPro_VST3 PRIVATE tensorflowlite_c.lib)
         endif()
+            else()
+                    message(STATUS "TFLite library not found at ThirdParty/TFLite/lib/ - building without TFLite support")
     endif()
 
     # Enable debug logging macros across all targets
@@ -774,8 +776,7 @@ if(TARGET AIEqualizerPro)
             /W4                          # Warning level 4
             /permissive-                 # Standards conformance
             /Zc:__cplusplus             # Correct __cplusplus macro
-            $<$<CONFIG:Release>:/O2>    # Optimize for speed in Release
-            $<$<CONFIG:Release>:/GL>    # Whole program optimization
+# Enable debug logging macros            $<$<CONFIG:Release>:/GL>    # Whole program optimization
         )
         target_link_options(AIEqualizerPro PRIVATE
             $<$<CONFIG:Release>:/LTCG>  # Link-time code generation
