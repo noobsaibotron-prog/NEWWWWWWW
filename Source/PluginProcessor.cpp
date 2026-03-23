@@ -376,12 +376,11 @@ void AIEqualizerAudioProcessor::irBuilderThreadFunc()
             std::copy(scaledIR.begin(), scaledIR.end(), freqBuf.begin());
             fft.performRealOnlyForwardTransform(freqBuf.data());
 
-            {
-                std::lock_guard<std::mutex> lock(pendingFreqIR.mutex);
-                pendingFreqIR.freqDomain = std::move(freqBuf);
-                pendingFreqIR.valid = true;
-            }
-            pendingIRReady.store(true, std::memory_order_release);
+            // Lock-free double-buffer write
+            int wi = pendingFreqIR.writeIndex.load(std::memory_order_relaxed);
+            pendingFreqIR.buffers[wi] = std::move(freqBuf);
+            pendingFreqIR.readyIndex.store(wi, std::memory_order_release);
+            pendingFreqIR.writeIndex.store(1 - wi, std::memory_order_relaxed);
         }
     }
     }
@@ -901,11 +900,15 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
 
     // Pre-allocate pending freq-domain IR buffer (builder thread → audio thread handoff)
     {
-        std::lock_guard<std::mutex> lock(pendingFreqIR.mutex);
-        pendingFreqIR.freqDomain.resize(LinearPhaseProcessor::fftSize * 2, 0.0f);
-        pendingFreqIR.valid = false;
-    }
-    pendingIRReady.store(false, std::memory_order_relaxed);
+    // Pre-allocate double buffers for lock-free IR handoff
+    const size_t freqBufSize = LinearPhaseProcessor::fftSize * 2;
+    pendingFreqIR.buffers[0].resize(freqBufSize, 0.0f);
+    pendingFreqIR.buffers[1].resize(freqBufSize, 0.0f);
+    pendingFreqIR.readyIndex.store(-1, std::memory_order_relaxed);
+    pendingFreqIR.writeIndex.store(0, std::memory_order_relaxed);
+
+    // Pre-allocate silent spectrum buffer for processBlock fallback
+    silentSpectrumBuffer.assign(aiSpectrumBins, -80.0f);
     previousIRIndex = 0;
 
     // Start OSC parameter server (deferred from constructor to avoid crash during plugin scan)
@@ -1305,7 +1308,7 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         }
         else
         {
-            static const std::vector<float> dummySpectrum(aiSpectrumBins, -80.0f);
+            const auto& dummySpectrum = silentSpectrumBuffer;
             enqueueAISpectrum(dummySpectrum);
         }
     }
@@ -1834,27 +1837,19 @@ void AIEqualizerAudioProcessor::triggerEQCurveUpdate()
 
 void AIEqualizerAudioProcessor::updateLinearPhaseIRIfNeeded()
 {
-    if (!pendingIRReady.load(std::memory_order_acquire))
-        return;
+    // Lock-free: atomically claim the ready buffer index
+    int ri = pendingFreqIR.readyIndex.exchange(-1, std::memory_order_acquire);
+    if (ri < 0)
+        return;  // No new IR data available
 
-    std::unique_lock<std::mutex> lock(pendingFreqIR.mutex, std::try_to_lock);
-    if (!lock.owns_lock())
-        return;  // builder is writing, try next block
+    // Feed pre-computed freq-domain IR to LinearPhaseProcessor
+    // LinearPhaseProcessor handles the internal crossfade
+    auto* lp = linearPhaseProcessors.get();
+    if (lp != nullptr)
+        lp->storeFreqIRDirect(pendingFreqIR.buffers[ri].data());
 
-    if (pendingFreqIR.valid)
-    {
-        // Feed pre-computed freq-domain IR directly into LP processor 0.
-        // LinearPhaseProcessor handles the internal A/B crossfade (4096 samples, hop-aligned).
-        auto* lp = linearPhaseProcessors[0].get();
-        if (lp != nullptr)
-            lp->storeFreqIRDirect(pendingFreqIR.freqDomain.data());
-
-        linearIRLoaded[0].store(true, std::memory_order_release);
-        activeIRIndex.store(0, std::memory_order_relaxed);
-
-        pendingFreqIR.valid = false;
-        pendingIRReady.store(false, std::memory_order_release);
-    }
+    linearIRLoaded.store(true, std::memory_order_release);
+    activeIRIndex.store(0, std::memory_order_relaxed);
 }
 
 void AIEqualizerAudioProcessor::requestIRBuild()
