@@ -94,7 +94,8 @@ public:
         int totalAdjustments = 0;
         int aiSuggestionsAccepted = 0;
         int aiSuggestionsCorrected = 0;
-        
+        int aiSuggestionsRejected = 0;
+
         juce::int64 lastUpdated = 0;
     };
 

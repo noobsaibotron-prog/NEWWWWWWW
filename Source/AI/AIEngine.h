@@ -142,7 +142,31 @@ public:
     
     void setSensitivity(float s) { sensitivity.store(juce::jlimit(0.0f, 1.0f, s), std::memory_order_relaxed); }
     float getSensitivity() const { return sensitivity.load(std::memory_order_relaxed); }
-    
+
+    void setDetectionThreshold(float t) noexcept
+    {
+        detectionThreshold.store(juce::jlimit(0.0f, 1.0f, t), std::memory_order_relaxed);
+    }
+    float getDetectionThreshold() const noexcept
+    {
+        return detectionThreshold.load(std::memory_order_relaxed);
+    }
+
+    void setTemporalSmoothing(float s) noexcept
+    {
+        temporalSmoothing.store(juce::jlimit(0.0f, 1.0f, s), std::memory_order_relaxed);
+    }
+    float getTemporalSmoothing() const noexcept
+    {
+        return temporalSmoothing.load(std::memory_order_relaxed);
+    }
+
+    void setTransientModeEnabled(bool e) noexcept { enableTransientMode.store(e, std::memory_order_relaxed); }
+    bool isTransientModeEnabled() const noexcept  { return enableTransientMode.load(std::memory_order_relaxed); }
+
+    void setSparseModeEnabled(bool e) noexcept { enableSparseMode.store(e, std::memory_order_relaxed); }
+    bool isSparseModeEnabled() const noexcept  { return enableSparseMode.load(std::memory_order_relaxed); }
+
     void setStrength(float s);
     float getStrength() const { return strength.load(std::memory_order_relaxed); }
     
@@ -584,6 +608,11 @@ private:
     bool enableNeuralNetworks = false;
     bool enableAdaptiveProcessing = false;
     bool enableOnlineLearning = false;
-    
+
+    std::atomic<float> detectionThreshold { 0.5f };
+    std::atomic<float> temporalSmoothing  { 0.1f };
+    std::atomic<bool>  enableTransientMode { false };
+    std::atomic<bool>  enableSparseMode    { false };
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AIEngine)
 };

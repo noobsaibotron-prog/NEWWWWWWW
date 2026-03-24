@@ -46,7 +46,20 @@ void UserLearningSystem::recordAISuggestionAccepted(const juce::String& /*sugges
 
 void UserLearningSystem::recordAISuggestionRejected(const juce::String& /*suggestionType*/)
 {
-    // Track rejection to adjust future suggestion confidence
+    currentProfile.aiSuggestionsRejected++;
+
+    // When the user rejects AI suggestions, reduce the correction strength preference
+    // slightly so future suggestions become less aggressive. The decay is deliberately
+    // small (2 %) so a single rejection doesn't overly distort the learned profile;
+    // repeated rejections will converge the preference toward more conservative values.
+    constexpr float kDecayRate = 0.02f;
+    currentProfile.correctionStrengthPref = juce::jlimit(
+        0.2f, 1.0f,
+        currentProfile.correctionStrengthPref * (1.0f - kDecayRate));
+
+    // Auto-save periodically (same cadence as recordAdjustment)
+    if (currentProfile.aiSuggestionsRejected % 5 == 0)
+        saveToDefaultLocation();
 }
 
 void UserLearningSystem::recordAISuggestionCorrected(const juce::String& suggestionType,

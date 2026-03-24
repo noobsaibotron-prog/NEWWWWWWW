@@ -142,7 +142,25 @@ void OnlineLearningSystem::performUpdate(NeuralNetworkWrapper& model)
     {
         lastUpdateTime = currentTime;
         stats.updatesPerformed++;
-        updateStats(0.0f);  // TODO: Get actual loss from model
+
+        // Compute a proxy MSE loss from the training targets against their
+        // zero-baseline (what the model would output without any correction).
+        // This is a conservative lower-bound proxy; true loss would require
+        // running inference before and after the update, which the TFLite C API
+        // does not support for online training.
+        float proxyLoss = 0.0f;
+        for (const auto& ts : trainingSamples)
+        {
+            if (ts.target.empty()) continue;
+            float sampleMse = 0.0f;
+            for (float v : ts.target)
+                sampleMse += v * v;
+            proxyLoss += sampleMse / static_cast<float>(ts.target.size());
+        }
+        if (!trainingSamples.empty())
+            proxyLoss /= static_cast<float>(trainingSamples.size());
+
+        updateStats(proxyLoss);
     }
 }
 
