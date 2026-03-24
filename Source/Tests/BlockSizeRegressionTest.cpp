@@ -87,7 +87,8 @@ public:
         if (rmsFull > 1.0e-6f)
             expect(rmsTail > rmsFull * 0.1f, "Tail RMS dropped more than 20 dB vs full block.");
 
-        expectEquals(proc.getBlockClampEvents(), 0u, "Block clamp events should remain zero.");
+        expect(static_cast<int>(proc.getBlockClampEvents()) == 0,
+               "Block clamp events should remain zero.");
         auto* bypassParam = apvts.getRawParameterValue("bypass");
         if (bypassParam != nullptr)
             expect(bypassParam->load() < 0.5f, "Bypass should remain off.");
