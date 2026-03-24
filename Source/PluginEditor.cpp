@@ -142,26 +142,32 @@ void AIEqualizerAudioProcessorEditor::createHeader()
     // Nav buttons with tooltips
     prevBtn.setTooltip("Previous preset");
     nextBtn.setTooltip("Next preset");
+    prevBtn.onClick = [this]() { navigatePreset(-1); };
+    nextBtn.onClick = [this]() { navigatePreset(1); };
     addAndMakeVisible(prevBtn);
     addAndMakeVisible(nextBtn);
-    
-    // Preset with tooltip
-    {
-        static const char* profiles[] = { "Generic", "Vocals", "Drums", "Bass", "Synth", "Master", "EDM" };
-        presetBox.clear(juce::dontSendNotification);
-        for (int i = 0; i < 7; ++i)
-            presetBox.addItem(profiles[i], i + 1);
 
-        if (auto* param = processor.getAPVTS().getParameter("sourceProfile"))
+    // Preset selector — shows factory + user presets
+    rebuildPresetMenu();
+    presetBox.setTooltip("Select EQ preset");
+    presetBox.onChange = [this]()
+    {
+        const int id = presetBox.getSelectedId();
+        if (id <= 0) return;
+        const int idx = id - 1;
+        if (idx >= 0 && idx < static_cast<int>(cachedPresetList.size()))
         {
-            const int idx = static_cast<int>(param->convertFrom0to1(param->getValue()) + 0.5f);
-            presetBox.setSelectedId(idx + 1, juce::dontSendNotification);
+            if (processor.hasPresetManager())
+                processor.getPresetManager().loadPreset(cachedPresetList[static_cast<size_t>(idx)]);
+            currentPresetIndex = idx;
         }
-    }
-    presetBox.setTooltip("Select source profile - AI adapts detection thresholds accordingly");
-    sourceProfileAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
-        processor.getAPVTS(), "sourceProfile", presetBox);
+    };
     addAndMakeVisible(presetBox);
+
+    // Save button for user presets
+    savePresetBtn.setTooltip("Save current settings as user preset");
+    savePresetBtn.onClick = [this]() { showSavePresetDialog(); };
+    addAndMakeVisible(savePresetBtn);
     
     // A/B with tooltips
     btnA.setRadioGroupId(1001);
@@ -903,9 +909,11 @@ void AIEqualizerAudioProcessorEditor::resized()
     // Left group: nav + preset
     prevBtn.setBounds(header.removeFromLeft(24).reduced(1));
     nextBtn.setBounds(header.removeFromLeft(24).reduced(1));
+    header.removeFromLeft(4);
+    presetBox.setBounds(header.removeFromLeft(160).reduced(0, 2));
+    header.removeFromLeft(2);
+    savePresetBtn.setBounds(header.removeFromLeft(40).reduced(1));
     header.removeFromLeft(6);
-    presetBox.setBounds(header.removeFromLeft(130).reduced(0, 2));
-    header.removeFromLeft(8);
     // Center group: A/B + phase
     btnA.setBounds(header.removeFromLeft(24).reduced(1));
     btnB.setBounds(header.removeFromLeft(24).reduced(1));
@@ -1109,14 +1117,6 @@ void AIEqualizerAudioProcessorEditor::timerCallback()
             qualityBtn.setColour(juce::TextButton::textColourOnId, ModernLookAndFeel::Colors::textBright);
         }
 
-        // Sync source profile combo with parameter (covers preset load/automation)
-        if (auto* param = processor.getAPVTS().getParameter("sourceProfile"))
-        {
-            const int idx = static_cast<int>(param->convertFrom0to1(param->getValue()) + 0.5f);
-            const int desiredId = idx + 1;
-            if (presetBox.getSelectedId() != desiredId)
-                presetBox.setSelectedId(desiredId, juce::dontSendNotification);
-        }
     }
 
     // Sync capture state
@@ -1306,6 +1306,84 @@ void AIEqualizerAudioProcessorEditor::switchRightTab(int tab)
         aiTabBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xFF333333));
         aiTabBtn.setColour(juce::TextButton::textColourOffId, juce::Colour(0xFFAAAAAA));
     }
-    
+
     repaint();
+}
+
+//==============================================================================
+// Preset Navigation
+//==============================================================================
+void AIEqualizerAudioProcessorEditor::rebuildPresetMenu()
+{
+    presetBox.clear(juce::dontSendNotification);
+    cachedPresetList.clear();
+
+    if (!processor.hasPresetManager())
+        return;
+
+    auto& pm = processor.getPresetManager();
+    auto all = pm.getAllPresets();
+
+    int id = 1;
+    juce::String lastCategory;
+
+    for (const auto& preset : all)
+    {
+        // Add category separator if category changed
+        if (preset.category != lastCategory)
+        {
+            if (!lastCategory.isEmpty())
+                presetBox.addSeparator();
+            presetBox.addSectionHeading(preset.category.toUpperCase());
+            lastCategory = preset.category;
+        }
+        presetBox.addItem(preset.name, id);
+        cachedPresetList.push_back(preset);
+        ++id;
+    }
+}
+
+void AIEqualizerAudioProcessorEditor::navigatePreset(int direction)
+{
+    if (cachedPresetList.empty())
+        return;
+
+    currentPresetIndex += direction;
+
+    if (currentPresetIndex < 0)
+        currentPresetIndex = static_cast<int>(cachedPresetList.size()) - 1;
+    else if (currentPresetIndex >= static_cast<int>(cachedPresetList.size()))
+        currentPresetIndex = 0;
+
+    presetBox.setSelectedId(currentPresetIndex + 1, juce::sendNotification);
+}
+
+void AIEqualizerAudioProcessorEditor::showSavePresetDialog()
+{
+    auto* aw = new juce::AlertWindow("Save Preset",
+                                      "Enter a name for your preset:",
+                                      juce::MessageBoxIconType::NoIcon);
+    aw->addTextEditor("name", "My Preset", "Name:");
+    aw->addComboBox("category", { "User", "Vocals", "Drums", "Bass", "Guitar", "Keys", "Master", "EDM", "Creative", "Utility" }, "Category:");
+    aw->addButton("Save", 1, juce::KeyPress(juce::KeyPress::returnKey));
+    aw->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+
+    aw->enterModalState(true, juce::ModalCallbackFunction::create(
+        [this, aw](int result)
+        {
+            if (result == 1)
+            {
+                auto name = aw->getTextEditorContents("name").trim();
+                auto* catBox = aw->getComboBoxComponent("category");
+                auto category = catBox ? catBox->getText() : "User";
+
+                if (name.isNotEmpty() && processor.hasPresetManager())
+                {
+                    processor.getPresetManager().saveUserPreset(name, category);
+                    rebuildPresetMenu();
+                }
+            }
+            delete aw;
+        }),
+        true);
 }

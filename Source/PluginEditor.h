@@ -140,6 +140,7 @@ private:
     // Header
     juce::TextButton prevBtn{"<"}, nextBtn{">"};
     juce::ComboBox presetBox;
+    juce::TextButton savePresetBtn{"SAVE"};
     juce::TextButton optionsBtn{"Options"};
     juce::TextButton aiPanelToggle{"AI"};
     juce::ComboBox phaseModeCombo;
@@ -214,12 +215,19 @@ private:
         bypassAtt, preAtt, postAtt, deltaAtt, autoAtt;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> 
         outAtt, mixAtt, sensitivityAtt, strengthAtt;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> 
-        phaseModeAtt, oversamplingAtt, slopeAtt, sourceProfileAtt;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment>
+        phaseModeAtt, oversamplingAtt, slopeAtt;
 
     // Output level meter
     LevelMeter outputMeter;
     juce::Label versionLabel;
+
+    // Preset navigation
+    std::vector<PresetManager::Preset> cachedPresetList;
+    int currentPresetIndex = -1;
+    void rebuildPresetMenu();
+    void navigatePreset(int direction);
+    void showSavePresetDialog();
 
     uint64_t lastParameterChangeCount = 0;
     uint32_t lastBlockClampEvents = 0;

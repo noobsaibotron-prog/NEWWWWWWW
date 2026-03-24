@@ -21,83 +21,272 @@ void PresetManager::loadFactoryPresets()
 
 void PresetManager::createDefaultFactoryPresets()
 {
-    // Vocals preset
-    factoryPresets.push_back(createPreset("Vocals - Bright", "Vocals", 
-        "Bright vocal preset with presence boost and sibilance control",
-        [](juce::AudioProcessorValueTreeState& apvts) {
-            // Set source profile
-            if (auto* param = apvts.getParameter("sourceProfile"))
-                param->setValueNotifyingHost(param->convertTo0to1(1.0f)); // Vocals
-            
-            // Typical vocal EQ: slight low cut, presence boost, high shelf
-            // Band 0: Low cut at 80Hz
-            if (auto* type = apvts.getParameter("band0Type"))
-                type->setValueNotifyingHost(type->convertTo0to1(0.0f)); // LowCut
-            if (auto* freq = apvts.getParameter("band0Freq"))
-                freq->setValueNotifyingHost(freq->convertTo0to1(80.0f));
-            
-            // Band 1: Presence boost at 3kHz
-            if (auto* freq = apvts.getParameter("band1Freq"))
-                freq->setValueNotifyingHost(freq->convertTo0to1(3000.0f));
-            if (auto* gain = apvts.getParameter("band1Gain"))
-                gain->setValueNotifyingHost(gain->convertTo0to1(2.0f));
-            if (auto* q = apvts.getParameter("band1Q"))
-                q->setValueNotifyingHost(q->convertTo0to1(1.5f));
+    // Helper: set a single band's parameters concisely
+    // type: 0=LowCut, 1=LowShelf, 2=Peak, 3=HighShelf, 4=HighCut, 5=Notch
+    auto setBand = [](juce::AudioProcessorValueTreeState& a, int band,
+                      int type, float freq, float gain, float q)
+    {
+        juce::String p = "band" + juce::String(band);
+        if (auto* v = a.getParameter(p + "Type"))  v->setValueNotifyingHost(v->convertTo0to1(static_cast<float>(type)));
+        if (auto* v = a.getParameter(p + "Freq"))  v->setValueNotifyingHost(v->convertTo0to1(freq));
+        if (auto* v = a.getParameter(p + "Gain"))  v->setValueNotifyingHost(v->convertTo0to1(gain));
+        if (auto* v = a.getParameter(p + "Q"))     v->setValueNotifyingHost(v->convertTo0to1(q));
+        if (auto* v = a.getParameter(p + "Enabled")) v->setValueNotifyingHost(1.0f);
+    };
+
+    auto setProfile = [](juce::AudioProcessorValueTreeState& a, float profile)
+    {
+        if (auto* v = a.getParameter("sourceProfile"))
+            v->setValueNotifyingHost(v->convertTo0to1(profile));
+    };
+
+    auto setNumBands = [](juce::AudioProcessorValueTreeState& a, int n)
+    {
+        if (auto* v = a.getParameter("numActiveBands"))
+            v->setValueNotifyingHost(v->convertTo0to1(static_cast<float>(n)));
+    };
+
+    //==========================================================================
+    //  INIT
+    //==========================================================================
+    factoryPresets.push_back(createPreset("Init (Flat)", "Utility",
+        "All bands at 0 dB — clean starting point",
+        [&](juce::AudioProcessorValueTreeState& a) {
+            setProfile(a, 0.0f);
+            setNumBands(a, 8);
+            // All gains already default to 0
         }));
-    
-    // Drums preset
-    factoryPresets.push_back(createPreset("Drums - Punchy", "Drums",
-        "Punchy drum preset with low-end emphasis and high-end clarity",
-        [](juce::AudioProcessorValueTreeState& apvts) {
-            if (auto* param = apvts.getParameter("sourceProfile"))
-                param->setValueNotifyingHost(param->convertTo0to1(2.0f)); // Drums
-            
-            // Low shelf boost
-            if (auto* freq = apvts.getParameter("band0Freq"))
-                freq->setValueNotifyingHost(freq->convertTo0to1(60.0f));
-            if (auto* gain = apvts.getParameter("band0Gain"))
-                gain->setValueNotifyingHost(gain->convertTo0to1(3.0f));
-            if (auto* type = apvts.getParameter("band0Type"))
-                type->setValueNotifyingHost(type->convertTo0to1(1.0f)); // LowShelf
+
+    //==========================================================================
+    //  VOCALS
+    //==========================================================================
+    factoryPresets.push_back(createPreset("Vocal Clarity", "Vocals",
+        "Clear, upfront vocal with controlled low-end and airy top",
+        [&](juce::AudioProcessorValueTreeState& a) {
+            setProfile(a, 1.0f); setNumBands(a, 5);
+            setBand(a, 0,  0,    80, 0.0f, 1.0f);   // LowCut 80 Hz
+            setBand(a, 1,  2,   300,-2.0f, 1.2f);    // Cut boxiness 300 Hz
+            setBand(a, 2,  2,  3000, 2.5f, 1.5f);    // Presence 3 kHz
+            setBand(a, 3,  2,  6000,-1.0f, 2.0f);    // Tame sibilance 6 kHz
+            setBand(a, 4,  3, 12000, 2.0f, 0.7f);    // Air shelf 12 kHz
         }));
-    
-    // Bass preset
-    factoryPresets.push_back(createPreset("Bass - Deep", "Bass",
-        "Deep bass preset with sub-bass emphasis",
-        [](juce::AudioProcessorValueTreeState& apvts) {
-            if (auto* param = apvts.getParameter("sourceProfile"))
-                param->setValueNotifyingHost(param->convertTo0to1(3.0f)); // Bass
-            
-            // Sub-bass boost
-            if (auto* freq = apvts.getParameter("band0Freq"))
-                freq->setValueNotifyingHost(freq->convertTo0to1(40.0f));
-            if (auto* gain = apvts.getParameter("band0Gain"))
-                gain->setValueNotifyingHost(gain->convertTo0to1(4.0f));
+
+    factoryPresets.push_back(createPreset("Vocal Warmth", "Vocals",
+        "Rich, warm vocal with body and smooth top-end",
+        [&](juce::AudioProcessorValueTreeState& a) {
+            setProfile(a, 1.0f); setNumBands(a, 4);
+            setBand(a, 0,  0,    60, 0.0f, 1.0f);    // LowCut 60 Hz
+            setBand(a, 1,  2,   200, 2.5f, 0.8f);    // Warmth 200 Hz
+            setBand(a, 2,  2,  4000, 1.5f, 1.2f);    // Gentle presence
+            setBand(a, 3,  3, 10000, 1.0f, 0.7f);    // Smooth air
         }));
-    
-    // Master preset
-    factoryPresets.push_back(createPreset("Master - Balanced", "Master",
-        "Balanced master bus preset",
-        [](juce::AudioProcessorValueTreeState& apvts) {
-            if (auto* param = apvts.getParameter("sourceProfile"))
-                param->setValueNotifyingHost(param->convertTo0to1(5.0f)); // Master
+
+    factoryPresets.push_back(createPreset("Vocal De-Harsh", "Vocals",
+        "Tame harsh upper mids without losing definition",
+        [&](juce::AudioProcessorValueTreeState& a) {
+            setProfile(a, 1.0f); setNumBands(a, 4);
+            setBand(a, 0,  0,    80, 0.0f, 1.0f);    // LowCut
+            setBand(a, 1,  2,  2500, 1.5f, 1.0f);    // Presence lift below harsh zone
+            setBand(a, 2,  2,  5000,-3.0f, 2.5f);    // Narrow harsh cut
+            setBand(a, 3,  3, 11000, 2.0f, 0.7f);    // Restore air above
         }));
-    
-    // EDM preset
-    factoryPresets.push_back(createPreset("EDM - Bright", "EDM",
-        "Bright EDM preset with high-end sparkle",
-        [](juce::AudioProcessorValueTreeState& apvts) {
-            if (auto* param = apvts.getParameter("sourceProfile"))
-                param->setValueNotifyingHost(param->convertTo0to1(6.0f)); // EDM
-            
-            // High shelf boost
-            int lastBand = 7;
-            if (auto* freq = apvts.getParameter("band" + juce::String(lastBand) + "Freq"))
-                freq->setValueNotifyingHost(freq->convertTo0to1(10000.0f));
-            if (auto* gain = apvts.getParameter("band" + juce::String(lastBand) + "Gain"))
-                gain->setValueNotifyingHost(gain->convertTo0to1(2.0f));
-            if (auto* type = apvts.getParameter("band" + juce::String(lastBand) + "Type"))
-                type->setValueNotifyingHost(type->convertTo0to1(3.0f)); // HighShelf
+
+    factoryPresets.push_back(createPreset("Broadcast Voice", "Vocals",
+        "Radio/podcast voice — proximity control, clarity, air",
+        [&](juce::AudioProcessorValueTreeState& a) {
+            setProfile(a, 1.0f); setNumBands(a, 5);
+            setBand(a, 0,  0,   100, 0.0f, 1.0f);    // HPF 100 Hz
+            setBand(a, 1,  2,   200,-1.5f, 1.0f);    // Tame proximity
+            setBand(a, 2,  2,  3500, 3.0f, 1.5f);    // Clarity/presence
+            setBand(a, 3,  2,  6500,-1.5f, 2.0f);    // De-ess zone
+            setBand(a, 4,  3, 12000, 2.5f, 0.7f);    // Air
+        }));
+
+    //==========================================================================
+    //  DRUMS
+    //==========================================================================
+    factoryPresets.push_back(createPreset("Drum Punch", "Drums",
+        "Punchy drums — tight low-end, reduced mud, snappy attack",
+        [&](juce::AudioProcessorValueTreeState& a) {
+            setProfile(a, 2.0f); setNumBands(a, 5);
+            setBand(a, 0,  1,    60, 3.0f, 0.7f);    // Low shelf boost
+            setBand(a, 1,  2,   400,-2.5f, 1.0f);    // Cut mud
+            setBand(a, 2,  2,  3000, 2.0f, 1.5f);    // Stick attack
+            setBand(a, 3,  2,  8000, 1.5f, 0.8f);    // Shimmer
+            setBand(a, 4,  3, 12000, 1.0f, 0.7f);    // Air
+        }));
+
+    factoryPresets.push_back(createPreset("Kick & Low Tom Focus", "Drums",
+        "Sub emphasis and beater click for kick and low toms",
+        [&](juce::AudioProcessorValueTreeState& a) {
+            setProfile(a, 2.0f); setNumBands(a, 4);
+            setBand(a, 0,  1,    50, 4.0f, 0.7f);    // Sub boost
+            setBand(a, 1,  2,   300,-3.0f, 1.2f);    // Cut mud/ring
+            setBand(a, 2,  2,  3500, 2.5f, 1.5f);    // Beater click
+            setBand(a, 3,  4,  8000, 0.0f, 1.0f);    // LPF for focus
+        }));
+
+    factoryPresets.push_back(createPreset("Snare Crack", "Drums",
+        "Tight snare with body, crack and sizzle",
+        [&](juce::AudioProcessorValueTreeState& a) {
+            setProfile(a, 2.0f); setNumBands(a, 4);
+            setBand(a, 0,  0,   100, 0.0f, 1.0f);    // HPF remove rumble
+            setBand(a, 1,  2,   200, 2.0f, 0.8f);    // Body/fatness
+            setBand(a, 2,  2,  2500, 3.0f, 1.5f);    // Crack
+            setBand(a, 3,  3,  8000, 2.0f, 0.7f);    // Wire sizzle
+        }));
+
+    //==========================================================================
+    //  BASS
+    //==========================================================================
+    factoryPresets.push_back(createPreset("Bass Clarity", "Bass",
+        "Defined bass with sub weight and midrange cut-through",
+        [&](juce::AudioProcessorValueTreeState& a) {
+            setProfile(a, 3.0f); setNumBands(a, 4);
+            setBand(a, 0,  0,    30, 0.0f, 1.0f);    // HPF sub-rumble
+            setBand(a, 1,  2,    80, 3.0f, 0.8f);    // Sub weight
+            setBand(a, 2,  2,   250,-2.0f, 1.0f);    // Cut mud
+            setBand(a, 3,  2,   700, 2.0f, 1.5f);    // Note definition
+        }));
+
+    factoryPresets.push_back(createPreset("Bass Warmth", "Bass",
+        "Warm, round bass with smooth top roll-off",
+        [&](juce::AudioProcessorValueTreeState& a) {
+            setProfile(a, 3.0f); setNumBands(a, 3);
+            setBand(a, 0,  1,    60, 3.5f, 0.7f);    // Low shelf warm
+            setBand(a, 1,  2,   150, 2.0f, 0.8f);    // Body
+            setBand(a, 2,  3,  5000,-2.0f, 0.7f);    // Top roll-off
+        }));
+
+    //==========================================================================
+    //  GUITAR
+    //==========================================================================
+    factoryPresets.push_back(createPreset("Electric Guitar Body", "Guitar",
+        "Full-bodied electric with controlled mids and presence",
+        [&](juce::AudioProcessorValueTreeState& a) {
+            setProfile(a, 0.0f); setNumBands(a, 4);
+            setBand(a, 0,  0,    80, 0.0f, 1.0f);    // HPF low rumble
+            setBand(a, 1,  2,   250, 2.0f, 0.8f);    // Body
+            setBand(a, 2,  2,   800,-2.0f, 1.5f);    // Cut honk/nasal
+            setBand(a, 3,  2,  3000, 2.0f, 1.2f);    // Presence/bite
+        }));
+
+    factoryPresets.push_back(createPreset("Acoustic Guitar Shimmer", "Guitar",
+        "Open, shimmering acoustic with reduced boom",
+        [&](juce::AudioProcessorValueTreeState& a) {
+            setProfile(a, 0.0f); setNumBands(a, 4);
+            setBand(a, 0,  0,    60, 0.0f, 1.0f);    // HPF boom
+            setBand(a, 1,  2,   200,-2.0f, 1.0f);    // Cut boominess
+            setBand(a, 2,  2,  3000, 2.5f, 1.0f);    // String shimmer
+            setBand(a, 3,  3, 10000, 2.0f, 0.7f);    // Air/sparkle
+        }));
+
+    //==========================================================================
+    //  KEYS & SYNTH
+    //==========================================================================
+    factoryPresets.push_back(createPreset("Piano Clarity", "Keys",
+        "Clean piano with reduced mud and clear attack",
+        [&](juce::AudioProcessorValueTreeState& a) {
+            setProfile(a, 0.0f); setNumBands(a, 4);
+            setBand(a, 0,  0,    40, 0.0f, 1.0f);    // HPF sub rumble
+            setBand(a, 1,  2,   300,-2.0f, 1.0f);    // Cut mud
+            setBand(a, 2,  2,  2500, 2.0f, 1.2f);    // Key attack clarity
+            setBand(a, 3,  3,  8000, 1.5f, 0.7f);    // Brilliance
+        }));
+
+    factoryPresets.push_back(createPreset("Synth Wide", "Keys",
+        "Wide synth pad with full low-end and sparkly top",
+        [&](juce::AudioProcessorValueTreeState& a) {
+            setProfile(a, 4.0f); setNumBands(a, 4);
+            setBand(a, 0,  1,    50, 2.0f, 0.7f);    // Low shelf fullness
+            setBand(a, 1,  2,   500,-1.5f, 1.0f);    // Reduce mid clutter
+            setBand(a, 2,  2,  5000, 2.0f, 1.0f);    // Presence/edge
+            setBand(a, 3,  3, 10000, 3.0f, 0.7f);    // High sparkle
+        }));
+
+    //==========================================================================
+    //  MASTER BUS
+    //==========================================================================
+    factoryPresets.push_back(createPreset("Master Gentle", "Master",
+        "Subtle master polish — low-end weight, air, slight mid scoop",
+        [&](juce::AudioProcessorValueTreeState& a) {
+            setProfile(a, 5.0f); setNumBands(a, 3);
+            setBand(a, 0,  1,    40, 1.0f, 0.7f);    // Low shelf +1
+            setBand(a, 1,  2,   350,-0.8f, 0.6f);    // Gentle mid scoop
+            setBand(a, 2,  3, 10000, 1.0f, 0.7f);    // Air shelf +1
+        }));
+
+    factoryPresets.push_back(createPreset("Master Loud", "Master",
+        "Aggressive master — punchy low-end, forward mids, bright top",
+        [&](juce::AudioProcessorValueTreeState& a) {
+            setProfile(a, 5.0f); setNumBands(a, 5);
+            setBand(a, 0,  0,    25, 0.0f, 1.0f);    // HPF sub-rumble
+            setBand(a, 1,  1,    50, 2.0f, 0.7f);    // Low shelf punch
+            setBand(a, 2,  2,   400,-1.5f, 0.8f);    // Cut mud
+            setBand(a, 3,  2,  2000, 1.5f, 1.0f);    // Forward presence
+            setBand(a, 4,  3,  8000, 2.5f, 0.7f);    // Bright air
+        }));
+
+    factoryPresets.push_back(createPreset("Master Clean", "Master",
+        "Transparent mastering polish — very subtle corrections",
+        [&](juce::AudioProcessorValueTreeState& a) {
+            setProfile(a, 5.0f); setNumBands(a, 3);
+            setBand(a, 0,  1,    30, 0.5f, 0.7f);    // Hint of sub weight
+            setBand(a, 1,  2,   500,-0.5f, 0.5f);    // Micro mid scoop
+            setBand(a, 2,  3, 12000, 0.5f, 0.7f);    // Touch of air
+        }));
+
+    //==========================================================================
+    //  EDM / ELECTRONIC
+    //==========================================================================
+    factoryPresets.push_back(createPreset("EDM Sizzle", "EDM",
+        "Sizzling electronic — sub weight, scooped mids, bright top",
+        [&](juce::AudioProcessorValueTreeState& a) {
+            setProfile(a, 6.0f); setNumBands(a, 5);
+            setBand(a, 0,  0,    25, 0.0f, 1.0f);    // HPF sub-sub
+            setBand(a, 1,  2,    50, 3.0f, 0.8f);    // Sub weight
+            setBand(a, 2,  2,   300,-2.0f, 0.8f);    // Scoop mids
+            setBand(a, 3,  2,  5000, 2.0f, 1.0f);    // Sizzle
+            setBand(a, 4,  3, 12000, 3.0f, 0.7f);    // Sparkle shelf
+        }));
+
+    factoryPresets.push_back(createPreset("EDM Warm Bass", "EDM",
+        "Warm sub-heavy electronic with controlled top",
+        [&](juce::AudioProcessorValueTreeState& a) {
+            setProfile(a, 6.0f); setNumBands(a, 3);
+            setBand(a, 0,  1,    40, 4.0f, 0.7f);    // Heavy sub shelf
+            setBand(a, 1,  2,   200,-1.5f, 0.8f);    // Clean up low-mids
+            setBand(a, 2,  2,  4000, 1.5f, 1.0f);    // Gentle presence
+        }));
+
+    //==========================================================================
+    //  UTILITY / CREATIVE
+    //==========================================================================
+    factoryPresets.push_back(createPreset("Telephone Effect", "Creative",
+        "Vintage telephone/radio band-pass filter",
+        [&](juce::AudioProcessorValueTreeState& a) {
+            setProfile(a, 0.0f); setNumBands(a, 3);
+            setBand(a, 0,  0,   300, 0.0f, 1.0f);    // HPF 300 Hz
+            setBand(a, 1,  2,  1000, 3.0f, 0.8f);    // Mid presence
+            setBand(a, 2,  4,  3500, 0.0f, 1.0f);    // LPF 3.5 kHz
+        }));
+
+    factoryPresets.push_back(createPreset("De-Mud", "Utility",
+        "General-purpose mud removal — cleans 200-500 Hz range",
+        [&](juce::AudioProcessorValueTreeState& a) {
+            setProfile(a, 0.0f); setNumBands(a, 3);
+            setBand(a, 0,  2,   250,-2.5f, 0.8f);    // Wide mud cut
+            setBand(a, 1,  2,   400,-1.5f, 1.2f);    // Narrow boxy cut
+            setBand(a, 2,  3,  8000, 1.0f, 0.7f);    // Compensate air
+        }));
+
+    factoryPresets.push_back(createPreset("Sibilance Tamer", "Utility",
+        "Broadband sibilance reduction for harsh sources",
+        [&](juce::AudioProcessorValueTreeState& a) {
+            setProfile(a, 0.0f); setNumBands(a, 3);
+            setBand(a, 0,  2,  5500,-2.5f, 2.0f);    // Narrow 5.5k cut
+            setBand(a, 1,  2,  7500,-2.0f, 2.0f);    // Narrow 7.5k cut
+            setBand(a, 2,  3, 12000, 1.0f, 0.7f);    // Restore air above
         }));
 }
 
