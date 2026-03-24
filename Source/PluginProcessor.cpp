@@ -929,14 +929,33 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     crossfadeBuffer.clear();
     crossfadeSamplesRemaining = 0;
 
-    // Pre-allocate double buffers for lock-free IR handoff (builder thread -> audio thread)
+    // Pre-allocate double buffers for lock-free IR handoff (builder thread -> audio thread).
+    // IMPORTANT: The builder thread reads/writes pendingFreqIR.buffers concurrently.
+    // We must pause it before reallocating the vectors, otherwise .assign() can
+    // invalidate pointers the builder is using → use-after-free / segfault.
     {
+        const bool builderWasRunning = irBuilderThread.joinable()
+                                       && !stopIRBuilder.load(std::memory_order_relaxed);
+        if (builderWasRunning)
+        {
+            stopIRBuilder.store(true, std::memory_order_release);
+            irBuildEvent.signal();
+            irBuilderThread.join();
+        }
+
         const size_t freqBufSize = LinearPhaseProcessor::fftSize * 2;
         pendingFreqIR.buffers[0].assign(freqBufSize, 0.0f);
         pendingFreqIR.buffers[1].assign(freqBufSize, 0.0f);
         pendingFreqIR.readyIndex.store(-1, std::memory_order_relaxed);
         pendingFreqIR.writeIndex.store(0, std::memory_order_relaxed);
         pendingFreqIR.readingIndex.store(-1, std::memory_order_relaxed);
+
+        // Restart the builder thread after safe reallocation
+        if (builderWasRunning)
+        {
+            stopIRBuilder.store(false, std::memory_order_release);
+            irBuilderThread = std::thread([this]() { irBuilderThreadFunc(); });
+        }
     }
 
     // Pre-allocate silent spectrum buffer for processBlock fallback

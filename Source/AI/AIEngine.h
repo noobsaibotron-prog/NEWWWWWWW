@@ -597,13 +597,24 @@ private:
     void detectProblemsWithML();  // ML-enhanced detection
     
     //==========================================================================
-    // Advanced AI Systems
+    // Advanced AI Systems — Maturity Classification (v1.0)
+    //
+    // SHIPPING:      AIEngine (heuristic detection), SemanticEQEngine,
+    //                ReferenceMatcher, AdaptiveAIEngine, UserLearning
+    // EXPERIMENTAL:  MLEngine (no trained weights bundled — heuristic fallback active),
+    //                OnlineLearningSystem (replay buffer works, training backend absent)
+    // DISABLED:      NeuralNetworkWrapper (requires TFLite model file),
+    //                MultiTrackUnmasking (requires multi-instance host support)
+    //
+    // Experimental/disabled modules are lazy-initialized and gated by feature flags.
+    // They compile and link but have no runtime cost when disabled (default).
+    //==========================================================================
     std::unique_ptr<MultiTrackUnmasking> multiTrackUnmasking;
     std::unique_ptr<NeuralNetworkWrapper> neuralNetwork;
     std::unique_ptr<AdaptiveAIEngine> adaptiveEngine;
     std::unique_ptr<OnlineLearningSystem> onlineLearning;
-    
-    // Advanced features flags
+
+    // Feature flags — all disabled by default; enable via setXxxEnabled(true)
     bool enableMultiTrackUnmasking = false;
     bool enableNeuralNetworks = false;
     bool enableAdaptiveProcessing = false;

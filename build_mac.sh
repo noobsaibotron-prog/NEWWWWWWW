@@ -21,6 +21,7 @@ fi
 
 echo "Configuring CMake project..."
 cmake -S . -B "${BUILD_DIR}" -G "Ninja" \
+  -DCMAKE_BUILD_TYPE="${CONFIG}" \
   -DCMAKE_CXX_COMPILER=/usr/bin/clang++ \
   -DCMAKE_C_COMPILER=/usr/bin/clang \
   -DCMAKE_OSX_ARCHITECTURES="${ARCHS}" \

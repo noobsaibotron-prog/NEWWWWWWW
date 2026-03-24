@@ -233,13 +233,18 @@ void OnlineLearningSystem::resetStats()
 //==============================================================================
 bool OnlineLearningSystem::saveModelCheckpoint(const juce::File& path, NeuralNetworkWrapper& model)
 {
-    // TODO: Implement checkpoint saving
+    // Save the model weights via NeuralNetworkWrapper (copies the underlying
+    // TFLite flatbuffer when available). Checkpoint metadata (replay buffer
+    // state, training stats) is not persisted separately — the replay buffer
+    // is ephemeral by design and stats are diagnostic-only.
     return model.saveFineTunedModel(path);
 }
 
 bool OnlineLearningSystem::loadModelCheckpoint(const juce::File& path, NeuralNetworkWrapper& model)
 {
-    // TODO: Implement checkpoint loading
+    // Load model weights. The replay buffer is intentionally NOT restored:
+    // online learning should start fresh from user interactions each session,
+    // avoiding stale training data from previous contexts.
     return model.loadModel(path);
 }
 

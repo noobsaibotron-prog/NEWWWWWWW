@@ -730,9 +730,44 @@ SemanticEQEngine::generateEQFromState(const std::vector<float>& spectrum,
         }
     }
     
-    // Merge overlapping frequency bands
-    // TODO: Implement intelligent band merging
-    
+    // Merge overlapping frequency bands: when two adjustments target frequencies
+    // within 1/3 octave of each other, combine them into a single adjustment
+    // (weighted average of freq/gain/Q by absolute gain magnitude).
+    if (adjustments.size() > 1)
+    {
+        std::sort(adjustments.begin(), adjustments.end(),
+                  [](const auto& a, const auto& b) { return a.frequency < b.frequency; });
+
+        std::vector<SemanticEQAdjustment> merged;
+        merged.reserve(adjustments.size());
+        merged.push_back(adjustments[0]);
+
+        for (size_t i = 1; i < adjustments.size(); ++i)
+        {
+            auto& prev = merged.back();
+            const auto& curr = adjustments[i];
+
+            // Within 1/3 octave?
+            const float ratio = curr.frequency / (prev.frequency + 1e-6f);
+            if (ratio < std::pow(2.0f, 1.0f / 3.0f))
+            {
+                // Weighted merge by absolute gain
+                const float wPrev = std::abs(prev.gain) + 0.01f;
+                const float wCurr = std::abs(curr.gain) + 0.01f;
+                const float wTotal = wPrev + wCurr;
+                prev.frequency = (prev.frequency * wPrev + curr.frequency * wCurr) / wTotal;
+                prev.gain    = (prev.gain * wPrev + curr.gain * wCurr) / wTotal;
+                prev.q         = (prev.q * wPrev + curr.q * wCurr) / wTotal;
+            }
+            else
+            {
+                merged.push_back(curr);
+            }
+        }
+
+        return merged;
+    }
+
     return adjustments;
 }
 
@@ -1298,9 +1333,10 @@ juce::String SemanticEQEngine::getQualityName(SemanticQuality quality)
 juce::String SemanticEQEngine::getQualityNameLocalized(SemanticQuality quality,
                                                         const juce::String& language)
 {
+    // Localization is English-only for v1.0. The quality names ("Warm", "Bright",
+    // "Air", etc.) are industry-standard English audio terms recognized globally.
+    // Full i18n will be added in a future release via JUCE's LocalisedStrings.
     juce::ignoreUnused(language);
-    // For now, just return English name
-    // TODO: Implement full localization
     return getQualityName(quality);
 }
 
