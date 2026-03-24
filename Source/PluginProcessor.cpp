@@ -2524,15 +2524,13 @@ void AIEqualizerAudioProcessor::loadStateFromSlot(ABState slot)
     }
     if (!sourceSlot) return;
 
-    // Load band states with bounds checking
+    // Load band states — clamp frequency instead of silently skipping the band,
+    // so an out-of-range value never causes a band to disappear unexpectedly.
     for (int i = 0; i < maxBands; ++i)
     {
-        // Validate band state before loading
-        const auto& bandState = sourceSlot->bands[static_cast<size_t>(i)];
-        if (bandState.frequency >= 20.0f && bandState.frequency <= 20000.0f)
-        {
-            setBandState(i, bandState);
-        }
+        auto bandState = sourceSlot->bands[static_cast<size_t>(i)];
+        bandState.frequency = juce::jlimit(20.0f, 20000.0f, bandState.frequency);
+        setBandState(i, bandState);
     }
 
     // Load output gain with validation
@@ -3373,8 +3371,28 @@ bool AIEqualizerAudioProcessor::hasEditor() const { return true; }
 //==============================================================================
 void AIEqualizerAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
 {
-    // Ensure the currently active slot mirrors the latest APVTS values before serialization
-    saveCurrentStateToSlot(currentABState.load(std::memory_order_relaxed));
+    // Snapshot the active slot directly from APVTS atomics — thread-safe regardless of caller thread.
+    // Some DAWs (Pro Tools, some VST3 hosts) call getStateInformation off the message thread,
+    // which causes saveCurrentStateToSlot() to bail out silently. Since getBandState() and
+    // getRawParameterValue()->load() only read atomics, they are safe from any thread.
+    {
+        const ABState activeSlot = currentABState.load(std::memory_order_relaxed);
+        EQSlot* slot = nullptr;
+        switch (activeSlot)
+        {
+            case ABState::A: slot = &slotA; break;
+            case ABState::B: slot = &slotB; break;
+            case ABState::C: slot = &slotC; break;
+            case ABState::D: slot = &slotD; break;
+        }
+        if (slot != nullptr)
+        {
+            for (int i = 0; i < maxBands; ++i)
+                slot->bands[static_cast<size_t>(i)] = getBandState(i);
+            if (auto* p = apvts.getRawParameterValue("outputGain"))
+                slot->outputGain = p->load();
+        }
+    }
 
     auto state = apvts.copyState();
 
@@ -3504,8 +3522,8 @@ void AIEqualizerAudioProcessor::setStateInformation(const void* data, int sizeIn
                     auto* self = weakThis.get();
                     if (self == nullptr)
                         return;
-                    if (!self->processorReady.load(std::memory_order_acquire))
-                        return;
+                    // No processorReady guard here: slot sync must always happen after restore,
+                    // regardless of whether the processor has finished initialising yet.
                     self->saveCurrentStateToSlot(static_cast<ABState>(slotIdx));
 
                     if (needsIRRebuild)
