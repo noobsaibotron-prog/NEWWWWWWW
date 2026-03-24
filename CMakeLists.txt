@@ -433,7 +433,7 @@ if(CMAKE_CXX_COMPILER MATCHES "cl\\.exe$")
 endif()
 
 # Project name and version
-project(AIEqualizerPro VERSION 2.1.0 LANGUAGES CXX)
+project(AIEqualizerPro VERSION 2.1.0 LANGUAGES C CXX)
 
 set(PROJECT_DESCRIPTION "AI-Powered Parametric Equalizer with Intelligent Frequency Analysis")
 

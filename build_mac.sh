@@ -20,10 +20,12 @@ if [[ -n "${JUCE_PATH:-}" ]]; then
 fi
 
 echo "Configuring CMake project..."
-cmake -S . -B "${BUILD_DIR}" -G "Xcode" \
+cmake -S . -B "${BUILD_DIR}" -G "Ninja" \
+  -DCMAKE_CXX_COMPILER=/usr/bin/clang++ \
+  -DCMAKE_C_COMPILER=/usr/bin/clang \
   -DCMAKE_OSX_ARCHITECTURES="${ARCHS}" \
   -DCMAKE_OSX_DEPLOYMENT_TARGET="${DEPLOY_TARGET}" \
-  "${JUCE_ARG[@]}"
+  ${JUCE_ARG[@]+"${JUCE_ARG[@]}"}
 
 echo "Building (${CONFIG})..."
 cmake --build "${BUILD_DIR}" --config "${CONFIG}"

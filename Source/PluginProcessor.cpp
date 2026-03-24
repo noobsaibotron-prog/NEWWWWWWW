@@ -181,6 +181,10 @@ void AIEqualizerAudioProcessor::irBuilderThreadFunc()
         if (sr <= 0.0)
             continue;
 
+        // SAFETY: Skip if prepareToPlay() hasn't allocated the double-buffer yet
+        if (pendingFreqIR.buffers[0].empty() || pendingFreqIR.buffers[1].empty())
+            continue;
+
         // SAFETY: Check for null pointer before dereferencing
         bool dynEnabled = false;
         if (auto* dynParam = apvts.getRawParameterValue("dynEqEnabled"))
@@ -3464,7 +3468,7 @@ void AIEqualizerAudioProcessor::decodeMidSide(juce::AudioBuffer<float>& buffer, 
 
     juce::FloatVectorOperations::copy(right, mid, samples);
     juce::FloatVectorOperations::subtract(right, side, samples);
-    juce::FloatVectorOperations::multiply(right, sqrt2Inv, samples);
+    juce::FloatVectorOperations::multiply(right, kInvSqrt2, samples);
 
     buffer.copyFrom(0, 0, left, samples);
     buffer.copyFrom(1, 0, right, samples);
