@@ -476,16 +476,22 @@ private:
         
         spectrumBuffers[static_cast<size_t>(writeIdx)].fill(spectrum, rms, avgRms);
         
-        // Swap write buffer with ready buffer (atomic exchange)
+        // Swap write buffer with ready buffer (bounded retry for RT safety)
         int expected = spectrumReadyIndex.load(std::memory_order_acquire);
         expected = (expected < 0 || expected > 2) ? 2 : expected;
-        
+
+        int retries = 0;
         while (!spectrumReadyIndex.compare_exchange_weak(expected, writeIdx,
                                                           std::memory_order_release,
-                                                          std::memory_order_relaxed)) {
+                                                          std::memory_order_relaxed)
+               && ++retries < 16) {
             expected = (expected < 0 || expected > 2) ? 2 : expected;
         }
-        
+
+        // Force-store if CAS exhausted retries (prevents audio thread stall)
+        if (retries >= 16)
+            spectrumReadyIndex.store(writeIdx, std::memory_order_release);
+
         // Clamp before storing
         expected = (expected < 0 || expected > 2) ? 1 : expected;
         spectrumWriteIndex.store(expected, std::memory_order_relaxed);
@@ -502,12 +508,19 @@ private:
         expected = (expected < 0 || expected > 2) ? 0 : expected;
         readIdx = (readIdx < 0 || readIdx > 2) ? 1 : readIdx;
         
+        int retries = 0;
         while (!spectrumReadyIndex.compare_exchange_weak(expected, readIdx,
                                                           std::memory_order_acquire,
-                                                          std::memory_order_relaxed)) {
+                                                          std::memory_order_relaxed)
+               && ++retries < 16) {
             // Re-clamp expected after failed exchange
             expected = (expected < 0 || expected > 2) ? 0 : expected;
         }
+
+        // If CAS exhausted retries, force-store to prevent stall
+        if (retries >= 16)
+            spectrumReadyIndex.store(readIdx, std::memory_order_release);
+
         spectrumReadIndex.store(expected, std::memory_order_relaxed);
         
         // Final bounds check before access

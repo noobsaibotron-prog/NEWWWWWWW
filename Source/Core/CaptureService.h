@@ -323,7 +323,7 @@ private:
         const int channelsToCopy = std::min(buffer.getNumChannels(), juce::jmax(1, channelCount));
         const size_t samplesToAdd = static_cast<size_t>(numSamples * channelsToCopy);
         
-        const size_t currentPos = manualCaptureWritePos.load(std::memory_order_relaxed);
+        const size_t currentPos = manualCaptureWritePos.load(std::memory_order_acquire);
         
         // Check if we have space (no allocation!)
         if (currentPos + samplesToAdd > manualCaptureMaxSamples)
