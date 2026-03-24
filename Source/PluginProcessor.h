@@ -474,10 +474,14 @@ private:
     alignas(64) juce::AudioBuffer<float> crossfadeBuffer;
 
     // Lock-free double-buffer for freq-domain IR handoff (builder thread -> audio thread)
+    // Protocol: builder writes to buffers[writeIndex], publishes via readyIndex (release).
+    // Audio thread claims with readyIndex.exchange(-1, acquire), guards the read via
+    // readingIndex so the builder never overwrites an in-progress read (ABA guard).
     struct PendingFreqIR {
-        std::vector<float> buffers[2];  // Double buffer, pre-allocated in prepareToPlay
-        std::atomic<int> readyIndex { -1 };  // Index of buffer with fresh data (-1 = none)
-        std::atomic<int> writeIndex { 0 };   // Index builder is writing to
+        std::vector<float> buffers[2];   // Double buffer, pre-allocated in prepareToPlay
+        std::atomic<int> readyIndex { -1 };   // Index of buffer with fresh data (-1 = none)
+        std::atomic<int> writeIndex { 0 };    // Index builder will write to next
+        std::atomic<int> readingIndex { -1 }; // Index audio thread is reading (-1 = none)
     };
     PendingFreqIR pendingFreqIR;
     

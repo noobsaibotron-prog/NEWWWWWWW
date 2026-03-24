@@ -376,11 +376,22 @@ void AIEqualizerAudioProcessor::irBuilderThreadFunc()
             std::copy(scaledIR.begin(), scaledIR.end(), freqBuf.begin());
             fft.performRealOnlyForwardTransform(freqBuf.data());
 
-            // Lock-free double-buffer write
+            // Lock-free double-buffer write.
+            // ABA guard: spin until the audio thread is not reading our target buffer.
+            // storeFreqIRDirect is a fast memcpy, so this wait is bounded and negligible
+            // compared to the IR build time (tens of ms). Not in the audio thread — safe to spin.
             int wi = pendingFreqIR.writeIndex.load(std::memory_order_relaxed);
-            pendingFreqIR.buffers[wi] = std::move(freqBuf);
+            while (wi == pendingFreqIR.readingIndex.load(std::memory_order_acquire))
+                wi = 1 - wi;
+
+            // std::copy preserves pre-allocated capacity of buffers[wi] (resize in prepareToPlay).
+            // Do NOT use std::move here: it would transfer ownership and lose the pre-allocation.
+            jassert(freqBuf.size() == pendingFreqIR.buffers[wi].size());
+            std::copy(freqBuf.begin(), freqBuf.end(), pendingFreqIR.buffers[wi].begin());
+
             pendingFreqIR.readyIndex.store(wi, std::memory_order_release);
-            pendingFreqIR.writeIndex.store(1 - wi, std::memory_order_relaxed);
+            // Release ordering on writeIndex ensures the flip is visible after the data write.
+            pendingFreqIR.writeIndex.store(1 - wi, std::memory_order_release);
         }
     }
     }
@@ -898,14 +909,15 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     crossfadeBuffer.clear();
     crossfadeSamplesRemaining = 0;
 
-    // Pre-allocate pending freq-domain IR buffer (builder thread → audio thread handoff)
+    // Pre-allocate double buffers for lock-free IR handoff (builder thread -> audio thread)
     {
-    // Pre-allocate double buffers for lock-free IR handoff
-    const size_t freqBufSize = LinearPhaseProcessor::fftSize * 2;
-    pendingFreqIR.buffers[0].resize(freqBufSize, 0.0f);
-    pendingFreqIR.buffers[1].resize(freqBufSize, 0.0f);
-    pendingFreqIR.readyIndex.store(-1, std::memory_order_relaxed);
-    pendingFreqIR.writeIndex.store(0, std::memory_order_relaxed);
+        const size_t freqBufSize = LinearPhaseProcessor::fftSize * 2;
+        pendingFreqIR.buffers[0].assign(freqBufSize, 0.0f);
+        pendingFreqIR.buffers[1].assign(freqBufSize, 0.0f);
+        pendingFreqIR.readyIndex.store(-1, std::memory_order_relaxed);
+        pendingFreqIR.writeIndex.store(0, std::memory_order_relaxed);
+        pendingFreqIR.readingIndex.store(-1, std::memory_order_relaxed);
+    }
 
     // Pre-allocate silent spectrum buffer for processBlock fallback
     silentSpectrumBuffer.assign(aiSpectrumBins, -80.0f);
@@ -1837,18 +1849,25 @@ void AIEqualizerAudioProcessor::triggerEQCurveUpdate()
 
 void AIEqualizerAudioProcessor::updateLinearPhaseIRIfNeeded()
 {
-    // Lock-free: atomically claim the ready buffer index
+    // Lock-free: atomically claim the ready buffer index.
     int ri = pendingFreqIR.readyIndex.exchange(-1, std::memory_order_acquire);
     if (ri < 0)
         return;  // No new IR data available
 
-    // Feed pre-computed freq-domain IR to LinearPhaseProcessor
-    // LinearPhaseProcessor handles the internal crossfade
-    auto* lp = linearPhaseProcessors.get();
+    // ABA guard: mark the buffer we are about to read so the builder won't overwrite it.
+    // Must be set before we dereference buffers[ri].data().
+    pendingFreqIR.readingIndex.store(ri, std::memory_order_release);
+
+    // Feed pre-computed freq-domain IR to LinearPhaseProcessor.
+    // LinearPhaseProcessor handles the internal A/B crossfade.
+    auto* lp = linearPhaseProcessors[0].get();
     if (lp != nullptr)
         lp->storeFreqIRDirect(pendingFreqIR.buffers[ri].data());
 
-    linearIRLoaded.store(true, std::memory_order_release);
+    // Signal that the read is complete so the builder may reuse this buffer.
+    pendingFreqIR.readingIndex.store(-1, std::memory_order_release);
+
+    linearIRLoaded[0].store(true, std::memory_order_release);
     activeIRIndex.store(0, std::memory_order_relaxed);
 }
 
