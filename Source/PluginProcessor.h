@@ -179,7 +179,11 @@ public:
     [[nodiscard]] bool consumeAIProblemsChanged() noexcept { return aiProblemsChanged.exchange(false, std::memory_order_acquire); }
     [[nodiscard]] uint64_t getParameterChangeCounter() const noexcept { return parameterChangeCounter.load(std::memory_order_relaxed); }
     [[nodiscard]] uint32_t getBlockClampEvents() const noexcept { return blockClampEvents.load(std::memory_order_relaxed); }
-    
+
+    // Output peak metering (GUI reads, audio thread writes)
+    [[nodiscard]] float getOutputPeakLeft() const noexcept { return outputPeakLeft.load(std::memory_order_relaxed); }
+    [[nodiscard]] float getOutputPeakRight() const noexcept { return outputPeakRight.load(std::memory_order_relaxed); }
+
     // Parameter tree access
     [[nodiscard]] juce::AudioProcessorValueTreeState& getAPVTS() noexcept { return apvts; }
     [[nodiscard]] PhaseMode getCurrentPhaseMode() const noexcept { return currentPhaseMode.load(std::memory_order_relaxed); }
@@ -580,6 +584,10 @@ private:
     std::atomic<bool> spectrumDataReady { false };
     std::atomic<bool> meterDataReady { false };
     std::atomic<bool> aiProblemsChanged { false };
+
+    // Output peak metering (lock-free, written by audio thread, read by GUI)
+    std::atomic<float> outputPeakLeft { 0.0f };
+    std::atomic<float> outputPeakRight { 0.0f };
     std::atomic<uint64_t> parameterChangeCounter { 0 };
     // Atomic to prevent data race if prepareToPlay (message thread) overlaps with
     // processBlock (audio thread) during host reconfiguration. Relaxed ordering is

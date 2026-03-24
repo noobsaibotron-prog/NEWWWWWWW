@@ -331,4 +331,52 @@ private:
         font.setBold(true);
         return font;
     }
+
+    //==========================================================================
+    // CUSTOM TOOLTIP — premium styled, semi-transparent rounded box
+    //==========================================================================
+    juce::Rectangle<int> getTooltipBounds(const juce::String& tipText,
+                                           juce::Point<int> screenPos,
+                                           juce::Rectangle<int> parentArea) override
+    {
+        auto font = juce::Font(juce::FontOptions().withHeight(12.0f));
+        const int maxWidth = 280;
+        juce::AttributedString s;
+        s.setJustification(juce::Justification::centredLeft);
+        s.append(tipText, font, Colors::textPrimary);
+
+        juce::TextLayout tl;
+        tl.createLayout(s, static_cast<float>(maxWidth));
+
+        int w = static_cast<int>(tl.getWidth()) + 18;
+        int h = static_cast<int>(tl.getHeight()) + 12;
+
+        int x = screenPos.x > parentArea.getCentreX() ? screenPos.x - w - 8 : screenPos.x + 12;
+        int y = screenPos.y + 20;
+
+        return { x, y, w, h };
+    }
+
+    void drawTooltip(juce::Graphics& g, const juce::String& text, int w, int h) override
+    {
+        auto bounds = juce::Rectangle<int>(0, 0, w, h).toFloat();
+
+        // Drop shadow
+        g.setColour(juce::Colours::black.withAlpha(0.35f));
+        g.fillRoundedRectangle(bounds.translated(1.5f, 1.5f), 6.0f);
+
+        // Background — semi-transparent dark panel
+        g.setColour(juce::Colour(0xF0202030));
+        g.fillRoundedRectangle(bounds, 6.0f);
+
+        // Subtle border
+        g.setColour(Colors::accentBlue.withAlpha(0.35f));
+        g.drawRoundedRectangle(bounds.reduced(0.5f), 6.0f, 1.0f);
+
+        // Text
+        g.setColour(Colors::textPrimary);
+        g.setFont(juce::Font(juce::FontOptions().withHeight(12.0f)));
+        g.drawFittedText(text, 9, 5, w - 18, h - 10,
+                         juce::Justification::centredLeft, 4);
+    }
 };

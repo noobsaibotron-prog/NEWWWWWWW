@@ -1832,6 +1832,14 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     // This is more efficient than manual sample-by-sample loop and prevents stereo image shift
     const int numSamples = buffer.getNumSamples();
     smoothedOutputGain.applyGain(buffer, numSamples);
+
+    // Output peak metering (lock-free, for GUI level meter)
+    {
+        float peakL = buffer.getMagnitude(0, 0, numSamples);
+        float peakR = totalNumInputChannels > 1 ? buffer.getMagnitude(1, 0, numSamples) : peakL;
+        outputPeakLeft.store(peakL, std::memory_order_relaxed);
+        outputPeakRight.store(peakR, std::memory_order_relaxed);
+    }
 }
 
 void AIEqualizerAudioProcessor::parameterChanged(const juce::String& parameterID, float newValue)

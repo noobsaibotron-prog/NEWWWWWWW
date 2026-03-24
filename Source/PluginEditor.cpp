@@ -101,7 +101,17 @@ AIEqualizerAudioProcessorEditor::AIEqualizerAudioProcessorEditor(AIEqualizerAudi
     // FIX 2: persistent selected band panel (avoid recreating on every selection)
     selectedBandPanel = std::make_unique<BandControlPanel>(0, processor.getAPVTS());
     addAndMakeVisible(*selectedBandPanel);
-    
+
+    // Output level meter (stereo VU with peak hold)
+    addAndMakeVisible(outputMeter);
+
+    // Version label (bottom-right branding)
+    versionLabel.setText("v2.1.1", juce::dontSendNotification);
+    versionLabel.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
+    versionLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted);
+    versionLabel.setJustificationType(juce::Justification::centredRight);
+    addAndMakeVisible(versionLabel);
+
     setSize(1200, 750);
     setResizable(true, true);
     setResizeLimits(1100, 680, 1800, 1100);
@@ -825,20 +835,63 @@ void AIEqualizerAudioProcessorEditor::showOptionsMenu()
 
 void AIEqualizerAudioProcessorEditor::paint(juce::Graphics& g)
 {
-    g.fillAll(ModernLookAndFeel::Colors::bgDark);
+    // Main background — subtle vertical gradient for depth
+    {
+        juce::ColourGradient bg(
+            ModernLookAndFeel::Colors::bgDark, 0.0f, 0.0f,
+            ModernLookAndFeel::Colors::bgDark.darker(0.15f), 0.0f, static_cast<float>(getHeight()),
+            false);
+        g.setGradientFill(bg);
+        g.fillRect(getLocalBounds());
+    }
 
-    // Header bar
-    g.setColour(ModernLookAndFeel::Colors::bgLight);
-    g.fillRect(0, 0, getWidth(), headerH);
-    g.setColour(ModernLookAndFeel::Colors::bgLighter);
-    g.drawHorizontalLine(headerH - 1, 0.0f, (float)getWidth());
+    const float w = static_cast<float>(getWidth());
 
-    // Bottom bar
-    int cpY = getHeight() - controlH;
-    g.setColour(ModernLookAndFeel::Colors::bgPanel);
-    g.fillRect(0, cpY, getWidth(), controlH);
-    g.setColour(ModernLookAndFeel::Colors::bgLighter);
-    g.drawHorizontalLine(cpY, 0.0f, (float)getWidth());
+    // === HEADER BAR (gradient + subtle inner shadow) ===
+    {
+        auto headerRect = juce::Rectangle<float>(0.0f, 0.0f, w, static_cast<float>(headerH));
+        juce::ColourGradient headerGrad(
+            ModernLookAndFeel::Colors::bgLight.brighter(0.06f), 0.0f, 0.0f,
+            ModernLookAndFeel::Colors::bgLight.darker(0.04f), 0.0f, static_cast<float>(headerH),
+            false);
+        g.setGradientFill(headerGrad);
+        g.fillRect(headerRect);
+
+        // Bottom edge highlight
+        g.setColour(ModernLookAndFeel::Colors::accentBlue.withAlpha(0.12f));
+        g.fillRect(0.0f, static_cast<float>(headerH - 1), w, 1.0f);
+
+        // Separator line
+        g.setColour(ModernLookAndFeel::Colors::bgDark);
+        g.fillRect(0.0f, static_cast<float>(headerH), w, 1.0f);
+
+        // Brand name — left side, subtle
+        g.setColour(ModernLookAndFeel::Colors::textPrimary.withAlpha(0.7f));
+        auto brandFont = juce::Font(juce::FontOptions().withHeight(11.0f));
+        brandFont.setBold(true);
+        g.setFont(brandFont);
+    }
+
+    // === BOTTOM CONTROL BAR (gradient + top edge) ===
+    {
+        float cpY = static_cast<float>(getHeight() - controlH);
+        auto bottomRect = juce::Rectangle<float>(0.0f, cpY, w, static_cast<float>(controlH));
+
+        juce::ColourGradient bottomGrad(
+            ModernLookAndFeel::Colors::bgPanel.brighter(0.03f), 0.0f, cpY,
+            ModernLookAndFeel::Colors::bgPanel.darker(0.05f), 0.0f, cpY + controlH,
+            false);
+        g.setGradientFill(bottomGrad);
+        g.fillRect(bottomRect);
+
+        // Top edge — accent highlight
+        g.setColour(ModernLookAndFeel::Colors::accentBlue.withAlpha(0.08f));
+        g.fillRect(0.0f, cpY, w, 1.0f);
+
+        // Separator
+        g.setColour(ModernLookAndFeel::Colors::bgDark);
+        g.fillRect(0.0f, cpY - 1.0f, w, 1.0f);
+    }
 }
 
 void AIEqualizerAudioProcessorEditor::resized()
@@ -903,8 +956,14 @@ void AIEqualizerAudioProcessorEditor::resized()
     bandSelectCombo.setBounds(bottom.removeFromLeft(80).reduced(0, 4));
     bottom.removeFromLeft(8);
 
-    // Output section (right of bottom bar)
-    auto rightControls = bottom.removeFromRight(140);
+    // Output section (right of bottom bar) — meter + knobs
+    auto rightControls = bottom.removeFromRight(210);
+    // Version label at the very right edge
+    versionLabel.setBounds(rightControls.removeFromRight(36).reduced(0, 4));
+    rightControls.removeFromRight(2);
+    // Output level meter
+    outputMeter.setBounds(rightControls.removeFromRight(32).reduced(0, 2));
+    rightControls.removeFromRight(6);
     auto mixArea = rightControls.removeFromLeft(46);
     mixLabel.setBounds(mixArea.removeFromTop(12));
     mixKnob.setBounds(mixArea);
@@ -948,6 +1007,15 @@ void AIEqualizerAudioProcessorEditor::timerCallback()
 
     // Drain RT-safe logger queue on message thread (every tick, cheap)
     AIEQLogger::getInstance().flushRTLogs();
+
+    // Output level meter — feed every tick (20 Hz, smooth ballistics in LevelMeter)
+    {
+        float peakL = processor.getOutputPeakLeft();
+        float peakR = processor.getOutputPeakRight();
+        float dbL = peakL > 1e-10f ? juce::Decibels::gainToDecibels(peakL) : -100.0f;
+        float dbR = peakR > 1e-10f ? juce::Decibels::gainToDecibels(peakR) : -100.0f;
+        outputMeter.setLevels(dbL, dbR);
+    }
 
     // Spectrum - process only when audio flagged new data (every tick)
     if (processor.consumeSpectrumDataReady())

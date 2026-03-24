@@ -13,6 +13,7 @@
 #include "GUI/PremiumKnob.h"
 #include "GUI/BandViewport.h"
 #include "GUI/SemanticControlPanel.h"
+#include "GUI/LevelMeter.h"
 #include <atomic>
 #include <vector>
 
@@ -215,6 +216,10 @@ private:
         outAtt, mixAtt, sensitivityAtt, strengthAtt;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> 
         phaseModeAtt, oversamplingAtt, slopeAtt, sourceProfileAtt;
+
+    // Output level meter
+    LevelMeter outputMeter;
+    juce::Label versionLabel;
 
     uint64_t lastParameterChangeCount = 0;
     uint32_t lastBlockClampEvents = 0;
