@@ -252,7 +252,8 @@ std::vector<MLEngine::ProblemDetection> MLEngine::detectProblems(
             ProblemDetection det;
             det.type = static_cast<ProblemType>(i);
             det.confidence = prob;
-            det.severity = (prob - threshold) / (1.0f - threshold);
+            det.severity = (1.0f - threshold) > 1e-6f
+                         ? (prob - threshold) / (1.0f - threshold) : 1.0f;
             
             // Calculate frequency from network output and problem range
             const auto& range = problemFreqRanges[static_cast<size_t>(i)];

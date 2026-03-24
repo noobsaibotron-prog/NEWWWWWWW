@@ -1143,7 +1143,6 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
 
         readyIRIndex.store(-1, std::memory_order_relaxed);
         activeIRIndex.store(0, std::memory_order_relaxed);
-        pendingIRIndex = -1;
         previousIRIndex = 0;
         crossfadeSamplesRemaining = 0;
         for (auto& loaded : linearIRLoaded)

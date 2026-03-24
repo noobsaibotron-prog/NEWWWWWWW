@@ -284,6 +284,10 @@ std::vector<AdaptiveAIEngine::Transient> AdaptiveAIEngine::detectTransients(
                     }
                 }
 
+                // Guard: silent signal → skip (avoids 0 Hz transient)
+                if (maxMag < 1e-10f)
+                    continue;
+
                 transient.frequency = static_cast<float>(maxBin) * static_cast<float>(sampleRate) / static_cast<float>(fftSize);
 
                 transients.push_back(transient);

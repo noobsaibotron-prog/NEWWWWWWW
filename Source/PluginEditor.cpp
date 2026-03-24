@@ -138,14 +138,15 @@ AIEqualizerAudioProcessorEditor::AIEqualizerAudioProcessorEditor(AIEqualizerAudi
 
 AIEqualizerAudioProcessorEditor::~AIEqualizerAudioProcessorEditor()
 {
+    // Stop timer FIRST — prevents callbacks from accessing half-destroyed components
+    stopTimer();
+
     // Join analysis threads before teardown to avoid use-after-free.
-    // Threads are short-lived (single analysis pass), so this returns quickly.
     for (auto& t : analysisThreads)
         if (t.joinable()) t.join();
     analysisThreads.clear();
 
     openGLContext.detach();
-    stopTimer();
     setLookAndFeel(nullptr);
 }
 

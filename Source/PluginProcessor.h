@@ -469,7 +469,6 @@ private:
     std::array<std::unique_ptr<LinearPhaseProcessor>, 2> linearPhaseProcessors;
     std::atomic<int> activeIRIndex { 0 };
     std::atomic<int> readyIRIndex { -1 };
-    int pendingIRIndex = -1;
     std::array<std::atomic<bool>, 2> linearIRLoaded { false, false };
     int consecutiveIRReadyBlocks = 0;
     

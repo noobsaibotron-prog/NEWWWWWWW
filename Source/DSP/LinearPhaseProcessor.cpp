@@ -71,16 +71,14 @@ void LinearPhaseProcessor::process(const juce::dsp::ProcessContextReplacing<floa
 
     ensureChannels(numChannels);
 
-    const int currentActive = activeSlot.load(std::memory_order_acquire);
+    // Cache activeSlot once per block — single load for validity check + processing
+    const int cachedSlot = activeSlot.load(std::memory_order_acquire);
 
-    if (!irSlots[currentActive].valid)
+    if (!irSlots[cachedSlot].valid)
     {
         block.clear();
         return;
     }
-
-    // Cache activeSlot once per block — avoids ~48k acquire loads/sec per channel
-    const int cachedSlot = activeSlot.load(std::memory_order_acquire);
 
     for (size_t ch = 0; ch < numChannels; ++ch)
     {
