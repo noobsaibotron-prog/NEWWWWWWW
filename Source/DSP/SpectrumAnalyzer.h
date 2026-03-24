@@ -117,7 +117,8 @@ private:
     static constexpr int fifoCapacity = 32768; // headroom for max FFT size
     juce::AbstractFifo fifo { fifoCapacity };
     std::vector<float> fifoBuffer;
-    
+    std::vector<float> overlapBuffer; // For 50% overlap FFT
+
     std::atomic<int> activeBufferIndex { 0 };
     
     // Helper to get active state (GUI thread only)
@@ -125,8 +126,8 @@ private:
     inline const FFTState& getActiveState() const { return fftStates[activeStateIndex.load(std::memory_order_acquire)]; }
     
     // Smoothing & decay
-    float attackTimeMs = 5.0f;
-    float releaseTimeMs = 100.0f;
+    float attackTimeMs = 2.0f;
+    float releaseTimeMs = 50.0f;
     float attackCoeff = 0.0f;
     float releaseCoeff = 0.0f;
     std::atomic<float> smoothingFactor { 0.7f };

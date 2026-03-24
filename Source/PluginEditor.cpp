@@ -21,7 +21,19 @@ AIEqualizerAudioProcessorEditor::AIEqualizerAudioProcessorEditor(AIEqualizerAudi
     
     spectrum = std::make_unique<AdvancedSpectrumDisplay>(processor);
     addAndMakeVisible(*spectrum);
-    
+
+    // Sync display speed with saved analyzer speed parameter
+    {
+        auto* speedParam = processor.getAPVTS().getRawParameterValue("analyzerSpeed");
+        if (speedParam)
+        {
+            int spd = static_cast<int>(std::round(speedParam->load()));
+            if (spd == 0) spectrum->setSpectrumSpeed(AdvancedSpectrumDisplay::SpectrumSpeed::Fast);
+            else if (spd == 2) spectrum->setSpectrumSpeed(AdvancedSpectrumDisplay::SpectrumSpeed::Slow);
+            else spectrum->setSpectrumSpeed(AdvancedSpectrumDisplay::SpectrumSpeed::Medium);
+        }
+    }
+
     // Setup spectrum callbacks for band interaction
     spectrum->onBandSelected = [this](int bandIndex) {
         selectBand(bandIndex);
@@ -121,7 +133,7 @@ AIEqualizerAudioProcessorEditor::AIEqualizerAudioProcessorEditor(AIEqualizerAudi
     
     // FIX: 20Hz is sufficient for smooth UI and reduces risk of message thread starvation
     // in Ableton (which can freeze the DAW if the message thread is overloaded at 30Hz).
-    startTimerHz(20);
+    startTimerHz(60); // 60Hz for responsive spectrum — processFFT is lightweight with overlap
 }
 
 AIEqualizerAudioProcessorEditor::~AIEqualizerAudioProcessorEditor()
@@ -723,9 +735,18 @@ void AIEqualizerAudioProcessorEditor::showOptionsMenu()
         {
             juce::PopupMenu spd;
             const int cur = getChoice("analyzerSpeed");
-            spd.addItem(makeItem(50, "Fast", cur == 0, [=]() { setChoice("analyzerSpeed", 0); }));
-            spd.addItem(makeItem(51, "Medium", cur == 1, [=]() { setChoice("analyzerSpeed", 1); }));
-            spd.addItem(makeItem(52, "Slow", cur == 2, [=]() { setChoice("analyzerSpeed", 2); }));
+            spd.addItem(makeItem(50, "Fast", cur == 0, [=]() {
+                setChoice("analyzerSpeed", 0);
+                spectrum->setSpectrumSpeed(AdvancedSpectrumDisplay::SpectrumSpeed::Fast);
+            }));
+            spd.addItem(makeItem(51, "Medium", cur == 1, [=]() {
+                setChoice("analyzerSpeed", 1);
+                spectrum->setSpectrumSpeed(AdvancedSpectrumDisplay::SpectrumSpeed::Medium);
+            }));
+            spd.addItem(makeItem(52, "Slow", cur == 2, [=]() {
+                setChoice("analyzerSpeed", 2);
+                spectrum->setSpectrumSpeed(AdvancedSpectrumDisplay::SpectrumSpeed::Slow);
+            }));
             analyzer.addSubMenu("Speed", spd);
         }
         // Peak hold
@@ -871,11 +892,6 @@ void AIEqualizerAudioProcessorEditor::paint(juce::Graphics& g)
         g.setColour(ModernLookAndFeel::Colors::bgDark);
         g.fillRect(0.0f, static_cast<float>(headerH), w, 1.0f);
 
-        // Brand name — left side, subtle
-        g.setColour(ModernLookAndFeel::Colors::textPrimary.withAlpha(0.7f));
-        auto brandFont = juce::Font(juce::FontOptions().withHeight(11.0f));
-        brandFont.setBold(true);
-        g.setFont(brandFont);
     }
 
     // === BOTTOM CONTROL BAR (gradient + top edge) ===
@@ -890,13 +906,17 @@ void AIEqualizerAudioProcessorEditor::paint(juce::Graphics& g)
         g.setGradientFill(bottomGrad);
         g.fillRect(bottomRect);
 
-        // Top edge — accent highlight
-        g.setColour(ModernLookAndFeel::Colors::accentBlue.withAlpha(0.08f));
-        g.fillRect(0.0f, cpY, w, 1.0f);
+        // Top edge — prominent accent separator (FabFilter-style divider)
+        g.setColour(juce::Colour(0xFF0A0A10));
+        g.fillRect(0.0f, cpY - 1.0f, w, 2.0f);
+        g.setColour(ModernLookAndFeel::Colors::accentBlue.withAlpha(0.18f));
+        g.fillRect(0.0f, cpY + 1.0f, w, 1.0f);
 
-        // Separator
-        g.setColour(ModernLookAndFeel::Colors::bgDark);
-        g.fillRect(0.0f, cpY - 1.0f, w, 1.0f);
+        // Version text (bottom-right corner)
+        g.setColour(ModernLookAndFeel::Colors::textMuted.withAlpha(0.5f));
+        g.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
+        g.drawText("v2.1.1", getWidth() - 44, getHeight() - 14, 40, 12,
+                   juce::Justification::centredRight);
     }
 }
 
@@ -957,32 +977,45 @@ void AIEqualizerAudioProcessorEditor::resized()
     // === BOTTOM BAR (55px) ===
     auto bottom = bounds.removeFromBottom(controlH).reduced(4, 4);
 
-    // Band selector (left)
-    numBandsLabel.setBounds(bottom.removeFromLeft(40));
-    numBandsCombo.setBounds(bottom.removeFromLeft(50).reduced(0, 4));
-    bottom.removeFromLeft(8);
-    bandSelectCombo.setBounds(bottom.removeFromLeft(80).reduced(0, 4));
-    bottom.removeFromLeft(8);
+    // === LEFT: band selector ===
+    auto leftCtrl = bottom.removeFromLeft(200);
+    {
+        auto row1 = leftCtrl.removeFromTop(leftCtrl.getHeight() / 2);
+        auto numArea = row1.removeFromLeft(90);
+        numBandsLabel.setBounds(numArea.removeFromLeft(42));
+        numBandsCombo.setBounds(numArea.reduced(0, 4));
+        row1.removeFromLeft(6);
+        bandSelectCombo.setBounds(row1.reduced(0, 4));
+    }
 
-    // Output section (right of bottom bar) — meter + knobs
-    auto rightControls = bottom.removeFromRight(210);
-    // Version label at the very right edge
-    versionLabel.setBounds(rightControls.removeFromRight(36).reduced(0, 4));
-    rightControls.removeFromRight(2);
-    // Output level meter
-    outputMeter.setBounds(rightControls.removeFromRight(32).reduced(0, 2));
-    rightControls.removeFromRight(6);
-    auto mixArea = rightControls.removeFromLeft(46);
-    mixLabel.setBounds(mixArea.removeFromTop(12));
-    mixKnob.setBounds(mixArea);
-    rightControls.removeFromLeft(4);
-    auto outArea = rightControls.removeFromLeft(46);
-    outLabel.setBounds(outArea.removeFromTop(12));
-    outKnob.setBounds(outArea);
-    rightControls.removeFromLeft(4);
-    autoBtn.setBounds(rightControls.removeFromLeft(40).reduced(0, 8));
+    // === RIGHT: output section (meter + knobs) ===
+    auto rightControls = bottom.removeFromRight(240);
+    {
+        // Level meter — tall, visible
+        outputMeter.setBounds(rightControls.removeFromRight(36).reduced(0, 2));
+        rightControls.removeFromRight(8);
 
-    // Band detail fills center
+        // Version label below meter area
+        versionLabel.setBounds(rightControls.removeFromRight(0));  // hidden from bar, shown in paint
+        versionLabel.setVisible(false);
+
+        // Output knobs (bigger)
+        auto mixArea = rightControls.removeFromLeft(56);
+        mixLabel.setBounds(mixArea.removeFromTop(13));
+        mixKnob.setBounds(mixArea);
+        rightControls.removeFromLeft(6);
+
+        auto outArea = rightControls.removeFromLeft(56);
+        outLabel.setBounds(outArea.removeFromTop(13));
+        outKnob.setBounds(outArea);
+        rightControls.removeFromLeft(6);
+
+        autoBtn.setBounds(rightControls.removeFromLeft(44).reduced(0, 12));
+    }
+
+    // === CENTER: band detail panel ===
+    bottom.removeFromLeft(8);
+    bottom.removeFromRight(8);
     if (selectedBandPanel)
     {
         selectedBandPanel->setBounds(bottom);
@@ -1236,6 +1269,10 @@ void AIEqualizerAudioProcessorEditor::selectBand(int bandIndex)
     if (dynamicEQPanel)
         dynamicEQPanel->setBandIndex(bandIndex);
     
+    // Update EQBandControl selected state (glow on selected node)
+    for (int i = 0; i < bands.size(); ++i)
+        bands[i]->setSelected(i == bandIndex);
+
     // Update band toggle highlight
     for (size_t i = 0; i < bandToggles.size(); ++i)
     {

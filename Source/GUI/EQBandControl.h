@@ -35,6 +35,8 @@ public:
     void setParameters(const BandParameters& p) { params = p; repaint(); }
     const BandParameters& getParameters() const { return params; }
     int getBandIndex() const { return bandIndex; }
+    void setSelected(bool sel) { selected = sel; repaint(); }
+    bool isSelected() const { return selected; }
 
     void paint(juce::Graphics& g) override
     {
@@ -57,17 +59,21 @@ public:
         g.setColour(juce::Colours::black.withAlpha(0.3f));
         g.fillEllipse(cx - r + 1.5f, cy - r + 2.0f, r * 2, r * 2);
 
-        // === SELECTION RING (when hovered or dragging) ===
-        if (isMouseOver() || dragging)
+        // === SELECTION RING (selected, hovered, or dragging) ===
+        if (selected || isMouseOver() || dragging)
         {
+            float glowAlpha = selected ? 0.22f : 0.15f;
+            float midAlpha  = selected ? 0.35f : 0.25f;
+            float ringAlpha = selected ? 0.8f  : 0.6f;
+
             // Outer glow
-            g.setColour(color.withAlpha(0.15f));
+            g.setColour(color.withAlpha(glowAlpha));
             g.fillEllipse(cx - r - 8, cy - r - 8, (r + 8) * 2, (r + 8) * 2);
-            g.setColour(color.withAlpha(0.25f));
+            g.setColour(color.withAlpha(midAlpha));
             g.fillEllipse(cx - r - 5, cy - r - 5, (r + 5) * 2, (r + 5) * 2);
 
-            g.setColour(color.withAlpha(0.6f));
-            g.drawEllipse(cx - r - 3, cy - r - 3, (r + 3) * 2, (r + 3) * 2, 1.5f);
+            g.setColour(color.withAlpha(ringAlpha));
+            g.drawEllipse(cx - r - 3, cy - r - 3, (r + 3) * 2, (r + 3) * 2, selected ? 2.0f : 1.5f);
         }
 
         // === MAIN CIRCLE — gradient for 3D depth ===
@@ -187,6 +193,7 @@ private:
     BandParameters params;
     juce::Colour color;
     
+    bool selected = false;
     bool dragging = false;
     juce::Point<float> dragStart;
     float startFreq = 0, startGain = 0, startQ = 0;

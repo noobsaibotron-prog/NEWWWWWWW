@@ -69,8 +69,12 @@ public:
         for (auto* label : {&modeLabel, &thresholdLabel, &ratioLabel, 
                             &attackLabel, &releaseLabel, &rangeLabel, &kneeLabel})
         {
-            label->setColour(juce::Label::textColourId, juce::Colours::white.withAlpha(0.8f));
-            label->setFont(juce::Font(juce::FontOptions().withHeight(11.0f)));
+            label->setColour(juce::Label::textColourId, juce::Colours::white.withAlpha(0.9f));
+            {
+                auto lf = juce::Font(juce::FontOptions().withHeight(13.0f));
+                lf.setBold(true);
+                label->setFont(lf);
+            }
             label->setJustificationType(juce::Justification::centred);
             addAndMakeVisible(label);
         }
@@ -332,7 +336,7 @@ private:
         // Text
         juce::String grText = "GR: " + juce::String(currentGainReduction, 1) + " dB";
         g.setColour(juce::Colours::white);
-        g.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
+        g.setFont(juce::Font(juce::FontOptions().withHeight(11.0f)));
         g.drawText(grText, gainReductionBounds, juce::Justification::centred);
     }
     

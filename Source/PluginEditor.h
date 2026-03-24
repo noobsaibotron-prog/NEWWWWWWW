@@ -131,8 +131,8 @@ private:
     ModernLookAndFeel lookAndFeel;
     
     // Layout
-    static constexpr int headerH = 32;
-    static constexpr int controlH = 55;
+    static constexpr int headerH = 34;
+    static constexpr int controlH = 72;
     static constexpr int bandPanelH = 140;
     static constexpr int pad = 6;
     bool aiPanelVisible = false;

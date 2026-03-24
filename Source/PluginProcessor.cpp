@@ -554,7 +554,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout AIEqualizerAudioProcessor::c
         juce::ParameterID{"showPreSpectrum", 1}, "Show Pre-EQ Spectrum", true));
 
     params.push_back(std::make_unique<juce::AudioParameterBool>(
-        juce::ParameterID{"showPostSpectrum", 1}, "Show Post-EQ Spectrum", false));
+        juce::ParameterID{"showPostSpectrum", 1}, "Show Post-EQ Spectrum", true));
 
     params.push_back(std::make_unique<juce::AudioParameterBool>(
         juce::ParameterID{"showDeltaSpectrum", 1}, "Show Delta Spectrum", false));
@@ -779,6 +779,10 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     soloMonitorFilterR.reset();
     preProcessingInputCopy.setSize(getTotalNumInputChannels(), preallocatedMaxSamples, false, true, false);
     preProcessingInputCopy.clear();
+    soloOutputBuffer.setSize(getTotalNumInputChannels(), preallocatedMaxSamples, false, true, false);
+    soloOutputBuffer.clear();
+    soloWarmupBuffer.setSize(getTotalNumInputChannels(), preallocatedMaxSamples, false, true, false);
+    soloWarmupBuffer.clear();
 
     auto toResolution = [](int idx) {
         switch (idx)
@@ -1045,8 +1049,10 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
         oversamplingLatency = std::max(oversamplingLatency, static_cast<int>(oversampler4x->getLatencyInSamples()));
     if (oversampler2x)
         oversamplingLatency = std::max(oversamplingLatency, static_cast<int>(oversampler2x->getLatencyInSamples()));
-    // Include worst-case 4x oversampling latency so host never needs reconfiguration
-    // when user switches oversampling rate during playback.
+    // Report ACTUAL latency for the current mode, not worst-case.
+    // This avoids unnecessary delay compensation in ZeroLatency/NaturalPhase modes.
+    // When user switches phase mode, we update via parameterChanged().
+    // Cache worst-case for reference but report actual.
     {
         juce::dsp::Oversampling<float> tempOversampler(
             static_cast<size_t>(getTotalNumInputChannels()),
@@ -1054,11 +1060,18 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
             juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR,
             true);
         tempOversampler.reset();
-        oversamplingLatency = std::max(oversamplingLatency, static_cast<int>(tempOversampler.getLatencyInSamples()));
+        worstCaseOversamplingLatency = std::max(oversamplingLatency, static_cast<int>(tempOversampler.getLatencyInSamples()));
     }
-    worstCaseLatencySamples = std::max(linearPhaseLatency, oversamplingLatency);
-    setLatencySamples(worstCaseLatencySamples);
-    lastReportedLatency = worstCaseLatencySamples;
+    int actualLatency;
+    if (currentMode == PhaseMode::LinearPhase)
+        actualLatency = linearPhaseLatency;
+    else if (currentMode == PhaseMode::NaturalPhase)
+        actualLatency = oversamplingLatency;
+    else
+        actualLatency = 0; // ZeroLatency: truly zero
+    worstCaseLatencySamples = actualLatency;
+    setLatencySamples(actualLatency);
+    lastReportedLatency = actualLatency;
 
     // Signal that processor is ready for GUI access
     processorReady.store(true, std::memory_order_release);
@@ -1707,69 +1720,74 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
                 lastSoloQ    = soloQ;
 
                 // Warm up filter with pre-EQ input to avoid transient on enable
+                // Uses pre-allocated soloWarmupBuffer (NO heap allocation)
                 if (!wasSoloed && preProcessingInputCopy.getNumSamples() >= numSamples)
                 {
-                    // Run a few dummy blocks to prime the IIR state
-                    constexpr int warmupBlocks = 4;
-                    juce::AudioBuffer<float> warmup(preProcessingInputCopy.getNumChannels(), numSamples);
+                    constexpr int warmupBlocks = 2; // Reduced from 4 to minimize CPU spike
+                    const int warmupChs = juce::jmin(soloWarmupBuffer.getNumChannels(), preProcessingInputCopy.getNumChannels());
                     for (int wb = 0; wb < warmupBlocks; ++wb)
                     {
-                        warmup.makeCopyOf(preProcessingInputCopy);
-                        if (warmup.getNumChannels() > 0)
-                            soloMonitorFilterL.processSamples(warmup.getWritePointer(0), numSamples);
-                        if (warmup.getNumChannels() > 1)
-                            soloMonitorFilterR.processSamples(warmup.getWritePointer(1), numSamples);
+                        for (int ch = 0; ch < warmupChs; ++ch)
+                            soloWarmupBuffer.copyFrom(ch, 0, preProcessingInputCopy, ch, 0, numSamples);
+                        if (warmupChs > 0)
+                            soloMonitorFilterL.processSamples(soloWarmupBuffer.getWritePointer(0), numSamples);
+                        if (warmupChs > 1)
+                            soloMonitorFilterR.processSamples(soloWarmupBuffer.getWritePointer(1), numSamples);
                     }
                 }
 
                 soloCrossfadeRemaining = soloCrossfadeSamples;
             }
 
-            // Build solo output buffer (pre-EQ signal + bandpass)
-            juce::AudioBuffer<float> soloOut(buffer.getNumChannels(), numSamples);
+            // Build solo output using pre-allocated buffer (NO heap allocation)
+            const int soloChs = juce::jmin(soloOutputBuffer.getNumChannels(), buffer.getNumChannels());
             if (preProcessingInputCopy.getNumChannels() >= buffer.getNumChannels()
                 && preProcessingInputCopy.getNumSamples() >= numSamples)
             {
-                soloOut.makeCopyOf(preProcessingInputCopy);
-                soloOut.setSize(buffer.getNumChannels(), numSamples, true, false, true);
+                for (int ch = 0; ch < soloChs; ++ch)
+                    soloOutputBuffer.copyFrom(ch, 0, preProcessingInputCopy, ch, 0, numSamples);
             }
             else
             {
-                soloOut.makeCopyOf(buffer);
+                for (int ch = 0; ch < soloChs; ++ch)
+                    soloOutputBuffer.copyFrom(ch, 0, buffer, ch, 0, numSamples);
             }
 
-            if (soloOut.getNumChannels() > 0)
-                soloMonitorFilterL.processSamples(soloOut.getWritePointer(0), numSamples);
-            if (soloOut.getNumChannels() > 1)
-                soloMonitorFilterR.processSamples(soloOut.getWritePointer(1), numSamples);
+            if (soloChs > 0)
+                soloMonitorFilterL.processSamples(soloOutputBuffer.getWritePointer(0), numSamples);
+            if (soloChs > 1)
+                soloMonitorFilterR.processSamples(soloOutputBuffer.getWritePointer(1), numSamples);
 
-            soloOut.applyGain(juce::Decibels::decibelsToGain(soloMakeupGainDB));
+            // Apply makeup gain in-place on pre-allocated buffer
+            for (int ch = 0; ch < soloChs; ++ch)
+                juce::FloatVectorOperations::multiply(soloOutputBuffer.getWritePointer(ch),
+                    juce::Decibels::decibelsToGain(soloMakeupGainDB), numSamples);
 
             // Crossfade from wet EQ output → solo bandpass output to avoid click on enable
             if (soloCrossfadeRemaining > 0)
             {
                 const int fadeLen = juce::jmin(soloCrossfadeRemaining, numSamples);
-                for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+                for (int ch = 0; ch < soloChs; ++ch)
                 {
                     float* wet  = buffer.getWritePointer(ch);
-                    const float* dry = soloOut.getReadPointer(ch);
+                    const float* dryS = soloOutputBuffer.getReadPointer(ch);
                     for (int s = 0; s < fadeLen; ++s)
                     {
                         const float t = static_cast<float>(soloCrossfadeSamples - soloCrossfadeRemaining + s)
                                       / static_cast<float>(soloCrossfadeSamples);
-                        wet[s] = wet[s] * (1.0f - t) + dry[s] * t;
+                        wet[s] = wet[s] * (1.0f - t) + dryS[s] * t;
                     }
                     // Rest of block: pure solo
                     for (int s = fadeLen; s < numSamples; ++s)
-                        wet[s] = dry[s];
+                        wet[s] = dryS[s];
                 }
                 soloCrossfadeRemaining = juce::jmax(0, soloCrossfadeRemaining - numSamples);
             }
             else
             {
-                // Full solo — copy directly
-                for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
-                    buffer.copyFrom(ch, 0, soloOut, ch, 0, numSamples);
+                // Full solo — copy directly from pre-allocated buffer
+                for (int ch = 0; ch < soloChs; ++ch)
+                    buffer.copyFrom(ch, 0, soloOutputBuffer, ch, 0, numSamples);
             }
 
             wasSoloed = true;
@@ -1863,6 +1881,26 @@ void AIEqualizerAudioProcessor::parameterChanged(const juce::String& parameterID
             readyIRIndex.store(-1, std::memory_order_relaxed);
             crossfadeSamplesRemaining = 0;
             triggerEQCurveUpdate();
+        }
+
+        // Update reported latency to match the new phase mode
+        // This ensures DAW delay compensation is accurate
+        {
+            int newLatency = 0;
+            if (newMode == PhaseMode::LinearPhase)
+                newLatency = static_cast<int>(LinearPhaseProcessor::usePartitioned
+                    ? LinearPhaseProcessor::partSize
+                    : LinearPhaseProcessor::hopSize);
+            else if (newMode == PhaseMode::NaturalPhase)
+                newLatency = worstCaseOversamplingLatency;
+            // ZeroLatency: 0
+
+            if (newLatency != lastReportedLatency)
+            {
+                worstCaseLatencySamples = newLatency;
+                setLatencySamples(newLatency);
+                lastReportedLatency = newLatency;
+            }
         }
         return;
     }

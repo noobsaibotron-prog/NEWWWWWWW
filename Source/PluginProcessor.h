@@ -438,6 +438,8 @@ private:
     // Solo acoustic monitor (band-pass audition)
     juce::IIRFilter soloMonitorFilterL;
     juce::IIRFilter soloMonitorFilterR;
+    juce::AudioBuffer<float> soloOutputBuffer;  // Pre-allocated in prepareToPlay
+    juce::AudioBuffer<float> soloWarmupBuffer;  // Pre-allocated in prepareToPlay
     juce::AudioBuffer<float> preProcessingInputCopy;
     float lastSoloFreq  = -1.0f;   // cached to skip setCoefficients when unchanged
     float lastSoloQ     = -1.0f;
@@ -524,6 +526,7 @@ private:
     int analyzerSpeedCached = 1;
     int lastReportedLatency = 0;
     int worstCaseLatencySamples = 0;
+    int worstCaseOversamplingLatency = 0;
     int preallocatedMaxSamples = 0;
     int aiAnalysisSamples = 0;
     int aiAnalysisIntervalSamples = 0;

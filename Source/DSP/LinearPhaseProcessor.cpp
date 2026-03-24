@@ -79,6 +79,9 @@ void LinearPhaseProcessor::process(const juce::dsp::ProcessContextReplacing<floa
         return;
     }
 
+    // Cache activeSlot once per block — avoids ~48k acquire loads/sec per channel
+    const int cachedSlot = activeSlot.load(std::memory_order_acquire);
+
     for (size_t ch = 0; ch < numChannels; ++ch)
     {
         float* data = block.getChannelPointer(ch);
@@ -92,7 +95,7 @@ void LinearPhaseProcessor::process(const juce::dsp::ProcessContextReplacing<floa
             {
                 state.inputCount = 0;
 
-                const float* currentIR = irSlots[activeSlot.load(std::memory_order_acquire)].freqDomain.data();
+                const float* currentIR = irSlots[cachedSlot].freqDomain.data();
                 processOLAFrame(state, currentIR, state.outputQueue.data(), fftWorkBuf.data());
 
                 state.outputReadPos  = 0;

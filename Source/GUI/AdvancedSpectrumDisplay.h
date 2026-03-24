@@ -40,12 +40,16 @@ public:
             bandColors[i] = ModernLookAndFeel::Colors::getBandColor(i % paletteSize);
         }
         
-        // Freeze button
-        freezeButton.setButtonText("FREEZE");
-        freezeButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xFF2A2A2A));
-        freezeButton.setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xFF4A90D9));
-        freezeButton.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
-        freezeButton.setColour(juce::TextButton::textColourOnId, juce::Colours::white);
+        // Spectrum toolbar — semi-transparent buttons that blend with the display
+        auto setupToolbarBtn = [](juce::TextButton& btn, const juce::String& text) {
+            btn.setButtonText(text);
+            btn.setColour(juce::TextButton::buttonColourId, juce::Colour(0x40202030));
+            btn.setColour(juce::TextButton::buttonOnColourId, juce::Colour(0x804A90D9));
+            btn.setColour(juce::TextButton::textColourOffId, juce::Colour(0xBBD0D0D8));
+            btn.setColour(juce::TextButton::textColourOnId, juce::Colours::white);
+        };
+
+        setupToolbarBtn(freezeButton, "FREEZE");
         freezeButton.setClickingTogglesState(true);
         freezeButton.onClick = [this]() {
             isFrozen = freezeButton.getToggleState();
@@ -55,29 +59,24 @@ public:
             refreshPeaks();
         };
         addAndMakeVisible(freezeButton);
-        
-        // Capture button
-        captureButton.setButtonText("CAPTURE");
-        captureButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xFF2A2A2A));
-        captureButton.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
+
+        setupToolbarBtn(captureButton, "CAPTURE");
         captureButton.onClick = [this]() {
             capturedSpectrum = smoothedSpectrum;
             hasCaptured = true;
+            capturedPathDirty = true;
             captureButton.setButtonText("CAPTURED!");
-            startTimer(100); // Will reset button text
+            startTimer(100);
         };
         addAndMakeVisible(captureButton);
-        
-        // Show Captured toggle
+
         showCapturedButton.setButtonText("SHOW CAPT");
-        showCapturedButton.setColour(juce::ToggleButton::textColourId, juce::Colours::white);
+        showCapturedButton.setColour(juce::ToggleButton::textColourId, juce::Colour(0xBBD0D0D8));
         showCapturedButton.setColour(juce::ToggleButton::tickColourId, juce::Colour(0xFFE6A23C));
         addAndMakeVisible(showCapturedButton);
-        
-        // Clear button
-        clearButton.setButtonText("CLEAR");
-        clearButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xFF3A3A3A));
-        clearButton.setColour(juce::TextButton::textColourOffId, juce::Colours::white.withAlpha(0.7f));
+
+        setupToolbarBtn(clearButton, "CLEAR");
+        clearButton.setColour(juce::TextButton::textColourOffId, juce::Colour(0x88D0D0D8));
         clearButton.onClick = [this]() {
             hasCaptured = false;
             isFrozen = false;
@@ -100,6 +99,21 @@ public:
     // Band selection API
     void setSelectedBand(int band) { selectedBandIndex = band; repaint(); }
     int getSelectedBand() const { return selectedBandIndex; }
+
+    // Spectrum display speed (smoothing)
+    enum class SpectrumSpeed { Fast, Medium, Slow };
+
+    void setSpectrumSpeed(SpectrumSpeed speed)
+    {
+        spectrumSpeed = speed;
+        switch (speed)
+        {
+            case SpectrumSpeed::Fast:   displayReleaseCoeff = 0.40f; break;
+            case SpectrumSpeed::Medium: displayReleaseCoeff = 0.70f; break;
+            case SpectrumSpeed::Slow:   displayReleaseCoeff = 0.85f; break;
+        }
+    }
+    SpectrumSpeed getSpectrumSpeed() const { return spectrumSpeed; }
     
     //==========================================================================
     // AI Problem Highlight API - Shows detected problem on spectrum
@@ -149,7 +163,6 @@ public:
 
     void paint(juce::Graphics& g) override
     {
-        g.setImageResamplingQuality(juce::Graphics::ResamplingQuality::highResamplingQuality);
         g.reduceClipRegion(getLocalBounds());
 
         auto bounds = getLocalBounds().toFloat();
@@ -195,8 +208,9 @@ public:
         g.drawRoundedRectangle(bounds.reduced(0.5f), 4.0f, 1.0f);
     }
 
-    void resized() override 
+    void resized() override
     {
+        capturedPathDirty = true;
         auto bounds = getLocalBounds();
 
         // Buttons in top-right corner
@@ -229,7 +243,12 @@ public:
         
         if (!isFrozen) {
             updateSmoothedSpectrum();
-            refreshPeaks();
+            // Throttle peak detection to ~10Hz (every 6th frame) — avoids heap alloc every frame
+            if (++peakRefreshCounter >= 6)
+            {
+                peakRefreshCounter = 0;
+                refreshPeaks();
+            }
         }
 
         repaint();
@@ -813,12 +832,32 @@ private:
         const float holdSec = getPeakHoldSeconds();
         const float decayDbPerSec = getPeakDecayDbPerSec();
         
+        // Asymmetric display smoothing: instant attack, gentle release
+        // The DSP analyzer already does dual-time-constant smoothing,
+        // so we only add a light release-only filter here to avoid jitter.
+
+        const auto& analyzer = processor.getSpectrumAnalyzer();
+        const int fftSize = analyzer.getFFTSize();
+        const double sr = analyzer.getSampleRate();
+        const int numBins = static_cast<int>(raw.size());
+
         for (size_t i = 0; i < w; ++i)
         {
             float freq = xToFreq(graphBounds.getX() + (float)i);
-            int bin = processor.getSpectrumAnalyzer().getBinForFrequency(freq);
-            float db = (bin >= 0 && bin < (int)raw.size()) ? raw[bin] : spectrumMinDb;
-            smoothedSpectrum[i] = smoothedSpectrum[i] * 0.75f + db * 0.25f;
+            // Interpolate between adjacent FFT bins for smooth spectrum
+            float binF = freq * static_cast<float>(fftSize) / static_cast<float>(sr);
+            int bin0 = static_cast<int>(binF);
+            int bin1 = bin0 + 1;
+            float frac = binF - static_cast<float>(bin0);
+            bin0 = juce::jlimit(0, numBins - 1, bin0);
+            bin1 = juce::jlimit(0, numBins - 1, bin1);
+            float db = raw[bin0] * (1.0f - frac) + raw[bin1] * frac;
+
+            // Instant attack (new value is higher) — smooth release only
+            if (db >= smoothedSpectrum[i])
+                smoothedSpectrum[i] = db;
+            else
+                smoothedSpectrum[i] = smoothedSpectrum[i] * displayReleaseCoeff + db * (1.0f - displayReleaseCoeff);
 
             // Peak-hold tracking
             if (smoothedSpectrum[i] >= peakHold[i])
@@ -903,23 +942,30 @@ private:
         //----------------------------------------------------------------------
         if (showCaptured && !capturedSpectrum.empty())
         {
-            juce::Path capturedPath;
-            bool started = false;
-
-            for (size_t i = 0; i < capturedSpectrum.size(); ++i)
+            // Use cached dashed path to avoid expensive createDashedStroke every frame
+            if (capturedPathDirty || cachedCapturedDash.isEmpty())
             {
-                float x = graphBounds.getX() + (float)i;
-                float freq = xToFreq(x);
-                float y = dbToY(applyTilt(capturedSpectrum[i], freq));
-                if (!started) { capturedPath.startNewSubPath(x, y); started = true; }
-                else capturedPath.lineTo(x, y);
+                juce::Path capturedPath;
+                bool started = false;
+
+                for (size_t i = 0; i < capturedSpectrum.size(); ++i)
+                {
+                    float x = graphBounds.getX() + (float)i;
+                    float freq = xToFreq(x);
+                    float y = dbToY(applyTilt(capturedSpectrum[i], freq));
+                    if (!started) { capturedPath.startNewSubPath(x, y); started = true; }
+                    else capturedPath.lineTo(x, y);
+                }
+
+                cachedCapturedDash.clear();
+                float dashLengths[] = { 4.0f, 4.0f };
+                juce::PathStrokeType stroke(1.5f);
+                stroke.createDashedStroke(cachedCapturedDash, capturedPath, dashLengths, 2);
+                capturedPathDirty = false;
             }
 
             g.setColour(juce::Colour(0xFFE6A23C).withAlpha(0.6f));
-            float dashLengths[] = { 4.0f, 4.0f };
-            juce::PathStrokeType stroke(1.5f);
-            stroke.createDashedStroke(capturedPath, capturedPath, dashLengths, 2);
-            g.strokePath(capturedPath, stroke);
+            g.strokePath(cachedCapturedDash, juce::PathStrokeType(1.5f));
         }
 
         //----------------------------------------------------------------------
@@ -927,35 +973,25 @@ private:
         //----------------------------------------------------------------------
         if (isFrozen && !frozenSpectrum.empty())
         {
-            juce::Path frozenFillPath;
-            frozenFillPath.startNewSubPath(graphBounds.getX(), graphBounds.getBottom());
-
-            for (size_t i = 0; i < frozenSpectrum.size(); ++i)
+            const size_t frozenUsable = std::min(frozenSpectrum.size(),
+                static_cast<size_t>(std::max(0, (int)graphBounds.getWidth())));
+            smoothYBuffer.resize(frozenUsable);
+            for (size_t i = 0; i < frozenUsable; ++i)
             {
-                float x = graphBounds.getX() + (float)i;
-                float freq = xToFreq(x);
-                float y = dbToY(applyTilt(frozenSpectrum[i], freq));
-                frozenFillPath.lineTo(x, y);
+                float freq = xToFreq(graphBounds.getX() + static_cast<float>(i));
+                smoothYBuffer[i] = dbToY(applyTilt(frozenSpectrum[i], freq));
             }
-            frozenFillPath.lineTo(graphBounds.getRight(), graphBounds.getBottom());
-            frozenFillPath.closeSubPath();
+
+            juce::Path frozenLinePath, frozenFillPath;
+            SmoothPathBuilder::build(smoothYBuffer.data(), frozenUsable,
+                                     graphBounds.getX(), graphBounds.getBottom(),
+                                     frozenLinePath, &frozenFillPath, 3);
 
             juce::ColourGradient frozenGrad(
                 ModernLookAndFeel::Colors::accentBlue.withAlpha(0.35f), 0, graphBounds.getY(),
                 ModernLookAndFeel::Colors::accentBlue.withAlpha(0.03f), 0, graphBounds.getBottom(), false);
             g.setGradientFill(frozenGrad);
             g.fillPath(frozenFillPath);
-
-            juce::Path frozenLinePath;
-            bool started = false;
-            for (size_t i = 0; i < frozenSpectrum.size(); ++i)
-            {
-                float x = graphBounds.getX() + (float)i;
-                float freq = xToFreq(x);
-                float y = dbToY(applyTilt(frozenSpectrum[i], freq));
-                if (!started) { frozenLinePath.startNewSubPath(x, y); started = true; }
-                else frozenLinePath.lineTo(x, y);
-            }
 
             g.setColour(ModernLookAndFeel::Colors::accentBlue);
             g.strokePath(frozenLinePath, juce::PathStrokeType(2.0f));
@@ -978,24 +1014,18 @@ private:
         //----------------------------------------------------------------------
         if (showPre && usable > 4)
         {
-            juce::Path fillPath;
-            fillPath.startNewSubPath(graphBounds.getX(), graphBounds.getBottom());
-
-            juce::Path linePath;
-            bool started = false;
-
+            // Build Y-values array for smooth path builder
+            smoothYBuffer.resize(usable);
             for (size_t i = 0; i < usable; ++i)
             {
-                float x = graphBounds.getX() + (float)i;
-                float freq = xToFreq(x);
-                float y = dbToY(applyTilt(preBuffer[i], freq));
-                fillPath.lineTo(x, y);
-
-                if (!started) { linePath.startNewSubPath(x, y); started = true; }
-                else linePath.lineTo(x, y);
+                float freq = xToFreq(graphBounds.getX() + static_cast<float>(i));
+                smoothYBuffer[i] = dbToY(applyTilt(preBuffer[i], freq));
             }
-            fillPath.lineTo(graphBounds.getRight(), graphBounds.getBottom());
-            fillPath.closeSubPath();
+
+            juce::Path linePath, fillPath;
+            SmoothPathBuilder::build(smoothYBuffer.data(), usable,
+                                     graphBounds.getX(), graphBounds.getBottom(),
+                                     linePath, &fillPath, 3);
 
             juce::ColourGradient fillGrad(
                 ModernLookAndFeel::Colors::textSecondary.withAlpha(0.28f), 0, graphBounds.getY(),
@@ -1015,20 +1045,25 @@ private:
             const auto& postRaw = processor.getPostEQAnalyzer().getSmoothedSpectrum();
             if (!postRaw.empty())
             {
-                juce::Path postPath;
-                bool started = false;
-
+                smoothYBuffer.resize(usable);
+                const int postFFTSize = processor.getPostEQAnalyzer().getFFTSize();
+                const double postSR = processor.getPostEQAnalyzer().getSampleRate();
+                const int postNumBins = static_cast<int>(postRaw.size());
                 for (size_t i = 0; i < usable; ++i)
                 {
-                    float x = graphBounds.getX() + (float)i;
-                    float freq = xToFreq(x);
-                    int bin = processor.getPostEQAnalyzer().getBinForFrequency(freq);
-                    float db = (bin >= 0 && bin < (int)postRaw.size()) ? postRaw[bin] : spectrumMinDb;
-                    float y = dbToY(applyTilt(db, freq));
-
-                    if (!started) { postPath.startNewSubPath(x, y); started = true; }
-                    else postPath.lineTo(x, y);
+                    float freq = xToFreq(graphBounds.getX() + static_cast<float>(i));
+                    float binF = freq * static_cast<float>(postFFTSize) / static_cast<float>(postSR);
+                    int b0 = juce::jlimit(0, postNumBins - 1, static_cast<int>(binF));
+                    int b1 = juce::jlimit(0, postNumBins - 1, b0 + 1);
+                    float frac = binF - static_cast<float>(static_cast<int>(binF));
+                    float db = postRaw[b0] * (1.0f - frac) + postRaw[b1] * frac;
+                    smoothYBuffer[i] = dbToY(applyTilt(db, freq));
                 }
+
+                juce::Path postPath;
+                SmoothPathBuilder::build(smoothYBuffer.data(), usable,
+                                         graphBounds.getX(), graphBounds.getBottom(),
+                                         postPath, nullptr, 3);
 
                 juce::Colour front = ModernLookAndFeel::Colors::accentGreen.brighter(0.05f);
                 juce::ColourGradient postGrad(
@@ -1047,24 +1082,29 @@ private:
             const auto& postRaw = processor.getPostEQAnalyzer().getSmoothedSpectrum();
             if (!postRaw.empty() && usable > 4)
             {
-                juce::Path deltaPath;
-                bool started = false;
                 float zeroY = dbToY(0.0f);
-
+                smoothYBuffer.resize(usable);
+                const int dFFTSize = processor.getPostEQAnalyzer().getFFTSize();
+                const double dSR = processor.getPostEQAnalyzer().getSampleRate();
+                const int dNumBins = static_cast<int>(postRaw.size());
                 for (size_t i = 0; i < usable; ++i)
                 {
-                    float x = graphBounds.getX() + (float)i;
-                    float freq = xToFreq(x);
-                    int bin = processor.getPostEQAnalyzer().getBinForFrequency(freq);
-                    float postDb = (bin >= 0 && bin < (int)postRaw.size()) ? postRaw[bin] : spectrumMinDb;
+                    float freq = xToFreq(graphBounds.getX() + static_cast<float>(i));
+                    float binF = freq * static_cast<float>(dFFTSize) / static_cast<float>(dSR);
+                    int b0 = juce::jlimit(0, dNumBins - 1, static_cast<int>(binF));
+                    int b1 = juce::jlimit(0, dNumBins - 1, b0 + 1);
+                    float frac = binF - static_cast<float>(static_cast<int>(binF));
+                    float postDb = postRaw[b0] * (1.0f - frac) + postRaw[b1] * frac;
                     float preDb = preBuffer[i];
                     float delta = applyTilt(postDb, freq) - applyTilt(preDb, freq);
                     delta = juce::jlimit(-24.0f, 24.0f, delta);
-                    float y = zeroY - (delta / 24.0f) * (graphBounds.getHeight() * 0.45f);
-
-                    if (!started) { deltaPath.startNewSubPath(x, y); started = true; }
-                    else deltaPath.lineTo(x, y);
+                    smoothYBuffer[i] = zeroY - (delta / 24.0f) * (graphBounds.getHeight() * 0.45f);
                 }
+
+                juce::Path deltaPath;
+                SmoothPathBuilder::build(smoothYBuffer.data(), usable,
+                                         graphBounds.getX(), graphBounds.getBottom(),
+                                         deltaPath, nullptr, 3);
 
                 g.setColour(ModernLookAndFeel::Colors::accentCyan.withAlpha(0.8f));
                 g.strokePath(deltaPath, juce::PathStrokeType(1.6f));
@@ -1076,17 +1116,19 @@ private:
         //----------------------------------------------------------------------
         if (!peakHold.empty() && usable > 4)
         {
-            juce::Path peakPath;
-            bool started = false;
             const size_t limit = std::min(usable, peakHold.size());
+            smoothYBuffer.resize(limit);
             for (size_t i = 0; i < limit; ++i)
             {
-                float x = graphBounds.getX() + (float)i;
-                float freq = xToFreq(x);
-                float y = dbToY(applyTilt(peakHold[i], freq));
-                if (!started) { peakPath.startNewSubPath(x, y); started = true; }
-                else peakPath.lineTo(x, y);
+                float freq = xToFreq(graphBounds.getX() + static_cast<float>(i));
+                smoothYBuffer[i] = dbToY(applyTilt(peakHold[i], freq));
             }
+
+            juce::Path peakPath;
+            SmoothPathBuilder::build(smoothYBuffer.data(), limit,
+                                     graphBounds.getX(), graphBounds.getBottom(),
+                                     peakPath, nullptr, 3);
+
             g.setColour(ModernLookAndFeel::Colors::accentOrange.withAlpha(0.9f));
             g.strokePath(peakPath, juce::PathStrokeType(1.2f));
         }
@@ -1128,7 +1170,8 @@ private:
             juce::Path bandFill;
             bandFill.startNewSubPath(x1, zeroY);
 
-            for (float x = x1; x <= x2; x += 2.0f)
+            // Use coarser step (4px) to reduce IIR calls in paint thread
+            for (float x = x1; x <= x2; x += 4.0f)
             {
                 float freq = xToFreq(x);
                 float mag = eq.getMagnitudeForFrequency(static_cast<double>(freq), sr);
@@ -1164,18 +1207,18 @@ private:
             return;
 
         // === GLOW LAYER 1: Wide soft outer glow ===
-        g.setColour(juce::Colour(0xFFB0C8E8).withAlpha(0.06f));
-        g.strokePath(cachedEQCurve, juce::PathStrokeType(8.0f, juce::PathStrokeType::curved,
-                                                           juce::PathStrokeType::rounded));
-        
-        // === GLOW LAYER 2: Medium glow ===
-        g.setColour(juce::Colour(0xFFB0C8E8).withAlpha(0.12f));
-        g.strokePath(cachedEQCurve, juce::PathStrokeType(4.0f, juce::PathStrokeType::curved,
+        g.setColour(juce::Colour(0xFFB0C8E8).withAlpha(0.08f));
+        g.strokePath(cachedEQCurve, juce::PathStrokeType(12.0f, juce::PathStrokeType::curved,
                                                            juce::PathStrokeType::rounded));
 
-        // === MAIN CURVE: Bright crisp line ===
-        g.setColour(juce::Colour(0xFFD8E4F0));
-        g.strokePath(cachedEQCurve, juce::PathStrokeType(1.8f, juce::PathStrokeType::curved,
+        // === GLOW LAYER 2: Medium glow ===
+        g.setColour(juce::Colour(0xFFB0C8E8).withAlpha(0.16f));
+        g.strokePath(cachedEQCurve, juce::PathStrokeType(6.0f, juce::PathStrokeType::curved,
+                                                           juce::PathStrokeType::rounded));
+
+        // === MAIN CURVE: Bright crisp line (thicker + brighter) ===
+        g.setColour(juce::Colour(0xFFE8F0FA));
+        g.strokePath(cachedEQCurve, juce::PathStrokeType(2.5f, juce::PathStrokeType::curved,
                                                            juce::PathStrokeType::rounded));
     }
 
@@ -1315,7 +1358,7 @@ private:
         if (selectedBandIndex >= 0 && selectedBandIndex < limit)
             drawOne(selectedBandIndex);
 
-        // Tooltip for selected band
+        // Tooltip for selected band — FabFilter-style floating info panel
         if (selectedBandIndex >= 0 && selectedBandIndex < AIEqualizerAudioProcessor::maxBands)
         {
             auto state = processor.getBandState(selectedBandIndex);
@@ -1323,28 +1366,60 @@ private:
             float y = gainToY(state.gain);
 
             juce::String freqStr = state.frequency >= 1000
-                ? juce::String(state.frequency / 1000.0f, 1) + " kHz"
+                ? juce::String(state.frequency / 1000.0f, 2) + " kHz"
                 : juce::String(static_cast<int>(state.frequency)) + " Hz";
 
-            juce::String info = "Band " + juce::String(selectedBandIndex + 1) + ": " + freqStr;
-            info += "  " + juce::String(state.gain, 1) + " dB";
-            info += "  Q:" + juce::String(state.q, 1);
+            // Filter type name
+            const char* typeNames[] = { "Low Cut", "Low Shelf", "Peak", "High Shelf", "High Cut", "Notch", "Band Pass" };
+            juce::String typeName = (state.type >= 0 && state.type < 7)
+                ? typeNames[state.type] : "Peak";
 
-            int tw = 180, th = 18;
+            int tw = 150, th = 52;
             int tx = static_cast<int>(juce::jlimit(graphBounds.getX(), graphBounds.getRight() - tw, x - tw / 2));
-            int ty = static_cast<int>(y) - 35;
-            if (ty < graphBounds.getY() + 30) ty = static_cast<int>(y) + 25;
+            int ty = static_cast<int>(y) - th - 14;
+            if (ty < graphBounds.getY() + 5) ty = static_cast<int>(y) + 20;
 
-            g.setColour(ModernLookAndFeel::Colors::bgLight.withAlpha(0.95f));
+            // Drop shadow
+            g.setColour(juce::Colours::black.withAlpha(0.4f));
+            g.fillRoundedRectangle(static_cast<float>(tx + 2), static_cast<float>(ty + 2),
+                                   static_cast<float>(tw), static_cast<float>(th), 6.0f);
+
+            // Background
+            g.setColour(juce::Colour(0xF0181822));
             g.fillRoundedRectangle(static_cast<float>(tx), static_cast<float>(ty),
-                                   static_cast<float>(tw), static_cast<float>(th), 4.0f);
-            g.setColour(bandColors[static_cast<size_t>(selectedBandIndex)]);
-            g.drawRoundedRectangle(static_cast<float>(tx), static_cast<float>(ty),
-                                   static_cast<float>(tw), static_cast<float>(th), 4.0f, 1.5f);
+                                   static_cast<float>(tw), static_cast<float>(th), 6.0f);
 
-            g.setColour(ModernLookAndFeel::Colors::textBright);
+            // Band color accent bar on left
+            auto bandCol = bandColors[static_cast<size_t>(selectedBandIndex)];
+            g.setColour(bandCol);
+            g.fillRoundedRectangle(static_cast<float>(tx), static_cast<float>(ty),
+                                   3.0f, static_cast<float>(th), 6.0f);
+
+            // Border
+            g.setColour(bandCol.withAlpha(0.4f));
+            g.drawRoundedRectangle(static_cast<float>(tx), static_cast<float>(ty),
+                                   static_cast<float>(tw), static_cast<float>(th), 6.0f, 1.0f);
+
+            // Line 1: Band number + type
+            g.setColour(bandCol);
+            auto boldFont = juce::Font(juce::FontOptions().withHeight(11.0f));
+            boldFont.setBold(true);
+            g.setFont(boldFont);
+            g.drawText("Band " + juce::String(selectedBandIndex + 1) + "  " + typeName,
+                       tx + 8, ty + 4, tw - 14, 14, juce::Justification::centredLeft);
+
+            // Line 2: Freq | Gain | Q — values prominent
+            g.setColour(juce::Colours::white.withAlpha(0.95f));
+            g.setFont(juce::Font(juce::FontOptions().withHeight(13.0f)));
+            g.drawText(freqStr, tx + 8, ty + 20, 60, 14, juce::Justification::centredLeft);
+
+            juce::String gainStr = (state.gain >= 0 ? "+" : "") + juce::String(state.gain, 1) + " dB";
+            g.drawText(gainStr, tx + 60, ty + 20, 50, 14, juce::Justification::centred);
+
+            // Line 3: Q value
+            g.setColour(juce::Colours::white.withAlpha(0.6f));
             g.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
-            g.drawText(info, tx, ty, tw, th, juce::Justification::centred);
+            g.drawText("Q: " + juce::String(state.q, 2), tx + 8, ty + 36, 60, 12, juce::Justification::centredLeft);
         }
     }
     
@@ -1568,6 +1643,102 @@ public:
         return juce::jmap(p, 0.0f, 1.0f, 24.0f, -24.0f);
     }
 
+    //==========================================================================
+    // Smooth spectrum path builder — Catmull-Rom spline subsampled
+    // Instead of 1 lineTo per pixel, subsample every `step` pixels and
+    // connect with quadratic beziers for a smooth, premium look.
+    //==========================================================================
+    struct SmoothPathBuilder
+    {
+        // In-place box blur (variable radius based on position — wider at high freq)
+        static void boxBlur(float* data, size_t count, int baseRadius = 2)
+        {
+            if (count < 8 || baseRadius < 1) return;
+            std::vector<float> temp(count);
+            for (size_t i = 0; i < count; ++i)
+            {
+                // Wider blur at right side (high freq, sparser bins)
+                float t = static_cast<float>(i) / static_cast<float>(count);
+                int r = baseRadius + static_cast<int>(t * t * 6.0f); // 2..8px radius
+                int lo = static_cast<int>(i) - r;
+                int hi = static_cast<int>(i) + r;
+                if (lo < 0) lo = 0;
+                if (hi >= static_cast<int>(count)) hi = static_cast<int>(count) - 1;
+                float sum = 0.0f;
+                for (int j = lo; j <= hi; ++j)
+                    sum += data[j];
+                temp[i] = sum / static_cast<float>(hi - lo + 1);
+            }
+            std::memcpy(data, temp.data(), count * sizeof(float));
+        }
+
+        // Builds a smooth line path + optional fill path from raw Y values.
+        // yValues[i] = Y coordinate at pixel offset i from graphBounds.getX()
+        // step = pixels between control points (3-6 is good)
+        static void build(const float* yValues, size_t count,
+                          float startX, float bottomY,
+                          juce::Path& linePath, juce::Path* fillPath,
+                          int step = 4, bool applyBlur = true)
+        {
+            if (count < 4) return;
+
+            // Apply adaptive box blur to smooth staircase artifacts from FFT bins
+            if (applyBlur)
+            {
+                // We need a mutable copy — caller's buffer is reusable so this is fine
+                auto* mutable_y = const_cast<float*>(yValues);
+                boxBlur(mutable_y, count, 2);
+            }
+
+            // Collect control points by subsampling
+            struct Pt { float x, y; };
+            std::vector<Pt> pts; // small, ~200-300 pts for 1200px width
+            pts.reserve(count / static_cast<size_t>(step) + 2);
+
+            for (size_t i = 0; i < count; i += static_cast<size_t>(step))
+                pts.push_back({ startX + static_cast<float>(i), yValues[i] });
+
+            // Always include the last point
+            if (pts.back().x < startX + static_cast<float>(count - 1))
+                pts.push_back({ startX + static_cast<float>(count - 1), yValues[count - 1] });
+
+            if (pts.size() < 2) return;
+
+            // Start paths
+            linePath.startNewSubPath(pts[0].x, pts[0].y);
+            if (fillPath)
+            {
+                fillPath->startNewSubPath(startX, bottomY);
+                fillPath->lineTo(pts[0].x, pts[0].y);
+            }
+
+            // Catmull-Rom → cubic bezier conversion
+            for (size_t i = 0; i + 1 < pts.size(); ++i)
+            {
+                const auto& p0 = pts[i == 0 ? 0 : i - 1];
+                const auto& p1 = pts[i];
+                const auto& p2 = pts[i + 1];
+                const auto& p3 = pts[i + 1 < pts.size() - 1 ? i + 2 : i + 1];
+
+                // Convert Catmull-Rom to cubic bezier control points
+                float cp1x = p1.x + (p2.x - p0.x) / 6.0f;
+                float cp1y = p1.y + (p2.y - p0.y) / 6.0f;
+                float cp2x = p2.x - (p3.x - p1.x) / 6.0f;
+                float cp2y = p2.y - (p3.y - p1.y) / 6.0f;
+
+                linePath.cubicTo(cp1x, cp1y, cp2x, cp2y, p2.x, p2.y);
+                if (fillPath)
+                    fillPath->cubicTo(cp1x, cp1y, cp2x, cp2y, p2.x, p2.y);
+            }
+
+            if (fillPath)
+            {
+                fillPath->lineTo(startX + static_cast<float>(count - 1), bottomY);
+                fillPath->closeSubPath();
+            }
+        }
+    };
+
 private:
     void rebuildEQCurvePath()
     {
@@ -1649,7 +1820,15 @@ private:
     std::vector<float> capturedSpectrum;
     bool isFrozen = false;
     bool hasCaptured = false;
+
+    // Spectrum smoothing
+    SpectrumSpeed spectrumSpeed = SpectrumSpeed::Medium;
+    float displayReleaseCoeff = 0.70f; // Default: Medium (premium smooth)
     int captureTextTimer = 0;
+    int peakRefreshCounter = 0;
+    juce::Path cachedCapturedDash;
+    bool capturedPathDirty = true;
+    std::vector<float> smoothYBuffer; // Reusable Y-coord buffer for smooth path builder
     // Spectrum buffers are grown on demand; no shrinking to avoid per-frame realloc
     int draggedBandIndex = -1;
     

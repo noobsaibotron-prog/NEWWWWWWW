@@ -282,15 +282,18 @@ private:
         juce::Colour base = btn.getToggleState() ? Colors::accentBlue : Colors::bgLighter;
         if (isQualityToggle && !btn.getToggleState())
             base = base.withAlpha(0.85f);
-        if (down) base = base.darker(0.15f);
-        else if (hover) base = base.brighter(0.08f);
+        if (down) base = base.darker(0.18f);
+        else if (hover) base = base.brighter(0.15f);
 
         g.setColour(base);
         g.fillRoundedRectangle(bounds, corner);
-        
-        auto outline = btn.getToggleState() ? Colors::accentCyan.withAlpha(0.45f) : Colors::bgLighter.brighter(0.15f);
+
+        // Hover glow effect — subtle luminous border
+        auto outline = btn.getToggleState()
+            ? Colors::accentCyan.withAlpha(hover ? 0.7f : 0.45f)
+            : Colors::bgLighter.brighter(hover ? 0.35f : 0.15f);
         g.setColour(outline);
-        g.drawRoundedRectangle(bounds, corner, 1.2f);
+        g.drawRoundedRectangle(bounds, corner, hover ? 1.5f : 1.2f);
     }
 
     void drawToggleButton(juce::Graphics& g, juce::ToggleButton& btn,
