@@ -448,6 +448,11 @@ private:
     static constexpr int   soloCrossfadeSamples = 256;  // ~5ms @ 48kHz
     static constexpr float soloMakeupGainDB = 6.0f;
 
+    // Bypass crossfade state — avoids click on bypass toggle
+    bool  wasBypassed = false;
+    int   bypassCrossfadeRemaining = 0;
+    static constexpr int bypassCrossfadeSamples = 256;  // ~5ms @ 48kHz
+
     // IR build debounce: accumulate rapid drag events, rebuild only after silence
     std::atomic<int64_t> irBuildRequestedAt { 0 };    // ms timestamp of last request
     static constexpr int64_t irBuildDebounceMs = 80;  // rebuild after 80ms of no changes

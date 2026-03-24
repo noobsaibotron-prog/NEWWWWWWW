@@ -1219,24 +1219,24 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         }
     }
 
+    // Read bypass state early (needed to decide dryBuffer capture for crossfade)
+    bool bypassed = false;
+    if (cachedBypass)
+        bypassed = cachedBypass->load(std::memory_order_relaxed) > 0.5f;
+
     // Global dry/wet mix
     const float dryWetPct = loadParam(cachedDryWet, 100.0f);
     const float wet = juce::jlimit(0.0f, 100.0f, dryWetPct) * 0.01f;
     const float dry = 1.0f - wet;
     const bool needsDry = dry > 0.0001f;
-    if (needsDry)
+    const bool needsDryForBypassFade = bypassCrossfadeRemaining > 0 || (bypassed != wasBypassed);
+    if (needsDry || needsDryForBypassFade)
     {
         jassert(dryBuffer.getNumSamples() >= blockSamples);
         const int chs = juce::jmin(buffer.getNumChannels(), dryBuffer.getNumChannels());
         for (int ch = 0; ch < chs; ++ch)
             dryBuffer.copyFrom(ch, 0, buffer, ch, 0, blockSamples);
     }
-
-    // SAFETY: Use cached pointer with safe fallback (no hash map lookup in audio thread)
-    bool bypassed = false;
-    if (cachedBypass)
-        bypassed = cachedBypass->load(std::memory_order_relaxed) > 0.5f;
-    // If cached pointer is null, assume not bypassed (safe default)
     const int qualityModeParam = static_cast<int>(std::round(loadParam(cachedQualityMode, static_cast<float>(qualityModeCached))));
     const auto phaseModeSnapshot = static_cast<PhaseMode>(paramsSnapshot.phaseMode);
     const auto msModeSnapshot = static_cast<MSMode>(paramsSnapshot.msMode);
@@ -1267,12 +1267,20 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     // Process any pending AI commands from the lock-free queue
     processAICommands();
 
-    // Check bypass
-    if (bypassed)
+    // Check bypass — with crossfade to avoid clicks on toggle
+    if (bypassed != wasBypassed)
+        bypassCrossfadeRemaining = bypassCrossfadeSamples;
+    wasBypassed = bypassed;
+
+    if (bypassed && bypassCrossfadeRemaining <= 0)
     {
-        clearDynamicMeterCache(); // reset GR meters when bypassed
+        // Steady-state bypass: skip processing entirely
+        clearDynamicMeterCache();
         return;
     }
+    // If bypassed but still crossfading: fall through, process this block
+    if (bypassed)
+        clearDynamicMeterCache();
 
     // Handle quality/latency mode (adjust lookahead dynamically)
     int qualityMode = juce::jlimit(0, 1, qualityModeParam);
@@ -1711,31 +1719,45 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
             if (freqChanged || !wasSoloed)
             {
                 auto coeffs = juce::IIRCoefficients::makeBandPass(sr, soloFreq, soloQ);
-                soloMonitorFilterL.reset();
-                soloMonitorFilterR.reset();
-                soloMonitorFilterL.setCoefficients(coeffs);
-                soloMonitorFilterR.setCoefficients(coeffs);
-                lastSoloFreq = soloFreq;
-                lastSoloQ    = soloQ;
 
-                // Warm up filter with pre-EQ input to avoid transient on enable
-                // Uses pre-allocated soloWarmupBuffer (NO heap allocation)
-                if (!wasSoloed && preProcessingInputCopy.getNumSamples() >= numSamples)
+                if (!wasSoloed)
                 {
-                    constexpr int warmupBlocks = 2; // Reduced from 4 to minimize CPU spike
-                    const int warmupChs = juce::jmin(soloWarmupBuffer.getNumChannels(), preProcessingInputCopy.getNumChannels());
-                    for (int wb = 0; wb < warmupBlocks; ++wb)
+                    // First enable: reset state + warmup + crossfade
+                    soloMonitorFilterL.reset();
+                    soloMonitorFilterR.reset();
+                    soloMonitorFilterL.setCoefficients(coeffs);
+                    soloMonitorFilterR.setCoefficients(coeffs);
+
+                    // Warm up filter with pre-EQ input to avoid transient on enable
+                    if (preProcessingInputCopy.getNumSamples() >= numSamples)
                     {
-                        for (int ch = 0; ch < warmupChs; ++ch)
-                            soloWarmupBuffer.copyFrom(ch, 0, preProcessingInputCopy, ch, 0, numSamples);
-                        if (warmupChs > 0)
-                            soloMonitorFilterL.processSamples(soloWarmupBuffer.getWritePointer(0), numSamples);
-                        if (warmupChs > 1)
-                            soloMonitorFilterR.processSamples(soloWarmupBuffer.getWritePointer(1), numSamples);
+                        constexpr int warmupBlocks = 2;
+                        const int warmupChs = juce::jmin(soloWarmupBuffer.getNumChannels(), preProcessingInputCopy.getNumChannels());
+                        for (int wb = 0; wb < warmupBlocks; ++wb)
+                        {
+                            for (int ch = 0; ch < warmupChs; ++ch)
+                                soloWarmupBuffer.copyFrom(ch, 0, preProcessingInputCopy, ch, 0, numSamples);
+                            if (warmupChs > 0)
+                                soloMonitorFilterL.processSamples(soloWarmupBuffer.getWritePointer(0), numSamples);
+                            if (warmupChs > 1)
+                                soloMonitorFilterR.processSamples(soloWarmupBuffer.getWritePointer(1), numSamples);
+                        }
                     }
+
+                    soloCrossfadeRemaining = soloCrossfadeSamples;
+                }
+                else
+                {
+                    // Already soloed, freq/Q changed during drag:
+                    // Update coefficients WITHOUT resetting filter state.
+                    // The IIR state adapts naturally to the new coefficients,
+                    // avoiding the impulse/crackle caused by a hard reset.
+                    soloMonitorFilterL.setCoefficients(coeffs);
+                    soloMonitorFilterR.setCoefficients(coeffs);
                 }
 
-                soloCrossfadeRemaining = soloCrossfadeSamples;
+                lastSoloFreq = soloFreq;
+                lastSoloQ    = soloQ;
             }
 
             // Build solo output using pre-allocated buffer (NO heap allocation)
@@ -1849,6 +1871,38 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     // This is more efficient than manual sample-by-sample loop and prevents stereo image shift
     const int numSamples = buffer.getNumSamples();
     smoothedOutputGain.applyGain(buffer, numSamples);
+
+    // Bypass crossfade: blend processed+gained ↔ dry(ungained) to match steady-state behavior
+    if (bypassCrossfadeRemaining > 0)
+    {
+        const int fadeLen = juce::jmin(bypassCrossfadeRemaining, numSamples);
+        const int chs = juce::jmin(buffer.getNumChannels(), dryBuffer.getNumChannels());
+
+        for (int ch = 0; ch < chs; ++ch)
+        {
+            float* out = buffer.getWritePointer(ch);
+            const float* dry = dryBuffer.getReadPointer(ch);
+
+            for (int s = 0; s < fadeLen; ++s)
+            {
+                const float t = static_cast<float>(bypassCrossfadeSamples - bypassCrossfadeRemaining + s)
+                              / static_cast<float>(bypassCrossfadeSamples);
+                // t: 0→1.  bypassed: wet→dry.  !bypassed: dry→wet.
+                if (bypassed)
+                    out[s] = out[s] * (1.0f - t) + dry[s] * t;
+                else
+                    out[s] = dry[s] * (1.0f - t) + out[s] * t;
+            }
+
+            // After crossfade ends mid-block: rest is target signal
+            if (bypassed)
+            {
+                for (int s = fadeLen; s < numSamples; ++s)
+                    out[s] = dry[s];
+            }
+        }
+        bypassCrossfadeRemaining = juce::jmax(0, bypassCrossfadeRemaining - numSamples);
+    }
 
     // Output peak metering (lock-free, for GUI level meter)
     {
