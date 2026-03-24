@@ -3,6 +3,7 @@
 #include <juce_dsp/juce_dsp.h>
 #include <juce_audio_basics/juce_audio_basics.h>
 #include "../Core/LockFreeStructures.h"
+#include "BiquadCoefficients.h"
 #include <array>
 #include <atomic>
 
@@ -71,12 +72,13 @@ public:
     
     //==============================================================================
     // Processing state for each band (audio thread only, no sharing)
+    // Uses stack-allocated BiquadCoeffs/BiquadState — zero heap allocations
     struct BandProcessingState
     {
         static constexpr int maxFilterStages = 4;
-        std::array<juce::dsp::IIR::Filter<float>, maxFilterStages> filtersL;
-        std::array<juce::dsp::IIR::Filter<float>, maxFilterStages> filtersR;
-        std::array<juce::dsp::IIR::Coefficients<float>::Ptr, maxFilterStages> coefficients;
+        std::array<BiquadState, maxFilterStages> filtersL;
+        std::array<BiquadState, maxFilterStages> filtersR;
+        std::array<BiquadCoeffs, maxFilterStages> coefficients;
         int numActiveStages = 1;
         uint64_t lastVersion = 0;  // Track when coefficients need update
         bool prepared = false;
@@ -155,7 +157,7 @@ private:
     //==============================================================================
     void updateCoefficientsForBand(int index);
     
-    [[nodiscard]] juce::dsp::IIR::Coefficients<float>::Ptr makeCoefficients(
+    [[nodiscard]] BiquadCoeffs makeCoefficients(
         FilterType type, float freq, float gain, float q, double sampleRate) const;
     
     //==============================================================================
