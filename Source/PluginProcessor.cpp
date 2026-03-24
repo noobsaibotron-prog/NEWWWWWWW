@@ -980,7 +980,8 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     autoGainCompensation.store(0.0f, std::memory_order_relaxed);
     autoGainBlockCounter = 0;
     parametersNeedUpdate.store(true, std::memory_order_relaxed);
-    lastProcessedParameterChangeCounter = parameterChangeCounter.load(std::memory_order_relaxed);
+    lastProcessedParameterChangeCounter.store(parameterChangeCounter.load(std::memory_order_relaxed),
+                                              std::memory_order_relaxed);
 
     // FIX: Initialize smoothed output gain (50ms ramp time to prevent zippering)
     smoothedOutputGain.reset(sampleRate, 0.05);
@@ -1273,11 +1274,11 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     // Update EQ parameters only when something actually changed
     const auto currentParamCounter = parameterChangeCounter.load(std::memory_order_acquire);
     const bool needsParamUpdate = parametersNeedUpdate.exchange(false, std::memory_order_acq_rel)
-                                  || currentParamCounter != lastProcessedParameterChangeCounter;
+                                  || currentParamCounter != lastProcessedParameterChangeCounter.load(std::memory_order_relaxed);
     if (needsParamUpdate)
     {
         updateEQFromParameters();
-        lastProcessedParameterChangeCounter = currentParamCounter;
+        lastProcessedParameterChangeCounter.store(currentParamCounter, std::memory_order_relaxed);
     }
 
     // Apply smoothed band params (anti-zippering) before processing

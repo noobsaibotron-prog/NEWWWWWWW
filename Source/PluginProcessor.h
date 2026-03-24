@@ -581,7 +581,10 @@ private:
     std::atomic<bool> meterDataReady { false };
     std::atomic<bool> aiProblemsChanged { false };
     std::atomic<uint64_t> parameterChangeCounter { 0 };
-    uint64_t lastProcessedParameterChangeCounter { 0 };
+    // Atomic to prevent data race if prepareToPlay (message thread) overlaps with
+    // processBlock (audio thread) during host reconfiguration. Relaxed ordering is
+    // sufficient: the variable is effectively owned by the audio thread during processing.
+    std::atomic<uint64_t> lastProcessedParameterChangeCounter { 0 };
     std::atomic<uint64_t> irCoeffVersion { 0 };
     std::atomic<uint32_t> blockClampEvents { 0 };
     
