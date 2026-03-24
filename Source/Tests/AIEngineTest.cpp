@@ -99,14 +99,6 @@ private:
             engine.analyzeSpectrum (spec, /*force=*/true);
     }
 
-    /** Build a prepared AIEngine ready for testing. */
-    AIEngine makeReadyEngine()
-    {
-        AIEngine engine;
-        engine.prepare (kSampleRate, kBlockSize);
-        return engine;
-    }
-
     //==========================================================================
     // Helper: create a Correction with given severity and confidence
     //==========================================================================
