@@ -38,12 +38,17 @@ jobs:
         run: cmake --build build-win --config ${{ matrix.config }} --parallel
         shell: cmd
 
-      - name: Build tests
-        # Tests target links only DSP modules (no TFLite/Torch), always safe to build.
+      - name: Build DSP tests
+        # Links only DSP modules (no TFLite/Torch) — always safe to build.
         run: cmake --build build-win --config ${{ matrix.config }} --target AIEqualizerPro_Tests --parallel
         shell: cmd
 
-      - name: Run DSP regression tests
+      - name: Build AI engine tests
+        # Links AI modules only (no TFLite/Torch) — exercises AIEngine behaviour.
+        run: cmake --build build-win --config ${{ matrix.config }} --target AIEqualizerPro_AI_Tests --parallel
+        shell: cmd
+
+      - name: Run all regression tests
         working-directory: build-win
         run: ctest --build-config ${{ matrix.config }} --output-on-failure --timeout 60
         shell: cmd

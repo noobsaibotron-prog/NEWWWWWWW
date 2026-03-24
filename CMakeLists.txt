@@ -954,4 +954,51 @@ if(HAVE_JUCE)
 
     add_test(NAME aieq_dsp_regression
              COMMAND $<TARGET_FILE:AIEqualizerPro_Tests>)
+
+    # ---------------------------------------------------------------------------
+    # AI Engine tests — links AI modules only (no TFLite / Torch).
+    # Covers AIEngine behaviour, correction management, merge logic, and
+    # profile switching without requiring any ML framework to be installed.
+    # ---------------------------------------------------------------------------
+    add_executable(AIEqualizerPro_AI_Tests
+        # AI module sources — self-contained, no DSP/plugin-processor deps
+        Source/AI/AIEngine.cpp
+        Source/AI/AIEngine_Advanced.cpp
+        Source/AI/MLEngine.cpp
+        Source/AI/AdaptiveAIEngine.cpp
+        Source/AI/MultiTrackUnmasking.cpp
+        Source/AI/NeuralNetworkWrapper.cpp
+        Source/AI/OnlineLearningSystem.cpp
+        Source/AI/ReferenceMatcher.cpp
+        Source/AI/SemanticEQEngine.cpp
+        Source/AI/UserLearning.cpp
+        Source/Utils/Logger.cpp
+        # Test file and shared runner entry-point
+        Source/Tests/AIEngineTest.cpp
+        Source/Tests/TestMain.cpp
+    )
+    target_compile_features(AIEqualizerPro_AI_Tests PRIVATE cxx_std_20)
+    target_compile_definitions(AIEqualizerPro_AI_Tests PRIVATE
+        JUCE_UNIT_TESTS=1
+        JUCE_GLOBAL_MODULE_SETTINGS_INCLUDED=1
+        JUCE_STRICT_REFCOUNTEDPOINTER=1
+        JUCE_STANDALONE_APPLICATION=0
+    )
+    target_include_directories(AIEqualizerPro_AI_Tests PRIVATE
+        Source
+        Source/AI
+        Source/Core
+        Source/Utils
+    )
+    target_link_libraries(AIEqualizerPro_AI_Tests PRIVATE
+        juce::juce_core
+        juce::juce_audio_basics
+        juce::juce_audio_processors
+        juce::juce_dsp
+    )
+    set_target_properties(AIEqualizerPro_AI_Tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/Tests)
+
+    add_test(NAME aieq_ai_regression
+             COMMAND $<TARGET_FILE:AIEqualizerPro_AI_Tests>)
 endif()
