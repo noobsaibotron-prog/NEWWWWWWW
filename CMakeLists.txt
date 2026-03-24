@@ -929,6 +929,7 @@ if(HAVE_JUCE)
         Source/Tests/FuzzBlockSizeTest.cpp
         Source/Tests/LinearPhaseBehavioralTest.cpp
         Source/Tests/DynamicEQBehavioralTest.cpp
+        Source/Tests/BiquadRegressionTest.cpp
         Source/Tests/TestMain.cpp
     )
     target_compile_features(AIEqualizerPro_Tests PRIVATE cxx_std_20)

@@ -3,6 +3,7 @@
 #include <juce_dsp/juce_dsp.h>
 #include <juce_audio_basics/juce_audio_basics.h>
 #include "../Core/LockFreeStructures.h"
+#include "BiquadCoefficients.h"
 #include <array>
 #include <atomic>
 #include <cmath>
@@ -147,12 +148,12 @@ private:
     // Processing state for each band (audio thread only)
     struct BandState
     {
-        juce::dsp::IIR::Coefficients<float>::Ptr eqCoeffs;
-        juce::dsp::IIR::Coefficients<float>::Ptr scCoeffs;
-        
-        std::array<juce::dsp::IIR::Filter<float>, 2> eqFiltersL;
-        std::array<juce::dsp::IIR::Filter<float>, 2> eqFiltersR;
-        juce::dsp::IIR::Filter<float> scFilterL, scFilterR;
+        BiquadCoeffs eqCoeffs;
+        BiquadCoeffs scCoeffs;
+
+        std::array<BiquadState, 2> eqFiltersL;
+        std::array<BiquadState, 2> eqFiltersR;
+        BiquadState scFilterL, scFilterR;
         
         float envelopeL = 0.0f;
         float envelopeR = 0.0f;
@@ -184,7 +185,7 @@ private:
                                              float range) const;
     [[nodiscard]] float computeSoftKnee(float inputDb, float threshold, float ratio, float knee) const;
     
-    [[nodiscard]] juce::dsp::IIR::Coefficients<float>::Ptr makeEQCoefficients(
+    [[nodiscard]] BiquadCoeffs makeEQCoefficients(
         int filterType, float freq, float gain, float q) const;
     
     //==============================================================================

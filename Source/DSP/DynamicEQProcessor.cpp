@@ -26,11 +26,6 @@ void DynamicEQProcessor::prepare(double sampleRate, int samplesPerBlock, int cha
     currentBlockSize.store(samplesPerBlock, std::memory_order_relaxed);
     numChannels = channels;
     
-    juce::dsp::ProcessSpec spec;
-    spec.sampleRate = sampleRate;
-    spec.maximumBlockSize = static_cast<juce::uint32>(samplesPerBlock);
-    spec.numChannels = 1;
-
     // Pre-allocate dry buffer with generous headroom so process() never needs to resize.
     // 8x block size covers Reaper dynamic block sizes and any host that delivers
     // larger-than-expected blocks without hitting the RT-unsafe setSize path.
@@ -44,11 +39,11 @@ void DynamicEQProcessor::prepare(double sampleRate, int samplesPerBlock, int cha
         auto& state = bandStates[i];
         
         for (auto& filter : state.eqFiltersL)
-            filter.prepare(spec);
+            filter.reset();
         for (auto& filter : state.eqFiltersR)
-            filter.prepare(spec);
-        state.scFilterL.prepare(spec);
-        state.scFilterR.prepare(spec);
+            filter.reset();
+        state.scFilterL.reset();
+        state.scFilterR.reset();
         
         state.prepared = true;
         state.lastVersion = 0;  // Force update
@@ -267,27 +262,25 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
         smoothedSidechainQ[bandIdx].skip(numSamples);
         const float scFreqNow = smoothedSidechainFreq[bandIdx].getCurrentValue();
         const float scQNow = smoothedSidechainQ[bandIdx].getCurrentValue();
-        if (params.sidechainEnabled.load(std::memory_order_relaxed) && state.scCoeffs != nullptr)
+        if (params.sidechainEnabled.load(std::memory_order_relaxed) && state.scCoeffs.valid)
         {
             constexpr float scEps = 1e-3f;
             if (std::abs(scFreqNow - state.scFreqApplied) > scEps
                 || std::abs(scQNow - state.scQApplied) > scEps)
             {
-                const double sr = currentSampleRate.load(std::memory_order_relaxed);
-                auto newCoeffs = juce::dsp::IIR::Coefficients<float>::makeBandPass(sr, scFreqNow, scQNow);
-                if (newCoeffs != nullptr)
+                const double sr2 = currentSampleRate.load(std::memory_order_relaxed);
+                auto newCoeffs = BiquadCoeffs::makeBandPass(sr2, scFreqNow, scQNow);
+                if (newCoeffs.valid)
                 {
                     state.scCoeffs = newCoeffs;
-                    *state.scFilterL.coefficients = *state.scCoeffs;
-                    *state.scFilterR.coefficients = *state.scCoeffs;
                     state.scFreqApplied = scFreqNow;
                     state.scQApplied = scQNow;
                 }
             }
         }
-        
+
         // Skip if no valid coefficients
-        if (state.eqCoeffs == nullptr)
+        if (!state.eqCoeffs.valid)
             continue;
         
         // Read dynamic mode
@@ -332,10 +325,10 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
                 // the detector signal, which distorts the gain-reduction curve. The second filter
                 // slot in the array is reserved for future 2nd-order (12dB) filter support.
                 float scL = detectL, scR = detectR;
-                if (scEnabled && state.scCoeffs != nullptr)
+                if (scEnabled && state.scCoeffs.valid)
                 {
-                    scL = state.scFilterL.processSample(detectL);
-                    scR = state.scFilterR.processSample(detectR);
+                    scL = state.scFilterL.processSample(detectL, state.scCoeffs);
+                    scR = state.scFilterR.processSample(detectR, state.scCoeffs);
                 }
                 
                 // Calculate input level
@@ -378,8 +371,8 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
                 state.meterGainReduction.store(dynamicGainDb, std::memory_order_relaxed);
                 
                 // Apply EQ
-                float outL = state.eqFiltersL[0].processSample(inL);
-                float outR = channels > 1 ? state.eqFiltersR[0].processSample(inR) : outL;
+                float outL = state.eqFiltersL[0].processSample(inL, state.eqCoeffs);
+                float outR = channels > 1 ? state.eqFiltersR[0].processSample(inR, state.eqCoeffs) : outL;
                 
                 // Apply dynamic behavior
                 if (dynMode == DynamicMode_Compress)
@@ -427,12 +420,12 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
             
             for (int sample = 0; sample < numSamples; ++sample)
             {
-                float outL = state.eqFiltersL[0].processSample(outLPtr[sample]);
+                float outL = state.eqFiltersL[0].processSample(outLPtr[sample], state.eqCoeffs);
                 outLPtr[sample] = outL;
-                
+
                 if (channels > 1)
                 {
-                    float outR = state.eqFiltersR[0].processSample(outRPtr[sample]);
+                    float outR = state.eqFiltersR[0].processSample(outRPtr[sample], state.eqCoeffs);
                     outRPtr[sample] = outR;
                 }
             }
@@ -678,31 +671,17 @@ void DynamicEQProcessor::updateBandCoefficients(int bandIndex)
     const int filterType = params.filterType.load(std::memory_order_relaxed);
     
     state.eqCoeffs = makeEQCoefficients(filterType, freq, gain, q);
-    
-    if (state.eqCoeffs != nullptr)
-    {
-        for (auto& filter : state.eqFiltersL)
-            *filter.coefficients = *state.eqCoeffs;
-        for (auto& filter : state.eqFiltersR)
-            *filter.coefficients = *state.eqCoeffs;
-    }
-    
+
     // Update sidechain filter if enabled
     if (params.sidechainEnabled.load(std::memory_order_relaxed))
     {
         const float scFreq = params.sidechainFreq.load(std::memory_order_relaxed);
         const float scQ = params.sidechainQ.load(std::memory_order_relaxed);
         const double sr = currentSampleRate.load(std::memory_order_relaxed);
-        
-        state.scCoeffs = juce::dsp::IIR::Coefficients<float>::makeBandPass(sr, scFreq, scQ);
-        
-        if (state.scCoeffs != nullptr)
-        {
-            *state.scFilterL.coefficients = *state.scCoeffs;
-            *state.scFilterR.coefficients = *state.scCoeffs;
-            state.scFreqApplied = scFreq;
-            state.scQApplied = scQ;
-        }
+
+        state.scCoeffs = BiquadCoeffs::makeBandPass(sr, scFreq, scQ);
+        state.scFreqApplied = scFreq;
+        state.scQApplied = scQ;
     }
     
     // Update smoothed targets for dynamic parameters
@@ -737,13 +716,13 @@ void DynamicEQProcessor::updateAttackReleaseCoeffs(int bandIndex)
     state.releaseCoeff = releaseSamples > 0 ? std::exp(-1.0f / releaseSamples) : 0.0f;
 }
 
-juce::dsp::IIR::Coefficients<float>::Ptr DynamicEQProcessor::makeEQCoefficients(
+BiquadCoeffs DynamicEQProcessor::makeEQCoefficients(
     int filterType, float freq, float gain, float q) const
 {
     const double sr = currentSampleRate.load(std::memory_order_relaxed);
 
     if (sr <= 0.0)
-        return nullptr;
+        return BiquadCoeffs::makeBypass();
 
     freq = juce::jlimit(20.0f, static_cast<float>(sr * 0.499), freq);
     q    = juce::jlimit(0.1f, 40.0f, q);
@@ -751,26 +730,26 @@ juce::dsp::IIR::Coefficients<float>::Ptr DynamicEQProcessor::makeEQCoefficients(
     switch (filterType)
     {
         case 0: // LowCut
-            return juce::dsp::IIR::Coefficients<float>::makeHighPass(sr, freq, q);
+            return BiquadCoeffs::makeHighPass(sr, freq, q);
         case 1: // LowShelf
-            return juce::dsp::IIR::Coefficients<float>::makeLowShelf(
+            return BiquadCoeffs::makeLowShelf(
                 sr, freq, q, juce::Decibels::decibelsToGain(gain));
         case 2: // Peak
             if (std::abs(gain) < 0.05f)
-                return juce::dsp::IIR::Coefficients<float>::makeAllPass(sr, 20.0, 0.1);
-            return juce::dsp::IIR::Coefficients<float>::makePeakFilter(
+                return BiquadCoeffs::makeAllPass(sr, 20.0f, 0.1f);
+            return BiquadCoeffs::makePeakFilter(
                 sr, freq, q, juce::Decibels::decibelsToGain(gain));
         case 3: // HighShelf
-            return juce::dsp::IIR::Coefficients<float>::makeHighShelf(
+            return BiquadCoeffs::makeHighShelf(
                 sr, freq, q, juce::Decibels::decibelsToGain(gain));
         case 4: // HighCut
-            return juce::dsp::IIR::Coefficients<float>::makeLowPass(sr, freq, q);
+            return BiquadCoeffs::makeLowPass(sr, freq, q);
         case 5: // Notch
-            return juce::dsp::IIR::Coefficients<float>::makeNotch(sr, freq, q);
+            return BiquadCoeffs::makeNotch(sr, freq, q);
         case 6: // BandPass
-            return juce::dsp::IIR::Coefficients<float>::makeBandPass(sr, freq, q);
+            return BiquadCoeffs::makeBandPass(sr, freq, q);
         default:
-            return juce::dsp::IIR::Coefficients<float>::makeAllPass(sr, 20.0, 0.1);
+            return BiquadCoeffs::makeAllPass(sr, 20.0f, 0.1f);
     }
 }
 
@@ -784,10 +763,10 @@ float DynamicEQProcessor::getMagnitudeForFrequency(float freq, double sampleRate
             continue;
         
         const auto& state = bandStates[i];
-        if (state.eqCoeffs == nullptr)
+        if (!state.eqCoeffs.valid)
             continue;
-        
-        magnitude *= state.eqCoeffs->getMagnitudeForFrequency(freq, sampleRate);
+
+        magnitude *= state.eqCoeffs.getMagnitudeForFrequency(freq, sampleRate);
     }
     
     return static_cast<float>(magnitude);
