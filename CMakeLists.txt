@@ -1036,7 +1036,7 @@ if(HAVE_JUCE)
         Source/AI
     )
     target_link_libraries(AIEqualizerPro_IntegrationTests PRIVATE
-        AIEqualizerPro_SharedCode
+        AIEqualizerPro
         juce::juce_core
         juce::juce_audio_basics
         juce::juce_audio_processors
