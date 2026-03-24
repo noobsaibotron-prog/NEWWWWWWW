@@ -1154,6 +1154,13 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
             consecutiveIRReadyBlocks = 0;
             triggerEQCurveUpdate();
         }
+
+        // Trigger a dry→wet crossfade to cover the reset transient.
+        // Resetting oversamplers/LP processors from non-zero state causes a brief
+        // dropout (IIR filters start from zero on a live signal). The bypass crossfade
+        // mechanism already has the dry buffer capture and blend logic — reusing it
+        // here covers the reset block with a smooth fade rather than an audible gap.
+        bypassCrossfadeRemaining = bypassCrossfadeSamples;
     }
 
     // Defensive clamp: if host delivers a block bigger than we pre-allocated for
