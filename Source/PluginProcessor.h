@@ -473,14 +473,13 @@ private:
     int previousIRIndex = 0;
     alignas(64) juce::AudioBuffer<float> crossfadeBuffer;
 
-    // Pre-computed freq-domain IR handoff (builder thread → audio thread)
+    // Lock-free double-buffer for freq-domain IR handoff (builder thread -> audio thread)
     struct PendingFreqIR {
-        std::vector<float> freqDomain;   // fftSize * 2, pre-allocated
-        bool valid = false;
-        std::mutex mutex;
+        std::vector<float> buffers[2];  // Double buffer, pre-allocated in prepareToPlay
+        std::atomic<int> readyIndex { -1 };  // Index of buffer with fresh data (-1 = none)
+        std::atomic<int> writeIndex { 0 };   // Index builder is writing to
     };
     PendingFreqIR pendingFreqIR;
-    std::atomic<bool> pendingIRReady { false };
     
     //==============================================================================
     // AI Components
@@ -562,6 +561,7 @@ private:
     static constexpr size_t aiSpectrumBins = 2049; // 4096 FFT -> 2049 bins
     static constexpr size_t aiSpectrumQueueCapacity = 8;
     using AISpectrumFrame = std::array<float, aiSpectrumBins>;
+    std::vector<float> silentSpectrumBuffer;  // Pre-allocated silent spectrum for processBlock fallback
     AIEQCore::SPSCQueue<AISpectrumFrame, aiSpectrumQueueCapacity> aiSpectrumQueue;
     juce::WaitableEvent aiSpectrumEvent;
     std::thread aiAnalysisThread;
