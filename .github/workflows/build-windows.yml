@@ -1,0 +1,79 @@
+name: Build Windows
+
+on:
+  push:
+    branches:
+      - main
+      - "fix/**"
+      - "feature/**"
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    strategy:
+      matrix:
+        config: [Release]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Configure CMake (Visual Studio 2022)
+        # Use the VS 2022 generator — already supported by CMakeLists.txt.
+        # No NMake flags needed; CMakeLists.txt handles compiler detection automatically.
+        run: |
+          cmake -S . -B build-win ^
+            -G "Visual Studio 17 2022" ^
+            -A x64
+        shell: cmd
+
+      - name: Build plugin (${{ matrix.config }})
+        run: cmake --build build-win --config ${{ matrix.config }} --parallel
+        shell: cmd
+
+      - name: Build tests
+        # Tests target links only DSP modules (no TFLite/Torch), always safe to build.
+        run: cmake --build build-win --config ${{ matrix.config }} --target AIEqualizerPro_Tests --parallel
+        shell: cmd
+
+      - name: Run DSP regression tests
+        working-directory: build-win
+        run: ctest --build-config ${{ matrix.config }} --output-on-failure --timeout 60
+        shell: cmd
+
+      - name: Find VST3 artifact
+        id: find_vst3
+        shell: pwsh
+        run: |
+          $vst3 = Get-ChildItem -Path build-win -Recurse -Filter "*.vst3" -Directory | Select-Object -First 1
+          if ($vst3) {
+            $dir = $vst3.Parent.FullName
+            Write-Output "vst3_dir=$dir" >> $env:GITHUB_OUTPUT
+            Write-Output "VST3 found: $($vst3.FullName)"
+          } else {
+            Write-Output "No VST3 artifact found — checking artefacts folder..."
+            Get-ChildItem -Path build-win -Recurse | Where-Object { $_.Name -match "vst3|artefact" } | Select-Object FullName
+          }
+
+      - name: Upload VST3
+        uses: actions/upload-artifact@v4
+        if: steps.find_vst3.outputs.vst3_dir != ''
+        with:
+          name: AI-Equalizer-Pro-Windows-VST3
+          path: ${{ steps.find_vst3.outputs.vst3_dir }}/
+          if-no-files-found: warn
+
+      - name: Upload test results on failure
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: test-results-windows
+          path: build-win/Testing/
+          if-no-files-found: ignore
