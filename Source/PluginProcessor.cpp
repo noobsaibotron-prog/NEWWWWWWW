@@ -15,6 +15,22 @@ namespace
         2800.0f, 4000.0f, 5600.0f, 8000.0f, 11000.0f,15000.0f,
         18000.0f,22000.0f,26000.0f,30000.0f,34000.0f,38000.0f
     };
+
+    // M/S encoding/decoding scale factor (1 / sqrt(2))
+    // Used in both encodeStereoToMS() and decodeMSToStereo() to normalise
+    // mid and side channels to the same RMS level as the input L/R pair.
+    constexpr float kInvSqrt2 = 0.7071067811865476f;
+
+    // Band-assignment scoring constants (used in applyAICorrections and
+    // applySemanticCorrections to pick the best existing EQ band to reuse).
+    // ~1/5 octave: if an existing band is within this ratio of the target
+    // frequency it is a candidate for reuse instead of allocating a new band.
+    constexpr float kBandReuseThresholdOctave = 0.148f;
+    // Score multiplier applied to unused bands — strongly prefers free bands.
+    constexpr float kUnusedBandScoreMult = 0.3f;
+    // Score multiplier applied when a band is within reuse threshold — even
+    // stronger preference for merging near-frequency corrections.
+    constexpr float kReuseThresholdScoreMult = 0.2f;
 }
 
 //==============================================================================
@@ -2750,7 +2766,7 @@ void AIEqualizerAudioProcessor::applyAICorrections()
         float bestScore = std::numeric_limits<float>::max();
 
         const float targetFreq = scaled.frequency;
-        const float reuseThreshold = targetFreq * 0.148f; // ~1/5 octave
+        const float reuseThreshold = targetFreq * kBandReuseThresholdOctave;
 
         for (int i = 0; i < activeBands; ++i)
         {
@@ -2760,13 +2776,13 @@ void AIEqualizerAudioProcessor::applyAICorrections()
             // Prefer unused bands (much lower score)
             if (!bandUsed[i])
             {
-                score *= 0.3f;
+                score *= kUnusedBandScoreMult;
             }
 
             // Prefer bands within reuse threshold (can merge)
             if (dist < reuseThreshold)
             {
-                score *= 0.2f;  // Strong preference for reuse
+                score *= kReuseThresholdScoreMult;
             }
 
             if (score < bestScore)
@@ -2881,7 +2897,7 @@ void AIEqualizerAudioProcessor::applySingleCorrection(const AIEngine::Correction
     float bestScore = std::numeric_limits<float>::max();
 
     const float targetFreq = scaled.frequency;
-    const float reuseThreshold = targetFreq * 0.148f; // ~1/5 octave
+    const float reuseThreshold = targetFreq * kBandReuseThresholdOctave;
 
     for (int i = 0; i < activeBands; ++i)
     {
@@ -2891,13 +2907,13 @@ void AIEqualizerAudioProcessor::applySingleCorrection(const AIEngine::Correction
         // Prefer unused bands (much lower score)
         if (!bandUsed[i])
         {
-            score *= 0.3f;
+            score *= kUnusedBandScoreMult;
         }
 
         // Prefer bands within reuse threshold (can merge)
         if (dist < reuseThreshold)
         {
-            score *= 0.2f;  // Strong preference for reuse
+            score *= kReuseThresholdScoreMult;
         }
 
         if (score < bestScore)
@@ -3417,14 +3433,12 @@ void AIEqualizerAudioProcessor::encodeMidSide(juce::AudioBuffer<float>& buffer, 
     float* midTmp = msBuffer.getWritePointer(0);
     float* sideTmp = msBuffer.getWritePointer(1);
 
-    const float sqrt2Inv = 0.7071067811865476f; // 1/sqrt(2)
-
     juce::FloatVectorOperations::add(midTmp, left, right, samples);
-    juce::FloatVectorOperations::multiply(midTmp, sqrt2Inv, samples);
+    juce::FloatVectorOperations::multiply(midTmp, kInvSqrt2, samples);
 
     juce::FloatVectorOperations::copy(sideTmp, left, samples);
     juce::FloatVectorOperations::subtract(sideTmp, right, samples);
-    juce::FloatVectorOperations::multiply(sideTmp, sqrt2Inv, samples);
+    juce::FloatVectorOperations::multiply(sideTmp, kInvSqrt2, samples);
 
     buffer.copyFrom(0, 0, midTmp, samples);
     buffer.copyFrom(1, 0, sideTmp, samples);
@@ -3445,10 +3459,8 @@ void AIEqualizerAudioProcessor::decodeMidSide(juce::AudioBuffer<float>& buffer, 
     float* left = msBuffer.getWritePointer(0);
     float* right = msBuffer.getWritePointer(1);
 
-    const float sqrt2Inv = 0.7071067811865476f; // 1/sqrt(2)
-
     juce::FloatVectorOperations::add(left, mid, side, samples);
-    juce::FloatVectorOperations::multiply(left, sqrt2Inv, samples);
+    juce::FloatVectorOperations::multiply(left, kInvSqrt2, samples);
 
     juce::FloatVectorOperations::copy(right, mid, samples);
     juce::FloatVectorOperations::subtract(right, side, samples);
