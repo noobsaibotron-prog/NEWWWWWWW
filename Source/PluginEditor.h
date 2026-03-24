@@ -1,4 +1,5 @@
 #pragma once
+#include <optional>
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_opengl/juce_opengl.h>
@@ -190,9 +191,8 @@ private:
     int selectedBand = 0;
     std::unique_ptr<BandControlPanel> selectedBandPanel;
     std::atomic<bool> isAnalyzing { false };
-    // Analysis threads: stored so destructor can join them before teardown,
-    // avoiding detached threads that outlive the editor (use-after-free risk).
-    std::vector<std::thread> analysisThreads;
+    // Single analysis thread — joined before launching a new one (isAnalyzing serializes).
+    std::optional<std::thread> analysisThread;
     
     // Dynamic EQ controls
     std::unique_ptr<DynamicEQPanel> dynamicEQPanel;

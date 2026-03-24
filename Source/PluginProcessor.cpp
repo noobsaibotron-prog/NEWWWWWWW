@@ -3441,18 +3441,24 @@ void AIEqualizerAudioProcessor::setStateInformation(const void* data, int sizeIn
                 const int slotIdx = static_cast<int>(currentABState.load(std::memory_order_relaxed));
                 const bool needsIRRebuild = (currentPhaseMode.load(std::memory_order_relaxed) == PhaseMode::LinearPhase);
 
-                auto doRestore = [this, slotIdx, needsIRRebuild]()
+                // Use WeakReference to prevent use-after-free if processor is
+                // destroyed before the async callback fires (matches pattern
+                // used elsewhere in this file, e.g. lines 2391, 2717, 3076).
+                juce::WeakReference<AIEqualizerAudioProcessor> weakThis(this);
+                auto doRestore = [weakThis, slotIdx, needsIRRebuild]()
                 {
-                    if (!processorReady.load(std::memory_order_acquire))
+                    auto* self = weakThis.get();
+                    if (self == nullptr)
                         return;
-                    saveCurrentStateToSlot(static_cast<ABState>(slotIdx));
+                    if (!self->processorReady.load(std::memory_order_acquire))
+                        return;
+                    self->saveCurrentStateToSlot(static_cast<ABState>(slotIdx));
 
-                    // Bug E fix: trigger IR rebuild after state load in Linear Phase mode
                     if (needsIRRebuild)
                     {
-                        for (auto& loaded : linearIRLoaded)
+                        for (auto& loaded : self->linearIRLoaded)
                             loaded.store(false, std::memory_order_relaxed);
-                        triggerEQCurveUpdate();
+                        self->triggerEQCurveUpdate();
                     }
                 };
 

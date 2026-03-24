@@ -141,10 +141,9 @@ AIEqualizerAudioProcessorEditor::~AIEqualizerAudioProcessorEditor()
     // Stop timer FIRST — prevents callbacks from accessing half-destroyed components
     stopTimer();
 
-    // Join analysis threads before teardown to avoid use-after-free.
-    for (auto& t : analysisThreads)
-        if (t.joinable()) t.join();
-    analysisThreads.clear();
+    // Join analysis thread before teardown to avoid use-after-free.
+    if (analysisThread && analysisThread->joinable())
+        analysisThread->join();
 
     openGLContext.detach();
     setLookAndFeel(nullptr);
@@ -400,10 +399,12 @@ void AIEqualizerAudioProcessorEditor::createControlPanel()
         captureStatusLabel.setText("Analyzing...", juce::dontSendNotification);
         captureStatusLabel.setColour(juce::Label::textColourId, juce::Colours::yellow);
 
-        // Bug I fix: capture safeThis by value (not raw this) so the thread body is safe
-        // if the editor is destroyed before the thread finishes.
+        // Join previous analysis thread if still around (isAnalyzing serializes, so it's done)
+        if (analysisThread && analysisThread->joinable())
+            analysisThread->join();
+
         juce::Component::SafePointer<AIEqualizerAudioProcessorEditor> safeThis(this);
-        analysisThreads.emplace_back([safeThis]() {
+        analysisThread.emplace([safeThis]() {
             auto* ed = safeThis.getComponent();
             if (ed == nullptr) return;
 
@@ -466,9 +467,12 @@ void AIEqualizerAudioProcessorEditor::createControlPanel()
         startCaptureBtn.setEnabled(false);
         stopCaptureBtn.setEnabled(false);
 
-        // Bug I fix: capture safeThis by value so thread body is safe if editor is destroyed.
+        // Join previous analysis thread if still around
+        if (analysisThread && analysisThread->joinable())
+            analysisThread->join();
+
         juce::Component::SafePointer<AIEqualizerAudioProcessorEditor> safeThis(this);
-        analysisThreads.emplace_back([safeThis]() {
+        analysisThread.emplace([safeThis]() {
             auto* ed = safeThis.getComponent();
             if (ed == nullptr) return;
 
