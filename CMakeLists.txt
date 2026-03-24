@@ -927,7 +927,6 @@ if(HAVE_JUCE)
         Source/Tests/LinearPhaseGainRegressionTest.cpp
         Source/Tests/DynamicEQRegressionTest.cpp
         Source/Tests/FuzzBlockSizeTest.cpp
-        Source/Tests/TransitionContinuityTests.cpp
         Source/Tests/TestMain.cpp
     )
     target_compile_features(AIEqualizerPro_Tests PRIVATE cxx_std_20)
@@ -954,4 +953,44 @@ if(HAVE_JUCE)
 
     add_test(NAME aieq_dsp_regression
              COMMAND $<TARGET_FILE:AIEqualizerPro_Tests>)
+
+    # ---------------------------------------------------------------------------
+    # Integration tests — full plugin processor path via SharedCode.
+    # Covers bypass, phase mode, oversampling/pendingReset, and state regressions.
+    # ---------------------------------------------------------------------------
+    add_executable(AIEqualizerPro_IntegrationTests
+        Source/Tests/TransitionContinuityTests.cpp
+        Source/Tests/IntegrationStateTest.cpp
+        Source/Tests/BlockSizeRegressionTest.cpp
+        Source/Tests/TestMain.cpp
+    )
+    target_compile_features(AIEqualizerPro_IntegrationTests PRIVATE cxx_std_20)
+    target_compile_definitions(AIEqualizerPro_IntegrationTests PRIVATE
+        JUCE_UNIT_TESTS=1
+        JUCE_GLOBAL_MODULE_SETTINGS_INCLUDED=1
+        JUCE_STRICT_REFCOUNTEDPOINTER=1
+        JUCE_STANDALONE_APPLICATION=0
+        JucePlugin_Build_VST3=0
+        JucePlugin_Build_AU=0
+        JucePlugin_Build_Standalone=0
+    )
+    target_include_directories(AIEqualizerPro_IntegrationTests PRIVATE
+        Source
+        Source/DSP
+        Source/Core
+        Source/Utils
+        Source/AI
+    )
+    target_link_libraries(AIEqualizerPro_IntegrationTests PRIVATE
+        AIEqualizerPro_SharedCode
+        juce::juce_core
+        juce::juce_audio_basics
+        juce::juce_audio_processors
+        juce::juce_dsp
+    )
+    set_target_properties(AIEqualizerPro_IntegrationTests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/Tests)
+
+    add_test(NAME aieq_integration_regression
+             COMMAND $<TARGET_FILE:AIEqualizerPro_IntegrationTests>)
 endif()

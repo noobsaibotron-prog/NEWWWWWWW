@@ -1,339 +1,436 @@
-#if JUCE_UNIT_TESTS
-
+#include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_audio_basics/juce_audio_basics.h>
-#include <juce_dsp/juce_dsp.h>
+#include <juce_core/juce_core.h>
 #include <cmath>
-#include <functional>
 #include <vector>
 
-#include "../DSP/LinearPhaseProcessor.h"
-#include "../DSP/ParametricEQProcessor.h"
+#include "../PluginProcessor.h"
 
 namespace
 {
-constexpr double kSampleRate = 48000.0;
-constexpr int kChannels = 2;
-
 struct TransitionMetrics
 {
-    float maxAbs = 0.0f;
     float maxDelta = 0.0f;
-    float rms = 0.0f;
-    float energy = 0.0f;
+    float peakAbs = 0.0f;
+    float energyRatio = 1.0f;
     bool hasNaN = false;
     bool hasInf = false;
-    int nearZeroRun = 0;
-    int longestNearZeroRun = 0;
+    int dropoutSamples = 0; // max consecutive near-zero samples while baseline is live
 };
 
-float computeRms(const std::vector<float>& data)
+constexpr float kMaxDeltaThreshold = 0.5f;
+constexpr float kPeakAbsThreshold = 2.0f;
+constexpr float kEnergyRatioThreshold = 8.0f;
+constexpr int kMaxDropoutSamples = 10;
+
+static void setChoice(juce::AudioProcessorValueTreeState& apvts, const juce::String& id, int index)
 {
-    if (data.empty())
-        return 0.0f;
-
-    long double sum = 0.0;
-    for (float v : data)
-        sum += static_cast<long double>(v) * static_cast<long double>(v);
-
-    return std::sqrt(static_cast<float>(sum / static_cast<long double>(data.size())));
+    if (auto* p = apvts.getParameter(id))
+        p->setValueNotifyingHost(p->convertTo0to1(static_cast<float>(index)));
 }
 
-TransitionMetrics analyzeWindow(const std::vector<float>& data, int startSample, int endSample)
+static void setBool(juce::AudioProcessorValueTreeState& apvts, const juce::String& id, bool value)
+{
+    if (auto* p = apvts.getParameter(id))
+        p->setValueNotifyingHost(value ? 1.0f : 0.0f);
+}
+
+static void setFloat(juce::AudioProcessorValueTreeState& apvts, const juce::String& id, float value)
+{
+    if (auto* p = apvts.getParameter(id))
+        p->setValueNotifyingHost(p->convertTo0to1(value));
+}
+
+void fillSine(juce::AudioBuffer<float>& buf,
+              double sampleRate,
+              double freqHz = 1000.0,
+              float amplitudeLinear = 0.25f,
+              int sampleOffset = 0)
+{
+    const auto w = juce::MathConstants<double>::twoPi * freqHz / sampleRate;
+
+    for (int ch = 0; ch < buf.getNumChannels(); ++ch)
+    {
+        auto* data = buf.getWritePointer(ch);
+        for (int i = 0; i < buf.getNumSamples(); ++i)
+            data[i] = amplitudeLinear * std::sin(w * static_cast<double>(sampleOffset + i));
+    }
+}
+
+TransitionMetrics analyzeWindow(const juce::AudioBuffer<float>& buf,
+                                int startSample,
+                                int windowSamples,
+                                const juce::AudioBuffer<float>* baseline = nullptr)
 {
     TransitionMetrics metrics;
-    if (data.empty())
+
+    if (buf.getNumChannels() == 0 || buf.getNumSamples() == 0 || windowSamples <= 0)
         return metrics;
 
-    startSample = juce::jlimit(0, static_cast<int>(data.size()) - 1, startSample);
-    endSample = juce::jlimit(startSample + 1, static_cast<int>(data.size()), endSample);
+    startSample = juce::jmax(0, startSample);
+    const int endSample = juce::jmin(buf.getNumSamples(), startSample + windowSamples);
 
-    long double sumSq = 0.0;
-    int count = 0;
-    int zeroRun = 0;
-    float previous = data[static_cast<size_t>(startSample)];
+    long double switchedEnergy = 0.0;
+    long double baselineEnergy = 0.0;
+    int maxDropoutRun = 0;
 
-    for (int i = startSample; i < endSample; ++i)
+    for (int ch = 0; ch < buf.getNumChannels(); ++ch)
     {
-        const float sample = data[static_cast<size_t>(i)];
+        const auto* data = buf.getReadPointer(ch);
+        const auto* base = baseline != nullptr && ch < baseline->getNumChannels()
+                         ? baseline->getReadPointer(ch)
+                         : nullptr;
 
-        if (std::isnan(sample))
-            metrics.hasNaN = true;
-        if (std::isinf(sample))
-            metrics.hasInf = true;
+        int currentDropoutRun = 0;
+        float previous = data[startSample];
 
-        metrics.maxAbs = std::max(metrics.maxAbs, std::abs(sample));
-        if (i > startSample)
-            metrics.maxDelta = std::max(metrics.maxDelta, std::abs(sample - previous));
-
-        const float absSample = std::abs(sample);
-        if (absSample < 1.0e-6f)
+        for (int i = startSample; i < endSample; ++i)
         {
-            ++zeroRun;
-            metrics.longestNearZeroRun = std::max(metrics.longestNearZeroRun, zeroRun);
-        }
-        else
-        {
-            zeroRun = 0;
-        }
+            const float sample = data[i];
+            if (std::isnan(sample)) metrics.hasNaN = true;
+            if (std::isinf(sample)) metrics.hasInf = true;
 
-        sumSq += static_cast<long double>(sample) * static_cast<long double>(sample);
-        previous = sample;
-        ++count;
+            metrics.peakAbs = std::max(metrics.peakAbs, std::abs(sample));
+            if (i > startSample)
+                metrics.maxDelta = std::max(metrics.maxDelta, std::abs(sample - previous));
+            previous = sample;
+
+            switchedEnergy += static_cast<long double>(sample) * static_cast<long double>(sample);
+
+            const float baselineSample = base != nullptr ? base[i] : 0.0f;
+            if (base != nullptr)
+            {
+                baselineEnergy += static_cast<long double>(baselineSample) * static_cast<long double>(baselineSample);
+
+                if (std::abs(baselineSample) > 0.01f && std::abs(sample) < 1.0e-5f)
+                    ++currentDropoutRun;
+                else
+                    currentDropoutRun = 0;
+
+                maxDropoutRun = std::max(maxDropoutRun, currentDropoutRun);
+            }
+        }
     }
 
-    metrics.energy = static_cast<float>(sumSq);
-    metrics.rms = (count > 0) ? std::sqrt(static_cast<float>(sumSq / static_cast<long double>(count))) : 0.0f;
-    metrics.nearZeroRun = zeroRun;
+    metrics.dropoutSamples = maxDropoutRun;
+
+    if (baseline != nullptr)
+    {
+        const long double denom = std::max<long double>(baselineEnergy, 1.0e-12);
+        metrics.energyRatio = static_cast<float>(switchedEnergy / denom);
+    }
+
     return metrics;
 }
 
-TransitionMetrics analyzeDifferenceWindow(const std::vector<float>& baseline,
-                                          const std::vector<float>& switched,
-                                          int startSample,
-                                          int endSample)
+struct ScenarioRun
 {
-    jassert(baseline.size() == switched.size());
+    juce::AudioBuffer<float> output;
+    juce::AudioBuffer<float> input;
+};
 
-    std::vector<float> diff;
-    diff.reserve(baseline.size());
-    for (size_t i = 0; i < baseline.size(); ++i)
-        diff.push_back(switched[i] - baseline[i]);
-
-    return analyzeWindow(diff, startSample, endSample);
-}
-
-std::vector<float> renderParametricScenario(int blockSize,
-                                            int numBlocks,
-                                            int switchBlock,
-                                            const std::function<void(ParametricEQProcessor&, int)>& transition,
-                                            bool applyTransition)
+ScenarioRun runScenario(double sampleRate,
+                        int blockSize,
+                        int numBlocks,
+                        int switchBlock,
+                        const std::function<void(AIEqualizerAudioProcessor&, juce::AudioProcessorValueTreeState&, int)>& onSwitch,
+                        std::function<void(AIEqualizerAudioProcessor&, juce::AudioProcessorValueTreeState&)> setup = {})
 {
-    ParametricEQProcessor processor;
-    processor.prepare(kSampleRate, blockSize, kChannels);
+    AIEqualizerAudioProcessor proc;
+    proc.prepareToPlay(sampleRate, blockSize);
 
-    const int bandIndex = processor.addBand(1000.0f, 0.0f, 1.0f, static_cast<int>(ParametricEQProcessor::Peak));
-    processor.setBandEnabled(bandIndex, true);
-    processor.setBypass(false);
+    auto& apvts = proc.getAPVTS();
+    if (setup)
+        setup(proc, apvts);
 
-    std::vector<float> output;
-    output.reserve(static_cast<size_t>(blockSize * numBlocks));
+    ScenarioRun run { juce::AudioBuffer<float>(2, blockSize * numBlocks),
+                      juce::AudioBuffer<float>(2, blockSize * numBlocks) };
+    juce::MidiBuffer midi;
 
-    double phase = 0.0;
-    const double phaseStep = juce::MathConstants<double>::twoPi * 1000.0 / kSampleRate;
-
-    for (int blockIndex = 0; blockIndex < numBlocks; ++blockIndex)
+    for (int block = 0; block < numBlocks; ++block)
     {
-        if (applyTransition && blockIndex == switchBlock)
-            transition(processor, bandIndex);
+        juce::AudioBuffer<float> chunk(2, blockSize);
+        fillSine(chunk, sampleRate, 1000.0, 0.25f, block * blockSize);
 
-        juce::AudioBuffer<float> buffer(kChannels, blockSize);
-        for (int ch = 0; ch < kChannels; ++ch)
-        {
-            auto* data = buffer.getWritePointer(ch);
-            double localPhase = phase;
-            for (int i = 0; i < blockSize; ++i)
-            {
-                data[i] = 0.25f * std::sin(static_cast<float>(localPhase));
-                localPhase += phaseStep;
-            }
-        }
+        for (int ch = 0; ch < chunk.getNumChannels(); ++ch)
+            run.input.copyFrom(ch, block * blockSize, chunk, ch, 0, blockSize);
 
-        phase += phaseStep * static_cast<double>(blockSize);
-        processor.process(buffer);
+        if (block == switchBlock && onSwitch)
+            onSwitch(proc, apvts, block);
 
-        const auto* read = buffer.getReadPointer(0);
-        output.insert(output.end(), read, read + blockSize);
+        proc.processBlock(chunk, midi);
+
+        for (int ch = 0; ch < chunk.getNumChannels(); ++ch)
+            run.output.copyFrom(ch, block * blockSize, chunk, ch, 0, blockSize);
     }
 
-    return output;
+    proc.releaseResources();
+    return run;
 }
 
-std::vector<float> renderLinearPhaseScenario(int blockSize,
-                                             int numBlocks,
-                                             int switchBlock,
-                                             const std::function<void(LinearPhaseProcessor&)>& transition,
-                                             bool applyTransition)
+void configureProcessing(AIEqualizerAudioProcessor& proc,
+                         juce::AudioProcessorValueTreeState& apvts,
+                         int phaseMode,
+                         int oversamplingFactor = 0)
 {
-    LinearPhaseProcessor processor;
-    juce::dsp::ProcessSpec spec;
-    spec.sampleRate = kSampleRate;
-    spec.maximumBlockSize = static_cast<juce::uint32>(blockSize);
-    spec.numChannels = kChannels;
-    processor.prepare(spec);
+    proc.setNumActiveBands(1);
+    AIEqualizerAudioProcessor::BandState band;
+    band.frequency = 1000.0f;
+    band.gain = 6.0f;
+    band.q = 1.0f;
+    band.type = static_cast<int>(ParametricEQProcessor::Peak);
+    band.enabled = true;
+    band.solo = false;
+    proc.setBandState(0, band);
 
-    std::vector<float> unity(LinearPhaseProcessor::fftSize / 2, 0.0f);
-    processor.updateImpulseResponse(unity, kSampleRate);
+    setChoice(apvts, "numActiveBands", 0);
+    setBool(apvts, "bypass", false);
+    setFloat(apvts, "dryWet", 100.0f);
+    setFloat(apvts, "outputGain", 0.0f);
+    setChoice(apvts, "qualityMode", 1);
+    setChoice(apvts, "msMode", 0);
+    setChoice(apvts, "phaseMode", phaseMode);
+    setChoice(apvts, "oversamplingFactor", oversamplingFactor);
+}
 
-    std::vector<float> output;
-    output.reserve(static_cast<size_t>(blockSize * numBlocks));
+void expectMetrics(juce::UnitTest& test, const TransitionMetrics& metrics, const juce::String& label)
+{
+    test.expect(!metrics.hasNaN, label + ": NaN detected");
+    test.expect(!metrics.hasInf, label + ": Inf detected");
+    test.expect(metrics.maxDelta < kMaxDeltaThreshold,
+                label + ": maxDelta too high = " + juce::String(metrics.maxDelta, 4));
+    test.expect(metrics.peakAbs < kPeakAbsThreshold,
+                label + ": peakAbs too high = " + juce::String(metrics.peakAbs, 4));
+    test.expect(metrics.energyRatio < kEnergyRatioThreshold,
+                label + ": energyRatio too high = " + juce::String(metrics.energyRatio, 4));
+    test.expect(metrics.dropoutSamples <= kMaxDropoutSamples,
+                label + ": dropoutSamples too high = " + juce::String(metrics.dropoutSamples));
+}
 
-    double phase = 0.0;
-    const double phaseStep = juce::MathConstants<double>::twoPi * 440.0 / kSampleRate;
-
-    for (int blockIndex = 0; blockIndex < numBlocks; ++blockIndex)
+float maxDifferenceVsInputAfter(const juce::AudioBuffer<float>& output,
+                                const juce::AudioBuffer<float>& input,
+                                int startSample)
+{
+    float maxDiff = 0.0f;
+    for (int ch = 0; ch < output.getNumChannels(); ++ch)
     {
-        if (applyTransition && blockIndex == switchBlock)
-            transition(processor);
-
-        juce::AudioBuffer<float> buffer(kChannels, blockSize);
-        for (int ch = 0; ch < kChannels; ++ch)
-        {
-            auto* data = buffer.getWritePointer(ch);
-            double localPhase = phase;
-            for (int i = 0; i < blockSize; ++i)
-            {
-                data[i] = 0.2f * std::sin(static_cast<float>(localPhase));
-                localPhase += phaseStep;
-            }
-        }
-
-        phase += phaseStep * static_cast<double>(blockSize);
-
-        juce::dsp::AudioBlock<float> block(buffer);
-        juce::dsp::ProcessContextReplacing<float> context(block);
-        processor.process(context);
-
-        const auto* read = buffer.getReadPointer(0);
-        output.insert(output.end(), read, read + blockSize);
+        const auto* out = output.getReadPointer(ch);
+        const auto* in = input.getReadPointer(ch);
+        for (int i = startSample; i < output.getNumSamples(); ++i)
+            maxDiff = std::max(maxDiff, std::abs(out[i] - in[i]));
     }
-
-    return output;
+    return maxDiff;
 }
 } // namespace
 
-class TransitionContinuityTests : public juce::UnitTest
+class OversamplingResetRegressionTest : public juce::UnitTest
 {
 public:
-    TransitionContinuityTests()
-        : juce::UnitTest("TransitionContinuityTests", "DSP") {}
+    OversamplingResetRegressionTest() : juce::UnitTest("Oversampling Reset Transition", "Regression") {}
 
     void runTest() override
     {
-        testParametricBypassIdentityTransition();
-        testLinearPhaseIRSwapContinuity();
-        testLinearPhaseResetContinuity();
-    }
+        auto* mm = juce::MessageManager::getInstance();
+        juce::ignoreUnused(mm);
 
-private:
-    void testParametricBypassIdentityTransition()
-    {
-        beginTest("Parametric bypass identity transition stays continuous");
+        const std::array<double, 2> sampleRates { 44100.0, 48000.0 };
+        const std::array<int, 3> blockSizes { 32, 64, 128 };
+        const std::array<std::pair<int, int>, 3> transitions { std::pair{0, 2}, std::pair{2, 1}, std::pair{1, 0} };
 
-        constexpr int blockSize = 128;
-        constexpr int numBlocks = 20;
-        constexpr int switchBlock = 8;
-        const int switchSample = blockSize * switchBlock;
-        const int windowRadius = blockSize;
+        constexpr int numBlocks = 100;
+        constexpr int switchBlock = 50;
 
-        auto baseline = renderParametricScenario(
-            blockSize, numBlocks, switchBlock,
-            [](ParametricEQProcessor&, int) {},
-            false);
-
-        auto switched = renderParametricScenario(
-            blockSize, numBlocks, switchBlock,
-            [](ParametricEQProcessor& processor, int bandIndex)
+        for (double sr : sampleRates)
+        {
+            for (int blockSize : blockSizes)
             {
-                juce::ignoreUnused(bandIndex);
-                processor.setBypass(true);
-            },
-            true);
+                for (auto [from, to] : transitions)
+                {
+                    beginTest("OS " + juce::String(from) + " -> " + juce::String(to)
+                              + " @ " + juce::String(sr, 0) + " Hz / block " + juce::String(blockSize));
 
-        auto diffMetrics = analyzeDifferenceWindow(baseline, switched,
-                                                   switchSample - windowRadius,
-                                                   switchSample + windowRadius);
+                    auto setup = [from](AIEqualizerAudioProcessor& proc, juce::AudioProcessorValueTreeState& apvts)
+                    {
+                        configureProcessing(proc, apvts, 1, from); // Natural phase path
+                    };
 
-        expect(!diffMetrics.hasNaN, "Bypass transition produced NaN values");
-        expect(!diffMetrics.hasInf, "Bypass transition produced Inf values");
-        expect(diffMetrics.maxDelta < 1.0e-4f,
-               "Identity bypass transition should be effectively sample-continuous");
-        expect(diffMetrics.maxAbs < 1.0e-4f,
-               "Identity bypass transition should not alter the rendered signal");
-    }
+                    auto baseline = runScenario(sr, blockSize, numBlocks, switchBlock,
+                                                {}, setup);
 
-    void testLinearPhaseIRSwapContinuity()
-    {
-        beginTest("Linear-phase IR hot-swap stays bounded around transition");
+                    auto switched = runScenario(sr, blockSize, numBlocks, switchBlock,
+                                                [to](AIEqualizerAudioProcessor&, juce::AudioProcessorValueTreeState& apvts, int)
+                                                {
+                                                    setChoice(apvts, "oversamplingFactor", to);
+                                                },
+                                                setup);
 
-        constexpr int blockSize = 256;
-        constexpr int numBlocks = 40;
-        constexpr int switchBlock = 14;
-        const int switchSample = blockSize * switchBlock;
-        const int windowRadius = blockSize * 2;
-
-        auto baseline = renderLinearPhaseScenario(
-            blockSize, numBlocks, switchBlock,
-            [](LinearPhaseProcessor&) {},
-            false);
-
-        auto switched = renderLinearPhaseScenario(
-            blockSize, numBlocks, switchBlock,
-            [](LinearPhaseProcessor& processor)
-            {
-                std::vector<float> boost(LinearPhaseProcessor::fftSize / 2, 0.0f);
-                std::fill(boost.begin(), boost.end(), 3.0f);
-                processor.updateImpulseResponse(boost, kSampleRate);
-            },
-            true);
-
-        auto switchedMetrics = analyzeWindow(switched,
-                                             switchSample - windowRadius,
-                                             switchSample + windowRadius);
-        auto diffMetrics = analyzeDifferenceWindow(baseline, switched,
-                                                   switchSample - windowRadius,
-                                                   switchSample + windowRadius);
-
-        expect(!switchedMetrics.hasNaN, "IR swap produced NaN values");
-        expect(!switchedMetrics.hasInf, "IR swap produced Inf values");
-        expect(switchedMetrics.longestNearZeroRun < blockSize / 2,
-               "IR swap caused a suspicious near-silent dropout window");
-        expect(diffMetrics.maxDelta < 0.25f,
-               "IR hot-swap caused an excessive single-sample jump");
-        expect(diffMetrics.maxAbs < 0.5f,
-               "IR hot-swap difference burst is too large around the transition");
-    }
-
-    void testLinearPhaseResetContinuity()
-    {
-        beginTest("Linear-phase reset during playback remains finite and bounded");
-
-        constexpr int blockSize = 128;
-        constexpr int numBlocks = 36;
-        constexpr int switchBlock = 12;
-        const int switchSample = blockSize * switchBlock;
-        const int windowRadius = blockSize * 2;
-
-        auto baseline = renderLinearPhaseScenario(
-            blockSize, numBlocks, switchBlock,
-            [](LinearPhaseProcessor&) {},
-            false);
-
-        auto switched = renderLinearPhaseScenario(
-            blockSize, numBlocks, switchBlock,
-            [](LinearPhaseProcessor& processor)
-            {
-                processor.reset();
-            },
-            true);
-
-        auto switchedMetrics = analyzeWindow(switched,
-                                             switchSample - windowRadius,
-                                             switchSample + windowRadius);
-        auto diffMetrics = analyzeDifferenceWindow(baseline, switched,
-                                                   switchSample - windowRadius,
-                                                   switchSample + windowRadius);
-
-        expect(!switchedMetrics.hasNaN, "Reset transition produced NaN values");
-        expect(!switchedMetrics.hasInf, "Reset transition produced Inf values");
-        expect(switchedMetrics.maxAbs < 1.0f,
-               "Reset transition produced an abnormally large output peak");
-        expect(diffMetrics.maxDelta < 0.35f,
-               "Reset transition produced an excessive sample jump");
-        expect(diffMetrics.maxAbs < 0.75f,
-               "Reset transition produced an excessive burst against baseline");
+                    const int start = juce::jmax(0, switchBlock * blockSize - 256);
+                    const int window = juce::jmin(switched.output.getNumSamples() - start,
+                                                  10 * blockSize + 256);
+                    auto metrics = analyzeWindow(switched.output, start, window, &baseline.output);
+                    expectMetrics(*this, metrics, "Oversampling transition");
+                }
+            }
+        }
     }
 };
 
-static TransitionContinuityTests transitionContinuityTests;
+class PhaseModeSwitchContinuityTest : public juce::UnitTest
+{
+public:
+    PhaseModeSwitchContinuityTest() : juce::UnitTest("Phase Mode Switch Continuity", "Regression") {}
 
-#endif // JUCE_UNIT_TESTS
+    void runTest() override
+    {
+        auto* mm = juce::MessageManager::getInstance();
+        juce::ignoreUnused(mm);
+
+        const std::array<std::pair<int, int>, 4> transitions { std::pair{0, 1}, std::pair{1, 0}, std::pair{0, 2}, std::pair{2, 0} };
+        constexpr double sampleRate = 48000.0;
+        constexpr int blockSize = 128;
+        constexpr int numBlocks = 100;
+        constexpr int switchBlock = 50;
+
+        for (auto [from, to] : transitions)
+        {
+            beginTest("Phase mode " + juce::String(from) + " -> " + juce::String(to));
+
+            auto setup = [from](AIEqualizerAudioProcessor& proc, juce::AudioProcessorValueTreeState& apvts)
+            {
+                configureProcessing(proc, apvts, from, 1);
+            };
+
+            auto baseline = runScenario(sampleRate, blockSize, numBlocks, switchBlock, {}, setup);
+
+            AIEqualizerAudioProcessor latencyProbe;
+            latencyProbe.prepareToPlay(sampleRate, blockSize);
+            auto& latencyAPVTS = latencyProbe.getAPVTS();
+            configureProcessing(latencyProbe, latencyAPVTS, from, 1);
+            setChoice(latencyAPVTS, "phaseMode", to);
+            expect(latencyProbe.getLatencySamples() >= 0, "Latency must remain non-negative after phase switch");
+            latencyProbe.releaseResources();
+
+            auto switched = runScenario(sampleRate, blockSize, numBlocks, switchBlock,
+                                        [to](AIEqualizerAudioProcessor&, juce::AudioProcessorValueTreeState& apvts, int)
+                                        {
+                                            setChoice(apvts, "phaseMode", to);
+                                        },
+                                        setup);
+
+            const int start = juce::jmax(0, switchBlock * blockSize - 256);
+            const int window = juce::jmin(switched.output.getNumSamples() - start,
+                                          10 * blockSize + 256);
+            auto metrics = analyzeWindow(switched.output, start, window, &baseline.output);
+            expectMetrics(*this, metrics, "Phase mode switch");
+        }
+    }
+};
+
+class BypassTransitionContinuityTest : public juce::UnitTest
+{
+public:
+    BypassTransitionContinuityTest() : juce::UnitTest("Bypass Transition Continuity", "Regression") {}
+
+    void runTest() override
+    {
+        auto* mm = juce::MessageManager::getInstance();
+        juce::ignoreUnused(mm);
+
+        const std::array<double, 2> sampleRates { 44100.0, 48000.0 };
+        const std::array<int, 3> blockSizes { 64, 128, 512 };
+
+        for (double sr : sampleRates)
+        {
+            for (int blockSize : blockSizes)
+            {
+                runOneScenario("active -> bypass", sr, blockSize,
+                               [](AIEqualizerAudioProcessor&, juce::AudioProcessorValueTreeState& apvts, int)
+                               {
+                                   setBool(apvts, "bypass", true);
+                               },
+                               true);
+
+                runOneScenario("bypass -> active", sr, blockSize,
+                               [](AIEqualizerAudioProcessor&, juce::AudioProcessorValueTreeState& apvts, int)
+                               {
+                                   setBool(apvts, "bypass", false);
+                               },
+                               false,
+                               true);
+
+                runRapidToggle(sr, blockSize);
+            }
+        }
+    }
+
+private:
+    void runOneScenario(const juce::String& label,
+                        double sampleRate,
+                        int blockSize,
+                        const std::function<void(AIEqualizerAudioProcessor&, juce::AudioProcessorValueTreeState&, int)>& onSwitch,
+                        bool expectDryIdentityAfterSwitch,
+                        bool startBypassed = false)
+    {
+        beginTest(label + " @ " + juce::String(sampleRate, 0) + " Hz / block " + juce::String(blockSize));
+
+        constexpr int numBlocks = 80;
+        constexpr int switchBlock = 30;
+
+        auto setup = [startBypassed](AIEqualizerAudioProcessor& proc, juce::AudioProcessorValueTreeState& apvts)
+        {
+            configureProcessing(proc, apvts, 0, 0);
+            setBool(apvts, "bypass", startBypassed);
+        };
+
+        auto baseline = runScenario(sampleRate, blockSize, numBlocks, switchBlock, {}, setup);
+        auto switched = runScenario(sampleRate, blockSize, numBlocks, switchBlock, onSwitch, setup);
+
+        const int start = juce::jmax(0, switchBlock * blockSize - 256);
+        const int window = juce::jmin(switched.output.getNumSamples() - start,
+                                      10 * blockSize + 256);
+        auto metrics = analyzeWindow(switched.output, start, window, &baseline.output);
+        expectMetrics(*this, metrics, label);
+
+        if (expectDryIdentityAfterSwitch)
+        {
+            const int settleStart = juce::jmin(switched.output.getNumSamples(), (switchBlock + 4) * blockSize);
+            const float maxDiff = maxDifferenceVsInputAfter(switched.output, switched.input, settleStart);
+            expect(maxDiff < 1.0e-4f,
+                   "Bypass output should match dry input after settle window, maxDiff=" + juce::String(maxDiff, 6));
+        }
+    }
+
+    void runRapidToggle(double sampleRate, int blockSize)
+    {
+        beginTest("rapid toggle @ " + juce::String(sampleRate, 0) + " Hz / block " + juce::String(blockSize));
+
+        constexpr int numBlocks = 80;
+        constexpr int switchBlock = 30;
+
+        auto setup = [](AIEqualizerAudioProcessor& proc, juce::AudioProcessorValueTreeState& apvts)
+        {
+            configureProcessing(proc, apvts, 0, 0);
+            setBool(apvts, "bypass", false);
+        };
+
+        auto baseline = runScenario(sampleRate, blockSize, numBlocks, switchBlock, {}, setup);
+        auto switched = runScenario(sampleRate, blockSize, numBlocks, switchBlock,
+                                    [](AIEqualizerAudioProcessor&, juce::AudioProcessorValueTreeState& apvts, int block)
+                                    {
+                                        if (block == 30) setBool(apvts, "bypass", true);
+                                        if (block == 33) setBool(apvts, "bypass", false);
+                                        if (block == 36) setBool(apvts, "bypass", true);
+                                    },
+                                    setup);
+
+        const int start = juce::jmax(0, switchBlock * blockSize - 256);
+        const int window = juce::jmin(switched.output.getNumSamples() - start,
+                                      10 * blockSize + 256);
+        auto metrics = analyzeWindow(switched.output, start, window, &baseline.output);
+        expectMetrics(*this, metrics, "rapid toggle");
+    }
+};
+
+static OversamplingResetRegressionTest oversamplingResetRegressionTest;
+static PhaseModeSwitchContinuityTest phaseModeSwitchContinuityTest;
+static BypassTransitionContinuityTest bypassTransitionContinuityTest;
