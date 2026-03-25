@@ -438,7 +438,7 @@ private:
     alignas(64) juce::AudioBuffer<float> oversamplingTransitionBuffer;
     std::atomic<int> phaseTransitionFromMode { -1 };
     std::atomic<int> phaseTransitionSamplesRemaining { 0 };
-    static constexpr int phaseTransitionCrossfadeSamples = 256; // ~5ms @ 48kHz
+    static constexpr int phaseTransitionCrossfadeSamples = 1024; // ~21ms @ 48kHz — longer fade needed for LP/Natural IIR state divergence
     std::atomic<int> oversamplingTransitionFromEffective { -1 };
     std::atomic<int> oversamplingTransitionSamplesRemaining { 0 };
     static constexpr int oversamplingTransitionCrossfadeSamples = 2048; // longer fade for 2x↔4x startup/warmup

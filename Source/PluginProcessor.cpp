@@ -2036,11 +2036,16 @@ void AIEqualizerAudioProcessor::parameterChanged(const juce::String& parameterID
 
             if (zeroNaturalSwap)
             {
+                // Zero ↔ Natural: same-latency modes, smooth dual-processor crossfade
                 phaseTransitionFromMode.store(static_cast<int>(oldMode), std::memory_order_release);
                 phaseTransitionSamplesRemaining.store(phaseTransitionCrossfadeSamples, std::memory_order_release);
             }
             else
             {
+                // Transitions involving LinearPhase: LP's convolution latency
+                // makes dual-processor crossfade impossible (time misalignment).
+                // Use pendingReset — the bypassCrossfade mechanism (dry→processed
+                // fade triggered by pendingReset) covers the transient smoothly.
                 phaseTransitionFromMode.store(-1, std::memory_order_release);
                 phaseTransitionSamplesRemaining.store(0, std::memory_order_release);
                 pendingReset.store(true, std::memory_order_release);
