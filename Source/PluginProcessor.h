@@ -435,10 +435,15 @@ private:
     alignas(64) juce::AudioBuffer<float> sideProcessBuffer;
     alignas(64) juce::AudioBuffer<float> dryBuffer;
     alignas(64) juce::AudioBuffer<float> phaseTransitionBuffer;
+    alignas(64) juce::AudioBuffer<float> oversamplingTransitionBuffer;
     std::atomic<int> phaseTransitionFromMode { -1 };
     std::atomic<int> phaseTransitionSamplesRemaining { 0 };
     static constexpr int phaseTransitionCrossfadeSamples = 256; // ~5ms @ 48kHz
-    
+    std::atomic<int> oversamplingTransitionFromEffective { -1 };
+    std::atomic<int> oversamplingTransitionSamplesRemaining { 0 };
+    static constexpr int oversamplingTransitionCrossfadeSamples = 1024; // longer fade for 2x↔4x startup
+    bool bypassStateInitialized = false;
+
     // Solo acoustic monitor (band-pass audition)
     juce::IIRFilter soloMonitorFilterL;
     juce::IIRFilter soloMonitorFilterR;
