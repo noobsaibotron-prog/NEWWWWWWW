@@ -96,11 +96,11 @@ public:
 
         if (totalFailures == 0)
         {
-            std::cout << "✓ ALL TESTS PASSED" << std::endl;
+            std::cout << "ALL TESTS PASSED" << std::endl;
             return 0;
         }
 
-        std::cout << "✗ " << totalFailures << " TEST(S) FAILED" << std::endl;
+        std::cout << "FAILED: " << totalFailures << " TEST(S) FAILED" << std::endl;
         return 1;
     }
 };

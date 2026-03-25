@@ -115,7 +115,7 @@ private:
 
         const float gainDB = 20.0f * std::log10(std::max(outputRMS / inputRMS, 1e-9f));
 
-        logMessage("Flat EQ gain: " + juce::String(gainDB, 2) + " dB (expected 0.0 dB, tolerance ±"
+        logMessage("Flat EQ gain: " + juce::String(gainDB, 2) + " dB (expected 0.0 dB, tolerance +/-"
                    + juce::String(kTolerance, 1) + " dB)");
 
         expectWithinAbsoluteError(gainDB, 0.0f, kTolerance,

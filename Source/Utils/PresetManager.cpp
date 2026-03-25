@@ -16,7 +16,8 @@ void PresetManager::loadFactoryPresets()
 
     factoryPresets.clear();
     createDefaultFactoryPresets();
-    AIEQ_LOG_INFO("Loaded " + juce::String(factoryPresets.size()) + " factory presets");
+    AIEQ_LOG_INFO(juce::String::formatted("Loaded %d factory presets",
+                                           static_cast<int>(factoryPresets.size())));
 }
 
 void PresetManager::createDefaultFactoryPresets()

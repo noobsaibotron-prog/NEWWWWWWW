@@ -33,7 +33,7 @@ public:
         }
 
         // In a 10 ms linear ramp from 0 -> 1, per-sample step at 48kHz is ~0.0021
-        expect(maxDelta < 0.01f, "Detected large step – potential zippering");
+        expect(maxDelta < 0.01f, "Detected large step - potential zippering");
     }
 };
 
