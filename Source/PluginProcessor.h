@@ -460,7 +460,6 @@ private:
     //==============================================================================
     // Oversampling
     //==============================================================================
-    std::unique_ptr<juce::dsp::Oversampling<float>> naturalOversampler;
     std::unique_ptr<juce::dsp::Oversampling<float>> oversampler2x;
     std::unique_ptr<juce::dsp::Oversampling<float>> oversampler4x;
     alignas(64) juce::AudioBuffer<float> naturalOversampledBuffer;
