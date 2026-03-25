@@ -1155,6 +1155,23 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
             triggerEQCurveUpdate();
         }
 
+        // Re-prepare eqProcessorHQ / dynamicEQProcessorHQ at the correct oversampled rate.
+        // prepare() is zero-allocation (stores atomics, resets POD, recalculates biquad
+        // coefficients) — safe to call on the audio thread.
+        // Without this, switching oversampling factor at runtime leaves HQ EQ coefficients
+        // calculated for the wrong sample rate (e.g. still sr*2 while oversampler is now
+        // feeding sr*4), causing wrong frequency response until the next prepareToPlay.
+        {
+            const int newOsFactor   = oversamplingFactor.load(std::memory_order_relaxed);
+            const int newOsMult     = (newOsFactor == 2 ? 4 : 2); // mirrors prepareToPlay logic
+            const double newHqRate  = currentSampleRate.load(std::memory_order_relaxed)
+                                      * static_cast<double>(newOsMult);
+            const int newHqBlock    = preallocatedMaxSamples * newOsMult;
+            const int numChs        = getTotalNumInputChannels();
+            eqProcessorHQ.prepare(newHqRate, newHqBlock, numChs);
+            dynamicEQProcessorHQ.prepare(newHqRate, newHqBlock, numChs);
+        }
+
         // Trigger a dry→wet crossfade to cover the reset transient.
         // Resetting oversamplers/LP processors from non-zero state causes a brief
         // dropout (IIR filters start from zero on a live signal). The bypass crossfade
