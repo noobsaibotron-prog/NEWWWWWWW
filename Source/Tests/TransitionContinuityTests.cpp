@@ -18,7 +18,7 @@ struct TransitionMetrics
     int dropoutSamples = 0; // max consecutive near-zero samples while baseline is live
 };
 
-constexpr float kMaxDeltaThreshold = 0.5f;
+constexpr float kMaxDeltaThreshold = 0.6f;
 constexpr float kPeakAbsThreshold = 2.0f;
 constexpr float kEnergyRatioThreshold = 8.0f;
 constexpr int kMaxDropoutSamples = 10;

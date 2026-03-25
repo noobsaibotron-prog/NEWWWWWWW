@@ -441,7 +441,7 @@ private:
     static constexpr int phaseTransitionCrossfadeSamples = 256; // ~5ms @ 48kHz
     std::atomic<int> oversamplingTransitionFromEffective { -1 };
     std::atomic<int> oversamplingTransitionSamplesRemaining { 0 };
-    static constexpr int oversamplingTransitionCrossfadeSamples = 1024; // longer fade for 2x↔4x startup
+    static constexpr int oversamplingTransitionCrossfadeSamples = 2048; // longer fade for 2x↔4x startup/warmup
     bool bypassStateInitialized = false;
 
     // Solo acoustic monitor (band-pass audition)
