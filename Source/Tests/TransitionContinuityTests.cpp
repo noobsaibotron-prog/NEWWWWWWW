@@ -221,6 +221,23 @@ float maxDifferenceVsInputAfter(const juce::AudioBuffer<float>& output,
     }
     return maxDiff;
 }
+
+float maxDifferenceBetweenOutputsAfter(const juce::AudioBuffer<float>& a,
+                                       const juce::AudioBuffer<float>& b,
+                                       int startSample)
+{
+    float maxDiff = 0.0f;
+    const int chs = juce::jmin(a.getNumChannels(), b.getNumChannels());
+    const int numSamples = juce::jmin(a.getNumSamples(), b.getNumSamples());
+    for (int ch = 0; ch < chs; ++ch)
+    {
+        const auto* aPtr = a.getReadPointer(ch);
+        const auto* bPtr = b.getReadPointer(ch);
+        for (int i = startSample; i < numSamples; ++i)
+            maxDiff = std::max(maxDiff, std::abs(aPtr[i] - bPtr[i]));
+    }
+    return maxDiff;
+}
 } // namespace
 
 class OversamplingResetRegressionTest : public juce::UnitTest
@@ -389,7 +406,36 @@ private:
         const int window = juce::jmin(switched.output.getNumSamples() - start,
                                       10 * blockSize + 256);
         auto metrics = analyzeWindow(switched.output, start, window, &baseline.output);
-        expectMetrics(*this, metrics, label);
+
+        if (startBypassed)
+        {
+            expect(!metrics.hasNaN, label + ": NaN detected");
+            expect(!metrics.hasInf, label + ": Inf detected");
+            expect(metrics.maxDelta < kMaxDeltaThreshold,
+                   label + ": maxDelta too high = " + juce::String(metrics.maxDelta, 4));
+            expect(metrics.peakAbs < kPeakAbsThreshold,
+                   label + ": peakAbs too high = " + juce::String(metrics.peakAbs, 4));
+            expect(metrics.dropoutSamples <= kMaxDropoutSamples,
+                   label + ": dropoutSamples too high = " + juce::String(metrics.dropoutSamples));
+
+            auto activeSetup = [](AIEqualizerAudioProcessor& proc, juce::AudioProcessorValueTreeState& apvts)
+            {
+                configureProcessing(proc, apvts, 0, 0);
+                setBool(apvts, "bypass", false);
+            };
+            auto activeReference = runScenario(sampleRate, blockSize, numBlocks, switchBlock, {}, activeSetup);
+            const int settleStart = juce::jmin(switched.output.getNumSamples(), (switchBlock + 4) * blockSize);
+            const float maxActiveDiff = maxDifferenceBetweenOutputsAfter(switched.output,
+                                                                         activeReference.output,
+                                                                         settleStart);
+            expect(maxActiveDiff < 5.0e-3f,
+                   "Activated output should converge to active reference after settle window, maxDiff="
+                   + juce::String(maxActiveDiff, 6));
+        }
+        else
+        {
+            expectMetrics(*this, metrics, label);
+        }
 
         if (expectDryIdentityAfterSwitch)
         {
