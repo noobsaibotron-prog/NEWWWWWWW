@@ -773,6 +773,10 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     blockClampEvents.store(0, std::memory_order_relaxed);
     dryBuffer.setSize(getTotalNumInputChannels(), preallocatedMaxSamples, false, true, false);
     dryBuffer.clear();
+    phaseTransitionBuffer.setSize(getTotalNumInputChannels(), preallocatedMaxSamples, false, true, false);
+    phaseTransitionBuffer.clear();
+    phaseTransitionFromMode.store(-1, std::memory_order_relaxed);
+    phaseTransitionSamplesRemaining.store(0, std::memory_order_relaxed);
 
     // === SOLO ACOUSTIC MONITOR SETUP ===
     soloMonitorFilterL.reset();
@@ -1407,6 +1411,111 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
 
     const auto mode = phaseModeSnapshot;
 
+    auto processStereoForPhaseMode = [&](juce::AudioBuffer<float>& targetBuffer,
+                                         PhaseMode targetMode,
+                                         bool updateMeters)
+    {
+        if (targetMode == PhaseMode::NaturalPhase)
+        {
+            int osUser = oversamplingFactor.load(std::memory_order_relaxed);
+            int osEffective = 1; // keep Natural-phase on a coherent 2x/4x HQ path; "Off" maps to 2x.
+
+            if (osUser == 2)
+            {
+                osEffective = 2;
+            }
+            else if (osUser == oversamplingAutoIndex)
+            {
+                // Simple auto heuristic: use 4x if any band has Q > 8 or qualityMode == HQ
+                osEffective = (qualityModeCached == 1) ? 2 : 1;
+                const int activeBandsForAuto = std::min(numActiveBands.load(std::memory_order_relaxed), maxBands);
+                for (int i = 0; i < activeBandsForAuto; ++i)
+                {
+                    float qVal = eqProcessor.getBandQ(i);
+                    if (qVal > 8.0f)
+                    {
+                        osEffective = 2;
+                        break;
+                    }
+                }
+            }
+
+            oversamplingEffectiveFactor.store(osEffective, std::memory_order_relaxed);
+
+            juce::dsp::Oversampling<float>* activeOversampler = (osEffective == 2 && oversampler4x)
+                ? oversampler4x.get()
+                : oversampler2x.get();
+
+            if (activeOversampler)
+            {
+                juce::dsp::AudioBlock<float> block(targetBuffer.getArrayOfWritePointers(),
+                                                   static_cast<size_t>(targetBuffer.getNumChannels()),
+                                                   static_cast<size_t>(targetBuffer.getNumSamples()));
+                auto upBlock = activeOversampler->processSamplesUp(block);
+
+                const auto upChannels = static_cast<int>(upBlock.getNumChannels());
+                const auto upSamples = static_cast<int>(upBlock.getNumSamples());
+                jassert(naturalOversampledBuffer.getNumChannels() >= upChannels);
+                jassert(naturalOversampledBuffer.getNumSamples() >= upSamples);
+                for (int ch = 0; ch < upChannels; ++ch)
+                {
+                    juce::FloatVectorOperations::copy(naturalOversampledBuffer.getWritePointer(ch),
+                                                      upBlock.getChannelPointer(static_cast<size_t>(ch)),
+                                                      upSamples);
+                }
+
+                juce::AudioBuffer<float> hqProcessBuffer(
+                    naturalOversampledBuffer.getArrayOfWritePointers(),
+                    upChannels,
+                    upSamples);
+
+                eqProcessorHQ.process(hqProcessBuffer);
+
+                if (dynEqEnabledLocal)
+                {
+                    dynamicEQProcessorHQ.process(hqProcessBuffer);
+                    if (updateMeters)
+                        updateDynamicMeterCacheFrom(dynamicEQProcessorHQ);
+                }
+
+                for (int ch = 0; ch < upChannels; ++ch)
+                {
+                    juce::FloatVectorOperations::copy(
+                        upBlock.getChannelPointer(static_cast<size_t>(ch)),
+                        naturalOversampledBuffer.getReadPointer(ch),
+                        upSamples);
+                }
+
+                activeOversampler->processSamplesDown(block);
+            }
+            else
+            {
+                juce::AudioBuffer<float> processView(
+                    targetBuffer.getArrayOfWritePointers(),
+                    targetBuffer.getNumChannels(),
+                    targetBuffer.getNumSamples());
+                eqProcessor.process(processView);
+                if (dynEqEnabledLocal)
+                {
+                    dynamicEQProcessor.process(processView);
+                    if (updateMeters)
+                        updateDynamicMeterCacheFrom(dynamicEQProcessor);
+                }
+            }
+        }
+        else
+        {
+            eqProcessor.process(targetBuffer);
+
+            if (dynEqEnabledLocal)
+            {
+                dynamicEQProcessor.process(targetBuffer);
+                if (updateMeters)
+                    updateDynamicMeterCacheFrom(dynamicEQProcessor);
+            }
+        }
+    };
+
     // Encode to M/S if needed (available for all phase modes)
     // Bug N/O fix: Mid-Only and Side-Only modes must NOT use M/S path - they should
     // process the corresponding component through the standard stereo EQ and then
@@ -1468,102 +1577,50 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         }
         else
         {
-            if (mode == PhaseMode::NaturalPhase)
+            const int transitionRemaining = phaseTransitionSamplesRemaining.load(std::memory_order_acquire);
+            const auto transitionFromMode = static_cast<PhaseMode>(phaseTransitionFromMode.load(std::memory_order_acquire));
+            const bool zeroNaturalTransition = transitionRemaining > 0
+                && ((transitionFromMode == PhaseMode::ZeroLatency && mode == PhaseMode::NaturalPhase)
+                 || (transitionFromMode == PhaseMode::NaturalPhase && mode == PhaseMode::ZeroLatency));
+
+            if (zeroNaturalTransition
+                && phaseTransitionBuffer.getNumChannels() >= buffer.getNumChannels()
+                && phaseTransitionBuffer.getNumSamples() >= blockSamples)
             {
-                int osUser = oversamplingFactor.load(std::memory_order_relaxed);
-                int osEffective = 1; // keep Natural-phase on a coherent 2x/4x HQ path; "Off" maps to 2x.
+                const int chs = juce::jmin(buffer.getNumChannels(), phaseTransitionBuffer.getNumChannels());
+                for (int ch = 0; ch < chs; ++ch)
+                    phaseTransitionBuffer.copyFrom(ch, 0, buffer, ch, 0, blockSamples);
 
-                if (osUser == 2)
+                processStereoForPhaseMode(buffer, mode, true);
+
+                juce::AudioBuffer<float> oldModeView(phaseTransitionBuffer.getArrayOfWritePointers(),
+                                                     buffer.getNumChannels(),
+                                                     blockSamples);
+                processStereoForPhaseMode(oldModeView, transitionFromMode, false);
+
+                const int fadeLen = juce::jmin(transitionRemaining, blockSamples);
+                const int fadeProgressStart = phaseTransitionCrossfadeSamples - transitionRemaining;
+                for (int ch = 0; ch < chs; ++ch)
                 {
-                    osEffective = 2;
-                }
-                else if (osUser == oversamplingAutoIndex)
-                {
-                    // Simple auto heuristic: use 4x if any band has Q > 8 or qualityMode == HQ
-                    osEffective = (qualityModeCached == 1) ? 2 : 1; // default auto: 4x in HQ, else 2x
-                    // FIX: Clamp to maxBands to prevent array out-of-bounds access
-                    const int activeBandsLocal = std::min(numActiveBands.load(std::memory_order_relaxed), maxBands);
-                    for (int i = 0; i < activeBandsLocal; ++i)
+                    float* newPtr = buffer.getWritePointer(ch);
+                    const float* oldPtr = phaseTransitionBuffer.getReadPointer(ch);
+                    for (int s = 0; s < fadeLen; ++s)
                     {
-                        float qVal = eqProcessor.getBandQ(i);
-                        if (qVal > 8.0f)
-                        {
-                            osEffective = 2; // 4x
-                            break;
-                        }
-                    }
-                }
-
-                oversamplingEffectiveFactor.store(osEffective, std::memory_order_relaxed);
-
-                juce::dsp::Oversampling<float>* activeOversampler = (osEffective == 2 && oversampler4x)
-                    ? oversampler4x.get()
-                    : oversampler2x.get();
-
-                if (activeOversampler)
-                {
-                    juce::dsp::AudioBlock<float> block(buffer.getArrayOfWritePointers(),
-                                                      static_cast<size_t>(buffer.getNumChannels()),
-                                                      static_cast<size_t>(blockSamples));
-                    auto upBlock = activeOversampler->processSamplesUp(block);
-
-                    const auto upChannels = static_cast<int>(upBlock.getNumChannels());
-                    const auto upSamples = static_cast<int>(upBlock.getNumSamples());
-                    jassert(naturalOversampledBuffer.getNumChannels() >= upChannels);
-                    jassert(naturalOversampledBuffer.getNumSamples() >= upSamples);
-                    for (int ch = 0; ch < upChannels; ++ch)
-                    {
-                        juce::FloatVectorOperations::copy(naturalOversampledBuffer.getWritePointer(ch),
-                                                          upBlock.getChannelPointer(static_cast<size_t>(ch)),
-                                                          upSamples);
-                    }
-
-                    juce::AudioBuffer<float> hqProcessBuffer(
-                        naturalOversampledBuffer.getArrayOfWritePointers(),
-                        upChannels,
-                        upSamples);
-
-                    eqProcessorHQ.process(hqProcessBuffer);
-
-                    if (dynEqEnabledLocal)
-                    {
-                        dynamicEQProcessorHQ.process(hqProcessBuffer);
-                        updateDynamicMeterCacheFrom(dynamicEQProcessorHQ);
-                    }
-
-                    for (int ch = 0; ch < upChannels; ++ch)
-                    {
-                        juce::FloatVectorOperations::copy(
-                            upBlock.getChannelPointer(static_cast<size_t>(ch)),
-                            naturalOversampledBuffer.getReadPointer(ch),
-                            upSamples);
-                    }
-
-                    activeOversampler->processSamplesDown(block);
-                }
-                else
-                {
-                    juce::AudioBuffer<float> processView(
-                        buffer.getArrayOfWritePointers(),
-                        buffer.getNumChannels(),
-                        blockSamples);
-                    eqProcessor.process(processView);
-                    if (dynEqEnabledLocal)
-                    {
-                        dynamicEQProcessor.process(processView);
-                        updateDynamicMeterCacheFrom(dynamicEQProcessor);
+                        const float tBase = static_cast<float>(fadeProgressStart + s)
+                                          / static_cast<float>(phaseTransitionCrossfadeSamples);
+                        const float t = juce::jlimit(0.0f, 1.0f, tBase);
+                        newPtr[s] = oldPtr[s] * (1.0f - t) + newPtr[s] * t;
                     }
                 }
+
+                const int remaining = juce::jmax(0, transitionRemaining - blockSamples);
+                phaseTransitionSamplesRemaining.store(remaining, std::memory_order_release);
+                if (remaining == 0)
+                    phaseTransitionFromMode.store(-1, std::memory_order_release);
             }
             else
             {
-                eqProcessor.process(buffer);
-
-                if (dynEqEnabledLocal)
-                {
-                    dynamicEQProcessor.process(buffer);
-                    updateDynamicMeterCacheFrom(dynamicEQProcessor);
-                }
+                processStereoForPhaseMode(buffer, mode, true);
             }
         }
     } // end if mode != LinearPhase
@@ -1897,7 +1954,23 @@ void AIEqualizerAudioProcessor::parameterChanged(const juce::String& parameterID
         const auto oldMode = currentPhaseMode.exchange(newMode);
 
         if (newMode != oldMode)
-            pendingReset.store(true, std::memory_order_release);
+        {
+            const bool zeroNaturalSwap =
+                (oldMode == PhaseMode::ZeroLatency && newMode == PhaseMode::NaturalPhase)
+             || (oldMode == PhaseMode::NaturalPhase && newMode == PhaseMode::ZeroLatency);
+
+            if (zeroNaturalSwap)
+            {
+                phaseTransitionFromMode.store(static_cast<int>(oldMode), std::memory_order_release);
+                phaseTransitionSamplesRemaining.store(phaseTransitionCrossfadeSamples, std::memory_order_release);
+            }
+            else
+            {
+                phaseTransitionFromMode.store(-1, std::memory_order_release);
+                phaseTransitionSamplesRemaining.store(0, std::memory_order_release);
+                pendingReset.store(true, std::memory_order_release);
+            }
+        }
 
         // Ensure linear-phase IR build kicks off immediately when entering LinearPhase
         if (newMode == PhaseMode::LinearPhase)
