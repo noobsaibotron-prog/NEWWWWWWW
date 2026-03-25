@@ -157,7 +157,7 @@ private:
         }
 
         expect(tailMax > 1e-4f,
-               "Tail of oversized block is silent — dry/wet blend was not applied (Bug G)");
+               "Tail of oversized block is silent - dry/wet blend was not applied (Bug G)");
         logMessage("Tail max amplitude: " + juce::String(tailMax, 4));
     }
 
