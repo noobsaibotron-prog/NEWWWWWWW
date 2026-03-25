@@ -1,4 +1,5 @@
 #include <juce_core/juce_core.h>
+#include <juce_events/juce_events.h>
 #include <iostream>
 
 /**
@@ -11,6 +12,7 @@ public:
     {
         juce::String category;
         bool verbose = false;
+        bool runAll = false;
     };
 
     static Options parseArgs(int argc, char** argv)
@@ -23,6 +25,8 @@ public:
                 opts.category = arg.fromFirstOccurrenceOf("=", false, false);
             else if (arg == "--verbose" || arg == "-v")
                 opts.verbose = true;
+            else if (arg == "--all")
+                opts.runAll = true;
         }
         return opts;
     }
@@ -40,10 +44,19 @@ public:
             std::cout << "Running category: " << opts.category << std::endl;
             runner.runTestsInCategory(opts.category);
         }
+        else if (opts.runAll)
+        {
+            std::cout << "Running all registered tests..." << std::endl;
+            runner.runAllTests();
+        }
         else
         {
-            std::cout << "Running all tests..." << std::endl;
-            runner.runAllTests();
+            const juce::StringArray projectCategories { "DSP", "Regression", "Integration" };
+            std::cout << "Running project test categories: "
+                      << projectCategories.joinIntoString(", ") << std::endl;
+
+            for (const auto& category : projectCategories)
+                runner.runTestsInCategory(category);
         }
 
         std::cout << std::endl;
@@ -94,7 +107,11 @@ public:
 
 int main(int argc, char** argv)
 {
+    juce::ScopedJuceInitialiser_GUI juceInitialiser;
     auto options = TestRunner::parseArgs(argc, argv);
-    return TestRunner::run(options);
+    const int result = TestRunner::run(options);
+    juce::DeletedAtShutdown::deleteAll();
+    juce::MessageManager::deleteInstance();
+    return result;
 }
 

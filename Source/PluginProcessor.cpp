@@ -1961,8 +1961,31 @@ void AIEqualizerAudioProcessor::parameterChanged(const juce::String& parameterID
             return 1; // Off and 2x both share the 2x Natural path
         };
 
-        if (normalizeNaturalPath(oldFactor) != normalizeNaturalPath(factor))
-            pendingReset.store(true, std::memory_order_release);
+        const int oldEffective = normalizeNaturalPath(oldFactor);
+        const int newEffective = normalizeNaturalPath(factor);
+
+        if (oldEffective != newEffective)
+        {
+            const bool naturalPhaseActive = currentPhaseMode.load(std::memory_order_relaxed) == PhaseMode::NaturalPhase;
+            const bool canCrossfadeNaturalOversampling = naturalPhaseActive
+                && oldEffective > 0
+                && newEffective > 0
+                && oldEffective != oversamplingAutoIndex
+                && newEffective != oversamplingAutoIndex;
+
+            if (canCrossfadeNaturalOversampling)
+            {
+                oversamplingTransitionFromEffective.store(oldEffective, std::memory_order_release);
+                oversamplingTransitionSamplesRemaining.store(oversamplingTransitionCrossfadeSamples,
+                                                            std::memory_order_release);
+            }
+            else
+            {
+                oversamplingTransitionFromEffective.store(-1, std::memory_order_release);
+                oversamplingTransitionSamplesRemaining.store(0, std::memory_order_release);
+                pendingReset.store(true, std::memory_order_release);
+            }
+        }
         return;
     }
 
