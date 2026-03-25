@@ -430,6 +430,10 @@ private:
     alignas(64) juce::AudioBuffer<float> midProcessBuffer;
     alignas(64) juce::AudioBuffer<float> sideProcessBuffer;
     alignas(64) juce::AudioBuffer<float> dryBuffer;
+    alignas(64) juce::AudioBuffer<float> phaseTransitionBuffer;
+    std::atomic<int> phaseTransitionFromMode { -1 };
+    std::atomic<int> phaseTransitionSamplesRemaining { 0 };
+    static constexpr int phaseTransitionCrossfadeSamples = 256; // ~5ms @ 48kHz
     
     // Solo acoustic monitor (band-pass audition)
     juce::IIRFilter soloMonitorFilterL;
