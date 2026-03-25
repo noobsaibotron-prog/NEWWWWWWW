@@ -423,7 +423,7 @@ void SemanticEQEngine::initializeQualityDefinitions()
         auto& d = defs[static_cast<int>(SemanticQuality::Darkness)];
         d.quality = SemanticQuality::Darkness;
         d.name = "Darkness";
-        d.nameIT = "Oscurità";
+        d.nameIT = "Oscurita";
         d.description = "Dark, moody character with reduced highs";
         d.bands = {
             { 150.0f, 0.6f, 2.0f, 1 },     // Low shelf boost
@@ -878,7 +878,7 @@ SemanticEQEngine::parseNaturalLanguage(const juce::String& input) const
     
     // Check for "more" or "less" modifiers
     const bool hasMore = lowInput.contains("more") || lowInput.contains("piu") || 
-                         lowInput.contains("più") || lowInput.contains("add");
+                         lowInput.contains("add");
     const bool hasLess = lowInput.contains("less") || lowInput.contains("meno") || 
                          lowInput.contains("reduce") || lowInput.contains("remove");
     
