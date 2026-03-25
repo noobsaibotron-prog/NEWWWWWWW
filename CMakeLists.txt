@@ -934,7 +934,6 @@ if(HAVE_JUCE)
         JUCE_UNIT_TESTS=1
         JUCE_GLOBAL_MODULE_SETTINGS_INCLUDED=1
         JUCE_STRICT_REFCOUNTEDPOINTER=1
-        JUCE_STANDALONE_APPLICATION=0
     )
     target_include_directories(AIEqualizerPro_Tests PRIVATE
         Source
@@ -969,7 +968,6 @@ if(HAVE_JUCE)
         JUCE_UNIT_TESTS=1
         JUCE_GLOBAL_MODULE_SETTINGS_INCLUDED=1
         JUCE_STRICT_REFCOUNTEDPOINTER=1
-        JUCE_STANDALONE_APPLICATION=0
         JucePlugin_Build_VST3=0
         JucePlugin_Build_AU=0
         JucePlugin_Build_Standalone=0
