@@ -80,6 +80,9 @@ public:
     Resolution getFFTResolution() const { return resolution; }
 
     bool hasNewData() const { return newDataAvailable.load(); }
+
+    // FIX 2: Version counter for spectrum path caching
+    uint64_t getSpectrumVersion() const { return spectrumVersion.load(std::memory_order_acquire); }
     
 private:
     //==============================================================================
@@ -139,6 +142,10 @@ private:
     std::atomic<bool> reconfiguring { false }; // blocks push while swapping resolution/FIFO
     bool peakHoldEnabled = true;
     float peakHoldDecayTime = 2.0f;  // seconds
+
+    // FIX 2: Version counter — incremented each time processFFT produces new data.
+    // GUI can compare to avoid rebuilding spectrum paths when nothing changed.
+    std::atomic<uint64_t> spectrumVersion { 0 };
     
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SpectrumAnalyzer)
 };

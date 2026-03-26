@@ -7,6 +7,10 @@
 #include <cmath>
 #include <limits>
 
+#if AIEQ_GUI_DEBUG
+#include "../Utils/DebugLog.h"
+#endif
+
 //==============================================================================
 /**
  * TDR Nova Style Spectrum Display
@@ -18,6 +22,7 @@
  */
 class AdvancedSpectrumDisplay : public juce::Component, public juce::Timer
 {
+    friend class EQGraphFluidityTest; // Performance test access
 public:
     // Callbacks for band interaction
     std::function<void(float)> onFrequencySelected;
@@ -52,9 +57,13 @@ public:
         setupToolbarBtn(freezeButton, "FREEZE");
         freezeButton.setClickingTogglesState(true);
         freezeButton.onClick = [this]() {
-            isFrozen = freezeButton.getToggleState();
-            if (isFrozen) {
+            bool frozen = freezeButton.getToggleState();
+            const juce::SpinLock::ScopedLockType lock(spectrumDataLock);
+            if (frozen) {
                 frozenSpectrum = smoothedSpectrum;
+                isFrozen = true;
+            } else {
+                isFrozen = false;
             }
             refreshPeaks();
         };
@@ -62,9 +71,12 @@ public:
 
         setupToolbarBtn(captureButton, "CAPTURE");
         captureButton.onClick = [this]() {
-            capturedSpectrum = smoothedSpectrum;
-            hasCaptured = true;
-            capturedPathDirty = true;
+            {
+                const juce::SpinLock::ScopedLockType lock(spectrumDataLock);
+                capturedSpectrum = smoothedSpectrum;
+                hasCaptured = true;
+                capturedPathDirty = true;
+            }
             captureButton.setButtonText("CAPTURED!");
             startTimer(100);
         };
@@ -78,8 +90,11 @@ public:
         setupToolbarBtn(clearButton, "CLEAR");
         clearButton.setColour(juce::TextButton::textColourOffId, juce::Colour(0x88D0D0D8));
         clearButton.onClick = [this]() {
-            hasCaptured = false;
-            isFrozen = false;
+            {
+                const juce::SpinLock::ScopedLockType lk(spectrumDataLock);
+                hasCaptured = false;
+                isFrozen = false;
+            }
             freezeButton.setToggleState(false, juce::dontSendNotification);
             showCapturedButton.setToggleState(false, juce::dontSendNotification);
         };
@@ -163,10 +178,16 @@ public:
 
     void paint(juce::Graphics& g) override
     {
+#if AIEQ_GUI_DEBUG
+        auto paintStartMs = juce::Time::getMillisecondCounterHiRes();
+        double tBg = 0, tGrid = 0, tSpec = 0, tEQ = 0, tBands = 0, tOther = 0;
+        auto lap = [&]() { return juce::Time::getMillisecondCounterHiRes(); };
+        double t0 = lap();
+#endif
         g.reduceClipRegion(getLocalBounds());
 
         auto bounds = getLocalBounds().toFloat();
-        
+
         // === PREMIUM BACKGROUND — subtle vertical gradient ===
         {
             juce::ColourGradient bgGrad(
@@ -176,7 +197,7 @@ public:
             g.setGradientFill(bgGrad);
             g.fillRoundedRectangle(bounds, 4.0f);
         }
-        
+
         // Graph area
         graphBounds = bounds.reduced(45, 25);
         graphBounds.removeFromBottom(22);
@@ -190,27 +211,96 @@ public:
             g.setGradientFill(shadowGrad);
             g.fillRect(graphBounds.getX(), graphBounds.getY(), graphBounds.getWidth(), 30.0f);
         }
-        
-        drawGrid(g);
+
+        // FIX 4: Grid + labels cached as off-screen image (static per resize)
+        if (gridCacheDirty || gridCache.isNull()
+            || gridCache.getWidth() != getWidth() || gridCache.getHeight() != getHeight())
+        {
+            gridCache = juce::Image(juce::Image::ARGB, getWidth(), getHeight(), true);
+            juce::Graphics gc(gridCache);
+            drawGrid(gc);
+            drawLabels(gc);
+            gridCacheDirty = false;
+        }
+        g.drawImageAt(gridCache, 0, 0);
+
+#if AIEQ_GUI_DEBUG
+        tBg = lap() - t0; t0 = lap();
+#endif
+
+        // FIX 2: Spectrum image is pre-rendered in timerCallback → rebuildLiveSpectrumPaths() → renderSpectrumToImage().
+        // Here we just blit the cached image (~0.3ms) instead of strokePath/fillPath (~17ms).
+        // Captured/frozen spectra are drawn directly (they change rarely).
         drawSpectrum(g);
+
+#if AIEQ_GUI_DEBUG
+        tSpec = lap() - t0; t0 = lap();
+#endif
+
         drawSpectrumGrab(g);
         drawProblemHighlight(g);
-        drawEQCurveFill(g);   // Per-band colored fill under EQ curve
+
+        // Draw EQ curve directly from cached paths (no image buffer).
+        // rebuildEQCurvePath() is version-gated — only rebuilds when curve params change.
+        // Direct path draw costs ~2-3ms but avoids 3.7MB image clear that trashes L2 cache.
+        drawEQCurveFill(g);
         drawEQCurve(g);
+        drawDynamicGROverlay(g);
+
+#if AIEQ_GUI_DEBUG
+        tEQ = lap() - t0; t0 = lap();
+#endif
+
         drawEQBands(g);
         drawAIMarkers(g);
-        drawLabels(g);
-        
+
         if (hoverX >= 0) drawHover(g);
-        
+
+#if AIEQ_GUI_DEBUG
+        tBands = lap() - t0;
+#endif
+
         // Subtle border
         g.setColour(juce::Colour(0xFF222230));
         g.drawRoundedRectangle(bounds.reduced(0.5f), 4.0f, 1.0f);
+
+#if AIEQ_GUI_DEBUG
+        {
+            double paintMs = juce::Time::getMillisecondCounterHiRes() - paintStartMs;
+            debugPaintTimeAccum += paintMs;
+            debugMaxPaintTime = std::max(debugMaxPaintTime, paintMs);
+            debugPaintCount++;
+            debugBgAccum += tBg;
+            debugSpecAccum += tSpec;
+            debugEQAccum += tEQ;
+            debugBandsAccum += tBands;
+            double now = juce::Time::getMillisecondCounterHiRes();
+            if (now - debugLastReportTime > 2000.0)
+            {
+                int n = std::max(1, debugPaintCount);
+                aieqDebugLog( "[SPECTRUM-DISPLAY] paints/sec=%.1f avgMs=%.2f maxMs=%.2f eqRebuilds=%d  bg=%.1f spec=%.1f eq=%.1f bands=%.1f\n",
+                    debugPaintCount * 1000.0 / (now - debugLastReportTime),
+                    debugPaintTimeAccum / n,
+                    debugMaxPaintTime,
+                    debugEQCurveRebuildCount,
+                    debugBgAccum / n, debugSpecAccum / n, debugEQAccum / n, debugBandsAccum / n);
+                debugPaintCount = 0;
+                debugPaintTimeAccum = 0.0;
+                debugMaxPaintTime = 0.0;
+                debugEQCurveRebuildCount = 0;
+                debugBgAccum = 0; debugSpecAccum = 0; debugEQAccum = 0; debugBandsAccum = 0;
+                debugLastReportTime = now;
+            }
+        }
+#endif
     }
 
     void resized() override
     {
         capturedPathDirty = true;
+        gridCacheDirty = true;        // FIX 4: invalidate grid cache on resize
+        lastPreSpectrumVersion = 0;   // FIX 2: invalidate spectrum path cache on resize
+        lastPostSpectrumVersion = 0;
         auto bounds = getLocalBounds();
 
         // Buttons in top-right corner
@@ -224,15 +314,32 @@ public:
         clearButton.setBounds(startX + (btnW + gap) * 2 + btnW + 10 + gap, startY, 50, btnH);
     }
     
-    void timerCallback() override 
-    { 
+    void timerCallback() override
+    {
         // SAFETY: Skip processing if processor not ready
         if (!processor.isProcessorReady())
         {
             repaint();  // Still repaint background
             return;
         }
-        
+
+        // ── Adaptive timer rate ──
+        // Multiple plugin instances share ONE message thread in JUCE.
+        // If this window isn't visible, drop to 5Hz to free budget for the active instance.
+        // If visible but idle, 30Hz is enough. 60Hz only during active interaction.
+        {
+            const bool windowVisible = isShowing();
+            const bool interacting = isDraggingBand || hoverX >= 0;
+            const int desiredHz = !windowVisible ? 5
+                                : interacting    ? 60
+                                                 : 30;
+            if (desiredHz != currentTimerHz)
+            {
+                currentTimerHz = desiredHz;
+                startTimerHz(desiredHz);
+            }
+        }
+
         // Reset capture button text after showing "CAPTURED!"
         if (captureButton.getButtonText() == "CAPTURED!") {
             if (++captureTextTimer > 10) {
@@ -240,18 +347,40 @@ public:
                 captureTextTimer = 0;
             }
         }
-        
+
+        bool needsRepaint = false;
+
         if (!isFrozen) {
             updateSmoothedSpectrum();
-            // Throttle peak detection to ~10Hz (every 6th frame) — avoids heap alloc every frame
-            if (++peakRefreshCounter >= 6)
+            rebuildLiveSpectrumPaths();
+            updateDynamicGRSmoothing();
+            // Repaint when new FFT data arrived (paths rebuilt) or during interaction
+            if (lastPreSpectrumVersion != prevRepaintPreVer || lastPostSpectrumVersion != prevRepaintPostVer
+                || isDraggingBand || hoverX >= 0)
+            {
+                prevRepaintPreVer = lastPreSpectrumVersion;
+                prevRepaintPostVer = lastPostSpectrumVersion;
+                needsRepaint = true;
+            }
+            // Throttle peak detection to ~10Hz (every 6th frame at 30Hz base)
+            if (++peakRefreshCounter >= 3)
             {
                 peakRefreshCounter = 0;
                 refreshPeaks();
             }
         }
 
-        repaint();
+        // EQ curve: no image cache. rebuildEQCurvePath() (called from drawEQCurveFill/drawEQCurve)
+        // is version-gated and only rebuilds the juce::Path when curve params actually change.
+        // Direct path rendering in paint (~2-3ms) avoids the 3.7MB image clear that was
+        // thrashing L2 cache and slowing down ALL paint components.
+
+        // FIX 3: Always repaint if mouse is interacting, frozen, or dynamic bands pulsing
+        if (hoverX >= 0 || isDraggingBand || isFrozen || anyDynamicBandActive)
+            needsRepaint = true;
+
+        if (needsRepaint)
+            repaint();
     }
 
     void mouseMove(const juce::MouseEvent& e) override 
@@ -876,6 +1005,199 @@ private:
         }
     }
 
+    // Rebuild live spectrum paths only when new FFT data arrives.
+    // Display-side smoothing creates <0.1dB changes between FFT frames — visually imperceptible.
+    // Path building (4× pathBuilder.build + renderSpectrumToImage) costs ~6ms, so skipping
+    // unchanged frames saves significant message thread time during band drag.
+    void rebuildLiveSpectrumPaths()
+    {
+        if (graphBounds.isEmpty()) return;
+
+        const uint64_t preVer = processor.getSpectrumAnalyzer().getSpectrumVersion();
+        const uint64_t postVer = processor.getPostEQAnalyzer().getSpectrumVersion();
+        const bool boundsChanged = (lastSpectrumBounds != graphBounds);
+
+        if (preVer == lastPreSpectrumVersion && postVer == lastPostSpectrumVersion && !boundsChanged)
+            return;
+
+        lastPreSpectrumVersion = preVer;
+        lastPostSpectrumVersion = postVer;
+        lastSpectrumBounds = graphBounds;
+
+        const auto& preBuffer = smoothedSpectrum; // alias used in paint
+        const size_t usable = std::min(preBuffer.size(),
+            static_cast<size_t>(std::max(0, static_cast<int>(graphBounds.getWidth()))));
+
+        // --- Pre (input) path ---
+        auto* preP = processor.getAPVTS().getRawParameterValue("showPreSpectrum");
+        bool showPre = preP ? preP->load() > 0.5f : false;
+        if (showPre && usable > 4)
+        {
+            smoothYBuffer.resize(usable);
+            for (size_t i = 0; i < usable; ++i)
+            {
+                float freq = xToFreq(graphBounds.getX() + static_cast<float>(i));
+                smoothYBuffer[i] = dbToY(applyTilt(preBuffer[i], freq));
+            }
+            cachedPreLine.clear();
+            cachedPreFill.clear();
+            pathBuilder.build(smoothYBuffer.data(), usable,
+                              graphBounds.getX(), graphBounds.getBottom(),
+                              cachedPreLine, &cachedPreFill, 3);
+        }
+        else
+        {
+            cachedPreLine.clear();
+            cachedPreFill.clear();
+        }
+
+        // --- Post (output) path ---
+        auto* postP = processor.getAPVTS().getRawParameterValue("showPostSpectrum");
+        bool showPost = postP ? postP->load() > 0.5f : false;
+        if (showPost && !isFrozen)
+        {
+            const auto& postRaw = processor.getPostEQAnalyzer().getSmoothedSpectrum();
+            if (!postRaw.empty() && usable > 4)
+            {
+                smoothYBuffer.resize(usable);
+                const int postFFTSize = processor.getPostEQAnalyzer().getFFTSize();
+                const double postSR = processor.getPostEQAnalyzer().getSampleRate();
+                const int postNumBins = static_cast<int>(postRaw.size());
+                for (size_t i = 0; i < usable; ++i)
+                {
+                    float freq = xToFreq(graphBounds.getX() + static_cast<float>(i));
+                    float binF = freq * static_cast<float>(postFFTSize) / static_cast<float>(postSR);
+                    int b0 = juce::jlimit(0, postNumBins - 1, static_cast<int>(binF));
+                    int b1 = juce::jlimit(0, postNumBins - 1, b0 + 1);
+                    float frac = binF - static_cast<float>(static_cast<int>(binF));
+                    float db = postRaw[b0] * (1.0f - frac) + postRaw[b1] * frac;
+                    smoothYBuffer[i] = dbToY(applyTilt(db, freq));
+                }
+                cachedPostLine.clear();
+                pathBuilder.build(smoothYBuffer.data(), usable,
+                                  graphBounds.getX(), graphBounds.getBottom(),
+                                  cachedPostLine, nullptr, 3);
+            }
+            else { cachedPostLine.clear(); }
+        }
+        else { cachedPostLine.clear(); }
+
+        // --- Delta (post - pre) path ---
+        bool showDelta = isDeltaEnabled();
+        if (showDelta && showPost && !isFrozen)
+        {
+            const auto& postRaw = processor.getPostEQAnalyzer().getSmoothedSpectrum();
+            if (!postRaw.empty() && usable > 4)
+            {
+                float zeroY = dbToY(0.0f);
+                smoothYBuffer.resize(usable);
+                const int dFFTSize = processor.getPostEQAnalyzer().getFFTSize();
+                const double dSR = processor.getPostEQAnalyzer().getSampleRate();
+                const int dNumBins = static_cast<int>(postRaw.size());
+                for (size_t i = 0; i < usable; ++i)
+                {
+                    float freq = xToFreq(graphBounds.getX() + static_cast<float>(i));
+                    float binF = freq * static_cast<float>(dFFTSize) / static_cast<float>(dSR);
+                    int b0 = juce::jlimit(0, dNumBins - 1, static_cast<int>(binF));
+                    int b1 = juce::jlimit(0, dNumBins - 1, b0 + 1);
+                    float frac = binF - static_cast<float>(static_cast<int>(binF));
+                    float postDb = postRaw[b0] * (1.0f - frac) + postRaw[b1] * frac;
+                    float preDb = preBuffer[i];
+                    float delta = applyTilt(postDb, freq) - applyTilt(preDb, freq);
+                    delta = juce::jlimit(-24.0f, 24.0f, delta);
+                    smoothYBuffer[i] = zeroY - (delta / 24.0f) * (graphBounds.getHeight() * 0.45f);
+                }
+                cachedDeltaLine.clear();
+                pathBuilder.build(smoothYBuffer.data(), usable,
+                                  graphBounds.getX(), graphBounds.getBottom(),
+                                  cachedDeltaLine, nullptr, 3);
+            }
+            else { cachedDeltaLine.clear(); }
+        }
+        else { cachedDeltaLine.clear(); }
+
+        // --- Peak-hold path ---
+        if (!peakHold.empty() && usable > 4)
+        {
+            const size_t limit = std::min(usable, peakHold.size());
+            smoothYBuffer.resize(limit);
+            for (size_t i = 0; i < limit; ++i)
+            {
+                float freq = xToFreq(graphBounds.getX() + static_cast<float>(i));
+                smoothYBuffer[i] = dbToY(applyTilt(peakHold[i], freq));
+            }
+            cachedPeakLine.clear();
+            pathBuilder.build(smoothYBuffer.data(), limit,
+                              graphBounds.getX(), graphBounds.getBottom(),
+                              cachedPeakLine, nullptr, 3);
+        }
+        else { cachedPeakLine.clear(); }
+
+        // --- Render all live spectrum paths into offscreen image ---
+        renderSpectrumToImage();
+
+    }
+
+    // Render cached spectrum paths (pre, post, delta, peak) into an offscreen image.
+    // Called only when paths are rebuilt (~12-47Hz), not every paint (~60Hz).
+    // paint() then does a single drawImageAt() instead of 4× strokePath/fillPath.
+    void renderSpectrumToImage()
+    {
+        int w = static_cast<int>(std::ceil(graphBounds.getWidth()));
+        int h = static_cast<int>(std::ceil(graphBounds.getHeight()));
+        if (w <= 0 || h <= 0) return;
+
+        // Reallocate image only if size changed
+        if (spectrumImageCache.isNull() || spectrumImageCache.getWidth() != w || spectrumImageCache.getHeight() != h)
+            spectrumImageCache = juce::Image(juce::Image::ARGB, w, h, true);
+        else
+            spectrumImageCache.clear(juce::Rectangle<int>(0, 0, w, h));
+
+        juce::Graphics ig(spectrumImageCache);
+        // Offset so paths (which use graphBounds coordinates) render at image origin
+        ig.addTransform(juce::AffineTransform::translation(-graphBounds.getX(), -graphBounds.getY()));
+
+        // Pre fill + line
+        if (!cachedPreFill.isEmpty())
+        {
+            juce::ColourGradient fillGrad(
+                ModernLookAndFeel::Colors::textSecondary.withAlpha(0.28f), 0, graphBounds.getY(),
+                ModernLookAndFeel::Colors::textSecondary.withAlpha(0.05f), 0, graphBounds.getBottom(), false);
+            ig.setGradientFill(fillGrad);
+            ig.fillPath(cachedPreFill);
+        }
+        if (!cachedPreLine.isEmpty())
+        {
+            ig.setColour(ModernLookAndFeel::Colors::textSecondary.withAlpha(0.55f));
+            ig.strokePath(cachedPreLine, juce::PathStrokeType(1.4f));
+        }
+
+        // Post line
+        if (!cachedPostLine.isEmpty())
+        {
+            juce::Colour front = ModernLookAndFeel::Colors::accentGreen.brighter(0.05f);
+            juce::ColourGradient postGrad(
+                ModernLookAndFeel::Colors::accentYellow.withAlpha(0.85f), 0, graphBounds.getY(),
+                front.withAlpha(0.85f), 0, graphBounds.getBottom(), false);
+            ig.setGradientFill(postGrad);
+            ig.strokePath(cachedPostLine, juce::PathStrokeType(1.8f));
+        }
+
+        // Delta line
+        if (!cachedDeltaLine.isEmpty())
+        {
+            ig.setColour(ModernLookAndFeel::Colors::accentCyan.withAlpha(0.8f));
+            ig.strokePath(cachedDeltaLine, juce::PathStrokeType(1.6f));
+        }
+
+        // Peak-hold line
+        if (!cachedPeakLine.isEmpty())
+        {
+            ig.setColour(ModernLookAndFeel::Colors::accentOrange.withAlpha(0.9f));
+            ig.strokePath(cachedPeakLine, juce::PathStrokeType(1.2f));
+        }
+    }
+
     void drawGrid(juce::Graphics& g)
     {
         // === Ultra-subtle frequency grid lines ===
@@ -931,6 +1253,15 @@ private:
         bool showPre  = preP  ? preP->load()  > 0.5f : false;
         bool showPost = postP ? postP->load() > 0.5f : false;
         bool showDelta = isDeltaEnabled();
+
+        // Lock protects frozenSpectrum, capturedSpectrum, isFrozen, hasCaptured, capturedPathDirty
+        // against concurrent writes from message thread button callbacks.
+        // SpinLock is non-blocking — the render thread will spin briefly if the message
+        // thread is mid-copy (< 1μs for a vector assignment).
+        const juce::SpinLock::ScopedTryLockType lock(spectrumDataLock);
+        if (!lock.isLocked())
+            return;  // Skip this frame rather than block — next frame will catch up
+
         bool showCaptured = showCapturedButton.getToggleState() && hasCaptured;
 
         const auto& preBuffer = (isFrozen && !frozenSpectrum.empty()) ? frozenSpectrum : smoothedSpectrum;
@@ -971,6 +1302,7 @@ private:
         //----------------------------------------------------------------------
         // Frozen spectrum (blue indicator)
         //----------------------------------------------------------------------
+
         if (isFrozen && !frozenSpectrum.empty())
         {
             const size_t frozenUsable = std::min(frozenSpectrum.size(),
@@ -983,7 +1315,7 @@ private:
             }
 
             juce::Path frozenLinePath, frozenFillPath;
-            SmoothPathBuilder::build(smoothYBuffer.data(), frozenUsable,
+            pathBuilder.build(smoothYBuffer.data(), frozenUsable,
                                      graphBounds.getX(), graphBounds.getBottom(),
                                      frozenLinePath, &frozenFillPath, 3);
 
@@ -1007,130 +1339,15 @@ private:
             g.fillEllipse(graphBounds.getRight() - 16.0f, graphBounds.getY() + 10.0f, 8.0f, 8.0f);
         }
 
-        const size_t usable = std::min(preBuffer.size(), static_cast<size_t>(std::max(0, (int)graphBounds.getWidth())));
-
         //----------------------------------------------------------------------
-        // Pre (input) - grey behind
+        // Live spectrum (pre, post, delta, peak) — single image blit
+        // [FIX 2b: render-to-image, ~0.5ms instead of ~17ms]
         //----------------------------------------------------------------------
-        if (showPre && usable > 4)
+        if (!spectrumImageCache.isNull())
         {
-            // Build Y-values array for smooth path builder
-            smoothYBuffer.resize(usable);
-            for (size_t i = 0; i < usable; ++i)
-            {
-                float freq = xToFreq(graphBounds.getX() + static_cast<float>(i));
-                smoothYBuffer[i] = dbToY(applyTilt(preBuffer[i], freq));
-            }
-
-            juce::Path linePath, fillPath;
-            SmoothPathBuilder::build(smoothYBuffer.data(), usable,
-                                     graphBounds.getX(), graphBounds.getBottom(),
-                                     linePath, &fillPath, 3);
-
-            juce::ColourGradient fillGrad(
-                ModernLookAndFeel::Colors::textSecondary.withAlpha(0.28f), 0, graphBounds.getY(),
-                ModernLookAndFeel::Colors::textSecondary.withAlpha(0.05f), 0, graphBounds.getBottom(), false);
-            g.setGradientFill(fillGrad);
-            g.fillPath(fillPath);
-
-            g.setColour(ModernLookAndFeel::Colors::textSecondary.withAlpha(0.55f));
-            g.strokePath(linePath, juce::PathStrokeType(1.4f));
-        }
-
-        //----------------------------------------------------------------------
-        // Post (output) - coloured front line
-        //----------------------------------------------------------------------
-        if (showPost && !isFrozen)
-        {
-            const auto& postRaw = processor.getPostEQAnalyzer().getSmoothedSpectrum();
-            if (!postRaw.empty())
-            {
-                smoothYBuffer.resize(usable);
-                const int postFFTSize = processor.getPostEQAnalyzer().getFFTSize();
-                const double postSR = processor.getPostEQAnalyzer().getSampleRate();
-                const int postNumBins = static_cast<int>(postRaw.size());
-                for (size_t i = 0; i < usable; ++i)
-                {
-                    float freq = xToFreq(graphBounds.getX() + static_cast<float>(i));
-                    float binF = freq * static_cast<float>(postFFTSize) / static_cast<float>(postSR);
-                    int b0 = juce::jlimit(0, postNumBins - 1, static_cast<int>(binF));
-                    int b1 = juce::jlimit(0, postNumBins - 1, b0 + 1);
-                    float frac = binF - static_cast<float>(static_cast<int>(binF));
-                    float db = postRaw[b0] * (1.0f - frac) + postRaw[b1] * frac;
-                    smoothYBuffer[i] = dbToY(applyTilt(db, freq));
-                }
-
-                juce::Path postPath;
-                SmoothPathBuilder::build(smoothYBuffer.data(), usable,
-                                         graphBounds.getX(), graphBounds.getBottom(),
-                                         postPath, nullptr, 3);
-
-                juce::Colour front = ModernLookAndFeel::Colors::accentGreen.brighter(0.05f);
-                juce::ColourGradient postGrad(
-                    ModernLookAndFeel::Colors::accentYellow.withAlpha(0.85f), 0, graphBounds.getY(),
-                    front.withAlpha(0.85f), 0, graphBounds.getBottom(), false);
-                g.setGradientFill(postGrad);
-                g.strokePath(postPath, juce::PathStrokeType(1.8f));
-            }
-        }
-
-        //----------------------------------------------------------------------
-        // Delta (post - pre) overlay
-        //----------------------------------------------------------------------
-        if (showDelta && showPost && !isFrozen)
-        {
-            const auto& postRaw = processor.getPostEQAnalyzer().getSmoothedSpectrum();
-            if (!postRaw.empty() && usable > 4)
-            {
-                float zeroY = dbToY(0.0f);
-                smoothYBuffer.resize(usable);
-                const int dFFTSize = processor.getPostEQAnalyzer().getFFTSize();
-                const double dSR = processor.getPostEQAnalyzer().getSampleRate();
-                const int dNumBins = static_cast<int>(postRaw.size());
-                for (size_t i = 0; i < usable; ++i)
-                {
-                    float freq = xToFreq(graphBounds.getX() + static_cast<float>(i));
-                    float binF = freq * static_cast<float>(dFFTSize) / static_cast<float>(dSR);
-                    int b0 = juce::jlimit(0, dNumBins - 1, static_cast<int>(binF));
-                    int b1 = juce::jlimit(0, dNumBins - 1, b0 + 1);
-                    float frac = binF - static_cast<float>(static_cast<int>(binF));
-                    float postDb = postRaw[b0] * (1.0f - frac) + postRaw[b1] * frac;
-                    float preDb = preBuffer[i];
-                    float delta = applyTilt(postDb, freq) - applyTilt(preDb, freq);
-                    delta = juce::jlimit(-24.0f, 24.0f, delta);
-                    smoothYBuffer[i] = zeroY - (delta / 24.0f) * (graphBounds.getHeight() * 0.45f);
-                }
-
-                juce::Path deltaPath;
-                SmoothPathBuilder::build(smoothYBuffer.data(), usable,
-                                         graphBounds.getX(), graphBounds.getBottom(),
-                                         deltaPath, nullptr, 3);
-
-                g.setColour(ModernLookAndFeel::Colors::accentCyan.withAlpha(0.8f));
-                g.strokePath(deltaPath, juce::PathStrokeType(1.6f));
-            }
-        }
-
-        //----------------------------------------------------------------------
-        // Peak-hold overlay (visual only)
-        //----------------------------------------------------------------------
-        if (!peakHold.empty() && usable > 4)
-        {
-            const size_t limit = std::min(usable, peakHold.size());
-            smoothYBuffer.resize(limit);
-            for (size_t i = 0; i < limit; ++i)
-            {
-                float freq = xToFreq(graphBounds.getX() + static_cast<float>(i));
-                smoothYBuffer[i] = dbToY(applyTilt(peakHold[i], freq));
-            }
-
-            juce::Path peakPath;
-            SmoothPathBuilder::build(smoothYBuffer.data(), limit,
-                                     graphBounds.getX(), graphBounds.getBottom(),
-                                     peakPath, nullptr, 3);
-
-            g.setColour(ModernLookAndFeel::Colors::accentOrange.withAlpha(0.9f));
-            g.strokePath(peakPath, juce::PathStrokeType(1.2f));
+            g.drawImageAt(spectrumImageCache,
+                          static_cast<int>(graphBounds.getX()),
+                          static_cast<int>(graphBounds.getY()));
         }
     }
 
@@ -1140,60 +1357,30 @@ private:
         if (!processor.isProcessorReady() || graphBounds.isEmpty())
             return;
 
+        // Skip during band drag — the fill is a visual nicety, not essential for interaction
+        if (isDraggingBand)
+            return;
+
         rebuildEQCurvePath();
 
-        auto& eq = processor.getEQProcessor();
-        double sr = processor.getSampleRate();
-        if (sr <= 0) sr = 44100.0;
+        if (cachedEQCurve.isEmpty())
+            return;
 
-        const int active = processor.getNumActiveBands();
-        const float zeroY = dbToY(0.0f);
-        const float yScale = graphBounds.getHeight() * 0.45f;
+        // Single unified fill under the entire EQ curve instead of per-band fills.
+        // Per-band fills with individual getMagnitudeForFrequency loops cost ~20ms with 12+ bands.
+        // A single fillPath on the cached curve + gradient costs ~1ms.
+        juce::Path fillPath(cachedEQCurve);
+        // Close the path along the bottom to create a filled area
+        fillPath.lineTo(graphBounds.getRight(), dbToY(0.0f));
+        fillPath.lineTo(graphBounds.getX(), dbToY(0.0f));
+        fillPath.closeSubPath();
 
-        // Draw a colored fill for each active band's contribution
-        for (int b = 0; b < std::min(active, AIEqualizerAudioProcessor::maxBands); ++b)
-        {
-            auto state = processor.getBandState(b);
-            if (!state.enabled || std::abs(state.gain) < 0.3f)
-                continue;
-
-            juce::Colour col = bandColors[b];
-            
-            // Build a fill path for this band's region
-            float bandwidth = state.frequency / juce::jmax(0.1f, state.q);
-            float lowF = juce::jmax(20.0f, state.frequency - bandwidth * 1.5f);
-            float highF = juce::jmin(20000.0f, state.frequency + bandwidth * 1.5f);
-            float x1 = freqToX(lowF);
-            float x2 = freqToX(highF);
-            float centerX = freqToX(state.frequency);
-
-            juce::Path bandFill;
-            bandFill.startNewSubPath(x1, zeroY);
-
-            // Use coarser step (4px) to reduce IIR calls in paint thread
-            for (float x = x1; x <= x2; x += 4.0f)
-            {
-                float freq = xToFreq(x);
-                float mag = eq.getMagnitudeForFrequency(static_cast<double>(freq), sr);
-                float db = juce::Decibels::gainToDecibels(mag, -48.0f);
-                db = juce::jlimit(-24.0f, 24.0f, db);
-                float y = zeroY - (db / 24.0f) * yScale;
-                bandFill.lineTo(x, y);
-            }
-            bandFill.lineTo(x2, zeroY);
-            bandFill.closeSubPath();
-
-            // Gradient from band color (at curve) to transparent (at zero line)
-            bool isBoost = state.gain > 0;
-            juce::ColourGradient fillGrad(
-                col.withAlpha(0.25f),
-                centerX, isBoost ? (zeroY - std::abs(state.gain) / 24.0f * yScale) : zeroY,
-                col.withAlpha(0.02f),
-                centerX, isBoost ? zeroY : (zeroY + std::abs(state.gain) / 24.0f * yScale),
-                false);
-            g.setGradientFill(fillGrad);
-            g.fillPath(bandFill);
-        }
+        float zeroY = dbToY(0.0f);
+        juce::ColourGradient fillGrad(
+            juce::Colour(0xFFB0C8E8).withAlpha(0.12f), 0, graphBounds.getY(),
+            juce::Colour(0xFFB0C8E8).withAlpha(0.02f), 0, zeroY, false);
+        g.setGradientFill(fillGrad);
+        g.fillPath(fillPath);
     }
 
     void drawEQCurve(juce::Graphics& g)
@@ -1206,19 +1393,22 @@ private:
         if (cachedEQCurve.isEmpty())
             return;
 
-        // === GLOW LAYER 1: Wide soft outer glow ===
-        g.setColour(juce::Colour(0xFFB0C8E8).withAlpha(0.08f));
-        g.strokePath(cachedEQCurve, juce::PathStrokeType(12.0f, juce::PathStrokeType::curved,
-                                                           juce::PathStrokeType::rounded));
+        if (!isDraggingBand)
+        {
+            // === GLOW LAYER 1: Wide soft outer glow ===
+            g.setColour(juce::Colour(0xFFB0C8E8).withAlpha(0.08f));
+            g.strokePath(cachedEQCurve, juce::PathStrokeType(10.0f, juce::PathStrokeType::mitered,
+                                                               juce::PathStrokeType::rounded));
 
-        // === GLOW LAYER 2: Medium glow ===
-        g.setColour(juce::Colour(0xFFB0C8E8).withAlpha(0.16f));
-        g.strokePath(cachedEQCurve, juce::PathStrokeType(6.0f, juce::PathStrokeType::curved,
-                                                           juce::PathStrokeType::rounded));
+            // === GLOW LAYER 2: Medium glow ===
+            g.setColour(juce::Colour(0xFFB0C8E8).withAlpha(0.16f));
+            g.strokePath(cachedEQCurve, juce::PathStrokeType(5.0f, juce::PathStrokeType::mitered,
+                                                               juce::PathStrokeType::rounded));
+        }
 
-        // === MAIN CURVE: Bright crisp line (thicker + brighter) ===
+        // === MAIN CURVE: Bright crisp line ===
         g.setColour(juce::Colour(0xFFE8F0FA));
-        g.strokePath(cachedEQCurve, juce::PathStrokeType(2.5f, juce::PathStrokeType::curved,
+        g.strokePath(cachedEQCurve, juce::PathStrokeType(2.5f, juce::PathStrokeType::mitered,
                                                            juce::PathStrokeType::rounded));
     }
 
@@ -1294,50 +1484,52 @@ private:
                 g.drawLine(x, zeroY, x, y, 1.0f);
             }
 
-            // === GLOW (selected/hovered/dragging) ===
-            if (isSelected || isDragging)
+            // === GLOW (selected/hovered/dragging) — skip non-dragged glow during drag for perf ===
+            if (isDragging)
             {
-                // Soft outer glow
                 g.setColour(col.withAlpha(0.10f));
                 g.fillEllipse(x - radius - 10, y - radius - 10, (radius + 10) * 2, (radius + 10) * 2);
                 g.setColour(col.withAlpha(0.18f));
                 g.fillEllipse(x - radius - 5, y - radius - 5, (radius + 5) * 2, (radius + 5) * 2);
             }
-            else if (isHovered)
+            else if (!isDraggingBand && (isSelected || isHovered))
             {
                 g.setColour(col.withAlpha(0.12f));
                 g.fillEllipse(x - radius - 6, y - radius - 6, (radius + 6) * 2, (radius + 6) * 2);
             }
 
-            // Solo badge
-            if (state.solo)
+            // Solo badge — skip during drag (font creation is expensive)
+            if (state.solo && !isDraggingBand)
             {
                 juce::Rectangle<float> badge(x + radius, y - radius - 4, 16.0f, 12.0f);
                 g.setColour(ModernLookAndFeel::Colors::accentYellow.withAlpha(0.9f));
                 g.fillRoundedRectangle(badge, 3.0f);
                 g.setColour(ModernLookAndFeel::Colors::bgDark);
-                g.setFont(juce::Font(juce::FontOptions().withHeight(8.0f).withStyle("Bold")));
+                g.setFont(soloBadgeFont);
                 g.drawText("S", badge, juce::Justification::centred);
             }
 
             if (state.enabled)
             {
-                // === SEMI-TRANSPARENT FILL (Pro-Q style — not fully opaque) ===
+                // === SEMI-TRANSPARENT FILL ===
                 g.setColour(col.withAlpha(isDragging ? 0.65f : (isSelected ? 0.55f : 0.40f)));
                 g.fillEllipse(x - radius, y - radius, radius * 2, radius * 2);
-                
+
                 // Luminous border ring
                 g.setColour(col.withAlpha(isDragging ? 1.0f : (isSelected ? 0.9f : 0.7f)));
                 g.drawEllipse(x - radius, y - radius, radius * 2, radius * 2,
                              isDragging ? 2.5f : 1.8f);
 
-                // Band number (simple, clean)
-                g.setColour(juce::Colours::white.withAlpha(0.9f));
-                g.setFont(juce::Font(juce::FontOptions().withHeight(10.0f).withStyle("Bold")));
-                g.drawText(juce::String(i + 1),
-                          static_cast<int>(x - radius), static_cast<int>(y - radius),
-                          static_cast<int>(radius * 2), static_cast<int>(radius * 2),
-                          juce::Justification::centred);
+                // Band number — skip during drag (setFont + drawText per band is expensive)
+                if (!isDraggingBand)
+                {
+                    g.setColour(juce::Colours::white.withAlpha(0.9f));
+                    g.setFont(bandNumberFont);
+                    g.drawText(juce::String(i + 1),
+                              static_cast<int>(x - radius), static_cast<int>(y - radius),
+                              static_cast<int>(radius * 2), static_cast<int>(radius * 2),
+                              juce::Justification::centred);
+                }
             }
             else
             {
@@ -1358,8 +1550,8 @@ private:
         if (selectedBandIndex >= 0 && selectedBandIndex < limit)
             drawOne(selectedBandIndex);
 
-        // Tooltip for selected band — FabFilter-style floating info panel
-        if (selectedBandIndex >= 0 && selectedBandIndex < AIEqualizerAudioProcessor::maxBands)
+        // Tooltip for selected band — FabFilter-style floating info panel (skip during drag for perf)
+        if (!isDraggingBand && selectedBandIndex >= 0 && selectedBandIndex < AIEqualizerAudioProcessor::maxBands)
         {
             auto state = processor.getBandState(selectedBandIndex);
             float x = freqToX(state.frequency);
@@ -1650,11 +1842,16 @@ public:
     //==========================================================================
     struct SmoothPathBuilder
     {
+        // Persistent scratch buffers — eliminates heap allocations per call
+        std::vector<float> blurTemp;
+        struct Pt { float x, y; };
+        std::vector<Pt> pts;
+
         // In-place box blur (variable radius based on position — wider at high freq)
-        static void boxBlur(float* data, size_t count, int baseRadius = 2)
+        void boxBlur(float* data, size_t count, int baseRadius = 2)
         {
             if (count < 8 || baseRadius < 1) return;
-            std::vector<float> temp(count);
+            if (blurTemp.size() < count) blurTemp.resize(count);
             for (size_t i = 0; i < count; ++i)
             {
                 // Wider blur at right side (high freq, sparser bins)
@@ -1667,33 +1864,29 @@ public:
                 float sum = 0.0f;
                 for (int j = lo; j <= hi; ++j)
                     sum += data[j];
-                temp[i] = sum / static_cast<float>(hi - lo + 1);
+                blurTemp[i] = sum / static_cast<float>(hi - lo + 1);
             }
-            std::memcpy(data, temp.data(), count * sizeof(float));
+            std::memcpy(data, blurTemp.data(), count * sizeof(float));
         }
 
         // Builds a smooth line path + optional fill path from raw Y values.
         // yValues[i] = Y coordinate at pixel offset i from graphBounds.getX()
         // step = pixels between control points (3-6 is good)
-        static void build(const float* yValues, size_t count,
-                          float startX, float bottomY,
-                          juce::Path& linePath, juce::Path* fillPath,
-                          int step = 4, bool applyBlur = true)
+        void build(float* yValues, size_t count,
+                   float startX, float bottomY,
+                   juce::Path& linePath, juce::Path* fillPath,
+                   int step = 4, bool applyBlur = true)
         {
             if (count < 4) return;
 
             // Apply adaptive box blur to smooth staircase artifacts from FFT bins
             if (applyBlur)
-            {
-                // We need a mutable copy — caller's buffer is reusable so this is fine
-                auto* mutable_y = const_cast<float*>(yValues);
-                boxBlur(mutable_y, count, 2);
-            }
+                boxBlur(yValues, count, 2);
 
-            // Collect control points by subsampling
-            struct Pt { float x, y; };
-            std::vector<Pt> pts; // small, ~200-300 pts for 1200px width
-            pts.reserve(count / static_cast<size_t>(step) + 2);
+            // Collect control points by subsampling — reuse pts vector
+            pts.clear();
+            const size_t needed = count / static_cast<size_t>(step) + 2;
+            if (pts.capacity() < needed) pts.reserve(needed);
 
             for (size_t i = 0; i < count; i += static_cast<size_t>(step))
                 pts.push_back({ startX + static_cast<float>(i), yValues[i] });
@@ -1704,6 +1897,11 @@ public:
 
             if (pts.size() < 2) return;
 
+            // Pre-allocate path storage (avoids incremental realloc inside JUCE Path)
+            linePath.preallocateSpace(static_cast<int>(pts.size()) * 3 + 4);
+            if (fillPath)
+                fillPath->preallocateSpace(static_cast<int>(pts.size()) * 3 + 8);
+
             // Start paths
             linePath.startNewSubPath(pts[0].x, pts[0].y);
             if (fillPath)
@@ -1713,12 +1911,13 @@ public:
             }
 
             // Catmull-Rom → cubic bezier conversion
-            for (size_t i = 0; i + 1 < pts.size(); ++i)
+            const size_t n = pts.size();
+            for (size_t i = 0; i + 1 < n; ++i)
             {
                 const auto& p0 = pts[i == 0 ? 0 : i - 1];
                 const auto& p1 = pts[i];
                 const auto& p2 = pts[i + 1];
-                const auto& p3 = pts[i + 1 < pts.size() - 1 ? i + 2 : i + 1];
+                const auto& p3 = pts[i + 1 < n - 1 ? i + 2 : i + 1];
 
                 // Convert Catmull-Rom to cubic bezier control points
                 float cp1x = p1.x + (p2.x - p0.x) / 6.0f;
@@ -1740,14 +1939,184 @@ public:
     };
 
 private:
+    // ── Dynamic GR smoothing — called from timerCallback ─────────────────────
+    // Reads instantaneous GR per band from the DSP meter cache (lock-free),
+    // applies 1-pole smoothing (fast attack ~3 frames, slow release ~10 frames),
+    // and marks the dynamic path dirty if values changed enough to be worth redrawing.
+    void updateDynamicGRSmoothing()
+    {
+        if (!processor.isProcessorReady()) return;
+
+        const int numActive = processor.getNumActiveBands();
+        const int limit     = std::min(numActive, AIEqualizerAudioProcessor::maxBands);
+        const auto& dynProc = processor.getDynamicEQProcessor();
+        bool hasAny = false;
+
+        for (int i = 0; i < limit; ++i)
+        {
+            const auto dynParams = dynProc.getBandParams(i);
+            if (dynParams.dynamicMode == DynamicEQProcessor::DynamicMode_Off || !dynParams.enabled)
+            {
+                dynGRSmoothed[static_cast<size_t>(i)] *= 0.85f; // decay to zero when deactivated
+                continue;
+            }
+
+            const float gr = processor.getDynamicBandMeter(i).gainReduction; // negative = compressing
+            float& s = dynGRSmoothed[static_cast<size_t>(i)];
+            const float coeff = (std::abs(gr) > std::abs(s)) ? 0.55f : 0.12f; // fast attack, slow release
+            s = s * (1.0f - coeff) + gr * coeff;
+
+            if (std::abs(s) > 0.05f)
+                hasAny = true;
+        }
+
+        anyDynamicBandActive = hasAny;
+    }
+
+    // Rebuilds the dynamic EQ curve, storing per-point X/Y coordinates for
+    // both static and dynamic curves. These are used to build the fill path
+    // between the two curves (the pulsing GR overlay).
+    void rebuildDynamicEQCurvePath()
+    {
+        if (graphBounds.isEmpty()) return;
+
+        const int numActive = processor.getNumActiveBands();
+        const int limit     = std::min(numActive, AIEqualizerAudioProcessor::maxBands);
+        const auto& dynProc = processor.getDynamicEQProcessor();
+
+        // Build per-band gain offsets from smoothed GR
+        std::array<float, AIEqualizerAudioProcessor::maxBands> offsets {};
+        for (int i = 0; i < limit; ++i)
+        {
+            const auto p = dynProc.getBandParams(i);
+            if (p.dynamicMode != DynamicEQProcessor::DynamicMode_Off && p.enabled)
+                offsets[static_cast<size_t>(i)] = dynGRSmoothed[static_cast<size_t>(i)];
+        }
+
+        ensureEQCurveFrequencies();
+        dynCurveMagnitudes.resize(eqCurveFrequencies.size(), 1.0f);
+
+        auto& eq  = processor.getEQProcessor();
+        double sr = processor.getSampleRate();
+        if (sr <= 0) sr = 44100.0;
+
+        eq.getMagnitudeForFrequencyArrayWithGainOffsets(
+            eqCurveFrequencies.data(), dynCurveMagnitudes.data(),
+            eqCurveFrequencies.size(), sr,
+            offsets.data(), static_cast<int>(offsets.size()));
+
+        // Store per-point X and Y for both curves
+        const size_t n = eqCurveFrequencies.size();
+        dynCurveXPoints.resize(n);
+        dynCurveYPoints.resize(n);
+        staticCurveYPoints.resize(n);
+
+        const float zeroY  = dbToY(0.0f);
+        const float yScale = graphBounds.getHeight() * 0.45f;
+
+        cachedDynamicEQCurve.clear();
+        bool started = false;
+
+        for (size_t i = 0; i < n; ++i)
+        {
+            const float x = freqToX(eqCurveFrequencies[i]);
+            dynCurveXPoints[i] = x;
+
+            // Dynamic curve Y
+            float dynDb = juce::Decibels::gainToDecibels(dynCurveMagnitudes[i], -48.0f);
+            dynDb = juce::jlimit(-24.0f, 24.0f, dynDb);
+            dynCurveYPoints[i] = zeroY - (dynDb / 24.0f) * yScale;
+
+            // Static curve Y (from already-computed magnitudes)
+            float statDb = (i < eqCurveMagnitudes.size())
+                ? juce::Decibels::gainToDecibels(eqCurveMagnitudes[i], -48.0f) : 0.0f;
+            statDb = juce::jlimit(-24.0f, 24.0f, statDb);
+            staticCurveYPoints[i] = zeroY - (statDb / 24.0f) * yScale;
+
+            if (!started) { cachedDynamicEQCurve.startNewSubPath(x, dynCurveYPoints[i]); started = true; }
+            else cachedDynamicEQCurve.lineTo(x, dynCurveYPoints[i]);
+        }
+
+        dynGRAtLastRebuild = dynGRSmoothed;
+    }
+
+    // ── Draw dynamic GR overlay (TDR Nova style) ─────────────────────────────
+    //
+    // 1. Fills the area BETWEEN the static and dynamic curves with warm amber
+    // 2. Draws the dynamic (live) curve as a white line
+    //
+    // The fill is built manually: trace static curve left→right along the top,
+    // then dynamic curve right→left along the bottom, close the path.
+    // This creates the correct enclosed area regardless of which curve is above.
+    void drawDynamicGROverlay(juce::Graphics& g)
+    {
+        if (!processor.isProcessorReady() || graphBounds.isEmpty()) return;
+        if (!anyDynamicBandActive) return;
+
+        // Ensure static curve is built
+        rebuildEQCurvePath();
+
+        // Check if GR values changed enough to warrant a dynamic path rebuild
+        bool needsRebuild = cachedDynamicEQCurve.isEmpty();
+        if (!needsRebuild)
+        {
+            const int limit = std::min(processor.getNumActiveBands(), AIEqualizerAudioProcessor::maxBands);
+            for (int i = 0; i < limit; ++i)
+            {
+                if (std::abs(dynGRSmoothed[static_cast<size_t>(i)] - dynGRAtLastRebuild[static_cast<size_t>(i)]) > 0.05f)
+                { needsRebuild = true; break; }
+            }
+        }
+        if (needsRebuild)
+            rebuildDynamicEQCurvePath();
+
+        const size_t n = dynCurveXPoints.size();
+        if (n < 2) return;
+
+        // ── Build fill path between the two curves ──
+        // Trace: static curve left→right, then dynamic curve right→left, close
+        juce::Path fillArea;
+        fillArea.startNewSubPath(dynCurveXPoints[0], staticCurveYPoints[0]);
+        for (size_t i = 1; i < n; ++i)
+            fillArea.lineTo(dynCurveXPoints[i], staticCurveYPoints[i]);
+        // Now go back right→left along the dynamic curve
+        for (int i = static_cast<int>(n) - 1; i >= 0; --i)
+            fillArea.lineTo(dynCurveXPoints[static_cast<size_t>(i)], dynCurveYPoints[static_cast<size_t>(i)]);
+        fillArea.closeSubPath();
+
+        // Warm amber fill, ~20% alpha
+        const juce::Colour overlayColour { 0xFFC89040u };
+        g.setColour(overlayColour.withAlpha(0.20f));
+        g.fillPath(fillArea);
+
+        // Dynamic (live) curve — bright white line
+        g.setColour(juce::Colours::white.withAlpha(0.80f));
+        g.strokePath(cachedDynamicEQCurve,
+                     juce::PathStrokeType(1.8f, juce::PathStrokeType::mitered,
+                                          juce::PathStrokeType::rounded));
+    }
+
     void rebuildEQCurvePath()
     {
-        const uint64_t version = processor.getParameterChangeCounter();
+        const uint64_t version = processor.getEQCurveChangeCounter();
         const bool boundsChanged = (lastCurveBounds != graphBounds);
 
         if (!eqCurveDirty && !boundsChanged && version == lastEQVersion && !cachedEQCurve.isEmpty())
             return;
 
+        // Throttle rebuilds to ~30Hz during drag. getMagnitudeForFrequencyArray on 600 freqs
+        // costs ~3-5ms. At 60fps that's 50% of the budget just for EQ curve math.
+        if (isDraggingBand && !boundsChanged)
+        {
+            double now = juce::Time::getMillisecondCounterHiRes();
+            if (now - lastEQCurveRebuildTime < 33.0) // 30Hz
+                return;
+            lastEQCurveRebuildTime = now;
+        }
+
+#if AIEQ_GUI_DEBUG
+        debugEQCurveRebuildCount++;
+#endif
         lastEQVersion = version;
         lastCurveBounds = graphBounds;
         eqCurveDirty = false;
@@ -1793,8 +2162,9 @@ private:
 
     void ensureEQCurveFrequencies()
     {
-        if (!eqCurveFrequencies.empty())
+        if (eqCurveFrequencies.size() == eqCurvePointCount)
             return;
+        eqCurveFrequencies.clear();
 
         eqCurveFrequencies.resize(eqCurvePointCount);
         const float logMin = std::log10(20.0f);
@@ -1816,6 +2186,7 @@ private:
     // Freeze/Capture functionality
     juce::TextButton freezeButton, captureButton, clearButton;
     juce::ToggleButton showCapturedButton;
+    juce::SpinLock spectrumDataLock;  // protects frozen/captured spectrum data vs OpenGL render thread
     std::vector<float> frozenSpectrum;
     std::vector<float> capturedSpectrum;
     bool isFrozen = false;
@@ -1829,6 +2200,7 @@ private:
     juce::Path cachedCapturedDash;
     bool capturedPathDirty = true;
     std::vector<float> smoothYBuffer; // Reusable Y-coord buffer for smooth path builder
+    mutable SmoothPathBuilder pathBuilder; // Persistent instance — zero heap alloc per frame
     // Spectrum buffers are grown on demand; no shrinking to avoid per-frame realloc
     int draggedBandIndex = -1;
     
@@ -1844,6 +2216,28 @@ private:
     std::vector<SpectrumPeak> detectedPeaks;
     int hoveredPeakIndex = -1;
 
+    // FIX 4: Off-screen grid + labels cache (static between resizes)
+    juce::Image gridCache;
+    bool gridCacheDirty = true;
+
+    // FIX 2: Cached spectrum paths — rebuilt only when spectrum version changes
+    juce::Path cachedPreLine, cachedPreFill;
+    juce::Path cachedPostLine;
+    juce::Path cachedDeltaLine;
+    juce::Path cachedPeakLine;
+    juce::Path cachedFrozenLine, cachedFrozenFill;
+    uint64_t lastPreSpectrumVersion = 0;
+    uint64_t lastPostSpectrumVersion = 0;
+    uint64_t prevRepaintPreVer = 0;
+    uint64_t prevRepaintPostVer = 0;
+    juce::Rectangle<float> lastSpectrumBounds;
+
+    // FIX SPEC-IMAGE: Off-screen image cache for spectrum rendering
+    // Paths are cheap to cache, but strokePath+fillPath with gradients is expensive (~17ms).
+    // Render all spectrum visuals into an image, rebuild only when spectrum version changes.
+    juce::Image spectrumImageCache;
+    // (removed: lastSpectrumImage tracking — now handled by rebuildLiveSpectrumPaths)
+
     // Cached EQ curve to avoid per-pixel recomputation
     juce::Path cachedEQCurve;
     std::vector<float> eqCurveFrequencies;
@@ -1851,7 +2245,40 @@ private:
     juce::Rectangle<float> lastCurveBounds;
     uint64_t lastEQVersion = std::numeric_limits<uint64_t>::max();
     bool eqCurveDirty = true;
-    static constexpr size_t eqCurvePointCount = 256;
-    
+    double lastEQCurveRebuildTime = 0.0;
+    static constexpr size_t eqCurvePointCount = 128;
+
+    // Adaptive timer — tracks current rate to avoid redundant startTimerHz calls
+    int currentTimerHz = 60;
+
+    // ── Dynamic EQ GR overlay (TDR Nova style) ──────────────────────────────
+    // Per-band smoothed gain reduction values (1-pole IIR)
+    std::array<float, AIEqualizerAudioProcessor::maxBands> dynGRSmoothed {};
+    // Cached dynamic EQ curve path + per-point coordinate arrays for fill construction
+    juce::Path cachedDynamicEQCurve;
+    std::vector<float> dynCurveMagnitudes;   // magnitude buffer (reused)
+    std::vector<float> dynCurveXPoints;       // X pixel positions (shared between static & dynamic)
+    std::vector<float> dynCurveYPoints;       // Y pixel positions (dynamic curve)
+    std::vector<float> staticCurveYPoints;    // Y pixel positions (static curve, for fill)
+    // Last smoothed GR values used to build the cached dynamic path
+    std::array<float, AIEqualizerAudioProcessor::maxBands> dynGRAtLastRebuild {};
+    // Whether any band has dynamic mode active
+    bool anyDynamicBandActive = false;
+    // ────────────────────────────────────────────────────────────────────────
+
+
+    // Pre-cached fonts for band drawing — avoid Font construction per band per frame
+    juce::Font bandNumberFont { juce::FontOptions().withHeight(10.0f).withStyle("Bold") };
+    juce::Font soloBadgeFont  { juce::FontOptions().withHeight(8.0f).withStyle("Bold") };
+
+#if AIEQ_GUI_DEBUG
+    int debugPaintCount = 0;
+    double debugPaintTimeAccum = 0.0;
+    double debugMaxPaintTime = 0.0;
+    double debugLastReportTime = 0.0;
+    int debugEQCurveRebuildCount = 0;
+    double debugBgAccum = 0, debugSpecAccum = 0, debugEQAccum = 0, debugBandsAccum = 0;
+#endif
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AdvancedSpectrumDisplay)
 };

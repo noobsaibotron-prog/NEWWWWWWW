@@ -1063,14 +1063,14 @@ void AIEqualizerAudioProcessorEditor::timerCallback()
         outputMeter.setLevels(dbL, dbR);
     }
 
-    // Spectrum - process only when audio flagged new data (every tick)
+    // Spectrum - process FFT only when audio flagged new data
+    // NOTE: Do NOT call spectrum->repaint() here — the display has its own 60Hz timer
+    // with conditional repaint (FIX 3). Double repaint was causing extra paint cycles.
     if (processor.consumeSpectrumDataReady())
     {
         processor.getSpectrumAnalyzer().processFFT();
         if (processor.getPostEQAnalyzer().hasNewData())
             processor.getPostEQAnalyzer().processFFT();
-        if (spectrum)
-            spectrum->repaint();
     }
 
     // AI problems update - every other tick (10Hz effective) to reduce message thread load

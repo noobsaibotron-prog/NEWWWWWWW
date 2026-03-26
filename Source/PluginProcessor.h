@@ -55,6 +55,9 @@
 #include "AI/SemanticEQEngine.h"
 #include "Utils/Logger.h"
 #include "Utils/PresetManager.h"
+#if AIEQ_GUI_DEBUG
+#include "Utils/DebugLog.h"
+#endif
 
 // Smoothed parameter helper for band-level automation (block-level smoothing)
 #include <juce_dsp/juce_dsp.h>
@@ -178,6 +181,9 @@ public:
     [[nodiscard]] bool consumeSpectrumDataReady() noexcept { return spectrumDataReady.exchange(false, std::memory_order_acquire); }
     [[nodiscard]] bool consumeAIProblemsChanged() noexcept { return aiProblemsChanged.exchange(false, std::memory_order_acquire); }
     [[nodiscard]] uint64_t getParameterChangeCounter() const noexcept { return parameterChangeCounter.load(std::memory_order_relaxed); }
+    // Counter incremented ONLY when curve-affecting params change (Freq/Gain/Q/Type/Enabled/Slope).
+    // Use this for EQ curve rebuild decisions — ignores DynEQ, metering, phase, etc.
+    [[nodiscard]] uint64_t getEQCurveChangeCounter() const noexcept { return eqCurveChangeCounter.load(std::memory_order_relaxed); }
     [[nodiscard]] uint32_t getBlockClampEvents() const noexcept { return blockClampEvents.load(std::memory_order_relaxed); }
 
     // Output peak metering (GUI reads, audio thread writes)
@@ -223,7 +229,26 @@ public:
     
     [[nodiscard]] int getNumActiveBands() const noexcept { return numActiveBands.load(std::memory_order_relaxed); }
     void setNumActiveBands(int n) noexcept;
-    void markParametersChanged() noexcept { parameterChangeCounter.fetch_add(1, std::memory_order_relaxed); }
+    void markParametersChanged() noexcept
+    {
+        parameterChangeCounter.fetch_add(1, std::memory_order_relaxed);
+#if AIEQ_GUI_DEBUG
+        static std::atomic<int> debugParamChangeCount { 0 };
+        static std::atomic<double> debugParamLastReport { 0.0 };
+        int count = debugParamChangeCount.fetch_add(1, std::memory_order_relaxed) + 1;
+        if (count % 200 == 0) // log every 200 changes to avoid flooding
+        {
+            double now = juce::Time::getMillisecondCounterHiRes();
+            double last = debugParamLastReport.load(std::memory_order_relaxed);
+            if (now - last > 2000.0)
+            {
+                debugParamLastReport.store(now, std::memory_order_relaxed);
+                aieqDebugLog( "[PARAMS] ~%.0f changes/sec\n", count * 1000.0 / std::max(1.0, now - last));
+                debugParamChangeCount.store(0, std::memory_order_relaxed);
+            }
+        }
+#endif
+    }
 
     // Semantic EQ application (message thread only)
     void applySemanticAdjustments(const std::vector<SemanticEQEngine::SemanticEQAdjustment>& adjustments);
@@ -534,6 +559,7 @@ private:
     // Parameter update flag
     std::atomic<bool> parametersNeedUpdate { true };
     std::atomic<bool> pendingReset { false };
+    std::atomic<bool> aiCorrectionCrossfadePending { false };
     int analyzerResolutionCached = 2;
     int analyzerSpeedCached = 1;
     int lastReportedLatency = 0;
@@ -604,6 +630,7 @@ private:
     std::atomic<float> outputPeakLeft { 0.0f };
     std::atomic<float> outputPeakRight { 0.0f };
     std::atomic<uint64_t> parameterChangeCounter { 0 };
+    std::atomic<uint64_t> eqCurveChangeCounter { 0 };  // Only curve-affecting params
     // Atomic to prevent data race if prepareToPlay (message thread) overlaps with
     // processBlock (audio thread) during host reconfiguration. Relaxed ordering is
     // sufficient: the variable is effectively owned by the audio thread during processing.

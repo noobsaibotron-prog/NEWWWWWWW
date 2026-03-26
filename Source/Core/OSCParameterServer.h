@@ -86,21 +86,32 @@ public:
 private:
     void run()
     {
-        char buf[4096];
-        while (running.load())
+        try
         {
-            juce::String senderIP;
-            int senderPort = 0;
-            int bytesRead = socket->read(buf, sizeof(buf), false, senderIP, senderPort);
-
-            if (bytesRead <= 0)
+            char buf[4096];
+            while (running.load())
             {
-                if (running.load())
-                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
-                continue;
-            }
+                juce::String senderIP;
+                int senderPort = 0;
+                int bytesRead = socket->read(buf, sizeof(buf), false, senderIP, senderPort);
 
-            handleRawOSC(buf, bytesRead, senderIP, senderPort);
+                if (bytesRead <= 0)
+                {
+                    if (running.load())
+                        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                    continue;
+                }
+
+                handleRawOSC(buf, bytesRead, senderIP, senderPort);
+            }
+        }
+        catch (const std::exception& e)
+        {
+            DBG("OSCParameterServer exception: " + juce::String(e.what()));
+        }
+        catch (...)
+        {
+            DBG("OSCParameterServer unknown exception");
         }
     }
 

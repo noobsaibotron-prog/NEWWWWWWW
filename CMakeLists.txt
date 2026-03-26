@@ -1016,6 +1016,10 @@ if(HAVE_JUCE)
         Source/Tests/IntegrationStateTest.cpp
         Source/Tests/LinearPhaseLatencyContractTest.cpp
         Source/Tests/BlockSizeRegressionTest.cpp
+        Source/Tests/MSModeSwitchContinuityTest.cpp
+        Source/Tests/SoloModeTransitionTest.cpp
+        Source/Tests/BandDragContinuityTest.cpp
+        Source/Tests/HostSessionClickTest.cpp
         Source/Tests/TestMain.cpp
     )
     target_compile_features(AIEqualizerPro_IntegrationTests PRIVATE cxx_std_20)
@@ -1047,4 +1051,47 @@ if(HAVE_JUCE)
 
     add_test(NAME aieq_integration_regression
              COMMAND $<TARGET_FILE:AIEqualizerPro_IntegrationTests>)
+
+    # ---------------------------------------------------------------------------
+    # Performance tests — GUI paint fluidity under aggressive scenarios.
+    # Benchmarks paint() with 23 bands, drag, spectrum, LOD, adaptive timer.
+    # ---------------------------------------------------------------------------
+    add_executable(AIEqualizerPro_PerformanceTests
+        Source/Tests/EQGraphFluidityTest.cpp
+        Source/Tests/TestMain.cpp
+    )
+    target_compile_features(AIEqualizerPro_PerformanceTests PRIVATE cxx_std_20)
+    target_compile_definitions(AIEqualizerPro_PerformanceTests PRIVATE
+        JUCE_UNIT_TESTS=1
+        JUCE_GLOBAL_MODULE_SETTINGS_INCLUDED=1
+        JUCE_STRICT_REFCOUNTEDPOINTER=1
+        JUCE_STANDALONE_APPLICATION=0
+        JucePlugin_Build_VST3=0
+        JucePlugin_Build_AU=0
+        JucePlugin_Build_Standalone=0
+    )
+    target_include_directories(AIEqualizerPro_PerformanceTests PRIVATE
+        Source
+        Source/DSP
+        Source/Core
+        Source/Utils
+        Source/AI
+        Source/GUI
+    )
+    target_link_libraries(AIEqualizerPro_PerformanceTests PRIVATE
+        AIEqualizerPro
+        juce::juce_core
+        juce::juce_audio_basics
+        juce::juce_audio_processors
+        juce::juce_gui_basics
+        juce::juce_gui_extra
+        juce::juce_graphics
+        juce::juce_events
+        juce::juce_dsp
+    )
+    set_target_properties(AIEqualizerPro_PerformanceTests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/Tests)
+
+    add_test(NAME aieq_performance
+             COMMAND $<TARGET_FILE:AIEqualizerPro_PerformanceTests> --category=Performance -v)
 endif()

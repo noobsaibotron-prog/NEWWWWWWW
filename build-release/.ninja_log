@@ -1,0 +1,216 @@
+# ninja log v6
+197	12216	1774512819738243369	CMakeFiles/AIEqualizerPro_IntegrationTests.dir/Source/Tests/BandDragContinuityTest.cpp.o	75743f7ac4be1271
+20086	38245	1774481741853543783	CMakeFiles/AIEqualizerPro.dir/JUCE/modules/juce_audio_basics/juce_audio_basics.mm.o	2c6df04c957b7b05
+29757	46619	1774481751524665306	CMakeFiles/AIEqualizerPro.dir/JUCE/modules/juce_audio_utils/juce_audio_utils.mm.o	5139a3b1ea141629
+8599	12287	1774481730366161164	CMakeFiles/AIEqualizerPro.dir/Source/Utils/Logger.cpp.o	8c4a21130c94f1ff
+136356	136436	1774481858124368982	CMakeFiles/AIEqualizerPro_AU.dir/JUCE/modules/juce_audio_plugin_client/juce_audio_plugin_client_AAX.mm.o	f211641c46dbaf0b
+48318	54152	1774481770085538083	CMakeFiles/AIEqualizerPro_Tests.dir/Source/Tests/ParametricEQTest.cpp.o	949ed0f6f94fddd7
+153036	281077	1774481874805335105	CMakeFiles/AIEqualizerPro_AI_Tests.dir/JUCE/modules/juce_gui_basics/juce_gui_basics.mm.o	a06bf01e5455576b
+113934	118575	1774481835702355432	CMakeFiles/AIEqualizerPro_AI_Tests.dir/Source/AI/MultiTrackUnmasking.cpp.o	460fe08f1f30d64
+146674	146749	1774481868442451789	CMakeFiles/AIEqualizerPro_VST3.dir/JUCE/modules/juce_audio_plugin_client/juce_audio_plugin_client_AU_2.mm.o	dd2facddf6f6538
+125082	129714	1774481846851032037	CMakeFiles/AIEqualizerPro_AI_Tests.dir/Source/Utils/Logger.cpp.o	a5889ff28734a1ba
+144	4982	1774481721911405333	CMakeFiles/AIEqualizerPro.dir/Source/DSP/DynamicEQProcessor.cpp.o	b090d4e1887f209f
+10513	11429	1774515834972031607	Release/bin/AI Equalizer Pro.app/Contents/MacOS/AI Equalizer Pro	b2a3f611283e3d00
+9	107	1774515824467873041	/Users/marco/Desktop/NEWWWWWWW/build-release/CMakeFiles/cmake.verify_globs	68422916d98969aa
+145	5560	1774481721912442011	CMakeFiles/AIEqualizerPro.dir/Source/DSP/LinearPhaseProcessor.cpp.o	bace95cf6d34c769
+58675	62278	1774481780442537933	CMakeFiles/AIEqualizerPro_Tests.dir/Source/Tests/TestMain.cpp.o	4e2ea90ad7ecbbf9
+94	2689	1774512871957082727	CMakeFiles/AIEqualizerPro.dir/Source/DSP/SpectrumAnalyzer.cpp.o	f4eef6c3c9a041b9
+195	12208	1774512819736004940	CMakeFiles/AIEqualizerPro_IntegrationTests.dir/Source/Tests/IntegrationStateTest.cpp.o	5f50196af0e1b0c
+135728	135797	1774481857496650113	CMakeFiles/AIEqualizerPro_Standalone.dir/JUCE/modules/juce_audio_plugin_client/juce_audio_plugin_client_AUv3.mm.o	686cd914f001afcc
+105041	109810	1774481826809741730	CMakeFiles/AIEqualizerPro_AI_Tests.dir/Source/AI/AIEngine_Advanced.cpp.o	9c22e39b3169c968
+146606	146673	1774481868374934605	CMakeFiles/AIEqualizerPro_VST3.dir/JUCE/modules/juce_audio_plugin_client/juce_audio_plugin_client_AU_1.mm.o	b98c55a31bacdcc5
+57738	62354	1774481779506271458	CMakeFiles/AIEqualizerPro_Tests.dir/Source/Tests/BiquadRegressionTest.cpp.o	725ee32efe4340f2
+4984	10089	1774481726750950117	CMakeFiles/AIEqualizerPro.dir/Source/AI/AdaptiveAIEngine.cpp.o	57935f5f1505b130
+57267	61982	1774481779034598516	CMakeFiles/AIEqualizerPro_Tests.dir/Source/Tests/DynamicEQBehavioralTest.cpp.o	cf3e4007396ed59d
+4471	10366	1774481726238556904	CMakeFiles/AIEqualizerPro.dir/Source/AI/MLEngine.cpp.o	355f05630a93981e
+120728	125091	1774481842496651341	CMakeFiles/AIEqualizerPro_AI_Tests.dir/Source/AI/UserLearning.cpp.o	288cd1bcf0a1e49c
+129714	129785	1774481851483066467	CMakeFiles/AIEqualizerPro_AI_Tests.dir/JUCE/modules/juce_core/juce_core_CompilationTime.cpp.o	5ec421166c0dea5c
+54152	58674	1774481775920197641	CMakeFiles/AIEqualizerPro_Tests.dir/Source/Tests/DynamicEQSidechainBehaviorTest.cpp.o	bbba8c5fbb45e841
+21205	36571	1774481742972805057	CMakeFiles/AIEqualizerPro.dir/JUCE/modules/juce_audio_devices/juce_audio_devices.mm.o	a6d213028f3cb445
+146899	146984	1774481868668104463	CMakeFiles/AIEqualizerPro_VST3.dir/JUCE/modules/juce_audio_plugin_client/juce_audio_plugin_client_VST2.mm.o	605bee3f288c2692
+4695	10740	1774481726462157222	CMakeFiles/AIEqualizerPro.dir/Source/AI/SemanticEQEngine.cpp.o	577604a96c12a135
+10531	11449	1774477791257217495	CMakeFiles/AIEqualizerPro.dir/JUCE/modules/juce_graphics/juce_graphics_Sheenbidi.c.o	377adacad13aeef5
+145	9286	1774481721912636721	CMakeFiles/AIEqualizerPro.dir/Source/AI/AIEngine.cpp.o	e7512abcf628c784
+12816	12888	1774481734582961465	CMakeFiles/AIEqualizerPro.dir/JUCE/modules/juce_core/juce_core_CompilationTime.cpp.o	dc8d9fde84bf59d0
+4725	9239	1774481726492306213	CMakeFiles/AIEqualizerPro.dir/Source/AI/MultiTrackUnmasking.cpp.o	bee8ba80c66cfc49
+19089	25774	1774481740856517280	CMakeFiles/AIEqualizerPro.dir/JUCE/modules/juce_data_structures/juce_data_structures.mm.o	febca75176b5a961
+143	4724	1774481721910192487	CMakeFiles/AIEqualizerPro.dir/Source/DSP/ParametricEQProcessor.cpp.o	e1654f6aad7a6cd6
+144430	153036	1774481866198746018	CMakeFiles/AIEqualizerPro_AU.dir/JUCE/modules/juce_audio_plugin_client/juce_audio_plugin_client_AU_2.mm.o	a9d068c8d54794c0
+210668	263692	1774481932438217181	CMakeFiles/AIEqualizerPro_IntegrationTests.dir/JUCE/modules/juce_audio_basics/juce_audio_basics.mm.o	8a940629d5704841
+100364	110939	1774481822132631692	CMakeFiles/AIEqualizerPro_AI_Tests.dir/Source/AI/AIEngine.cpp.o	3a890aad9e4c6324
+39975	47975	1774481761742482578	CMakeFiles/AIEqualizerPro_vst3_helper.dir/JUCE/modules/juce_audio_plugin_client/VST3/juce_VST3ManifestHelper.mm.o	20437fe283d4d414
+4926	8599	1774481726693501333	CMakeFiles/AIEqualizerPro.dir/Source/AI/NeuralNetworkWrapper.cpp.o	ee8154b8debbc3b
+46619	51801	1774481768387202755	CMakeFiles/AIEqualizerPro_Tests.dir/Source/DSP/DynamicEQProcessor.cpp.o	120a837d8c71d431
+147	5793	1774481721914337448	CMakeFiles/AIEqualizerPro.dir/Source/AI/ReferenceMatcher.cpp.o	a32915a4470549a2
+116095	120444	1774481837863796111	CMakeFiles/AIEqualizerPro_AI_Tests.dir/Source/AI/NeuralNetworkWrapper.cpp.o	f496412eb626d96d
+5793	12815	1774481727560366521	CMakeFiles/AIEqualizerPro.dir/Source/GUI/BandViewport.cpp.o	ed0579050c6a6e30
+9367	29757	1774481731134866255	CMakeFiles/AIEqualizerPro.dir/JUCE/modules/juce_gui_extra/juce_gui_extra.mm.o	5e80a2b6c7eefb15
+214	15643	1774515460405100753	CMakeFiles/AIEqualizerPro.dir/Source/PluginEditor.cpp.o	3963fc918322553d
+159845	248486	1774481881613609289	CMakeFiles/AIEqualizerPro_AI_Tests.dir/JUCE/modules/juce_graphics/juce_graphics.mm.o	5491f40cb18aa6c9
+147	4926	1774481721914057611	CMakeFiles/AIEqualizerPro.dir/Source/AI/AIEngine_Advanced.cpp.o	44564ae2038e4792
+135867	135938	1774481857636229404	CMakeFiles/AIEqualizerPro_Standalone.dir/JUCE/modules/juce_audio_plugin_client/juce_audio_plugin_client_VST2.mm.o	28745073c463ccef
+169848	181869	1774481891617142758	CMakeFiles/AIEqualizerPro_AI_Tests.dir/JUCE/modules/juce_events/juce_events.mm.o	59585cd05c7de8a2
+9286	9362	1774481731053893802	CMakeFiles/AIEqualizerPro.dir/JUCE/modules/juce_audio_processors/juce_audio_processors_ara.cpp.o	48dd0a56ea41e5c2
+195	12281	1774512819736487609	CMakeFiles/AIEqualizerPro_IntegrationTests.dir/Source/Tests/BlockSizeRegressionTest.cpp.o	d6e9fa42d270cdba
+9362	39975	1774481731129381655	CMakeFiles/AIEqualizerPro.dir/JUCE/modules/juce_audio_processors/juce_audio_processors.mm.o	d02d71c17b05a90f
+132657	132734	1774481854425839623	CMakeFiles/AIEqualizerPro_Standalone.dir/JUCE/modules/juce_audio_plugin_client/juce_audio_plugin_client_AAX_utils.cpp.o	23631c6f2271bee9
+195	13067	1774512819735879064	CMakeFiles/AIEqualizerPro_IntegrationTests.dir/Source/Tests/TransitionContinuityTests.cpp.o	c9c37d58b9a7df5d
+234925	293036	1774481956695159778	CMakeFiles/AIEqualizerPro_IntegrationTests.dir/JUCE/modules/juce_graphics/juce_graphics.mm.o	c28bce3ec0f91e64
+40253	40297	1774477820979155187	Release/bin/AI Equalizer Pro.app/Contents/Resources/RecentFilesMenuTemplate.nib	e757ca4cd6789dde
+56895	61873	1774481778662991316	CMakeFiles/AIEqualizerPro_Tests.dir/Source/Tests/LinearPhaseBehavioralTest.cpp.o	57b5dfaf7e34555a
+86041	93461	1774481807809378940	CMakeFiles/AIEqualizerPro_Tests.dir/JUCE/modules/juce_data_structures/juce_data_structures.mm.o	5ebc9279b2520ea1
+110939	116286	1774481832707406631	CMakeFiles/AIEqualizerPro_AI_Tests.dir/Source/AI/AdaptiveAIEngine.cpp.o	9f2e10db7a3f3d9f
+135938	136022	1774481857707154958	CMakeFiles/AIEqualizerPro_Standalone.dir/JUCE/modules/juce_audio_plugin_client/juce_audio_plugin_client_VST3.mm.o	c05da7b0f9c2d9e4
+47976	48318	1774481769743489284	Release/bin/AIEqualizerPro_vst3_helper	7d2f85338e646a9d
+10366	85818	1774481732133483317	CMakeFiles/AIEqualizerPro.dir/JUCE/modules/juce_graphics/juce_graphics_Harfbuzz.cpp.o	d4403dd9f7f1ad9e
+46611	51386	1774481768379129251	CMakeFiles/AIEqualizerPro_Tests.dir/Source/DSP/ParametricEQProcessor.cpp.o	b5baa231a9dd7c3d
+41352	46611	1774481763119430954	CMakeFiles/AIEqualizerPro_Tests.dir/Source/DSP/LinearPhaseProcessor.cpp.o	224fcb1693f17fe6
+38245	74605	1774481760012957497	CMakeFiles/AIEqualizerPro.dir/JUCE/modules/juce_opengl/juce_opengl.mm.o	96f57ef372ce73e4
+51386	56311	1774481773154187217	CMakeFiles/AIEqualizerPro_Tests.dir/Source/Tests/LinearPhaseIRSmokeTest.cpp.o	fdb20d7386cbf2bb
+51801	56579	1774481773569350552	CMakeFiles/AIEqualizerPro_Tests.dir/Source/Tests/LinearPhaseGainRegressionTest.cpp.o	1b845628f63087d8
+10514	11469	1774515834972565821	Release/bin/AIEqualizerPro_IntegrationTests	787f3f9c29874b1c
+210874	210965	1774481932643966641	CMakeFiles/AIEqualizerPro_IntegrationTests.dir/JUCE/modules/juce_audio_processors/juce_audio_processors_ara.cpp.o	455c12e49178f74f
+36571	41352	1774481758338979097	CMakeFiles/AIEqualizerPro.dir/JUCE/modules/juce_osc/juce_osc.cpp.o	2be61e47c1b1aa6
+66545	67629	1774477847271635850	CMakeFiles/AIEqualizerPro_Tests.dir/JUCE/modules/juce_graphics/juce_graphics_Sheenbidi.c.o	5a218f74f6ecfe5
+120444	127443	1774481842212807000	CMakeFiles/AIEqualizerPro_AI_Tests.dir/Source/AI/SemanticEQEngine.cpp.o	93c113b8074eb755
+10514	11428	1774515834972280318	Release/lib/AI Equalizer Pro.component/Contents/MacOS/AI Equalizer Pro	615cd5c90ca4c343
+214257	239390	1774481936026498439	CMakeFiles/AIEqualizerPro_IntegrationTests.dir/JUCE/modules/juce_gui_extra/juce_gui_extra.mm.o	a6ececffc4cc1c8a
+52692	57266	1774481774460263540	CMakeFiles/AIEqualizerPro_Tests.dir/Source/Tests/DynamicEQRegressionTest.cpp.o	1ca9f6c046e09d2a
+12288	21205	1774481734055045294	CMakeFiles/AIEqualizerPro.dir/JUCE/modules/juce_events/juce_events.mm.o	6da3ddbb04f8b651
+5560	9312	1774481727327701813	CMakeFiles/AIEqualizerPro.dir/Source/AI/OnlineLearningSystem.cpp.o	88c53d8de3a424b6
+125091	131388	1774481846859696297	CMakeFiles/AIEqualizerPro_AI_Tests.dir/Source/Tests/AIEngineTest.cpp.o	8dab20d120a69ec2
+147	4471	1774481721914499491	CMakeFiles/AIEqualizerPro.dir/Source/AI/UserLearning.cpp.o	df73c14a6d1b258f
+62055	62118	1774481783822518287	CMakeFiles/AIEqualizerPro_Tests.dir/JUCE/modules/juce_audio_processors/juce_audio_processors_lv2_libs.cpp.o	f630a0fa59d31799
+132734	132812	1774481854503045536	CMakeFiles/AIEqualizerPro_Standalone.dir/JUCE/modules/juce_audio_plugin_client/juce_audio_plugin_client_ARA.cpp.o	10ff8224bf7d254d
+118319	118423	1774477899148024637	/Users/marco/Desktop/NEWWWWWWW/build-release/AIEqualizerPro_artefacts/JuceLibraryCode/AIEqualizerPro_VST3/PkgInfo	c7bb3ade5d6ff5b6
+56312	60978	1774481778079678466	CMakeFiles/AIEqualizerPro_Tests.dir/Source/Tests/DynamicEQGlobalMixBehaviorTest.cpp.o	1de12d579cfb11c2
+62118	105041	1774481783886158012	CMakeFiles/AIEqualizerPro_Tests.dir/JUCE/modules/juce_audio_processors/juce_audio_processors.mm.o	74b51dc6a41fb245
+109810	116095	1774481831578274959	CMakeFiles/AIEqualizerPro_AI_Tests.dir/Source/AI/MLEngine.cpp.o	58790851d150b37f
+9239	20086	1774481731006668086	CMakeFiles/AIEqualizerPro.dir/Source/Utils/PresetManager.cpp.o	df470b36f007f4e4
+192457	193527	1774477973183118320	CMakeFiles/AIEqualizerPro_IntegrationTests.dir/JUCE/modules/juce_graphics/juce_graphics_Sheenbidi.c.o	72060036128edf8d
+116286	120728	1774481838054600827	CMakeFiles/AIEqualizerPro_AI_Tests.dir/Source/AI/OnlineLearningSystem.cpp.o	540f8109e1712d37
+118575	125082	1774481840343633377	CMakeFiles/AIEqualizerPro_AI_Tests.dir/Source/AI/ReferenceMatcher.cpp.o	695ff863084d591b
+184849	223448	1774481906618647130	CMakeFiles/AIEqualizerPro_AI_Tests.dir/JUCE/modules/juce_audio_formats/juce_audio_formats.mm.o	f07328fef39a817f
+60978	61054	1774481782746491352	CMakeFiles/AIEqualizerPro_Tests.dir/JUCE/modules/juce_core/juce_core_CompilationTime.cpp.o	67f0efb082cff87c
+131249	131324	1774481853017919706	CMakeFiles/AIEqualizerPro_AI_Tests.dir/JUCE/modules/juce_audio_processors/juce_audio_processors_ara.cpp.o	2139836ba22f6bf7
+25775	57738	1774481747542306315	CMakeFiles/AIEqualizerPro.dir/JUCE/modules/juce_audio_formats/juce_audio_formats.mm.o	1c883db6d31b5653
+146984	184849	1774481868752984167	CMakeFiles/AIEqualizerPro_VST3.dir/JUCE/modules/juce_audio_plugin_client/juce_audio_plugin_client_VST3.mm.o	db4bdbae68a0d258
+131324	131390	1774481853092564216	CMakeFiles/AIEqualizerPro_AI_Tests.dir/JUCE/modules/juce_audio_processors/juce_audio_processors_lv2_libs.cpp.o	b6a20a96188d21eb
+118081	118218	1774477898942121827	AIEqualizerPro_artefacts/JuceLibraryCode/AIEqualizerPro_Standalone/PkgInfo	3087c8c4bc65f12e
+95391	131006	1774481817159652350	CMakeFiles/AIEqualizerPro_Tests.dir/JUCE/modules/juce_audio_formats/juce_audio_formats.mm.o	ebbb36ad5c80cc34
+129785	261177	1774481851554069688	CMakeFiles/AIEqualizerPro_AI_Tests.dir/JUCE/modules/juce_core/juce_core.mm.o	1e2db4a90dd7f410
+66186	145971	1774481787953841920	CMakeFiles/AIEqualizerPro_Tests.dir/JUCE/modules/juce_graphics/juce_graphics_Harfbuzz.cpp.o	d91d9e8e2f5f8714
+10090	132427	1774481731857056805	CMakeFiles/AIEqualizerPro.dir/JUCE/modules/juce_gui_basics/juce_gui_basics.mm.o	a3a0dd549a1b448a
+196	12433	1774512819737655532	CMakeFiles/AIEqualizerPro_IntegrationTests.dir/Source/Tests/SoloModeTransitionTest.cpp.o	3c03a87001d8c7d1
+10317	10513	1774515834775505095	Release/lib/libAI Equalizer Pro_SharedCode.a	f15340e7b783583a
+118081	118218	1774477898942121827	/Users/marco/Desktop/NEWWWWWWW/build-release/AIEqualizerPro_artefacts/JuceLibraryCode/AIEqualizerPro_Standalone/PkgInfo	3087c8c4bc65f12e
+118218	118318	1774477899041940080	AIEqualizerPro_artefacts/JuceLibraryCode/AIEqualizerPro_AU/PkgInfo	3c580197fe4cee5a
+56579	66185	1774481778347202798	CMakeFiles/AIEqualizerPro_Tests.dir/Source/Tests/FuzzBlockSizeTest.cpp.o	75a8cf74c39256fb
+118319	118423	1774477899148024637	AIEqualizerPro_artefacts/JuceLibraryCode/AIEqualizerPro_VST3/PkgInfo	c7bb3ade5d6ff5b6
+9314	9367	1774481731081536224	CMakeFiles/AIEqualizerPro.dir/JUCE/modules/juce_audio_processors/juce_audio_processors_lv2_libs.cpp.o	7c57e3d9311a6ea4
+12888	56895	1774481734655114574	CMakeFiles/AIEqualizerPro.dir/JUCE/modules/juce_core/juce_core.mm.o	503b0c23489931c1
+118218	118318	1774477899041940080	/Users/marco/Desktop/NEWWWWWWW/build-release/AIEqualizerPro_artefacts/JuceLibraryCode/AIEqualizerPro_AU/PkgInfo	3c580197fe4cee5a
+93462	135422	1774481815230064078	CMakeFiles/AIEqualizerPro_Tests.dir/JUCE/modules/juce_dsp/juce_dsp.mm.o	ac6f47ad8bbd82de
+195	12494	1774512819736631485	CMakeFiles/AIEqualizerPro_IntegrationTests.dir/Source/Tests/MSModeSwitchContinuityTest.cpp.o	23ff979999d72b06
+162	10316	1774515824620186720	CMakeFiles/AIEqualizerPro.dir/Source/PluginProcessor.cpp.o	51577838ef2bfa83
+135511	135581	1774481857280060036	CMakeFiles/AIEqualizerPro_Standalone.dir/JUCE/modules/juce_audio_plugin_client/juce_audio_plugin_client_AAX.mm.o	33c510fdf0db8df7
+135581	135655	1774481857350033455	CMakeFiles/AIEqualizerPro_Standalone.dir/JUCE/modules/juce_audio_plugin_client/juce_audio_plugin_client_AU_1.mm.o	654aa5d50b9cad2c
+10741	86041	1774481732508176384	CMakeFiles/AIEqualizerPro.dir/JUCE/modules/juce_graphics/juce_graphics.mm.o	150df0612e019013
+210965	211043	1774481932734705991	CMakeFiles/AIEqualizerPro_IntegrationTests.dir/JUCE/modules/juce_audio_processors/juce_audio_processors_lv2_libs.cpp.o	1987e46feab0f836
+135422	135511	1774481857190963954	CMakeFiles/AIEqualizerPro_Standalone.dir/JUCE/modules/juce_audio_plugin_client/juce_audio_plugin_client_Unity.cpp.o	65a6c7d3bde08490
+131006	187114	1774481852775275641	CMakeFiles/AIEqualizerPro_AI_Tests.dir/JUCE/modules/juce_audio_basics/juce_audio_basics.mm.o	ccab6cf54032339d
+135797	135867	1774481857565785814	CMakeFiles/AIEqualizerPro_Standalone.dir/JUCE/modules/juce_audio_plugin_client/juce_audio_plugin_client_LV2.mm.o	9493de059a66589f
+138119	139116	1774477918845348628	CMakeFiles/AIEqualizerPro_AI_Tests.dir/JUCE/modules/juce_graphics/juce_graphics_Sheenbidi.c.o	40422b9b19178afe
+136022	136105	1774481857790944275	CMakeFiles/AIEqualizerPro_AU.dir/JUCE/modules/juce_audio_plugin_client/juce_audio_plugin_client_AAX_utils.cpp.o	7c088214b1e69d93
+239391	252770	1774481961160696919	CMakeFiles/AIEqualizerPro_IntegrationTests.dir/JUCE/modules/juce_events/juce_events.mm.o	2646e1d02a9a6157
+132813	144429	1774481854581270418	CMakeFiles/AIEqualizerPro_Standalone.dir/JUCE/modules/juce_audio_plugin_client/juce_audio_plugin_client_Standalone.cpp.o	68c7e59df5354020
+10514	11607	1774515834972427694	Release/lib/AI Equalizer Pro.vst3/Contents/MacOS/AI Equalizer Pro	c52070707cbb0748
+145971	146043	1774481867740152786	CMakeFiles/AIEqualizerPro_AU.dir/JUCE/modules/juce_audio_plugin_client/juce_audio_plugin_client_AUv3.mm.o	92062dc6d814a17f
+136105	136182	1774481857873576204	CMakeFiles/AIEqualizerPro_AU.dir/JUCE/modules/juce_audio_plugin_client/juce_audio_plugin_client_ARA.cpp.o	78b580040cca0ceb
+181869	226543	1774481903638610657	CMakeFiles/AIEqualizerPro_AI_Tests.dir/JUCE/modules/juce_dsp/juce_dsp.mm.o	e70b98e4fe756357
+146043	146113	1774481867812254977	CMakeFiles/AIEqualizerPro_AU.dir/JUCE/modules/juce_audio_plugin_client/juce_audio_plugin_client_LV2.mm.o	45c9dc2e822b775d
+146113	146187	1774481867882181562	CMakeFiles/AIEqualizerPro_AU.dir/JUCE/modules/juce_audio_plugin_client/juce_audio_plugin_client_VST2.mm.o	6bda687a33e04ef6
+61873	113934	1774481783641408216	CMakeFiles/AIEqualizerPro_Tests.dir/JUCE/modules/juce_audio_basics/juce_audio_basics.mm.o	c7c1268c9729e48a
+135656	135728	1774481857424542797	CMakeFiles/AIEqualizerPro_Standalone.dir/JUCE/modules/juce_audio_plugin_client/juce_audio_plugin_client_AU_2.mm.o	a9b84671531d22ce
+136259	136356	1774481858027908945	CMakeFiles/AIEqualizerPro_AU.dir/JUCE/modules/juce_audio_plugin_client/juce_audio_plugin_client_Unity.cpp.o	d8bcd1c6d3699b7c
+62278	100364	1774481784046114522	CMakeFiles/AIEqualizerPro_Tests.dir/JUCE/modules/juce_gui_extra/juce_gui_extra.mm.o	37bae8c49955eaae
+61982	62054	1774481783750179385	CMakeFiles/AIEqualizerPro_Tests.dir/JUCE/modules/juce_audio_processors/juce_audio_processors_ara.cpp.o	3d60b9df4c31df2a
+31734	52692	1774481753501282708	CMakeFiles/AIEqualizerPro.dir/JUCE/modules/juce_dsp/juce_dsp.mm.o	5a1f1c063ba91d31
+146188	146266	1774481867956398067	CMakeFiles/AIEqualizerPro_AU.dir/JUCE/modules/juce_audio_plugin_client/juce_audio_plugin_client_VST3.mm.o	95725a94d4428a37
+155170	234925	1774481876938650482	CMakeFiles/AIEqualizerPro_AI_Tests.dir/JUCE/modules/juce_graphics/juce_graphics_Harfbuzz.cpp.o	a37e535fcd7294ab
+146266	146338	1774481868034721825	CMakeFiles/AIEqualizerPro_VST3.dir/JUCE/modules/juce_audio_plugin_client/juce_audio_plugin_client_AAX_utils.cpp.o	2024220f655b002
+146338	146405	1774481868107167187	CMakeFiles/AIEqualizerPro_VST3.dir/JUCE/modules/juce_audio_plugin_client/juce_audio_plugin_client_ARA.cpp.o	e4f48eb4f5560d6b
+252771	282041	1774481974540699913	CMakeFiles/AIEqualizerPro_IntegrationTests.dir/JUCE/modules/juce_dsp/juce_dsp.mm.o	e0df6a5b2ade07fe
+146537	146606	1774481868305724945	CMakeFiles/AIEqualizerPro_VST3.dir/JUCE/modules/juce_audio_plugin_client/juce_audio_plugin_client_AAX.mm.o	600fc2b4e4deec65
+248487	255957	1774481970257072852	CMakeFiles/AIEqualizerPro_IntegrationTests.dir/JUCE/modules/juce_data_structures/juce_data_structures.mm.o	62fa5a281c74953
+146405	146469	1774481868173710860	CMakeFiles/AIEqualizerPro_VST3.dir/JUCE/modules/juce_audio_plugin_client/juce_audio_plugin_client_Standalone.cpp.o	c75512b1852be75d
+85819	95391	1774481807586936550	CMakeFiles/AIEqualizerPro_Tests.dir/JUCE/modules/juce_events/juce_events.mm.o	cccb03d6d8ad087d
+258329	258970	1774481980098704749	Release/bin/AIEqualizerPro_Tests	7dc166100ab0683d
+281077	281632	1774482002847571437	Release/bin/AIEqualizerPro_AI_Tests	4d63d07e834d4933
+146749	146829	1774481868518035476	CMakeFiles/AIEqualizerPro_VST3.dir/JUCE/modules/juce_audio_plugin_client/juce_audio_plugin_client_AUv3.mm.o	20b69599fb891014
+136182	136259	1774481857950548489	CMakeFiles/AIEqualizerPro_AU.dir/JUCE/modules/juce_audio_plugin_client/juce_audio_plugin_client_Standalone.cpp.o	a430df8ff0cf1150
+195	12197	1774512819736292025	CMakeFiles/AIEqualizerPro_IntegrationTests.dir/Source/Tests/LinearPhaseLatencyContractTest.cpp.o	f1be9037e59bab5f
+146469	146537	1774481868237715923	CMakeFiles/AIEqualizerPro_VST3.dir/JUCE/modules/juce_audio_plugin_client/juce_audio_plugin_client_Unity.cpp.o	c238f184d3b0a457
+146830	146899	1774481868598552674	CMakeFiles/AIEqualizerPro_VST3.dir/JUCE/modules/juce_audio_plugin_client/juce_audio_plugin_client_LV2.mm.o	3913699ac69573b0
+62354	203035	1774481784121897420	CMakeFiles/AIEqualizerPro_Tests.dir/JUCE/modules/juce_gui_basics/juce_gui_basics.mm.o	554fbd6a19b1cb75
+136436	155169	1774481858205103682	CMakeFiles/AIEqualizerPro_AU.dir/JUCE/modules/juce_audio_plugin_client/juce_audio_plugin_client_AU_1.mm.o	b3866e5ee44dd1ea
+211044	253868	1774481932813212626	CMakeFiles/AIEqualizerPro_IntegrationTests.dir/JUCE/modules/juce_audio_processors/juce_audio_processors.mm.o	7b5e73fcc6a41115
+253869	280040	1774481975639198215	CMakeFiles/AIEqualizerPro_IntegrationTests.dir/JUCE/modules/juce_audio_formats/juce_audio_formats.mm.o	f24f106bcdb656c2
+206900	210874	1774481928669814154	CMakeFiles/AIEqualizerPro_IntegrationTests.dir/Source/Tests/TestMain.cpp.o	81c1f266c9791167
+74605	159844	1774481796373322914	CMakeFiles/AIEqualizerPro_Tests.dir/JUCE/modules/juce_graphics/juce_graphics.mm.o	20ab48169fe8de72
+131388	177075	1774481853156700072	CMakeFiles/AIEqualizerPro_AI_Tests.dir/JUCE/modules/juce_audio_processors/juce_audio_processors.mm.o	8594ba2ace7c0195
+127443	131249	1774481849211689481	CMakeFiles/AIEqualizerPro_AI_Tests.dir/Source/Tests/TestMain.cpp.o	551ee3189e39a85b
+61055	190325	1774481782822503585	CMakeFiles/AIEqualizerPro_Tests.dir/JUCE/modules/juce_core/juce_core.mm.o	9d3215fc5012e5a8
+223448	310047	1774481945217990393	CMakeFiles/AIEqualizerPro_IntegrationTests.dir/JUCE/modules/juce_gui_basics/juce_gui_basics.mm.o	5406b5d1ee47518
+131390	169847	1774481853158481924	CMakeFiles/AIEqualizerPro_AI_Tests.dir/JUCE/modules/juce_gui_extra/juce_gui_extra.mm.o	7d1755c714337b74
+177076	185523	1774481898845111909	CMakeFiles/AIEqualizerPro_AI_Tests.dir/JUCE/modules/juce_data_structures/juce_data_structures.mm.o	7053ee450f9dfa67
+226543	286736	1774481948313083352	CMakeFiles/AIEqualizerPro_IntegrationTests.dir/JUCE/modules/juce_graphics/juce_graphics_Harfbuzz.cpp.o	f3f421c7da29751f
+207609	207683	1774481929378940731	CMakeFiles/AIEqualizerPro_IntegrationTests.dir/JUCE/modules/juce_core/juce_core_CompilationTime.cpp.o	acad286baf9325a6
+207683	298743	1774481929452576022	CMakeFiles/AIEqualizerPro_IntegrationTests.dir/JUCE/modules/juce_core/juce_core.mm.o	2f09d75c4fa436dd
+16	190	1774516060099025804	/Users/marco/Desktop/NEWWWWWWW/build-release/CMakeFiles/cmake.verify_globs	68422916d98969aa
+257	12598	1774516060340530074	CMakeFiles/AIEqualizerPro.dir/Source/PluginProcessor.cpp.o	51577838ef2bfa83
+258	19364	1774516060340913370	CMakeFiles/AIEqualizerPro.dir/Source/PluginEditor.cpp.o	3963fc918322553d
+19365	19572	1774516079448756826	Release/lib/libAI Equalizer Pro_SharedCode.a	f15340e7b783583a
+19572	20731	1774516079655297033	Release/lib/AI Equalizer Pro.component/Contents/MacOS/AI Equalizer Pro	615cd5c90ca4c343
+19572	20766	1774516079654974238	Release/bin/AI Equalizer Pro.app/Contents/MacOS/AI Equalizer Pro	b2a3f611283e3d00
+19573	20822	1774516079655814497	Release/bin/AIEqualizerPro_IntegrationTests	787f3f9c29874b1c
+19572	20888	1774516079655595370	Release/lib/AI Equalizer Pro.vst3/Contents/MacOS/AI Equalizer Pro	c52070707cbb0748
+8	162	1774516568417893838	/Users/marco/Desktop/NEWWWWWWW/build-release/CMakeFiles/cmake.verify_globs	68422916d98969aa
+217	10057	1774516568626686629	CMakeFiles/AIEqualizerPro.dir/Source/PluginProcessor.cpp.o	51577838ef2bfa83
+218	15442	1774516568627061020	CMakeFiles/AIEqualizerPro.dir/Source/PluginEditor.cpp.o	3963fc918322553d
+15443	15605	1774516583852360749	Release/lib/libAI Equalizer Pro_SharedCode.a	f15340e7b783583a
+15605	16285	1774516584014788598	Release/bin/AI Equalizer Pro.app/Contents/MacOS/AI Equalizer Pro	b2a3f611283e3d00
+15605	16286	1774516584015034646	Release/lib/AI Equalizer Pro.component/Contents/MacOS/AI Equalizer Pro	615cd5c90ca4c343
+15606	16301	1774516584015299777	Release/bin/AIEqualizerPro_IntegrationTests	787f3f9c29874b1c
+15605	16411	1774516584015174274	Release/lib/AI Equalizer Pro.vst3/Contents/MacOS/AI Equalizer Pro	c52070707cbb0748
+9	155	1774517236727490407	/Users/marco/Desktop/NEWWWWWWW/build-release/CMakeFiles/cmake.verify_globs	68422916d98969aa
+212	10100	1774517236930576874	CMakeFiles/AIEqualizerPro.dir/Source/PluginProcessor.cpp.o	51577838ef2bfa83
+212	15519	1774517236930918753	CMakeFiles/AIEqualizerPro.dir/Source/PluginEditor.cpp.o	3963fc918322553d
+15520	15704	1774517252238676243	Release/lib/libAI Equalizer Pro_SharedCode.a	f15340e7b783583a
+15705	16399	1774517252423576206	Release/lib/AI Equalizer Pro.component/Contents/MacOS/AI Equalizer Pro	615cd5c90ca4c343
+15705	16411	1774517252423345245	Release/bin/AI Equalizer Pro.app/Contents/MacOS/AI Equalizer Pro	b2a3f611283e3d00
+15705	16425	1774517252423844584	Release/bin/AIEqualizerPro_IntegrationTests	787f3f9c29874b1c
+15705	16538	1774517252423714541	Release/lib/AI Equalizer Pro.vst3/Contents/MacOS/AI Equalizer Pro	c52070707cbb0748
+9	121	1774518313435531701	/Users/marco/Desktop/NEWWWWWWW/build-release/CMakeFiles/cmake.verify_globs	68422916d98969aa
+217	9946	1774518313643312016	CMakeFiles/AIEqualizerPro.dir/Source/PluginProcessor.cpp.o	51577838ef2bfa83
+217	15383	1774518313643674853	CMakeFiles/AIEqualizerPro.dir/Source/PluginEditor.cpp.o	3963fc918322553d
+15383	15548	1774518328809900188	Release/lib/libAI Equalizer Pro_SharedCode.a	f15340e7b783583a
+15549	16211	1774518328975435041	Release/bin/AI Equalizer Pro.app/Contents/MacOS/AI Equalizer Pro	b2a3f611283e3d00
+15549	16214	1774518328975662044	Release/lib/AI Equalizer Pro.component/Contents/MacOS/AI Equalizer Pro	615cd5c90ca4c343
+15549	16228	1774518328975926963	Release/bin/AIEqualizerPro_IntegrationTests	787f3f9c29874b1c
+15549	16319	1774518328975794295	Release/lib/AI Equalizer Pro.vst3/Contents/MacOS/AI Equalizer Pro	c52070707cbb0748
+14	178	1774522082909067409	/Users/marco/Desktop/NEWWWWWWW/build-release/CMakeFiles/cmake.verify_globs	68422916d98969aa
+243	11394	1774522083138391287	CMakeFiles/AIEqualizerPro.dir/Source/PluginProcessor.cpp.o	51577838ef2bfa83
+244	17516	1774522083138822749	CMakeFiles/AIEqualizerPro.dir/Source/PluginEditor.cpp.o	3963fc918322553d
+17516	17685	1774522100411819409	Release/lib/libAI Equalizer Pro_SharedCode.a	f15340e7b783583a
+17685	18798	1774522100580645431	Release/bin/AI Equalizer Pro.app/Contents/MacOS/AI Equalizer Pro	b2a3f611283e3d00
+17686	18801	1774522100580957224	Release/lib/AI Equalizer Pro.component/Contents/MacOS/AI Equalizer Pro	615cd5c90ca4c343
+17686	18829	1774522100581275101	Release/bin/AIEqualizerPro_IntegrationTests	787f3f9c29874b1c
+17686	18947	1774522100581113225	Release/lib/AI Equalizer Pro.vst3/Contents/MacOS/AI Equalizer Pro	c52070707cbb0748
+18	410	1774522723076863492	/Users/marco/Desktop/NEWWWWWWW/build-release/CMakeFiles/cmake.verify_globs	68422916d98969aa
+2128	2227	1774524254788733334	/Users/marco/Desktop/NEWWWWWWW/build-release/CMakeFiles/cmake.verify_globs	68422916d98969aa
+8	58	1774524255011824082	/Users/marco/Desktop/NEWWWWWWW/build-release/CMakeFiles/cmake.verify_globs	68422916d98969aa
+9	67	1774524255140700173	/Users/marco/Desktop/NEWWWWWWW/build-release/CMakeFiles/cmake.verify_globs	68422916d98969aa
+30	118	1774524273029413387	/Users/marco/Desktop/NEWWWWWWW/build-release/CMakeFiles/cmake.verify_globs	68422916d98969aa
+16	74	1774524273163649388	/Users/marco/Desktop/NEWWWWWWW/build-release/CMakeFiles/cmake.verify_globs	68422916d98969aa
+18	62	1774524273264090752	/Users/marco/Desktop/NEWWWWWWW/build-release/CMakeFiles/cmake.verify_globs	68422916d98969aa

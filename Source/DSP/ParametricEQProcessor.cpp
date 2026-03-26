@@ -604,6 +604,64 @@ void ParametricEQProcessor::getMagnitudeForFrequencyArray(const float* frequenci
 }
 
 //==============================================================================
+void ParametricEQProcessor::getMagnitudeForFrequencyArrayWithGainOffsets(
+    const float* frequencies, float* magnitudes, size_t numPoints,
+    double sampleRate, const float* gainOffsets, int numOffsets) const
+{
+    if (sampleRate <= 0.0)
+        sampleRate = currentSampleRate.load(std::memory_order_relaxed);
+    if (sampleRate <= 0.0)
+    {
+        for (size_t i = 0; i < numPoints; ++i)
+            magnitudes[i] = outputGain.load(std::memory_order_relaxed);
+        return;
+    }
+
+    for (size_t i = 0; i < numPoints; ++i)
+        magnitudes[i] = 1.0f;
+
+    const int numBands = numActiveBands.load(std::memory_order_acquire);
+
+    for (int bandIdx = 0; bandIdx < numBands; ++bandIdx)
+    {
+        if (!bandParams[bandIdx].enabled.load(std::memory_order_relaxed))
+            continue;
+
+        const float bFreq  = bandParams[bandIdx].frequency.load(std::memory_order_relaxed);
+        const float bGainBase = bandParams[bandIdx].gain.load(std::memory_order_relaxed);
+        const float bQ     = bandParams[bandIdx].q.load(std::memory_order_relaxed);
+        const int   bType  = bandParams[bandIdx].type.load(std::memory_order_relaxed);
+        const int   bSlope = bandParams[bandIdx].slope.load(std::memory_order_relaxed);
+
+        // Apply per-band gain offset (gain reduction from dynamic EQ)
+        const float offset = (gainOffsets && bandIdx < numOffsets) ? gainOffsets[bandIdx] : 0.0f;
+        const float bGain  = bGainBase + offset;
+
+        auto coefs = makeCoefficients(static_cast<FilterType>(bType), bFreq, bGain, bQ, sampleRate);
+        if (!coefs.valid)
+            continue;
+
+        int numStages = 1;
+        if ((bType == static_cast<int>(LowCut) || bType == static_cast<int>(HighCut)) && bSlope > 0)
+            numStages = (bSlope == 1) ? 2 : 4;
+
+        for (size_t i = 0; i < numPoints; ++i)
+        {
+            double mag = coefs.getMagnitudeForFrequency(
+                static_cast<double>(frequencies[i]), sampleRate);
+            double totalMag = 1.0;
+            for (int s = 0; s < numStages; ++s)
+                totalMag *= mag;
+            magnitudes[i] *= static_cast<float>(totalMag);
+        }
+    }
+
+    const float gain = outputGain.load(std::memory_order_relaxed);
+    for (size_t i = 0; i < numPoints; ++i)
+        magnitudes[i] *= gain;
+}
+
+//==============================================================================
 void ParametricEQProcessor::updateCoefficientsForBand(int index)
 {
     if (index < 0 || index >= getMaxBands())

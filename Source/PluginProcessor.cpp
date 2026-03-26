@@ -1305,6 +1305,10 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         bypassCrossfadeRemaining = bypassCrossfadeSamples;
     wasBypassed = bypassed;
 
+    // AI correction applied: trigger dry→wet crossfade to cover coefficient discontinuity
+    if (aiCorrectionCrossfadePending.exchange(false, std::memory_order_acquire))
+        bypassCrossfadeRemaining = bypassCrossfadeSamples;
+
     if (bypassed && bypassCrossfadeRemaining <= 0)
     {
         // Steady-state bypass: skip processing entirely
@@ -2019,9 +2023,38 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
 
 void AIEqualizerAudioProcessor::parameterChanged(const juce::String& parameterID, float newValue)
 {
-    parametersNeedUpdate.store(true, std::memory_order_release);
-    markParametersChanged();
+    // Increment the general parameter change counter for host automation, etc.
+    parameterChangeCounter.fetch_add(1, std::memory_order_relaxed);
 
+    // --- OPTIMIZATION: Selective EQ Curve Counter Increment ---
+    // Only increment the EQ curve counter if a parameter that visually affects
+    // the curve has changed. This prevents the expensive EQ image rebuild
+    // from being triggered by host polling of non-visual parameters.
+    
+    bool affectsEQCurve = false;
+    if (parameterID.startsWith("band"))
+    {
+        // A simple string check is faster than parsing the band index.
+        // We only care if *any* band's visual parameter has changed.
+        if (parameterID.contains("Freq") || parameterID.contains("Gain") || parameterID.contains("Q") ||
+            parameterID.contains("Type") || parameterID.contains("Enabled") || parameterID.contains("Slope"))
+        {
+            affectsEQCurve = true;
+        }
+    }
+    else if (parameterID == "numActiveBands")
+    {
+        affectsEQCurve = true;
+    }
+
+    if (affectsEQCurve)
+    {
+        eqCurveChangeCounter.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    // --- End of Optimization ---
+
+    // Handle specific parameter changes that require immediate action
     if (parameterID == "phaseMode")
     {
         const int modeIdx = juce::jlimit(0, 2, static_cast<int>(std::round(newValue)));
@@ -2036,23 +2069,17 @@ void AIEqualizerAudioProcessor::parameterChanged(const juce::String& parameterID
 
             if (zeroNaturalSwap)
             {
-                // Zero ↔ Natural: same-latency modes, smooth dual-processor crossfade
                 phaseTransitionFromMode.store(static_cast<int>(oldMode), std::memory_order_release);
                 phaseTransitionSamplesRemaining.store(phaseTransitionCrossfadeSamples, std::memory_order_release);
             }
             else
             {
-                // Transitions involving LinearPhase: LP's convolution latency
-                // makes dual-processor crossfade impossible (time misalignment).
-                // Use pendingReset — the bypassCrossfade mechanism (dry→processed
-                // fade triggered by pendingReset) covers the transient smoothly.
                 phaseTransitionFromMode.store(-1, std::memory_order_release);
                 phaseTransitionSamplesRemaining.store(0, std::memory_order_release);
                 pendingReset.store(true, std::memory_order_release);
             }
         }
 
-        // Ensure linear-phase IR build kicks off immediately when entering LinearPhase
         if (newMode == PhaseMode::LinearPhase)
         {
             consecutiveIRReadyBlocks = 0;
@@ -2061,8 +2088,6 @@ void AIEqualizerAudioProcessor::parameterChanged(const juce::String& parameterID
             triggerEQCurveUpdate();
         }
 
-        // Update reported latency to match the new phase mode
-        // This ensures DAW delay compensation is accurate
         {
             int newLatency = 0;
             if (newMode == PhaseMode::LinearPhase)
@@ -2071,7 +2096,6 @@ void AIEqualizerAudioProcessor::parameterChanged(const juce::String& parameterID
                     : LinearPhaseProcessor::hopSize);
             else if (newMode == PhaseMode::NaturalPhase)
                 newLatency = worstCaseOversamplingLatency;
-            // ZeroLatency: 0
 
             if (newLatency != lastReportedLatency)
             {
@@ -2080,17 +2104,13 @@ void AIEqualizerAudioProcessor::parameterChanged(const juce::String& parameterID
                 lastReportedLatency = newLatency;
             }
         }
-        return;
     }
-
-    if (parameterID == "msMode")
+    else if (parameterID == "msMode")
     {
         const int modeIdx = juce::jlimit(0, 3, static_cast<int>(std::round(newValue)));
         currentMSMode.store(static_cast<MSMode>(modeIdx));
-        return;
     }
-
-    if (parameterID == "oversamplingFactor")
+    else if (parameterID == "oversamplingFactor")
     {
         const int factor = juce::jlimit(0, 3, static_cast<int>(std::round(newValue)));
         const int oldFactor = oversamplingFactor.exchange(factor);
@@ -2100,7 +2120,7 @@ void AIEqualizerAudioProcessor::parameterChanged(const juce::String& parameterID
             if (value == 2)
                 return 2; // 4x
             if (value == oversamplingAutoIndex)
-                return oversamplingAutoIndex; // keep Auto distinct
+                return oversamplingAutoIndex;
             return 1; // Off and 2x both share the 2x Natural path
         };
 
@@ -2129,14 +2149,17 @@ void AIEqualizerAudioProcessor::parameterChanged(const juce::String& parameterID
                 pendingReset.store(true, std::memory_order_release);
             }
         }
-        return;
     }
 
-    // Mark IR dirty for any band-related parameter
+    // Mark IR dirty for any band-related parameter (needed for Linear Phase IR rebuild)
     if (parameterID.startsWith("band") || parameterID == "numActiveBands")
     {
         triggerEQCurveUpdate();
     }
+
+    // Mark parameters as needing update for the audio thread's next processing block.
+    parametersNeedUpdate.store(true, std::memory_order_release);
+    markParametersChanged();
 }
 
 void AIEqualizerAudioProcessor::triggerEQCurveUpdate()
@@ -2700,6 +2723,9 @@ void AIEqualizerAudioProcessor::loadStateFromSlot(ABState slot)
         param->setValueNotifyingHost(param->convertTo0to1(gain));
         param->endChangeGesture();
     }
+
+    // Trigger crossfade to avoid clicks on bulk parameter change (A/B switch)
+    aiCorrectionCrossfadePending.store(true, std::memory_order_release);
 }
 
 void AIEqualizerAudioProcessor::copyAtoB()
@@ -3133,6 +3159,9 @@ void AIEqualizerAudioProcessor::applyAICorrections()
         }
     }
 
+    // Trigger dry→wet crossfade to cover the coefficient discontinuity
+    aiCorrectionCrossfadePending.store(true, std::memory_order_release);
+
     // Clear ONLY approved corrections after applying (keep pending for future approval)
     // This allows user to approve more corrections later without losing pending ones
     aiEngine.clearApprovedCorrections();
@@ -3258,6 +3287,9 @@ void AIEqualizerAudioProcessor::applySingleCorrection(const AIEngine::Correction
             );
         }
     }
+
+    // Trigger dry→wet crossfade to cover the coefficient discontinuity
+    aiCorrectionCrossfadePending.store(true, std::memory_order_release);
 
     // Remove this correction from pending (user has applied it)
     // Find and remove the matching correction from pendingCorrections

@@ -4,6 +4,9 @@
 #include <memory>
 #include "../AI/SemanticEQEngine.h"
 #include "ModernLookAndFeel.h"
+#if AIEQ_GUI_DEBUG
+#include "../Utils/DebugLog.h"
+#endif
 
 //==============================================================================
 /**
@@ -260,9 +263,18 @@ public:
         {
             semanticEngine.updateMorph(33.0f);  // ~30fps
             syncSlidersFromEngine();
-            updateEQFromState();
+            semanticDirty = true;
         }
-        
+
+        // FIX 1: Coalesce — apply semantic EQ updates at timer rate (30Hz max),
+        // not on every slider drag event. This eliminates the parameter storm
+        // while keeping the UI responsive.
+        if (semanticDirty)
+        {
+            updateEQFromState();
+            semanticDirty = false;
+        }
+
         repaint();  // For visualizer animation
     }
     
@@ -270,12 +282,25 @@ public:
     // Slider::Listener
     void sliderValueChanged(juce::Slider* slider) override
     {
+#if AIEQ_GUI_DEBUG
+        debugSliderEventCount++;
+        double now = juce::Time::getMillisecondCounterHiRes();
+        if (now - debugLastSliderReport > 2000.0)
+        {
+            aieqDebugLog( "[SEMANTIC] sliderEvents/sec=%.1f updateEQ/sec=%.1f\n",
+                debugSliderEventCount * 1000.0 / (now - debugLastSliderReport),
+                debugUpdateEQCount * 1000.0 / (now - debugLastSliderReport));
+            debugSliderEventCount = 0;
+            debugUpdateEQCount = 0;
+            debugLastSliderReport = now;
+        }
+#endif
         for (auto& qs : qualitySliders)
         {
             if (qs.slider.get() == slider)
             {
                 float value = static_cast<float>(slider->getValue());
-                
+
                 if (morphButton.getToggleState() && std::abs(value - semanticEngine.getQuality(qs.quality)) > 0.1f)
                 {
                     // Morph to new state
@@ -285,10 +310,24 @@ public:
                 }
                 else
                 {
+                    // FIX 1b: Throttle with immediate passthrough.
+                    // First event passes through immediately (small coefficient step → no click).
+                    // Subsequent events within kSemanticMinIntervalMs are deferred to the
+                    // 30Hz timer. This caps updateEQ at ~60Hz while keeping responsiveness
+                    // and avoiding the large coefficient jumps that cause clicks.
                     semanticEngine.setQuality(qs.quality, value);
-                    updateEQFromState();
+                    double now = juce::Time::getMillisecondCounterHiRes();
+                    if (now - lastSemanticApplyMs >= kSemanticMinIntervalMs)
+                    {
+                        updateEQFromState();
+                        lastSemanticApplyMs = now;
+                    }
+                    else
+                    {
+                        semanticDirty = true; // timer will pick it up
+                    }
                 }
-                
+
                 updateStatusLabel(qs.name, value);
                 break;
             }
@@ -497,7 +536,10 @@ private:
         // SAFETY: Only update if panel is visible and ready
         if (!isVisible())
             return;
-            
+
+#if AIEQ_GUI_DEBUG
+        debugUpdateEQCount++;
+#endif
         // Generate EQ adjustments from current semantic state
         auto adjustments = semanticEngine.generateEQFromState({}, currentSampleRate);
         
@@ -571,7 +613,16 @@ private:
     
     std::vector<QualitySliderData> qualitySliders;
     std::vector<std::unique_ptr<juce::TextButton>> presetButtons;
-    
+    bool semanticDirty = false;            // FIX 1: coalesce slider events to timer rate
+    double lastSemanticApplyMs = 0.0;      // FIX 1b: throttle with immediate passthrough
+    static constexpr double kSemanticMinIntervalMs = 16.0; // ~60Hz max update rate
+
+#if AIEQ_GUI_DEBUG
+    int debugSliderEventCount = 0;
+    int debugUpdateEQCount = 0;
+    double debugLastSliderReport = 0.0;
+#endif
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SemanticControlPanel)
 };
 

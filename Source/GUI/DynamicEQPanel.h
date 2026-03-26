@@ -224,12 +224,23 @@ public:
     {
         if (newIndex == bandIndex || newIndex < 0 || newIndex >= DynamicEQProcessor::maxBands)
             return;
-        
+
+        // CRITICAL: Destroy ALL old attachments FIRST, before creating new ones.
+        // If a new attachment updates the knob value while the old attachment is still
+        // alive, the old attachment's listener fires and writes the new band's value
+        // into the OLD band's parameter — corrupting the previous band's settings.
+        modeAttachment.reset();
+        thresholdAtt.reset();
+        ratioAtt.reset();
+        attackAtt.reset();
+        releaseAtt.reset();
+        rangeAtt.reset();
+        kneeAtt.reset();
+
         bandIndex = newIndex;
-        
         juce::String prefix = "band" + juce::String(bandIndex);
-        
-        // Re-attach all parameters (construct new attachments before replacing old ones)
+
+        // Now safe to create new attachments — no old listener can intercept
         modeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
             apvts, prefix + "DynMode", modeCombo);
         thresholdAtt = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
@@ -244,7 +255,7 @@ public:
             apvts, prefix + "Range", rangeKnob);
         kneeAtt = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
             apvts, prefix + "Knee", kneeKnob);
-        
+
         titleLabel.setText("DYNAMIC EQ - Band " + juce::String(bandIndex + 1), juce::dontSendNotification);
         repaint();
     }

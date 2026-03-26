@@ -242,11 +242,9 @@ NeuralNetworkWrapper::~NeuralNetworkWrapper()
 //==============================================================================
 bool NeuralNetworkWrapper::loadModel(const juce::File& modelFile, ModelType type)
 {
-    // FIX: lock ordering must be consistent to prevent deadlock.
-    // Rule: ALWAYS acquire inferenceMutex before modelMutex (same order as runInference).
-    std::lock_guard<std::mutex> infLock(inferenceMutex);
-    std::lock_guard<std::mutex> lock(modelMutex);
-    
+    // C++17 scoped_lock: acquires both mutexes atomically, deadlock-free
+    std::scoped_lock lock(inferenceMutex, modelMutex);
+
     if (!modelFile.existsAsFile())
         return false;
     
@@ -288,10 +286,9 @@ void NeuralNetworkWrapper::unloadModel()
 //==============================================================================
 NeuralNetworkWrapper::InferenceResult NeuralNetworkWrapper::runInference(const std::vector<float>& input)
 {
-    // Serialize inference to guard non-thread-safe interpreters (TFLite/libtorch)
-    std::lock_guard<std::mutex> infLock(inferenceMutex);
-    std::lock_guard<std::mutex> lock(modelMutex);
-    
+    // C++17 scoped_lock: acquires both mutexes atomically, deadlock-free
+    std::scoped_lock lock(inferenceMutex, modelMutex);
+
     if (!currentModel.isLoaded)
     {
         InferenceResult result;

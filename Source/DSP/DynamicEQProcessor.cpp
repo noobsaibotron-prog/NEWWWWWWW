@@ -530,6 +530,10 @@ float DynamicEQProcessor::calculateDynamicGain(float inputLevelDb,
 
 float DynamicEQProcessor::computeSoftKnee(float inputDb, float threshold, float ratio, float knee) const
 {
+    // Guard: unity ratio means no compression — avoid indeterminate gain
+    if (std::abs(ratio - 1.0f) < 0.01f)
+        return 0.0f;
+
     if (knee <= 0.0f)
     {
         if (inputDb <= threshold)

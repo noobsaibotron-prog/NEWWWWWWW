@@ -638,5 +638,8 @@ private:
     std::atomic<bool>  enableTransientMode { false };
     std::atomic<bool>  enableSparseMode    { false };
 
+    // Pre-allocated buffer for analyzeSpectrum — avoids heap allocation on each call
+    std::vector<float> normalizedBuffer;
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AIEngine)
 };

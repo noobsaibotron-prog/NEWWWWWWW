@@ -20,7 +20,8 @@
 AIEngine::AIEngine()
 {
     currentSpectrum.resize(numBins, -100.0f);
-    
+    normalizedBuffer.resize(numBins, -100.0f);
+
     // EXPLICITLY initialize triple-buffer to prevent uninitialized access
     for (auto& buf : spectrumBuffers)
     {
@@ -144,14 +145,15 @@ void AIEngine::analyzeSpectrum(const std::vector<float>& spectrum, bool force)
     if (!enabled && !force)
         return;  // Only skip if disabled AND not forced
     
-    std::vector<float> normalized;
+    // Reuse pre-allocated buffer to avoid heap allocation per call
+    auto& normalized = normalizedBuffer;
     if (static_cast<int>(spectrum.size()) == numBins)
     {
-        normalized = spectrum;
+        std::copy(spectrum.begin(), spectrum.end(), normalized.begin());
     }
     else
     {
-        normalized.resize(numBins, -100.0f);
+        std::fill(normalized.begin(), normalized.end(), -100.0f);
         if (spectrum.size() > 1)
         {
             const float scale = static_cast<float>(spectrum.size() - 1) / static_cast<float>(numBins - 1);

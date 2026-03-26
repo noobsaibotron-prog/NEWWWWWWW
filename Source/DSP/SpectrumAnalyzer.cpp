@@ -1,5 +1,8 @@
 #include "SpectrumAnalyzer.h"
 #include <cmath>
+#if AIEQ_GUI_DEBUG
+#include "../Utils/DebugLog.h"
+#endif
 
 SpectrumAnalyzer::SpectrumAnalyzer()
 {
@@ -129,6 +132,13 @@ void SpectrumAnalyzer::pushSamples(const juce::AudioBuffer<float>& buffer)
 //==============================================================================
 void SpectrumAnalyzer::processFFT()
 {
+#if AIEQ_GUI_DEBUG
+    static int fftDebugCallCount = 0;
+    static double fftDebugTimeAccum = 0.0;
+    static double fftDebugLastReport = 0.0;
+    auto fftDebugStart = juce::Time::getMillisecondCounterHiRes();
+#endif
+
     if (resolution == Resolution::Max)
     {
         const double nowMs = juce::Time::getMillisecondCounterHiRes();
@@ -228,6 +238,27 @@ void SpectrumAnalyzer::processFFT()
     }
 
     newDataAvailable.store(false);
+
+    // FIX 2: Bump version so GUI knows spectrum paths need rebuild
+    if (framesProcessed > 0)
+        spectrumVersion.fetch_add(1, std::memory_order_release);
+
+#if AIEQ_GUI_DEBUG
+    double fftDebugMs = juce::Time::getMillisecondCounterHiRes() - fftDebugStart;
+    fftDebugTimeAccum += fftDebugMs;
+    fftDebugCallCount++;
+    double fftDebugNow = juce::Time::getMillisecondCounterHiRes();
+    if (fftDebugNow - fftDebugLastReport > 2000.0)
+    {
+        aieqDebugLog( "[FFT] calls/sec=%.1f avgMs=%.2f fftSize=%d\n",
+            fftDebugCallCount * 1000.0 / (fftDebugNow - fftDebugLastReport),
+            fftDebugTimeAccum / std::max(1, fftDebugCallCount),
+            getFFTSize());
+        fftDebugCallCount = 0;
+        fftDebugTimeAccum = 0.0;
+        fftDebugLastReport = fftDebugNow;
+    }
+#endif
 }
 
 //==============================================================================

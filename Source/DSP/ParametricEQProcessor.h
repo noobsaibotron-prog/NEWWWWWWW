@@ -142,8 +142,13 @@ public:
     //==============================================================================
     // Magnitude response (for GUI curve drawing)
     [[nodiscard]] float getMagnitudeForFrequency(float freq, double sampleRate) const;
-    void getMagnitudeForFrequencyArray(const float* frequencies, float* magnitudes, 
+    void getMagnitudeForFrequencyArray(const float* frequencies, float* magnitudes,
                                         size_t numPoints, double sampleRate) const;
+    // Like getMagnitudeForFrequencyArray but adds gainOffsets[bandIdx] to each band's gain.
+    // Used by dynamic EQ overlay to compute the "live" curve with GR applied per band.
+    void getMagnitudeForFrequencyArrayWithGainOffsets(const float* frequencies, float* magnitudes,
+                                                       size_t numPoints, double sampleRate,
+                                                       const float* gainOffsets, int numOffsets) const;
     
     //==============================================================================
     // Global controls (atomic, lock-free)

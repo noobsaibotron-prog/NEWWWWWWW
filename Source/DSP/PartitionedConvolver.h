@@ -59,14 +59,14 @@ public:
         accumScratch.assign(fftPartSize * 2, 0.0f);
         fullIrTime.assign(fftSize * 2, 0.0f);
 
-        crossfadeSamplesLeft = 0;
+        crossfadeSamplesLeft.store(0, std::memory_order_relaxed);
     }
 
     void reset()
     {
         for (auto& ch : chState)
             ch.resetState();
-        crossfadeSamplesLeft = 0;
+        crossfadeSamplesLeft.store(0, std::memory_order_relaxed);
     }
 
     // ── IR loading ─────────────────────────────────────────────────────
@@ -91,7 +91,7 @@ public:
         if (irSets[oldActive].valid)
         {
             crossfadeFromSet = oldActive;
-            crossfadeSamplesLeft = crossfadeLength;
+            crossfadeSamplesLeft.store(crossfadeLength, std::memory_order_release);
             // Snapshot each channel's FDL + overlap for the old-IR path
             for (auto& ch : chState)
             {
@@ -121,7 +121,7 @@ public:
         if (irSets[oldActive].valid)
         {
             crossfadeFromSet = oldActive;
-            crossfadeSamplesLeft = crossfadeLength;
+            crossfadeSamplesLeft.store(crossfadeLength, std::memory_order_release);
             for (auto& ch : chState)
             {
                 ch.fdlOld.resize(numParts);
@@ -181,7 +181,7 @@ public:
                     processOneBlock(ch, irParts, ch.outputQueue.data());
 
                     // Handle crossfade with old IR
-                    if (crossfadeSamplesLeft > 0)
+                    if (crossfadeSamplesLeft.load(std::memory_order_acquire) > 0)
                     {
                         const auto& oldParts = irSets[crossfadeFromSet];
                         processOneBlockWithFDL(ch.fdlOld, ch.overlapOld,
@@ -199,15 +199,16 @@ public:
                     float sample = ch.outputQueue[ch.outputReadPos];
 
                     // Apply crossfade if active
-                    if (crossfadeSamplesLeft > 0)
+                    const int cfLeft = crossfadeSamplesLeft.load(std::memory_order_relaxed);
+                    if (cfLeft > 0)
                     {
-                        const float fadeNew = 1.0f - static_cast<float>(crossfadeSamplesLeft)
+                        const float fadeNew = 1.0f - static_cast<float>(cfLeft)
                                                      / static_cast<float>(crossfadeLength);
                         const float fadeOld = 1.0f - fadeNew;
                         sample = sample * fadeNew + ch.outputQueueOld[ch.outputReadPos] * fadeOld;
                         // Only decrement on channel 0 to keep channels in sync
                         if (c == 0)
-                            --crossfadeSamplesLeft;
+                            crossfadeSamplesLeft.store(cfLeft - 1, std::memory_order_release);
                     }
 
                     data[i] = sample;
@@ -235,7 +236,7 @@ private:
 
     // Crossfade
     static constexpr int crossfadeLength = static_cast<int>(partSize); // 128 samples
-    int crossfadeSamplesLeft = 0;
+    std::atomic<int> crossfadeSamplesLeft { 0 };
     int crossfadeFromSet = 0;
 
     // ── Per-channel state ──────────────────────────────────────────────
