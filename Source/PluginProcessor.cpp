@@ -1179,7 +1179,8 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         // dropout (IIR filters start from zero on a live signal). The bypass crossfade
         // mechanism already has the dry buffer capture and blend logic — reusing it
         // here covers the reset block with a smooth fade rather than an audible gap.
-        bypassCrossfadeRemaining = bypassCrossfadeSamples;
+        currentBypassCrossfadeSamples = bypassCrossfadeSamples;
+        bypassCrossfadeRemaining = currentBypassCrossfadeSamples;
     }
 
     // Defensive clamp: if host delivers a block bigger than we pre-allocated for
@@ -1302,12 +1303,19 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
 
     // Check bypass — with crossfade to avoid clicks on toggle
     if (bypassed != wasBypassed)
-        bypassCrossfadeRemaining = bypassCrossfadeSamples;
+    {
+        currentBypassCrossfadeSamples = bypassCrossfadeSamples;
+        bypassCrossfadeRemaining = currentBypassCrossfadeSamples;
+    }
     wasBypassed = bypassed;
 
-    // AI correction applied: trigger dry→wet crossfade to cover coefficient discontinuity
+    // AI correction applied: trigger a longer dry→wet crossfade to better mask
+    // coefficient/filter-type discontinuities than the short bypass fade does.
     if (aiCorrectionCrossfadePending.exchange(false, std::memory_order_acquire))
-        bypassCrossfadeRemaining = bypassCrossfadeSamples;
+    {
+        currentBypassCrossfadeSamples = aiCorrectionCrossfadeSamples;
+        bypassCrossfadeRemaining = currentBypassCrossfadeSamples;
+    }
 
     if (bypassed && bypassCrossfadeRemaining <= 0)
     {
@@ -1982,7 +1990,8 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     if (bypassCrossfadeRemaining > 0)
     {
         const int fadeLen = juce::jmin(bypassCrossfadeRemaining, numSamples);
-        const int fadeProgressStart = bypassCrossfadeSamples - bypassCrossfadeRemaining;
+        const int fadeTotal = juce::jmax(1, currentBypassCrossfadeSamples);
+        const int fadeProgressStart = fadeTotal - bypassCrossfadeRemaining;
         const int chs = juce::jmin(buffer.getNumChannels(), dryBuffer.getNumChannels());
 
         for (int ch = 0; ch < chs; ++ch)
@@ -1994,7 +2003,7 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
             {
                 const float t = juce::jlimit(0.0f, 1.0f,
                                 static_cast<float>(fadeProgressStart + s)
-                              / static_cast<float>(bypassCrossfadeSamples));
+                              / static_cast<float>(fadeTotal));
                 // t: 0→1.  bypassed: wet→dry.  !bypassed: dry→wet.
                 if (bypassed)
                     out[s] = out[s] * (1.0f - t) + dry[s] * t;
@@ -3056,6 +3065,8 @@ void AIEqualizerAudioProcessor::applyAICorrections()
         }
     }
 
+    bool anyMaterialChange = false;
+
     // Assign corrections to bands intelligently
     for (const auto& corr : merged)
     {
@@ -3100,44 +3111,61 @@ void AIEqualizerAudioProcessor::applyAICorrections()
         if (bestBand >= 0)
         {
             juce::String prefix = "band" + juce::String(bestBand);
+            const int typeIndex = static_cast<int>(aiFilterTypeToProcessorType(scaled.suggestedFilter));
 
-            // FIX: Use beginChangeGesture/endChangeGesture for proper undo support
-            if (auto* freqParam = apvts.getParameter(prefix + "Freq"))
-            {
-                freqParam->beginChangeGesture();
-                freqParam->setValueNotifyingHost(freqParam->convertTo0to1(scaled.frequency));
-                freqParam->endChangeGesture();
-            }
+            bool bandMateriallyChanged = false;
+            if (auto* freqRaw = apvts.getRawParameterValue(prefix + "Freq"); freqRaw != nullptr)
+                bandMateriallyChanged = bandMateriallyChanged || std::abs(freqRaw->load() - scaled.frequency) > 1.0f;
+            if (auto* gainRaw = apvts.getRawParameterValue(prefix + "Gain"); gainRaw != nullptr)
+                bandMateriallyChanged = bandMateriallyChanged || std::abs(gainRaw->load() - scaled.suggestedGain) > 0.05f;
+            if (auto* qRaw = apvts.getRawParameterValue(prefix + "Q"); qRaw != nullptr)
+                bandMateriallyChanged = bandMateriallyChanged || std::abs(qRaw->load() - scaled.suggestedQ) > 0.02f;
+            if (auto* typeRaw = apvts.getRawParameterValue(prefix + "Type"); typeRaw != nullptr)
+                bandMateriallyChanged = bandMateriallyChanged || static_cast<int>(std::lround(typeRaw->load())) != typeIndex;
+            if (auto* enabledRaw = apvts.getRawParameterValue(prefix + "Enabled"); enabledRaw != nullptr)
+                bandMateriallyChanged = bandMateriallyChanged || enabledRaw->load() <= 0.5f;
 
-            if (auto* gainParam = apvts.getParameter(prefix + "Gain"))
+            if (bandMateriallyChanged)
             {
-                gainParam->beginChangeGesture();
-                gainParam->setValueNotifyingHost(gainParam->convertTo0to1(scaled.suggestedGain));
-                gainParam->endChangeGesture();
-            }
+                // FIX: Use beginChangeGesture/endChangeGesture for proper undo support
+                if (auto* freqParam = apvts.getParameter(prefix + "Freq"))
+                {
+                    freqParam->beginChangeGesture();
+                    freqParam->setValueNotifyingHost(freqParam->convertTo0to1(scaled.frequency));
+                    freqParam->endChangeGesture();
+                }
 
-            if (auto* qParam = apvts.getParameter(prefix + "Q"))
-            {
-                qParam->beginChangeGesture();
-                qParam->setValueNotifyingHost(qParam->convertTo0to1(scaled.suggestedQ));
-                qParam->endChangeGesture();
-            }
+                if (auto* gainParam = apvts.getParameter(prefix + "Gain"))
+                {
+                    gainParam->beginChangeGesture();
+                    gainParam->setValueNotifyingHost(gainParam->convertTo0to1(scaled.suggestedGain));
+                    gainParam->endChangeGesture();
+                }
 
-            // Set filter type from AI suggestion
-            if (auto* typeParam = apvts.getParameter(prefix + "Type"))
-            {
-                const int typeIndex = static_cast<int>(aiFilterTypeToProcessorType(scaled.suggestedFilter));
-                typeParam->beginChangeGesture();
-                typeParam->setValueNotifyingHost(typeParam->convertTo0to1(static_cast<float>(typeIndex)));
-                typeParam->endChangeGesture();
-            }
+                if (auto* qParam = apvts.getParameter(prefix + "Q"))
+                {
+                    qParam->beginChangeGesture();
+                    qParam->setValueNotifyingHost(qParam->convertTo0to1(scaled.suggestedQ));
+                    qParam->endChangeGesture();
+                }
 
-            // Enable the band
-            if (auto* enabledParam = apvts.getParameter(prefix + "Enabled"))
-            {
-                enabledParam->beginChangeGesture();
-                enabledParam->setValueNotifyingHost(1.0f);
-                enabledParam->endChangeGesture();
+                // Set filter type from AI suggestion
+                if (auto* typeParam = apvts.getParameter(prefix + "Type"))
+                {
+                    typeParam->beginChangeGesture();
+                    typeParam->setValueNotifyingHost(typeParam->convertTo0to1(static_cast<float>(typeIndex)));
+                    typeParam->endChangeGesture();
+                }
+
+                // Enable the band
+                if (auto* enabledParam = apvts.getParameter(prefix + "Enabled"))
+                {
+                    enabledParam->beginChangeGesture();
+                    enabledParam->setValueNotifyingHost(1.0f);
+                    enabledParam->endChangeGesture();
+                }
+
+                anyMaterialChange = true;
             }
 
             // FIX: Record this to user learning system for better future suggestions
@@ -3159,8 +3187,9 @@ void AIEqualizerAudioProcessor::applyAICorrections()
         }
     }
 
-    // Trigger dry→wet crossfade to cover the coefficient discontinuity
-    aiCorrectionCrossfadePending.store(true, std::memory_order_release);
+    // Trigger dry→wet crossfade only if AI application actually changed band state.
+    if (anyMaterialChange)
+        aiCorrectionCrossfadePending.store(true, std::memory_order_release);
 
     // Clear ONLY approved corrections after applying (keep pending for future approval)
     // This allows user to approve more corrections later without losing pending ones
@@ -3231,47 +3260,63 @@ void AIEqualizerAudioProcessor::applySingleCorrection(const AIEngine::Correction
         }
     }
 
+    bool anyMaterialChange = false;
+
     if (bestBand >= 0)
     {
         juce::String prefix = "band" + juce::String(bestBand);
+        const int typeIndex = static_cast<int>(aiFilterTypeToProcessorType(scaled.suggestedFilter));
 
-        // Apply parameters with undo support
-        if (auto* freqParam = apvts.getParameter(prefix + "Freq"))
-        {
-            freqParam->beginChangeGesture();
-            freqParam->setValueNotifyingHost(freqParam->convertTo0to1(scaled.frequency));
-            freqParam->endChangeGesture();
-        }
+        if (auto* freqRaw = apvts.getRawParameterValue(prefix + "Freq"); freqRaw != nullptr)
+            anyMaterialChange = anyMaterialChange || std::abs(freqRaw->load() - scaled.frequency) > 1.0f;
+        if (auto* gainRaw = apvts.getRawParameterValue(prefix + "Gain"); gainRaw != nullptr)
+            anyMaterialChange = anyMaterialChange || std::abs(gainRaw->load() - scaled.suggestedGain) > 0.05f;
+        if (auto* qRaw = apvts.getRawParameterValue(prefix + "Q"); qRaw != nullptr)
+            anyMaterialChange = anyMaterialChange || std::abs(qRaw->load() - scaled.suggestedQ) > 0.02f;
+        if (auto* typeRaw = apvts.getRawParameterValue(prefix + "Type"); typeRaw != nullptr)
+            anyMaterialChange = anyMaterialChange || static_cast<int>(std::lround(typeRaw->load())) != typeIndex;
+        if (auto* enabledRaw = apvts.getRawParameterValue(prefix + "Enabled"); enabledRaw != nullptr)
+            anyMaterialChange = anyMaterialChange || enabledRaw->load() <= 0.5f;
 
-        if (auto* gainParam = apvts.getParameter(prefix + "Gain"))
+        if (anyMaterialChange)
         {
-            gainParam->beginChangeGesture();
-            gainParam->setValueNotifyingHost(gainParam->convertTo0to1(scaled.suggestedGain));
-            gainParam->endChangeGesture();
-        }
+            // Apply parameters with undo support
+            if (auto* freqParam = apvts.getParameter(prefix + "Freq"))
+            {
+                freqParam->beginChangeGesture();
+                freqParam->setValueNotifyingHost(freqParam->convertTo0to1(scaled.frequency));
+                freqParam->endChangeGesture();
+            }
 
-        if (auto* qParam = apvts.getParameter(prefix + "Q"))
-        {
-            qParam->beginChangeGesture();
-            qParam->setValueNotifyingHost(qParam->convertTo0to1(scaled.suggestedQ));
-            qParam->endChangeGesture();
-        }
+            if (auto* gainParam = apvts.getParameter(prefix + "Gain"))
+            {
+                gainParam->beginChangeGesture();
+                gainParam->setValueNotifyingHost(gainParam->convertTo0to1(scaled.suggestedGain));
+                gainParam->endChangeGesture();
+            }
 
-        // Set filter type from AI suggestion
-        if (auto* typeParam = apvts.getParameter(prefix + "Type"))
-        {
-            const int typeIndex = static_cast<int>(aiFilterTypeToProcessorType(scaled.suggestedFilter));
-            typeParam->beginChangeGesture();
-            typeParam->setValueNotifyingHost(typeParam->convertTo0to1(static_cast<float>(typeIndex)));
-            typeParam->endChangeGesture();
-        }
+            if (auto* qParam = apvts.getParameter(prefix + "Q"))
+            {
+                qParam->beginChangeGesture();
+                qParam->setValueNotifyingHost(qParam->convertTo0to1(scaled.suggestedQ));
+                qParam->endChangeGesture();
+            }
 
-        // Enable the band
-        if (auto* enabledParam = apvts.getParameter(prefix + "Enabled"))
-        {
-            enabledParam->beginChangeGesture();
-            enabledParam->setValueNotifyingHost(1.0f);
-            enabledParam->endChangeGesture();
+            // Set filter type from AI suggestion
+            if (auto* typeParam = apvts.getParameter(prefix + "Type"))
+            {
+                typeParam->beginChangeGesture();
+                typeParam->setValueNotifyingHost(typeParam->convertTo0to1(static_cast<float>(typeIndex)));
+                typeParam->endChangeGesture();
+            }
+
+            // Enable the band
+            if (auto* enabledParam = apvts.getParameter(prefix + "Enabled"))
+            {
+                enabledParam->beginChangeGesture();
+                enabledParam->setValueNotifyingHost(1.0f);
+                enabledParam->endChangeGesture();
+            }
         }
 
         // Record this to user learning system for better future suggestions
@@ -3288,8 +3333,9 @@ void AIEqualizerAudioProcessor::applySingleCorrection(const AIEngine::Correction
         }
     }
 
-    // Trigger dry→wet crossfade to cover the coefficient discontinuity
-    aiCorrectionCrossfadePending.store(true, std::memory_order_release);
+    // Trigger dry→wet crossfade only when the AI correction actually changed state.
+    if (anyMaterialChange)
+        aiCorrectionCrossfadePending.store(true, std::memory_order_release);
 
     // Remove this correction from pending (user has applied it)
     // Find and remove the matching correction from pendingCorrections

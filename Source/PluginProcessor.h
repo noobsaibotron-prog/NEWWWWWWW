@@ -485,7 +485,9 @@ private:
     // Bypass crossfade state — avoids click on bypass toggle
     bool  wasBypassed = false;
     int   bypassCrossfadeRemaining = 0;
-    static constexpr int bypassCrossfadeSamples = 256;  // ~5ms @ 48kHz
+    int   currentBypassCrossfadeSamples = 256;
+    static constexpr int bypassCrossfadeSamples = 256;       // ~5ms @ 48kHz
+    static constexpr int aiCorrectionCrossfadeSamples = 1024; // ~21ms @ 48kHz
 
     // IR build debounce: accumulate rapid drag events, rebuild only after silence
     std::atomic<int64_t> irBuildRequestedAt { 0 };    // ms timestamp of last request
