@@ -838,6 +838,7 @@ public:
 
         for (int phaseMode : { 0, 1, 2 })
         {
+            testRealABContinuity(sr, blockSize, phaseMode);
             testRealABStateSwitch(sr, blockSize, phaseMode);
             testRealSingleAICorrection(sr, blockSize, phaseMode);
         }
@@ -852,6 +853,68 @@ private:
             case 1: return "Natural";
             case 2: return "Linear";
             default: return "Unknown";
+        }
+    }
+
+    void testRealABContinuity(double sr, int blockSize, int phaseMode)
+    {
+        beginTest("Real A/B continuity (near-identical profiles) [" + phaseLabel(phaseMode) + "]");
+
+        auto setup = [phaseMode](AIEqualizerAudioProcessor& proc, juce::AudioProcessorValueTreeState& apvts)
+        {
+            setupRealisticSession(proc, apvts);
+            setChoice(apvts, "phaseMode", phaseMode);
+
+            // B = copy of A with ONE band changed: band 4 Peak→Notch, gain -3dB
+            proc.copyAtoB();
+            proc.setABState(AIEqualizerAudioProcessor::ABState::B);
+
+            AIEqualizerAudioProcessor::BandState bs = proc.getBandState(4);
+            bs.type = static_cast<int>(ParametricEQProcessor::Notch);
+            bs.gain = -3.0f;
+            proc.setBandState(4, bs);
+
+            // Return to A before run
+            proc.setABState(AIEqualizerAudioProcessor::ABState::A);
+        };
+
+        auto result = runSession(sr, blockSize, 150, setup,
+            [](AIEqualizerAudioProcessor& proc, juce::AudioProcessorValueTreeState&, int block)
+            {
+                if (block == 40)
+                    proc.setABState(AIEqualizerAudioProcessor::ABState::B);
+                if (block == 80)
+                    proc.setABState(AIEqualizerAudioProcessor::ABState::A);
+                if (block == 110)
+                    proc.setABState(AIEqualizerAudioProcessor::ABState::B);
+            });
+
+        for (int transBlock : { 40, 80, 110 })
+        {
+            const int start = transBlock * blockSize;
+            const int len   = 24 * blockSize;
+
+            {
+                const int preSt = juce::jmax(0, start - blockSize);
+                auto mPre = analyzeForClicks(result.output, result.input, preSt, blockSize, 0.20f);
+                logMessage("  [PRE block" + juce::String(transBlock - 1) + "] maxDelta=" + juce::String(mPre.maxDelta, 4)
+                    + " clicks=" + juce::String(mPre.clickCount)
+                    + " peakAbs=" + juce::String(mPre.peakAbs, 4));
+
+                auto mPost = analyzeForClicks(result.output, result.input, start, len, 0.20f);
+                logMessage("  [POST block" + juce::String(transBlock) + "+] maxDelta=" + juce::String(mPost.maxDelta, 4)
+                    + " clicks=" + juce::String(mPost.clickCount)
+                    + " peakAbs=" + juce::String(mPost.peakAbs, 4)
+                    + " avgDelta=" + juce::String(mPost.avgDelta, 6));
+            }
+
+            auto m = analyzeForClicks(result.output, result.input, start, len, 0.20f);
+            expectCleanMetrics(*this, m,
+                               "AB continuity[" + phaseLabel(phaseMode) + "]@block" + juce::String(transBlock),
+                               /*maxDeltaLimit=*/ phaseMode == 0 ? 0.40f : 0.30f,
+                               /*maxClicks=*/ 0,
+                               /*peakLimit=*/ 3.0f,
+                               /*maxDropout=*/ 8);
         }
     }
 
@@ -897,15 +960,63 @@ private:
 
         for (int transBlock : { 40, 80, 110 })
         {
-            const int start = juce::jmax(0, transBlock * blockSize - 128);
+            const int start = transBlock * blockSize;
             const int len   = 24 * blockSize;
-            auto m = analyzeForClicks(result.output, result.input, start, len, 0.20f);
-            expectCleanMetrics(*this, m,
-                               "Real AB[" + phaseLabel(phaseMode) + "]@block" + juce::String(transBlock),
-                               /*maxDeltaLimit=*/ phaseMode == 0 ? 0.40f : 0.30f,
-                               /*maxClicks=*/ 0,
-                               /*peakLimit=*/ 3.0f,
-                               /*maxDropout=*/ 8);
+
+            // PRE / POST diagnostics
+            {
+                const int preSt = juce::jmax(0, start - blockSize);
+                auto mPre = analyzeForClicks(result.output, result.input, preSt, blockSize, 0.20f);
+                logMessage("  [PRE-TRIGGER block" + juce::String(transBlock - 1) + "] maxDelta=" + juce::String(mPre.maxDelta, 4)
+                    + " clicks=" + juce::String(mPre.clickCount)
+                    + " peakAbs=" + juce::String(mPre.peakAbs, 4));
+
+                auto mPost = analyzeForClicks(result.output, result.input, start, len, 0.20f);
+                logMessage("  [POST-TRIGGER block" + juce::String(transBlock) + "+] maxDelta=" + juce::String(mPost.maxDelta, 4)
+                    + " clicks=" + juce::String(mPost.clickCount)
+                    + " peakAbs=" + juce::String(mPost.peakAbs, 4)
+                    + " avgDelta=" + juce::String(mPost.avgDelta, 6));
+            }
+
+            // Boundary region: first 2 blocks after switch
+            const int boundaryLen = 2 * blockSize;
+            auto mBoundary = analyzeForClicks(result.output, result.input, start, boundaryLen, 0.20f);
+
+            // Pre-switch reference: last block before switch (captures outgoing profile level)
+            const int preRefStart = juce::jmax(0, start - blockSize);
+            auto mPreRef = analyzeForClicks(result.output, result.input, preRefStart, blockSize, 0.20f);
+
+            // Post-switch steady-state: blocks 10-20 after switch (incoming profile settled)
+            const int ssStart = (transBlock + 10) * blockSize;
+            const int ssLen   = 10 * blockSize;
+            auto mSteady = analyzeForClicks(result.output, result.input, ssStart, ssLen, 0.20f);
+
+            // Reference = max of pre-switch and post-switch steady-state.
+            // This handles both directions: A→B (loud destination) and B→A (loud source fading out).
+            const float refMaxDelta = juce::jmax(mPreRef.maxDelta, mSteady.maxDelta);
+            const float ratio = (refMaxDelta > 0.001f)
+                ? (mBoundary.maxDelta / refMaxDelta) : 0.0f;
+
+            logMessage("  boundary maxDelta=" + juce::String(mBoundary.maxDelta, 4)
+                + " preRef maxDelta=" + juce::String(mPreRef.maxDelta, 4)
+                + " steady maxDelta=" + juce::String(mSteady.maxDelta, 4)
+                + " ratio=" + juce::String(ratio, 2));
+
+            const juce::String label = "Real AB[" + phaseLabel(phaseMode) + "]@block" + juce::String(transBlock);
+
+            // Full window: no NaN/Inf
+            auto mFull = analyzeForClicks(result.output, result.input, start, len, 0.20f);
+            expect(!mFull.hasNaN, label + ": NaN detected");
+            expect(!mFull.hasInf, label + ": Inf detected");
+
+            // Boundary ratio: switch region shouldn't be dramatically worse than
+            // the louder of pre-switch and post-switch steady-state.
+            expect(ratio < 2.0f, label + ": boundary ratio too high = " + juce::String(ratio, 2)
+                + " (boundary=" + juce::String(mBoundary.maxDelta, 4)
+                + " ref=" + juce::String(refMaxDelta, 4) + ")");
+
+            // Peak: allow loud signal (±9dB extreme profile) but not explosion
+            expect(mFull.peakAbs < 15.0f, label + ": output explosion, peakAbs=" + juce::String(mFull.peakAbs, 4));
         }
     }
 

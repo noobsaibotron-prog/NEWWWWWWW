@@ -134,6 +134,11 @@ public:
     /// Call BEFORE setBandParameters() updates the type.
     void beginBandCrossfade(int index, int fadeSamples = 128) noexcept;
 
+    /// Begin a whole-chain crossfade: saves ALL active bands' coefficients + filter state,
+    /// resets live state, and in process() runs BOTH old chain and new chain, blending at output.
+    /// Use for A/B switch where per-band crossfade in cascade doesn't work correctly.
+    void beginWholeChainCrossfade(int fadeSamples = 2048) noexcept;
+
     [[nodiscard]] float getBandFrequency(int index) const;
     [[nodiscard]] float getBandGain(int index) const;
     [[nodiscard]] float getBandQ(int index) const;
@@ -193,7 +198,30 @@ private:
         int total = 0;       // total crossfade length
     };
     std::array<BandCrossfade, 24> bandCrossfades {};
-    
+
+    // Whole-chain crossfade state (for A/B switch)
+    // When active, process() runs entire old chain + entire new chain, blends at output.
+    struct WholeChainCrossfade
+    {
+        int remaining = 0;
+        int total = 0;
+        int oldNumBands = 0;
+        // Snapshot of ALL bands' old state (coefficients + filter state)
+        struct OldBand
+        {
+            static constexpr int maxFilterStages = BandProcessingState::maxFilterStages;
+            std::array<BiquadCoeffs, maxFilterStages> coeffs;
+            std::array<BiquadState, maxFilterStages> filtersL;
+            std::array<BiquadState, maxFilterStages> filtersR;
+            int numStages = 1;
+            bool enabled = false;
+            bool solo = false;
+        };
+        std::array<OldBand, 24> oldBands {};
+        bool hadSolo = false;
+    };
+    WholeChainCrossfade wholeChainXfade {};
+
     // Number of active bands (atomic)
     std::atomic<int> numActiveBands { 0 };
     

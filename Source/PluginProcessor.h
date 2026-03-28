@@ -498,6 +498,9 @@ private:
     static constexpr int aiCorrectionCrossfadeSamples = 1024;  // ~21ms @ 48kHz
     static constexpr int abSwitchCrossfadeSamples = 2048;      // ~43ms @ 48kHz, bulk state restore is more discontinuous
 
+    // Pending A/B whole-chain crossfade: armed by message thread, dispatched by audio thread
+    std::atomic<bool> abCrossfadePending { false };
+    std::array<std::atomic<bool>, maxBands> abCrossfadePendingBands {};
     // IR build debounce: accumulate rapid drag events, rebuild only after silence
     std::atomic<int64_t> irBuildRequestedAt { 0 };    // ms timestamp of last request
     static constexpr int64_t irBuildDebounceMs = 80;  // rebuild after 80ms of no changes

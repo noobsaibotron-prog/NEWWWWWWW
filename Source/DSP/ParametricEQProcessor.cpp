@@ -147,7 +147,94 @@ void ParametricEQProcessor::process(juce::AudioBuffer<float>& buffer)
     //==========================================================================
     // AUDIO PROCESSING - Completely lock-free
     //==========================================================================
-    
+
+    // Whole-chain crossfade (A/B switch): process input through BOTH old chain and new chain,
+    // blend at output. This is correct for multi-band cascades unlike per-band crossfade.
+    auto& wc = wholeChainXfade;
+    if (wc.remaining > 0)
+    {
+        const float invTotal = 1.0f / static_cast<float>(wc.total);
+
+        for (int i = 0; i < numSamples; ++i)
+        {
+            const float t = 1.0f - static_cast<float>(wc.remaining) * invTotal;
+
+            // --- Left channel ---
+            if (bufferChannels > 0)
+            {
+                const float input = buffer.getSample(0, i);
+
+                // Old chain: cascade through all old bands
+                float oldSample = input;
+                for (int b = 0; b < wc.oldNumBands; ++b)
+                {
+                    auto& ob = wc.oldBands[b];
+                    if (!ob.enabled) continue;
+                    if (wc.hadSolo && !ob.solo) continue;
+                    if (!ob.coeffs[0].valid) continue;
+                    for (int s = 0; s < ob.numStages; ++s)
+                        oldSample = ob.filtersL[s].processSample(oldSample, ob.coeffs[s]);
+                }
+
+                // New chain: cascade through all new bands
+                float newSample = input;
+                for (int b = 0; b < localNumBands; ++b)
+                {
+                    const bool en = bandParams[b].enabled.load(std::memory_order_relaxed);
+                    const bool sl = bandParams[b].solo.load(std::memory_order_relaxed);
+                    if (!en) continue;
+                    if (hasSolo && !sl) continue;
+                    auto& st = bandStates[b];
+                    if (!st.coefficients[0].valid) continue;
+                    for (int s = 0; s < st.numActiveStages; ++s)
+                        newSample = st.filtersL[s].processSample(newSample, st.coefficients[s]);
+                }
+
+                buffer.setSample(0, i, oldSample + (newSample - oldSample) * t);
+            }
+
+            // --- Right channel ---
+            if (bufferChannels > 1)
+            {
+                const float input = buffer.getSample(1, i);
+
+                float oldSample = input;
+                for (int b = 0; b < wc.oldNumBands; ++b)
+                {
+                    auto& ob = wc.oldBands[b];
+                    if (!ob.enabled) continue;
+                    if (wc.hadSolo && !ob.solo) continue;
+                    if (!ob.coeffs[0].valid) continue;
+                    for (int s = 0; s < ob.numStages; ++s)
+                        oldSample = ob.filtersR[s].processSample(oldSample, ob.coeffs[s]);
+                }
+
+                float newSample = input;
+                for (int b = 0; b < localNumBands; ++b)
+                {
+                    const bool en = bandParams[b].enabled.load(std::memory_order_relaxed);
+                    const bool sl = bandParams[b].solo.load(std::memory_order_relaxed);
+                    if (!en) continue;
+                    if (hasSolo && !sl) continue;
+                    auto& st = bandStates[b];
+                    if (!st.coefficients[0].valid) continue;
+                    for (int s = 0; s < st.numActiveStages; ++s)
+                        newSample = st.filtersR[s].processSample(newSample, st.coefficients[s]);
+                }
+
+                buffer.setSample(1, i, oldSample + (newSample - oldSample) * t);
+            }
+
+            if (wc.remaining > 0) --wc.remaining;
+        }
+
+        // Apply output gain and return (skip per-band processing below)
+        const float gain = outputGain.load(std::memory_order_relaxed);
+        if (std::abs(gain - 1.0f) > 0.0001f)
+            buffer.applyGain(gain);
+        return;
+    }
+
     for (int bandIdx = 0; bandIdx < localNumBands; ++bandIdx)
     {
         const auto& params = bandParams[bandIdx];
@@ -534,6 +621,51 @@ void ParametricEQProcessor::beginBandCrossfade(int index, int fadeSamples) noexc
     // Start crossfade
     xfade.remaining = fadeSamples;
     xfade.total = fadeSamples;
+}
+
+void ParametricEQProcessor::beginWholeChainCrossfade(int fadeSamples) noexcept
+{
+    auto& wc = wholeChainXfade;
+
+    // Don't overwrite an active crossfade with a shorter one
+    if (wc.remaining > 0 && fadeSamples <= wc.remaining)
+        return;
+
+    const int localNumBands = numActiveBands.load(std::memory_order_acquire);
+    wc.oldNumBands = localNumBands;
+
+    // Snapshot all bands.
+    // CRITICAL: bandParams[] are already updated by the message thread (loadStateFromSlot),
+    // so we CANNOT read enabled/solo from bandParams. Instead, determine if a band was
+    // active by checking if it has valid coefficients in bandStates (audio-thread-only data).
+    wc.hadSolo = false; // Solo state from bandStates is not tracked; assume no solo for old chain
+    for (int i = 0; i < localNumBands; ++i)
+    {
+        auto& ob = wc.oldBands[i];
+        auto& state = bandStates[i];
+        ob.numStages = state.numActiveStages;
+        // A band was active if it had valid coefficients from the last process() call
+        ob.enabled = state.coefficients[0].valid;
+        ob.solo = false; // Not tracked in bandStates; treat all enabled bands as active
+
+        for (int s = 0; s < BandProcessingState::maxFilterStages; ++s)
+        {
+            ob.coeffs[s] = state.coefficients[s];
+            ob.filtersL[s] = state.filtersL[s];
+            ob.filtersR[s] = state.filtersR[s];
+        }
+
+        // Reset live filter state so new coefficients start clean
+        for (auto& f : state.filtersL) f.reset();
+        for (auto& f : state.filtersR) f.reset();
+    }
+
+    // Cancel any per-band crossfades (whole-chain supersedes)
+    for (int i = 0; i < localNumBands; ++i)
+        bandCrossfades[i].remaining = 0;
+
+    wc.remaining = fadeSamples;
+    wc.total = fadeSamples;
 }
 
 //==============================================================================

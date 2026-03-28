@@ -784,6 +784,9 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     bypassStateInitialized = false;
     wasBypassed = false;
     bypassCrossfadeRemaining = 0;
+    abCrossfadePending.store(false, std::memory_order_relaxed);
+    for (int i = 0; i < maxBands; ++i)
+        abCrossfadePendingBands[i].store(false, std::memory_order_relaxed);
 
     // === SOLO ACOUSTIC MONITOR SETUP ===
     soloMonitorFilterL.reset();
@@ -1389,6 +1392,17 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         auto speed = toSpeed(spdIdx);
         spectrumAnalyzer.setSpeed(speed);
         postEQAnalyzer.setSpeed(speed);
+    }
+
+    // Dispatch pending A/B whole-chain crossfade BEFORE updating coefficients,
+    // so beginWholeChainCrossfade() snapshots the OLD coefficients/filter state.
+    if (abCrossfadePending.load(std::memory_order_acquire))
+    {
+        eqProcessor.beginWholeChainCrossfade(abSwitchCrossfadeSamples);
+        eqProcessorHQ.beginWholeChainCrossfade(abSwitchCrossfadeSamples);
+        eqProcessorMid.beginWholeChainCrossfade(abSwitchCrossfadeSamples);
+        eqProcessorSide.beginWholeChainCrossfade(abSwitchCrossfadeSamples);
+        abCrossfadePending.store(false, std::memory_order_release);
     }
 
     // Update EQ parameters only when something actually changed
@@ -2801,6 +2815,10 @@ void AIEqualizerAudioProcessor::loadStateFromSlot(ABState slot)
             currentState.enabled != bandState.enabled ||
             currentState.solo != bandState.solo;
 
+        // Arm per-band crossfade flag BEFORE applying delta (message thread).
+        // The audio thread will dispatch beginBandCrossfade() before updating coefficients.
+        abCrossfadePendingBands[i].store(materiallyChanged, std::memory_order_relaxed);
+
         if (materiallyChanged)
         {
             anyMaterialChange = applyBandStateDelta(i, bandState, false) || anyMaterialChange;
@@ -2823,11 +2841,11 @@ void AIEqualizerAudioProcessor::loadStateFromSlot(ABState slot)
         }
     }
 
-    // Trigger a longer crossfade to better cover the bulk state swap of A/B/C/D.
+    // Arm pending A/B whole-chain crossfade for audio thread dispatch.
+    // Do NOT arm the dry↔wet bypass crossfade — it would overwrite the whole-chain blend.
     if (anyMaterialChange)
     {
-        currentBypassCrossfadeSamples = abSwitchCrossfadeSamples;
-        bypassCrossfadeRemaining = currentBypassCrossfadeSamples;
+        abCrossfadePending.store(true, std::memory_order_release);
     }
 }
 
