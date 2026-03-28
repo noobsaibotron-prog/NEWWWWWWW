@@ -306,6 +306,7 @@ public:
             
             menu.showMenuAsync(juce::PopupMenu::Options(), [this, row, p](int result) {
                 if (result == 1) {
+                    if (!canApplyNow()) return;
                     // Apply ONLY this single correction, not all approved ones
                     processor.applySingleCorrection(p);
                     updateProblemList();
@@ -323,6 +324,7 @@ public:
     {
         if (row >= 0 && row < static_cast<int>(problems.size()))
         {
+            if (!canApplyNow()) return;
             const auto& p = problems[row];
             // Apply ONLY this single correction, not all approved ones
             processor.applySingleCorrection(p);
@@ -894,25 +896,31 @@ private:
     void showAutoFixConfirmation()
     {
         if (problems.empty()) return;
-        
+        if (fixAllInProgress) return;
+        fixAllInProgress = true;
+        autoFixBtn.setEnabled(false);
+
         juce::String msg = tr("Apply ", "Apply ") + juce::String(problems.size()) + tr(" corrections?\n\n", " corrections?\n\n");
-        
+
         for (size_t i = 0; i < juce::jmin(problems.size(), size_t(5)); ++i)
         {
             const auto& p = problems[i];
             msg += "• " + AIEngine::getProblemTypeName(p.type) + " @ " + formatFreq(p.frequency);
             msg += " → " + juce::String(p.suggestedGain, 1) + " dB\n";
         }
-        
+
         if (problems.size() > 5)
             msg += "\n" + tr("...and ", "...and ") + juce::String(problems.size() - 5) + tr(" more\n", " more\n");
-        
+
         msg += "\n" + tr("You can UNDO these changes.", "You can UNDO these changes.");
-        
+
         juce::AlertWindow::showOkCancelBox(juce::AlertWindow::QuestionIcon,
             tr("Apply AI Corrections", "Apply AI Corrections"), msg, tr("Apply", "Apply"), tr("Cancel", "Cancel"), nullptr,
             juce::ModalCallbackFunction::create([this](int result) {
+                fixAllInProgress = false;
+                autoFixBtn.setEnabled(true);
                 if (result == 1) {
+                    if (!canApplyNow()) { updateProblemList(); return; }
                     processor.getAIEngine().approveAllCorrections();
                     processor.applyAICorrections();
                     updateProblemList();
@@ -968,6 +976,7 @@ private:
     {
         if (row < 0 || row >= static_cast<int>(problems.size()))
             return;
+        if (!canApplyNow()) return;
 
         const auto& p = problems[row];
         // Apply ONLY this single correction, not all approved ones
@@ -1078,6 +1087,18 @@ private:
     
     std::vector<AIEngine::Correction> problems;
     std::atomic<bool> needsUpdate { true };
-    
+    juce::int64 lastApplyTimeMs { 0 };      // throttle rapid apply clicks (300ms window)
+    bool fixAllInProgress { false };         // guard for FIX ALL re-entry
+
+    /** Returns true if enough time has passed since the last apply (300ms). */
+    bool canApplyNow()
+    {
+        const juce::int64 now = juce::Time::currentTimeMillis();
+        if (now - lastApplyTimeMs < 300)
+            return false;
+        lastApplyTimeMs = now;
+        return true;
+    }
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AIProblemPanel)
 };
