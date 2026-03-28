@@ -2813,7 +2813,15 @@ void AIEqualizerAudioProcessor::loadStateFromSlot(ABState slot)
             std::abs(currentState.q - bandState.q) > 0.02f ||
             currentState.type != bandState.type ||
             currentState.enabled != bandState.enabled ||
-            currentState.solo != bandState.solo;
+            currentState.solo != bandState.solo ||
+            currentState.slope != bandState.slope ||
+            currentState.dynMode != bandState.dynMode ||
+            std::abs(currentState.dynThreshold - bandState.dynThreshold) > 0.05f ||
+            std::abs(currentState.dynRatio - bandState.dynRatio) > 0.02f ||
+            std::abs(currentState.dynAttack - bandState.dynAttack) > 0.1f ||
+            std::abs(currentState.dynRelease - bandState.dynRelease) > 0.5f ||
+            std::abs(currentState.dynRange - bandState.dynRange) > 0.05f ||
+            std::abs(currentState.dynKnee - bandState.dynKnee) > 0.05f;
 
         // Arm per-band crossfade flag BEFORE applying delta (message thread).
         // The audio thread will dispatch beginBandCrossfade() before updating coefficients.
@@ -3555,6 +3563,46 @@ AIEqualizerAudioProcessor::BandState AIEqualizerAudioProcessor::getBandState(int
     else
         state.solo = false;
 
+    if (auto* slopeParam = apvts.getRawParameterValue(prefix + "Slope"))
+        state.slope = static_cast<int>(std::round(slopeParam->load()));
+    else
+        state.slope = 0;
+
+    if (auto* dynModeParam = apvts.getRawParameterValue(prefix + "DynMode"))
+        state.dynMode = static_cast<int>(std::round(dynModeParam->load()));
+    else
+        state.dynMode = 0;
+
+    if (auto* dynThresholdParam = apvts.getRawParameterValue(prefix + "Threshold"))
+        state.dynThreshold = dynThresholdParam->load();
+    else
+        state.dynThreshold = -24.0f;
+
+    if (auto* dynRatioParam = apvts.getRawParameterValue(prefix + "Ratio"))
+        state.dynRatio = dynRatioParam->load();
+    else
+        state.dynRatio = 2.0f;
+
+    if (auto* dynAttackParam = apvts.getRawParameterValue(prefix + "Attack"))
+        state.dynAttack = dynAttackParam->load();
+    else
+        state.dynAttack = 10.0f;
+
+    if (auto* dynReleaseParam = apvts.getRawParameterValue(prefix + "Release"))
+        state.dynRelease = dynReleaseParam->load();
+    else
+        state.dynRelease = 100.0f;
+
+    if (auto* dynRangeParam = apvts.getRawParameterValue(prefix + "Range"))
+        state.dynRange = dynRangeParam->load();
+    else
+        state.dynRange = 24.0f;
+
+    if (auto* dynKneeParam = apvts.getRawParameterValue(prefix + "Knee"))
+        state.dynKnee = dynKneeParam->load();
+    else
+        state.dynKnee = 6.0f;
+
     return state;
 }
 
@@ -3577,6 +3625,14 @@ bool AIEqualizerAudioProcessor::applyBandStateDelta(int bandIndex, const BandSta
     clampedState.gain = juce::jlimit(-24.0f, 24.0f, clampedState.gain);
     clampedState.q = juce::jlimit(0.1f, 10.0f, clampedState.q);
     clampedState.type = juce::jlimit(0, 8, clampedState.type);
+    clampedState.slope = juce::jlimit(0, 2, clampedState.slope);
+    clampedState.dynMode = juce::jlimit(0, 3, clampedState.dynMode);
+    clampedState.dynThreshold = juce::jlimit(-60.0f, 0.0f, clampedState.dynThreshold);
+    clampedState.dynRatio = juce::jlimit(1.0f, 20.0f, clampedState.dynRatio);
+    clampedState.dynAttack = juce::jlimit(0.1f, 500.0f, clampedState.dynAttack);
+    clampedState.dynRelease = juce::jlimit(1.0f, 2000.0f, clampedState.dynRelease);
+    clampedState.dynRange = juce::jlimit(0.0f, 48.0f, clampedState.dynRange);
+    clampedState.dynKnee = juce::jlimit(0.0f, 24.0f, clampedState.dynKnee);
 
     const bool freqChanged = std::abs(currentState.frequency - clampedState.frequency) > 1.0f;
     const bool gainChanged = std::abs(currentState.gain - clampedState.gain) > 0.05f;
@@ -3584,8 +3640,18 @@ bool AIEqualizerAudioProcessor::applyBandStateDelta(int bandIndex, const BandSta
     const bool typeChanged = currentState.type != clampedState.type;
     const bool enabledChanged = currentState.enabled != clampedState.enabled;
     const bool soloChanged = currentState.solo != clampedState.solo;
+    const bool slopeChanged = currentState.slope != clampedState.slope;
+    const bool dynModeChanged = currentState.dynMode != clampedState.dynMode;
+    const bool dynThresholdChanged = std::abs(currentState.dynThreshold - clampedState.dynThreshold) > 0.05f;
+    const bool dynRatioChanged = std::abs(currentState.dynRatio - clampedState.dynRatio) > 0.02f;
+    const bool dynAttackChanged = std::abs(currentState.dynAttack - clampedState.dynAttack) > 0.1f;
+    const bool dynReleaseChanged = std::abs(currentState.dynRelease - clampedState.dynRelease) > 0.5f;
+    const bool dynRangeChanged = std::abs(currentState.dynRange - clampedState.dynRange) > 0.05f;
+    const bool dynKneeChanged = std::abs(currentState.dynKnee - clampedState.dynKnee) > 0.05f;
 
-    const bool anyChanged = freqChanged || gainChanged || qChanged || typeChanged || enabledChanged || soloChanged;
+    const bool anyChanged = freqChanged || gainChanged || qChanged || typeChanged || enabledChanged || soloChanged ||
+                            slopeChanged || dynModeChanged || dynThresholdChanged || dynRatioChanged ||
+                            dynAttackChanged || dynReleaseChanged || dynRangeChanged || dynKneeChanged;
     if (!anyChanged)
         return false;
 
@@ -3612,6 +3678,22 @@ bool AIEqualizerAudioProcessor::applyBandStateDelta(int bandIndex, const BandSta
         applyParam(apvts.getParameter(prefix + "Enabled"), clampedState.enabled ? 1.0f : 0.0f);
     if (soloChanged)
         applyParam(apvts.getParameter(prefix + "Solo"), clampedState.solo ? 1.0f : 0.0f);
+    if (slopeChanged)
+        applyParam(apvts.getParameter(prefix + "Slope"), apvts.getParameter(prefix + "Slope")->convertTo0to1(static_cast<float>(clampedState.slope)));
+    if (dynModeChanged)
+        applyParam(apvts.getParameter(prefix + "DynMode"), apvts.getParameter(prefix + "DynMode")->convertTo0to1(static_cast<float>(clampedState.dynMode)));
+    if (dynThresholdChanged)
+        applyParam(apvts.getParameter(prefix + "Threshold"), apvts.getParameter(prefix + "Threshold")->convertTo0to1(clampedState.dynThreshold));
+    if (dynRatioChanged)
+        applyParam(apvts.getParameter(prefix + "Ratio"), apvts.getParameter(prefix + "Ratio")->convertTo0to1(clampedState.dynRatio));
+    if (dynAttackChanged)
+        applyParam(apvts.getParameter(prefix + "Attack"), apvts.getParameter(prefix + "Attack")->convertTo0to1(clampedState.dynAttack));
+    if (dynReleaseChanged)
+        applyParam(apvts.getParameter(prefix + "Release"), apvts.getParameter(prefix + "Release")->convertTo0to1(clampedState.dynRelease));
+    if (dynRangeChanged)
+        applyParam(apvts.getParameter(prefix + "Range"), apvts.getParameter(prefix + "Range")->convertTo0to1(clampedState.dynRange));
+    if (dynKneeChanged)
+        applyParam(apvts.getParameter(prefix + "Knee"), apvts.getParameter(prefix + "Knee")->convertTo0to1(clampedState.dynKnee));
 
     markParametersChanged();
     return true;
@@ -3690,6 +3772,14 @@ void AIEqualizerAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
             bandTree.setProperty("type", band.type, nullptr);
             bandTree.setProperty("enabled", band.enabled, nullptr);
             bandTree.setProperty("solo", band.solo, nullptr);
+            bandTree.setProperty("slope", band.slope, nullptr);
+            bandTree.setProperty("dynMode", band.dynMode, nullptr);
+            bandTree.setProperty("dynThreshold", band.dynThreshold, nullptr);
+            bandTree.setProperty("dynRatio", band.dynRatio, nullptr);
+            bandTree.setProperty("dynAttack", band.dynAttack, nullptr);
+            bandTree.setProperty("dynRelease", band.dynRelease, nullptr);
+            bandTree.setProperty("dynRange", band.dynRange, nullptr);
+            bandTree.setProperty("dynKnee", band.dynKnee, nullptr);
             slotTree.addChild(bandTree, -1, nullptr);
         }
 
@@ -3763,6 +3853,22 @@ void AIEqualizerAudioProcessor::setStateInformation(const void* data, int sizeIn
                         band.enabled = static_cast<bool>(bandTree.getProperty("enabled"));
                     if (bandTree.hasProperty("solo"))
                         band.solo = static_cast<bool>(bandTree.getProperty("solo"));
+                    if (bandTree.hasProperty("slope"))
+                        band.slope = static_cast<int>(bandTree.getProperty("slope"));
+                    if (bandTree.hasProperty("dynMode"))
+                        band.dynMode = static_cast<int>(bandTree.getProperty("dynMode"));
+                    if (bandTree.hasProperty("dynThreshold"))
+                        band.dynThreshold = static_cast<float>(bandTree.getProperty("dynThreshold"));
+                    if (bandTree.hasProperty("dynRatio"))
+                        band.dynRatio = static_cast<float>(bandTree.getProperty("dynRatio"));
+                    if (bandTree.hasProperty("dynAttack"))
+                        band.dynAttack = static_cast<float>(bandTree.getProperty("dynAttack"));
+                    if (bandTree.hasProperty("dynRelease"))
+                        band.dynRelease = static_cast<float>(bandTree.getProperty("dynRelease"));
+                    if (bandTree.hasProperty("dynRange"))
+                        band.dynRange = static_cast<float>(bandTree.getProperty("dynRange"));
+                    if (bandTree.hasProperty("dynKnee"))
+                        band.dynKnee = static_cast<float>(bandTree.getProperty("dynKnee"));
                 }
             };
 

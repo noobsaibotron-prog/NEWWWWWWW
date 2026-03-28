@@ -214,6 +214,14 @@ public:
         int type = 2; // Peak
         bool enabled = true;
         bool solo = false;
+        int slope = 0;
+        int dynMode = 0;
+        float dynThreshold = -24.0f;
+        float dynRatio = 2.0f;
+        float dynAttack = 10.0f;
+        float dynRelease = 100.0f;
+        float dynRange = 24.0f;
+        float dynKnee = 6.0f;
     };
     
     /**

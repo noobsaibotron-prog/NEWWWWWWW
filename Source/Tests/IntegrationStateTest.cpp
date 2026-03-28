@@ -17,6 +17,7 @@ public:
         juce::ignoreUnused(mm); // ensure MessageManager exists; current thread becomes message thread
 
         testStateRoundTrip();
+        testDynamicABStateRoundTrip();
         testBypassPassThrough();
     }
 
@@ -97,6 +98,76 @@ private:
 
         expect(proc.getLatencySamples() >= 0);
         expect(proc.getLatencySamples() == origLatency); // worst-case latency should be stable across state load
+    }
+
+    void testDynamicABStateRoundTrip()
+    {
+        beginTest("A/B slots preserve per-band Dynamic EQ state across save/load");
+        AIEqualizerAudioProcessor proc;
+        proc.prepareToPlay(48000.0, 512);
+        auto& apvts = proc.getAPVTS();
+
+        proc.setNumActiveBands(1);
+        AIEqualizerAudioProcessor::BandState band0;
+        band0.frequency = 1000.0f;
+        band0.gain = 12.0f;
+        band0.q = 1.0f;
+        band0.type = static_cast<int>(ParametricEQProcessor::Peak);
+        band0.enabled = true;
+        band0.solo = false;
+        band0.dynMode = 0;
+        band0.dynThreshold = 0.0f;
+        band0.dynRatio = 2.0f;
+        band0.dynAttack = 10.0f;
+        band0.dynRelease = 100.0f;
+        band0.dynRange = 24.0f;
+        band0.dynKnee = 6.0f;
+        proc.setBandState(0, band0);
+
+        // Save A with Dynamic EQ effectively off.
+        proc.setABState(AIEqualizerAudioProcessor::ABState::B);
+
+        // Configure B with aggressive dynamic compression.
+        band0.dynMode = 1;
+        band0.dynThreshold = -30.0f;
+        band0.dynRatio = 8.0f;
+        band0.dynAttack = 1.0f;
+        band0.dynRelease = 50.0f;
+        band0.dynRange = 24.0f;
+        band0.dynKnee = 0.0f;
+        proc.setBandState(0, band0);
+
+        juce::MemoryBlock blob;
+        proc.getStateInformation(blob);
+
+        AIEqualizerAudioProcessor restored;
+        restored.prepareToPlay(48000.0, 512);
+        restored.setStateInformation(blob.getData(), static_cast<int>(blob.getSize()));
+        auto& restoredAPVTS = restored.getAPVTS();
+
+        restored.setABState(AIEqualizerAudioProcessor::ABState::A);
+        if (auto* p = restoredAPVTS.getRawParameterValue("band0DynMode"))
+            expectWithinAbsoluteError(p->load(), 0.0f, 0.01f);
+        if (auto* p = restoredAPVTS.getRawParameterValue("band0Threshold"))
+            expectWithinAbsoluteError(p->load(), 0.0f, 0.05f);
+        if (auto* p = restoredAPVTS.getRawParameterValue("band0Ratio"))
+            expectWithinAbsoluteError(p->load(), 2.0f, 0.05f);
+
+        restored.setABState(AIEqualizerAudioProcessor::ABState::B);
+        if (auto* p = restoredAPVTS.getRawParameterValue("band0DynMode"))
+            expectWithinAbsoluteError(p->load(), 1.0f, 0.01f);
+        if (auto* p = restoredAPVTS.getRawParameterValue("band0Threshold"))
+            expectWithinAbsoluteError(p->load(), -30.0f, 0.05f);
+        if (auto* p = restoredAPVTS.getRawParameterValue("band0Ratio"))
+            expectWithinAbsoluteError(p->load(), 8.0f, 0.05f);
+        if (auto* p = restoredAPVTS.getRawParameterValue("band0Attack"))
+            expectWithinAbsoluteError(p->load(), 1.0f, 0.05f);
+        if (auto* p = restoredAPVTS.getRawParameterValue("band0Release"))
+            expectWithinAbsoluteError(p->load(), 50.0f, 0.1f);
+        if (auto* p = restoredAPVTS.getRawParameterValue("band0Range"))
+            expectWithinAbsoluteError(p->load(), 24.0f, 0.05f);
+        if (auto* p = restoredAPVTS.getRawParameterValue("band0Knee"))
+            expectWithinAbsoluteError(p->load(), 0.0f, 0.05f);
     }
 
     void testBypassPassThrough()
