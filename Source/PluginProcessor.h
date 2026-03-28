@@ -301,7 +301,8 @@ public:
     //==============================================================================
     // Linear Phase Support
     //==============================================================================
-    void triggerEQCurveUpdate();        // Mark IR dirty
+    void triggerEQCurveUpdate();        // Mark curve/UI dirty
+    void triggerLinearPhaseIRUpdate();  // Mark LP IR dirty + signal background builder
     void updateLinearPhaseIRIfNeeded(); // Swap in pre-built IR if ready
     void requestIRBuild();              // Signal background IR builder
     

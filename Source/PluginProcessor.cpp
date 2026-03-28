@@ -74,8 +74,8 @@ AIEqualizerAudioProcessor::AIEqualizerAudioProcessor()
     for (const auto& id : eqParameterIDs)
         apvts.addParameterListener(id, this);
 
-    // Initial IR build
-    triggerEQCurveUpdate();
+    // Initial curve refresh + LP IR build if needed later
+    triggerLinearPhaseIRUpdate();
 
     if (auto* phaseValue = apvts.getRawParameterValue("phaseMode"))
         parameterChanged("phaseMode", phaseValue->load());
@@ -1154,7 +1154,7 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         if (currentPhaseMode.load(std::memory_order_relaxed) == PhaseMode::LinearPhase)
         {
             consecutiveIRReadyBlocks = 0;
-            triggerEQCurveUpdate();
+            triggerLinearPhaseIRUpdate();
         }
 
         // Re-prepare eqProcessorHQ / dynamicEQProcessorHQ at the correct oversampled rate.
@@ -2094,7 +2094,7 @@ void AIEqualizerAudioProcessor::parameterChanged(const juce::String& parameterID
             consecutiveIRReadyBlocks = 0;
             readyIRIndex.store(-1, std::memory_order_relaxed);
             crossfadeSamplesRemaining = 0;
-            triggerEQCurveUpdate();
+            triggerLinearPhaseIRUpdate();
         }
 
         {
@@ -2160,10 +2160,15 @@ void AIEqualizerAudioProcessor::parameterChanged(const juce::String& parameterID
         }
     }
 
-    // Mark IR dirty for any band-related parameter (needed for Linear Phase IR rebuild)
+    // Band changes always dirty the visible EQ/analyzer curve, but only Linear Phase
+    // actually needs a background IR rebuild. Decoupling these avoids arming the LP
+    // machinery on every live edit in Zero/Natural modes.
     if (parameterID.startsWith("band") || parameterID == "numActiveBands")
     {
         triggerEQCurveUpdate();
+
+        if (currentPhaseMode.load(std::memory_order_relaxed) == PhaseMode::LinearPhase)
+            triggerLinearPhaseIRUpdate();
     }
 
     // Mark parameters as needing update for the audio thread's next processing block.
@@ -2173,7 +2178,12 @@ void AIEqualizerAudioProcessor::parameterChanged(const juce::String& parameterID
 
 void AIEqualizerAudioProcessor::triggerEQCurveUpdate()
 {
-    eqCurveNeedsUpdate = true;
+    eqCurveNeedsUpdate.store(true, std::memory_order_release);
+}
+
+void AIEqualizerAudioProcessor::triggerLinearPhaseIRUpdate()
+{
+    eqCurveNeedsUpdate.store(true, std::memory_order_release);
     requestIRBuild();
 }
 
@@ -3813,7 +3823,7 @@ void AIEqualizerAudioProcessor::setStateInformation(const void* data, int sizeIn
                     {
                         for (auto& loaded : self->linearIRLoaded)
                             loaded.store(false, std::memory_order_relaxed);
-                        self->triggerEQCurveUpdate();
+                        self->triggerLinearPhaseIRUpdate();
                     }
                 };
 
