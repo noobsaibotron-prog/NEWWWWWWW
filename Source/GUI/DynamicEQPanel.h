@@ -101,6 +101,21 @@ public:
         // Repaint/refresh hook for graph overlays and selected-band visuals.
         auto notifyDynamicParamChanged = [this]()
         {
+            // If the user is editing Dynamic EQ for this band, make sure the band is active.
+            // This matches the graph interaction path where touching/dragging a node can
+            // implicitly activate it; without this, the Dynamic EQ DSP/meter may stay inert
+            // until the user moves the node on the spectrum.
+            if (auto* enabledParam = apvts.getParameter("band" + juce::String(this->bandIndex) + "Enabled"))
+            {
+                if (auto* raw = apvts.getRawParameterValue("band" + juce::String(this->bandIndex) + "Enabled");
+                    raw != nullptr && raw->load() < 0.5f)
+                {
+                    enabledParam->beginChangeGesture();
+                    enabledParam->setValueNotifyingHost(enabledParam->convertTo0to1(1.0f));
+                    enabledParam->endChangeGesture();
+                }
+            }
+
             if (onDynamicParamsChanged)
                 onDynamicParamsChanged(this->bandIndex);
             repaint();
