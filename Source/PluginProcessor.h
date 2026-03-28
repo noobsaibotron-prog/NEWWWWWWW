@@ -486,8 +486,9 @@ private:
     bool  wasBypassed = false;
     int   bypassCrossfadeRemaining = 0;
     int   currentBypassCrossfadeSamples = 256;
-    static constexpr int bypassCrossfadeSamples = 256;       // ~5ms @ 48kHz
-    static constexpr int aiCorrectionCrossfadeSamples = 1024; // ~21ms @ 48kHz
+    static constexpr int bypassCrossfadeSamples = 256;         // ~5ms @ 48kHz
+    static constexpr int aiCorrectionCrossfadeSamples = 1024;  // ~21ms @ 48kHz
+    static constexpr int abSwitchCrossfadeSamples = 2048;      // ~43ms @ 48kHz, bulk state restore is more discontinuous
 
     // IR build debounce: accumulate rapid drag events, rebuild only after silence
     std::atomic<int64_t> irBuildRequestedAt { 0 };    // ms timestamp of last request

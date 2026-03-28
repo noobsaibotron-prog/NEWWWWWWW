@@ -2715,26 +2715,53 @@ void AIEqualizerAudioProcessor::loadStateFromSlot(ABState slot)
     }
     if (!sourceSlot) return;
 
+    bool anyMaterialChange = false;
+
     // Load band states — clamp frequency instead of silently skipping the band,
     // so an out-of-range value never causes a band to disappear unexpectedly.
     for (int i = 0; i < maxBands; ++i)
     {
         auto bandState = sourceSlot->bands[static_cast<size_t>(i)];
         bandState.frequency = juce::jlimit(20.0f, 20000.0f, bandState.frequency);
-        setBandState(i, bandState);
+
+        const auto currentState = getBandState(i);
+        const bool materiallyChanged =
+            std::abs(currentState.frequency - bandState.frequency) > 1.0f ||
+            std::abs(currentState.gain - bandState.gain) > 0.05f ||
+            std::abs(currentState.q - bandState.q) > 0.02f ||
+            currentState.type != bandState.type ||
+            currentState.enabled != bandState.enabled ||
+            currentState.solo != bandState.solo;
+
+        if (materiallyChanged)
+        {
+            setBandState(i, bandState);
+            anyMaterialChange = true;
+        }
     }
 
     // Load output gain with validation
     if (auto* param = apvts.getParameter("outputGain"))
     {
         const float gain = juce::jlimit(-24.0f, 24.0f, sourceSlot->outputGain);
-        param->beginChangeGesture();
-        param->setValueNotifyingHost(param->convertTo0to1(gain));
-        param->endChangeGesture();
+        if (auto* raw = apvts.getRawParameterValue("outputGain"); raw != nullptr)
+        {
+            if (std::abs(raw->load() - gain) > 0.01f)
+            {
+                param->beginChangeGesture();
+                param->setValueNotifyingHost(param->convertTo0to1(gain));
+                param->endChangeGesture();
+                anyMaterialChange = true;
+            }
+        }
     }
 
-    // Trigger crossfade to avoid clicks on bulk parameter change (A/B switch)
-    aiCorrectionCrossfadePending.store(true, std::memory_order_release);
+    // Trigger a longer crossfade to better cover the bulk state swap of A/B/C/D.
+    if (anyMaterialChange)
+    {
+        currentBypassCrossfadeSamples = abSwitchCrossfadeSamples;
+        bypassCrossfadeRemaining = currentBypassCrossfadeSamples;
+    }
 }
 
 void AIEqualizerAudioProcessor::copyAtoB()
