@@ -127,7 +127,13 @@ public:
     
     void setBandParameters(int index, float freq, float gain, float q, int type);
     void setBandSlope(int index, int slope);  // 0=12, 1=24, 2=48 dB/oct (LowCut/HighCut only)
-    
+    void clearBandFilterState(int index) noexcept;  // Zero biquad v1/v2 for clean topology change
+
+    /// Begin a per-band output crossfade: saves current coefficients + filter state,
+    /// resets the live state, and crossfades old→new over fadeSamples.
+    /// Call BEFORE setBandParameters() updates the type.
+    void beginBandCrossfade(int index, int fadeSamples = 128) noexcept;
+
     [[nodiscard]] float getBandFrequency(int index) const;
     [[nodiscard]] float getBandGain(int index) const;
     [[nodiscard]] float getBandQ(int index) const;
@@ -174,6 +180,19 @@ private:
     
     // Processing state for each band (audio thread only)
     std::array<BandProcessingState, 24> bandStates;
+
+    // Per-band crossfade state for topology changes (audio thread only)
+    struct BandCrossfade
+    {
+        static constexpr int maxFilterStages = BandProcessingState::maxFilterStages;
+        std::array<BiquadCoeffs, maxFilterStages> oldCoeffs;
+        std::array<BiquadState, maxFilterStages> oldFiltersL;
+        std::array<BiquadState, maxFilterStages> oldFiltersR;
+        int oldNumStages = 1;
+        int remaining = 0;   // samples left in crossfade
+        int total = 0;       // total crossfade length
+    };
+    std::array<BandCrossfade, 24> bandCrossfades {};
     
     // Number of active bands (atomic)
     std::atomic<int> numActiveBands { 0 };

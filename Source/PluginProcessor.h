@@ -192,6 +192,7 @@ public:
 
     // Parameter tree access
     [[nodiscard]] juce::AudioProcessorValueTreeState& getAPVTS() noexcept { return apvts; }
+
     [[nodiscard]] PhaseMode getCurrentPhaseMode() const noexcept { return currentPhaseMode.load(std::memory_order_relaxed); }
     [[nodiscard]] MSMode getCurrentMSMode() const noexcept { return currentMSMode.load(std::memory_order_relaxed); }
     
@@ -358,6 +359,7 @@ private:
     void calculateAutoGain();
     void saveCurrentStateToSlot(ABState slot);
     void loadStateFromSlot(ABState slot);
+    bool applyBandStateDelta(int bandIndex, const BandState& targetState, bool useGestures);
     void updateReportedLatency();
     void cacheParameterPointers();
     bool runCapturedAudioAnalysis();
@@ -428,16 +430,21 @@ private:
     std::array<DynamicMeterCacheEntry, maxBands> dynamicMeterCache {};
     std::atomic<float> dynamicTotalGR { 0.0f };
 
-    // Smoothed band targets (frequency/gain) for anti-zippering automation
+    // Smoothed band targets (frequency/gain/Q) for anti-zippering automation
     std::array<juce::SmoothedValue<float>, maxBands> smoothedBandFreq {};
     std::array<juce::SmoothedValue<float>, maxBands> smoothedBandGain {};
+    std::array<juce::SmoothedValue<float>, maxBands> smoothedBandQ {};
     std::array<float, maxBands> targetBandFreq {};
     std::array<float, maxBands> targetBandGain {};
     std::array<float, maxBands> targetBandQ {};
     std::array<int, maxBands> targetBandType {};
+    std::array<int, maxBands> prevAppliedBandType {};  // track type for state clear on topology change
+    std::array<int, maxBands> targetBandSlope {};
     std::array<bool, maxBands> targetBandEnabled {};
     std::array<bool, maxBands> targetBandSolo {};
+    std::array<DynamicEQProcessor::DynamicBandParams, maxBands> targetDynamicBandParams {};
     bool bandSmoothingPrimed { false };
+    bool correctionSmoothingActive { false };
 
     // Linear-phase delay compensation when IR is not ready
     juce::AudioBuffer<float> linearPhaseDelayBuffer;

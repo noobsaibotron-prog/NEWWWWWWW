@@ -1309,12 +1309,28 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     }
     wasBypassed = bypassed;
 
-    // AI correction applied: trigger a longer dry→wet crossfade to better mask
-    // coefficient/filter-type discontinuities than the short bypass fade does.
+    // AI correction: widen SmoothedValue ramp for gentler per-block coefficient steps.
+    // AI correction: widen SmoothedValue ramp. Per-band crossfade for type changes
+    // is handled in applySmoothedBandParams().
     if (aiCorrectionCrossfadePending.exchange(false, std::memory_order_acquire))
     {
-        currentBypassCrossfadeSamples = aiCorrectionCrossfadeSamples;
-        bypassCrossfadeRemaining = currentBypassCrossfadeSamples;
+        // Widen SmoothedValue ramp for gentler per-block coefficient steps
+        const double sr = currentSampleRate.load(std::memory_order_relaxed);
+        constexpr double correctionRampSec = 0.08; // 80ms
+        for (int i = 0; i < maxBands; ++i)
+        {
+            auto idx = static_cast<size_t>(i);
+            const float curFreq = smoothedBandFreq[idx].getCurrentValue();
+            const float curGain = smoothedBandGain[idx].getCurrentValue();
+            const float curQ    = smoothedBandQ[idx].getCurrentValue();
+            smoothedBandFreq[idx].reset(sr, correctionRampSec);
+            smoothedBandGain[idx].reset(sr, correctionRampSec);
+            smoothedBandQ[idx].reset(sr, correctionRampSec);
+            smoothedBandFreq[idx].setCurrentAndTargetValue(curFreq);
+            smoothedBandGain[idx].setCurrentAndTargetValue(curGain);
+            smoothedBandQ[idx].setCurrentAndTargetValue(curQ);
+        }
+        correctionSmoothingActive = true;
     }
 
     if (bypassed && bypassCrossfadeRemaining <= 0)
@@ -2363,14 +2379,18 @@ void AIEqualizerAudioProcessor::updateReportedLatency()
 
 void AIEqualizerAudioProcessor::primeBandSmoothers(double sampleRate)
 {
-    constexpr double rampSeconds = 0.02; // 20ms block-level smoothing
+    constexpr double rampSeconds = 0.02;  // 20ms for freq/gain
+    constexpr double qRampSeconds = 0.03; // 30ms for Q (longer: coeff sensitivity)
     for (int i = 0; i < maxBands; ++i)
     {
         auto idx = static_cast<size_t>(i);
         smoothedBandFreq[idx].reset(sampleRate, rampSeconds);
         smoothedBandGain[idx].reset(sampleRate, rampSeconds);
+        smoothedBandQ[idx].reset(sampleRate, qRampSeconds);
         smoothedBandFreq[idx].setCurrentAndTargetValue(targetBandFreq[idx]);
         smoothedBandGain[idx].setCurrentAndTargetValue(targetBandGain[idx]);
+        smoothedBandQ[idx].setCurrentAndTargetValue(targetBandQ[idx]);
+        prevAppliedBandType[idx] = targetBandType[idx];
     }
     bandSmoothingPrimed = true;
 }
@@ -2387,45 +2407,116 @@ void AIEqualizerAudioProcessor::applySmoothedBandParams(int blockSamples)
     for (int i = 0; i < availableBands; ++i)
     {
         auto idx = static_cast<size_t>(i);
-        const bool isMoving = smoothedBandFreq[idx].isSmoothing() || smoothedBandGain[idx].isSmoothing();
+        const bool isMoving = smoothedBandFreq[idx].isSmoothing()
+                           || smoothedBandGain[idx].isSmoothing()
+                           || smoothedBandQ[idx].isSmoothing();
 
         // Advance smoothing by one block
         smoothedBandFreq[idx].skip(blockSamples);
         smoothedBandGain[idx].skip(blockSamples);
+        smoothedBandQ[idx].skip(blockSamples);
 
         if (!isMoving && !parametersNeedUpdate.load(std::memory_order_relaxed))
             continue;
 
         const float freq = smoothedBandFreq[idx].getCurrentValue();
         const float gain = smoothedBandGain[idx].getCurrentValue();
-        const float q = targetBandQ[idx];
+        const float q = smoothedBandQ[idx].getCurrentValue();
         const int type = targetBandType[idx];
+        const int slope = targetBandSlope[idx];
         const bool enabled = targetBandEnabled[idx];
         const bool solo = targetBandSolo[idx];
+
+        // Per-band output crossfade on filter topology change.
+        // Processes same input through both old and new filter, blends over 128 samples.
+        // This eliminates the transfer function discontinuity (e.g. HighShelf→Notch).
+        if (type != prevAppliedBandType[idx])
+        {
+            if (i < eqProcessor.getNumBands())
+                eqProcessor.beginBandCrossfade(i, 128);
+            if (i < eqProcessorHQ.getNumBands())
+                eqProcessorHQ.beginBandCrossfade(i, 128);
+            if (i < eqProcessorMid.getNumBands())
+                eqProcessorMid.beginBandCrossfade(i, 128);
+            if (i < eqProcessorSide.getNumBands())
+                eqProcessorSide.beginBandCrossfade(i, 128);
+            prevAppliedBandType[idx] = type;
+        }
 
         if (i < eqProcessor.getNumBands())
         {
             eqProcessor.setBandParameters(i, freq, gain, q, type);
+            eqProcessor.setBandSlope(i, slope);
             eqProcessor.setBandEnabled(i, enabled);
             eqProcessor.setBandSolo(i, solo);
         }
         if (i < eqProcessorHQ.getNumBands())
         {
             eqProcessorHQ.setBandParameters(i, freq, gain, q, type);
+            eqProcessorHQ.setBandSlope(i, slope);
             eqProcessorHQ.setBandEnabled(i, enabled);
             eqProcessorHQ.setBandSolo(i, solo);
         }
         if (i < eqProcessorMid.getNumBands())
         {
             eqProcessorMid.setBandParameters(i, freq, gain, q, type);
+            eqProcessorMid.setBandSlope(i, slope);
             eqProcessorMid.setBandEnabled(i, enabled);
             eqProcessorMid.setBandSolo(i, solo);
         }
         if (i < eqProcessorSide.getNumBands())
         {
             eqProcessorSide.setBandParameters(i, freq, gain, q, type);
+            eqProcessorSide.setBandSlope(i, slope);
             eqProcessorSide.setBandEnabled(i, enabled);
             eqProcessorSide.setBandSolo(i, solo);
+        }
+
+        if (i < maxBands)
+        {
+            auto dynParams = targetDynamicBandParams[idx];
+            dynParams.frequency = freq;
+            dynParams.gain = gain;
+            dynParams.q = q;
+            dynParams.filterType = type;
+            dynParams.enabled = enabled;
+            dynamicEQProcessor.setBandParams(i, dynParams);
+            dynamicEQProcessorHQ.setBandParams(i, dynParams);
+            dynamicEQProcessorMid.setBandParams(i, dynParams);
+            dynamicEQProcessorSide.setBandParams(i, dynParams);
+        }
+    }
+
+    // When AI correction ramp finishes, restore fast ramp for user drag responsiveness
+    if (correctionSmoothingActive)
+    {
+        bool anyStillSmoothing = false;
+        for (int i = 0; i < availableBands && !anyStillSmoothing; ++i)
+        {
+            auto idx = static_cast<size_t>(i);
+            anyStillSmoothing = smoothedBandFreq[idx].isSmoothing()
+                             || smoothedBandGain[idx].isSmoothing()
+                             || smoothedBandQ[idx].isSmoothing();
+        }
+        if (!anyStillSmoothing)
+        {
+            const double sr = currentSampleRate.load(std::memory_order_relaxed);
+            constexpr double fastRamp = 0.02;  // 20ms for drag
+            constexpr double fastQRamp = 0.03; // 30ms for Q
+            for (int i = 0; i < maxBands; ++i)
+            {
+                auto idx = static_cast<size_t>(i);
+                const float f = smoothedBandFreq[idx].getCurrentValue();
+                const float g = smoothedBandGain[idx].getCurrentValue();
+                const float qv = smoothedBandQ[idx].getCurrentValue();
+                smoothedBandFreq[idx].reset(sr, fastRamp);
+                smoothedBandGain[idx].reset(sr, fastQRamp);
+                smoothedBandQ[idx].reset(sr, fastQRamp);
+                smoothedBandFreq[idx].setCurrentAndTargetValue(f);
+                smoothedBandGain[idx].setCurrentAndTargetValue(g);
+                smoothedBandQ[idx].setCurrentAndTargetValue(qv);
+            }
+            correctionSmoothingActive = false;
         }
     }
 }
@@ -2515,6 +2606,7 @@ void AIEqualizerAudioProcessor::updateEQFromParameters()
         const bool enabledFiltered = enabled && (!hasSolo || solo);
 
         int type = static_cast<int>(loadParam(p.type, 2.0f));
+        int slopeVal = static_cast<int>(loadParam(p.slope, 0.0f));
         // Fallback for legacy states
         if (p.type == nullptr)
         {
@@ -2522,41 +2614,9 @@ void AIEqualizerAudioProcessor::updateEQFromParameters()
             else if (i == activeBandsLocal - 1) type = ParametricEQProcessor::HighShelf;
         }
 
-        if (i < eqProcessor.getNumBands())
-        {
-            eqProcessor.setBandParameters(i, freq, gain, q, type);
-            eqProcessor.setBandEnabled(i, enabledFiltered);
-            eqProcessor.setBandSolo(i, solo);
-        }
-        if (i < eqProcessorHQ.getNumBands())
-        {
-            eqProcessorHQ.setBandParameters(i, freq, gain, q, type);
-            eqProcessorHQ.setBandEnabled(i, enabledFiltered);
-            eqProcessorHQ.setBandSolo(i, solo);
-        }
-
-        // Sync M/S processors
-        if (i < eqProcessorMid.getNumBands())
-        {
-            eqProcessorMid.setBandParameters(i, freq, gain, q, type);
-            eqProcessorMid.setBandEnabled(i, enabledFiltered);
-            eqProcessorMid.setBandSolo(i, solo);
-        }
-        if (i < eqProcessorSide.getNumBands())
-        {
-            eqProcessorSide.setBandParameters(i, freq, gain, q, type);
-            eqProcessorSide.setBandEnabled(i, enabledFiltered);
-            eqProcessorSide.setBandSolo(i, solo);
-        }
-
-        // Sync slope parameter for all processors
-        {
-            int slopeVal = static_cast<int>(loadParam(p.slope, 0.0f));
-            eqProcessor.setBandSlope(i, slopeVal);
-            eqProcessorHQ.setBandSlope(i, slopeVal);
-            eqProcessorMid.setBandSlope(i, slopeVal);
-            eqProcessorSide.setBandSlope(i, slopeVal);
-        }
+        // Do not slam the active audible EQ processors here.
+        // updateEQFromParameters() should only refresh targets + shadow/IR state;
+        // applySmoothedBandParams() is the single live-apply point for the audible EQ path.
 
         //----------------------------------------------------------------------
         // Update Dynamic EQ band parameters
@@ -2589,6 +2649,7 @@ void AIEqualizerAudioProcessor::updateEQFromParameters()
         targetBandGain[idx] = gain;
         targetBandQ[idx] = q;
         targetBandType[idx] = type;
+        targetBandSlope[idx] = slopeVal;
         targetBandEnabled[idx] = enabledFiltered;
         targetBandSolo[idx] = solo;
 
@@ -2596,19 +2657,16 @@ void AIEqualizerAudioProcessor::updateEQFromParameters()
         {
             smoothedBandFreq[idx].setTargetValue(freq);
             smoothedBandGain[idx].setTargetValue(gain);
+            smoothedBandQ[idx].setTargetValue(q);
         }
         else
         {
             smoothedBandFreq[idx].setCurrentAndTargetValue(freq);
             smoothedBandGain[idx].setCurrentAndTargetValue(gain);
+            smoothedBandQ[idx].setCurrentAndTargetValue(q);
         }
 
-        dynamicEQProcessor.setBandParams(i, dynParams);
-        dynamicEQProcessorHQ.setBandParams(i, dynParams);
-
-        // Sync M/S dynamic processors
-        dynamicEQProcessorMid.setBandParams(i, dynParams);
-        dynamicEQProcessorSide.setBandParams(i, dynParams);
+        targetDynamicBandParams[idx] = dynParams;
 
         // FIX: Update shadow processors for thread-safe IR building
         // These are read by the IR builder thread without locking
@@ -2745,8 +2803,7 @@ void AIEqualizerAudioProcessor::loadStateFromSlot(ABState slot)
 
         if (materiallyChanged)
         {
-            setBandState(i, bandState);
-            anyMaterialChange = true;
+            anyMaterialChange = applyBandStateDelta(i, bandState, false) || anyMaterialChange;
         }
     }
 
@@ -3147,63 +3204,15 @@ void AIEqualizerAudioProcessor::applyAICorrections()
 
         if (bestBand >= 0)
         {
-            juce::String prefix = "band" + juce::String(bestBand);
-            const int typeIndex = static_cast<int>(aiFilterTypeToProcessorType(scaled.suggestedFilter));
+            auto state = getBandState(bestBand);
+            state.frequency = scaled.frequency;
+            state.gain = scaled.suggestedGain;
+            state.q = scaled.suggestedQ;
+            state.type = static_cast<int>(aiFilterTypeToProcessorType(scaled.suggestedFilter));
+            state.enabled = true;
+            state.solo = false;
 
-            bool bandMateriallyChanged = false;
-            if (auto* freqRaw = apvts.getRawParameterValue(prefix + "Freq"); freqRaw != nullptr)
-                bandMateriallyChanged = bandMateriallyChanged || std::abs(freqRaw->load() - scaled.frequency) > 1.0f;
-            if (auto* gainRaw = apvts.getRawParameterValue(prefix + "Gain"); gainRaw != nullptr)
-                bandMateriallyChanged = bandMateriallyChanged || std::abs(gainRaw->load() - scaled.suggestedGain) > 0.05f;
-            if (auto* qRaw = apvts.getRawParameterValue(prefix + "Q"); qRaw != nullptr)
-                bandMateriallyChanged = bandMateriallyChanged || std::abs(qRaw->load() - scaled.suggestedQ) > 0.02f;
-            if (auto* typeRaw = apvts.getRawParameterValue(prefix + "Type"); typeRaw != nullptr)
-                bandMateriallyChanged = bandMateriallyChanged || static_cast<int>(std::lround(typeRaw->load())) != typeIndex;
-            if (auto* enabledRaw = apvts.getRawParameterValue(prefix + "Enabled"); enabledRaw != nullptr)
-                bandMateriallyChanged = bandMateriallyChanged || enabledRaw->load() <= 0.5f;
-
-            if (bandMateriallyChanged)
-            {
-                // FIX: Use beginChangeGesture/endChangeGesture for proper undo support
-                if (auto* freqParam = apvts.getParameter(prefix + "Freq"))
-                {
-                    freqParam->beginChangeGesture();
-                    freqParam->setValueNotifyingHost(freqParam->convertTo0to1(scaled.frequency));
-                    freqParam->endChangeGesture();
-                }
-
-                if (auto* gainParam = apvts.getParameter(prefix + "Gain"))
-                {
-                    gainParam->beginChangeGesture();
-                    gainParam->setValueNotifyingHost(gainParam->convertTo0to1(scaled.suggestedGain));
-                    gainParam->endChangeGesture();
-                }
-
-                if (auto* qParam = apvts.getParameter(prefix + "Q"))
-                {
-                    qParam->beginChangeGesture();
-                    qParam->setValueNotifyingHost(qParam->convertTo0to1(scaled.suggestedQ));
-                    qParam->endChangeGesture();
-                }
-
-                // Set filter type from AI suggestion
-                if (auto* typeParam = apvts.getParameter(prefix + "Type"))
-                {
-                    typeParam->beginChangeGesture();
-                    typeParam->setValueNotifyingHost(typeParam->convertTo0to1(static_cast<float>(typeIndex)));
-                    typeParam->endChangeGesture();
-                }
-
-                // Enable the band
-                if (auto* enabledParam = apvts.getParameter(prefix + "Enabled"))
-                {
-                    enabledParam->beginChangeGesture();
-                    enabledParam->setValueNotifyingHost(1.0f);
-                    enabledParam->endChangeGesture();
-                }
-
-                anyMaterialChange = true;
-            }
+            anyMaterialChange = applyBandStateDelta(bestBand, state, false) || anyMaterialChange;
 
             // FIX: Record this to user learning system for better future suggestions
             // Only record if learning is enabled (privacy control)
@@ -3301,60 +3310,15 @@ void AIEqualizerAudioProcessor::applySingleCorrection(const AIEngine::Correction
 
     if (bestBand >= 0)
     {
-        juce::String prefix = "band" + juce::String(bestBand);
-        const int typeIndex = static_cast<int>(aiFilterTypeToProcessorType(scaled.suggestedFilter));
+        auto state = getBandState(bestBand);
+        state.frequency = scaled.frequency;
+        state.gain = scaled.suggestedGain;
+        state.q = scaled.suggestedQ;
+        state.type = static_cast<int>(aiFilterTypeToProcessorType(scaled.suggestedFilter));
+        state.enabled = true;
+        state.solo = false;
 
-        if (auto* freqRaw = apvts.getRawParameterValue(prefix + "Freq"); freqRaw != nullptr)
-            anyMaterialChange = anyMaterialChange || std::abs(freqRaw->load() - scaled.frequency) > 1.0f;
-        if (auto* gainRaw = apvts.getRawParameterValue(prefix + "Gain"); gainRaw != nullptr)
-            anyMaterialChange = anyMaterialChange || std::abs(gainRaw->load() - scaled.suggestedGain) > 0.05f;
-        if (auto* qRaw = apvts.getRawParameterValue(prefix + "Q"); qRaw != nullptr)
-            anyMaterialChange = anyMaterialChange || std::abs(qRaw->load() - scaled.suggestedQ) > 0.02f;
-        if (auto* typeRaw = apvts.getRawParameterValue(prefix + "Type"); typeRaw != nullptr)
-            anyMaterialChange = anyMaterialChange || static_cast<int>(std::lround(typeRaw->load())) != typeIndex;
-        if (auto* enabledRaw = apvts.getRawParameterValue(prefix + "Enabled"); enabledRaw != nullptr)
-            anyMaterialChange = anyMaterialChange || enabledRaw->load() <= 0.5f;
-
-        if (anyMaterialChange)
-        {
-            // Apply parameters with undo support
-            if (auto* freqParam = apvts.getParameter(prefix + "Freq"))
-            {
-                freqParam->beginChangeGesture();
-                freqParam->setValueNotifyingHost(freqParam->convertTo0to1(scaled.frequency));
-                freqParam->endChangeGesture();
-            }
-
-            if (auto* gainParam = apvts.getParameter(prefix + "Gain"))
-            {
-                gainParam->beginChangeGesture();
-                gainParam->setValueNotifyingHost(gainParam->convertTo0to1(scaled.suggestedGain));
-                gainParam->endChangeGesture();
-            }
-
-            if (auto* qParam = apvts.getParameter(prefix + "Q"))
-            {
-                qParam->beginChangeGesture();
-                qParam->setValueNotifyingHost(qParam->convertTo0to1(scaled.suggestedQ));
-                qParam->endChangeGesture();
-            }
-
-            // Set filter type from AI suggestion
-            if (auto* typeParam = apvts.getParameter(prefix + "Type"))
-            {
-                typeParam->beginChangeGesture();
-                typeParam->setValueNotifyingHost(typeParam->convertTo0to1(static_cast<float>(typeIndex)));
-                typeParam->endChangeGesture();
-            }
-
-            // Enable the band
-            if (auto* enabledParam = apvts.getParameter(prefix + "Enabled"))
-            {
-                enabledParam->beginChangeGesture();
-                enabledParam->setValueNotifyingHost(1.0f);
-                enabledParam->endChangeGesture();
-            }
-        }
+        anyMaterialChange = applyBandStateDelta(bestBand, state, false) || anyMaterialChange;
 
         // Record this to user learning system for better future suggestions
         // Only record if learning is enabled (privacy control)
@@ -3576,76 +3540,68 @@ AIEqualizerAudioProcessor::BandState AIEqualizerAudioProcessor::getBandState(int
     return state;
 }
 
-void AIEqualizerAudioProcessor::setBandState(int bandIndex, const BandState& state)
+bool AIEqualizerAudioProcessor::applyBandStateDelta(int bandIndex, const BandState& targetState, bool useGestures)
 {
     // CRITICAL: Must be called from Message Thread for APVTS access
-    // SAFETY: Runtime check (jassert is disabled in release builds)
     auto* mm = juce::MessageManager::getInstance();
     if (mm == nullptr || !mm->isThisTheMessageThread())
     {
-        jassertfalse; // Debug breakpoint
-        return; // Fail silently in release to prevent crash
+        jassertfalse;
+        return false;
     }
 
-    // SAFETY: Bounds check
     if (bandIndex < 0 || bandIndex >= maxBands)
-        return;
+        return false;
+
+    const BandState currentState = getBandState(bandIndex);
+    BandState clampedState = targetState;
+    clampedState.frequency = juce::jlimit(20.0f, 20000.0f, clampedState.frequency);
+    clampedState.gain = juce::jlimit(-24.0f, 24.0f, clampedState.gain);
+    clampedState.q = juce::jlimit(0.1f, 10.0f, clampedState.q);
+    clampedState.type = juce::jlimit(0, 8, clampedState.type);
+
+    const bool freqChanged = std::abs(currentState.frequency - clampedState.frequency) > 1.0f;
+    const bool gainChanged = std::abs(currentState.gain - clampedState.gain) > 0.05f;
+    const bool qChanged = std::abs(currentState.q - clampedState.q) > 0.02f;
+    const bool typeChanged = currentState.type != clampedState.type;
+    const bool enabledChanged = currentState.enabled != clampedState.enabled;
+    const bool soloChanged = currentState.solo != clampedState.solo;
+
+    const bool anyChanged = freqChanged || gainChanged || qChanged || typeChanged || enabledChanged || soloChanged;
+    if (!anyChanged)
+        return false;
 
     juce::String prefix = "band" + juce::String(bandIndex);
 
-    // Validate and set frequency
-    if (auto* param = apvts.getParameter(prefix + "Freq"))
+    auto applyParam = [useGestures](juce::RangedAudioParameter* param, float normalized)
     {
-        const float freq = juce::jlimit(20.0f, 20000.0f, state.frequency);
-        param->beginChangeGesture();
-        param->setValueNotifyingHost(param->convertTo0to1(freq));
-        param->endChangeGesture();
-    }
+        if (param == nullptr)
+            return;
+        if (useGestures) param->beginChangeGesture();
+        param->setValueNotifyingHost(normalized);
+        if (useGestures) param->endChangeGesture();
+    };
 
-    // Validate and set gain
-    if (auto* param = apvts.getParameter(prefix + "Gain"))
-    {
-        const float gain = juce::jlimit(-24.0f, 24.0f, state.gain);
-        param->beginChangeGesture();
-        param->setValueNotifyingHost(param->convertTo0to1(gain));
-        param->endChangeGesture();
-    }
-
-    // Validate and set Q
-    if (auto* param = apvts.getParameter(prefix + "Q"))
-    {
-        const float q = juce::jlimit(0.1f, 10.0f, state.q);
-        param->beginChangeGesture();
-        param->setValueNotifyingHost(param->convertTo0to1(q));
-        param->endChangeGesture();
-    }
-
-    // Validate and set type
-    if (auto* param = apvts.getParameter(prefix + "Type"))
-    {
-        const int type = juce::jlimit(0, 8, state.type); // 0-8 valid filter types
-        param->beginChangeGesture();
-        param->setValueNotifyingHost(param->convertTo0to1(static_cast<float>(type)));
-        param->endChangeGesture();
-    }
-
-    // Set enabled state
-    if (auto* param = apvts.getParameter(prefix + "Enabled"))
-    {
-        param->beginChangeGesture();
-        param->setValueNotifyingHost(state.enabled ? 1.0f : 0.0f);
-        param->endChangeGesture();
-    }
-
-    // Set solo state
-    if (auto* param = apvts.getParameter(prefix + "Solo"))
-    {
-        param->beginChangeGesture();
-        param->setValueNotifyingHost(state.solo ? 1.0f : 0.0f);
-        param->endChangeGesture();
-    }
+    if (freqChanged)
+        applyParam(apvts.getParameter(prefix + "Freq"), apvts.getParameter(prefix + "Freq")->convertTo0to1(clampedState.frequency));
+    if (gainChanged)
+        applyParam(apvts.getParameter(prefix + "Gain"), apvts.getParameter(prefix + "Gain")->convertTo0to1(clampedState.gain));
+    if (qChanged)
+        applyParam(apvts.getParameter(prefix + "Q"), apvts.getParameter(prefix + "Q")->convertTo0to1(clampedState.q));
+    if (typeChanged)
+        applyParam(apvts.getParameter(prefix + "Type"), apvts.getParameter(prefix + "Type")->convertTo0to1(static_cast<float>(clampedState.type)));
+    if (enabledChanged)
+        applyParam(apvts.getParameter(prefix + "Enabled"), clampedState.enabled ? 1.0f : 0.0f);
+    if (soloChanged)
+        applyParam(apvts.getParameter(prefix + "Solo"), clampedState.solo ? 1.0f : 0.0f);
 
     markParametersChanged();
+    return true;
+}
+
+void AIEqualizerAudioProcessor::setBandState(int bandIndex, const BandState& state)
+{
+    juce::ignoreUnused(applyBandStateDelta(bandIndex, state, true));
 }
 
 //==============================================================================

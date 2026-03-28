@@ -152,89 +152,155 @@ void ParametricEQProcessor::process(juce::AudioBuffer<float>& buffer)
     {
         const auto& params = bandParams[bandIdx];
         auto& state = bandStates[bandIdx];
-        
+
         // Read band state atomically
         const bool enabled = params.enabled.load(std::memory_order_relaxed);
         const bool solo = params.solo.load(std::memory_order_relaxed);
         const bool vintage = params.vintageMode.load(std::memory_order_relaxed);
         const int type = params.type.load(std::memory_order_relaxed);
-        
+
         // Skip if not enabled, or if other bands are solo'd and this one isn't
         if (!enabled)
             continue;
         if (hasSolo && !solo)
             continue;
-        
+
         // Skip if no valid coefficients (check first stage)
         if (!state.coefficients[0].valid)
             continue;
-        
+
         const int numStages = state.numActiveStages;
-        
+        auto& xfade = bandCrossfades[bandIdx];
+        const bool crossfading = xfade.remaining > 0;
+
         // Check for vintage modes that need soft clipping
-        const bool applyVintage = vintage && 
+        const bool applyVintage = vintage &&
             (type == static_cast<int>(VintageLowShelf) || type == static_cast<int>(VintageHighShelf));
-        
-        // Process left channel
-        if (bufferChannels > 0)
+
+        if (crossfading)
         {
-            float* channelData = buffer.getWritePointer(0);
-            
-            if (applyVintage)
+            // Per-sample crossfade: process same input through both old and new filters,
+            // blend linearly from old → new. Both L and R advance in lockstep.
+            const float invTotal = 1.0f / static_cast<float>(xfade.total);
+
+            float* dataL = (bufferChannels > 0) ? buffer.getWritePointer(0) : nullptr;
+            float* dataR = (bufferChannels > 1) ? buffer.getWritePointer(1) : nullptr;
+
+            for (int i = 0; i < numSamples; ++i)
             {
-                // With vintage soft clipping
-                constexpr float drive = 1.2f;
-                constexpr float invDrive = 1.0f / 1.2f;
-                
-                for (int i = 0; i < numSamples; ++i)
+                const float t = (xfade.remaining > 0)
+                    ? (1.0f - static_cast<float>(xfade.remaining) * invTotal)
+                    : 1.0f;
+
+                // Left channel
+                if (dataL != nullptr)
                 {
-                    float sample = channelData[i];
+                    const float input = dataL[i];
+
+                    float newSample = input;
                     for (int s = 0; s < numStages; ++s)
-                        sample = state.filtersL[s].processSample(sample, state.coefficients[s]);
-                    sample = fastTanhApprox(sample * drive) * invDrive;
-                    channelData[i] = sample;
+                        newSample = state.filtersL[s].processSample(newSample, state.coefficients[s]);
+
+                    float oldSample = input;
+                    for (int s = 0; s < xfade.oldNumStages; ++s)
+                        oldSample = xfade.oldFiltersL[s].processSample(oldSample, xfade.oldCoeffs[s]);
+
+                    if (applyVintage)
+                    {
+                        constexpr float drive = 1.2f;
+                        constexpr float invDrive = 1.0f / 1.2f;
+                        newSample = fastTanhApprox(newSample * drive) * invDrive;
+                        oldSample = fastTanhApprox(oldSample * drive) * invDrive;
+                    }
+
+                    dataL[i] = oldSample + (newSample - oldSample) * t;
                 }
-            }
-            else
-            {
-                // Standard processing
-                for (int i = 0; i < numSamples; ++i)
+
+                // Right channel
+                if (dataR != nullptr)
                 {
-                    float sample = channelData[i];
+                    const float input = dataR[i];
+
+                    float newSample = input;
                     for (int s = 0; s < numStages; ++s)
-                        sample = state.filtersL[s].processSample(sample, state.coefficients[s]);
-                    channelData[i] = sample;
+                        newSample = state.filtersR[s].processSample(newSample, state.coefficients[s]);
+
+                    float oldSample = input;
+                    for (int s = 0; s < xfade.oldNumStages; ++s)
+                        oldSample = xfade.oldFiltersR[s].processSample(oldSample, xfade.oldCoeffs[s]);
+
+                    if (applyVintage)
+                    {
+                        constexpr float drive = 1.2f;
+                        constexpr float invDrive = 1.0f / 1.2f;
+                        newSample = fastTanhApprox(newSample * drive) * invDrive;
+                        oldSample = fastTanhApprox(oldSample * drive) * invDrive;
+                    }
+
+                    dataR[i] = oldSample + (newSample - oldSample) * t;
+                }
+
+                // Per-sample decrement
+                if (xfade.remaining > 0)
+                {
+                    --xfade.remaining;
                 }
             }
         }
-
-        // Process right channel
-        if (bufferChannels > 1)
+        else
         {
-            float* channelData = buffer.getWritePointer(1);
-
-            if (applyVintage)
+            // Standard processing (no crossfade active)
+            if (bufferChannels > 0)
             {
-                constexpr float drive = 1.2f;
-                constexpr float invDrive = 1.0f / 1.2f;
-
-                for (int i = 0; i < numSamples; ++i)
+                float* channelData = buffer.getWritePointer(0);
+                if (applyVintage)
                 {
-                    float sample = channelData[i];
-                    for (int s = 0; s < numStages; ++s)
-                        sample = state.filtersR[s].processSample(sample, state.coefficients[s]);
-                    sample = fastTanhApprox(sample * drive) * invDrive;
-                    channelData[i] = sample;
+                    constexpr float drive = 1.2f;
+                    constexpr float invDrive = 1.0f / 1.2f;
+                    for (int i = 0; i < numSamples; ++i)
+                    {
+                        float sample = channelData[i];
+                        for (int s = 0; s < numStages; ++s)
+                            sample = state.filtersL[s].processSample(sample, state.coefficients[s]);
+                        channelData[i] = fastTanhApprox(sample * drive) * invDrive;
+                    }
+                }
+                else
+                {
+                    for (int i = 0; i < numSamples; ++i)
+                    {
+                        float sample = channelData[i];
+                        for (int s = 0; s < numStages; ++s)
+                            sample = state.filtersL[s].processSample(sample, state.coefficients[s]);
+                        channelData[i] = sample;
+                    }
                 }
             }
-            else
+
+            if (bufferChannels > 1)
             {
-                for (int i = 0; i < numSamples; ++i)
+                float* channelData = buffer.getWritePointer(1);
+                if (applyVintage)
                 {
-                    float sample = channelData[i];
-                    for (int s = 0; s < numStages; ++s)
-                        sample = state.filtersR[s].processSample(sample, state.coefficients[s]);
-                    channelData[i] = sample;
+                    constexpr float drive = 1.2f;
+                    constexpr float invDrive = 1.0f / 1.2f;
+                    for (int i = 0; i < numSamples; ++i)
+                    {
+                        float sample = channelData[i];
+                        for (int s = 0; s < numStages; ++s)
+                            sample = state.filtersR[s].processSample(sample, state.coefficients[s]);
+                        channelData[i] = fastTanhApprox(sample * drive) * invDrive;
+                    }
+                }
+                else
+                {
+                    for (int i = 0; i < numSamples; ++i)
+                    {
+                        float sample = channelData[i];
+                        for (int s = 0; s < numStages; ++s)
+                            sample = state.filtersR[s].processSample(sample, state.coefficients[s]);
+                        channelData[i] = sample;
+                    }
                 }
             }
         }
@@ -431,6 +497,43 @@ void ParametricEQProcessor::setBandSlope(int index, int s)
     if (index < 0 || index >= getMaxBands()) return;
     bandParams[index].slope.store(juce::jlimit(0, 2, s), std::memory_order_relaxed);
     bandParams[index].version.fetch_add(1, std::memory_order_release);
+}
+
+void ParametricEQProcessor::clearBandFilterState(int index) noexcept
+{
+    if (index < 0 || index >= getMaxBands()) return;
+    auto& state = bandStates[index];
+    for (auto& f : state.filtersL) f.reset();
+    for (auto& f : state.filtersR) f.reset();
+}
+
+void ParametricEQProcessor::beginBandCrossfade(int index, int fadeSamples) noexcept
+{
+    if (index < 0 || index >= getMaxBands()) return;
+
+    auto& state = bandStates[index];
+    auto& xfade = bandCrossfades[index];
+
+    // Don't overwrite an active crossfade with a shorter one
+    if (xfade.remaining > 0 && fadeSamples <= xfade.remaining)
+        return;
+
+    // Save current coefficients and filter state
+    xfade.oldNumStages = state.numActiveStages;
+    for (int s = 0; s < BandProcessingState::maxFilterStages; ++s)
+    {
+        xfade.oldCoeffs[s] = state.coefficients[s];
+        xfade.oldFiltersL[s] = state.filtersL[s];
+        xfade.oldFiltersR[s] = state.filtersR[s];
+    }
+
+    // Reset live filter state so new coefficients start clean
+    for (auto& f : state.filtersL) f.reset();
+    for (auto& f : state.filtersR) f.reset();
+
+    // Start crossfade
+    xfade.remaining = fadeSamples;
+    xfade.total = fadeSamples;
 }
 
 //==============================================================================

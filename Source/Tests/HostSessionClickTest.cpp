@@ -168,6 +168,34 @@ static ClickMetrics analyzeForClicks(const juce::AudioBuffer<float>& output,
     return m;
 }
 
+static void expectCleanMetrics(juce::UnitTest& test,
+                               const ClickMetrics& m,
+                               const juce::String& label,
+                               float maxDeltaLimit,
+                               int maxClicks,
+                               float peakLimit,
+                               int maxDropout)
+{
+    test.logMessage("  " + label + ": maxDelta=" + juce::String(m.maxDelta, 4)
+                    + " clicks=" + juce::String(m.clickCount)
+                    + " peakAbs=" + juce::String(m.peakAbs, 4)
+                    + " dropout=" + juce::String(m.maxDropoutRun)
+                    + " avgDelta=" + juce::String(m.avgDelta, 6));
+
+    test.expect(!m.hasNaN,  label + ": NaN in output");
+    test.expect(!m.hasInf,  label + ": Inf in output");
+    test.expect(m.maxDelta < maxDeltaLimit,
+                label + ": click detected, maxDelta=" + juce::String(m.maxDelta, 4)
+                + " (threshold " + juce::String(maxDeltaLimit, 2) + ")");
+    test.expect(m.peakAbs < peakLimit,
+                label + ": output explosion, peakAbs=" + juce::String(m.peakAbs, 4));
+    test.expect(m.maxDropoutRun <= maxDropout,
+                label + ": audio dropout, " + juce::String(m.maxDropoutRun) + " silent samples");
+    test.expect(m.clickCount <= maxClicks,
+                label + ": " + juce::String(m.clickCount) + " clicks detected (max allowed: "
+                + juce::String(maxClicks) + ")");
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Session runner — simulates a real host session
 // ─────────────────────────────────────────────────────────────────────────────
@@ -794,4 +822,180 @@ private:
     }
 };
 
+class RealApplyPathClickRegressionTest : public juce::UnitTest
+{
+public:
+    RealApplyPathClickRegressionTest()
+        : juce::UnitTest("Real Apply Path Click Regression", "Integration") {}
+
+    void runTest() override
+    {
+        auto* mm = juce::MessageManager::getInstance();
+        juce::ignoreUnused(mm);
+
+        constexpr double sr = 48000.0;
+        constexpr int blockSize = 128;
+
+        for (int phaseMode : { 0, 1, 2 })
+        {
+            testRealABStateSwitch(sr, blockSize, phaseMode);
+            testRealSingleAICorrection(sr, blockSize, phaseMode);
+        }
+    }
+
+private:
+    static juce::String phaseLabel(int phaseMode)
+    {
+        switch (phaseMode)
+        {
+            case 0: return "Zero";
+            case 1: return "Natural";
+            case 2: return "Linear";
+            default: return "Unknown";
+        }
+    }
+
+    void testRealABStateSwitch(double sr, int blockSize, int phaseMode)
+    {
+        beginTest("Real A/B state switch via setABState() under live audio [" + phaseLabel(phaseMode) + "]");
+
+        auto setup = [phaseMode](AIEqualizerAudioProcessor& proc, juce::AudioProcessorValueTreeState& apvts)
+        {
+            setupRealisticSession(proc, apvts);
+            setChoice(apvts, "phaseMode", phaseMode);
+
+            // Snapshot A into B, switch to B, then make B materially different.
+            // Switching back to A will save the edited live state into slot B.
+            proc.copyAtoB();
+            proc.setABState(AIEqualizerAudioProcessor::ABState::B);
+
+            AIEqualizerAudioProcessor::BandState bs;
+            for (int i = 0; i < 8; ++i)
+            {
+                bs = proc.getBandState(i);
+                bs.gain = (i % 2 == 0) ? 9.0f : -9.0f;
+                bs.q = 0.6f + 0.45f * static_cast<float>(i);
+                bs.frequency = juce::jlimit(30.0f, 18000.0f, bs.frequency * (1.0f + 0.12f * static_cast<float>(i + 1)));
+                proc.setBandState(i, bs);
+            }
+            setFloat(apvts, "outputGain", -2.0f);
+
+            // Return to slot A before the run starts (this also saves edited B)
+            proc.setABState(AIEqualizerAudioProcessor::ABState::A);
+        };
+
+        auto result = runSession(sr, blockSize, 150, setup,
+            [](AIEqualizerAudioProcessor& proc, juce::AudioProcessorValueTreeState&, int block)
+            {
+                if (block == 40)
+                    proc.setABState(AIEqualizerAudioProcessor::ABState::B);
+                if (block == 80)
+                    proc.setABState(AIEqualizerAudioProcessor::ABState::A);
+                if (block == 110)
+                    proc.setABState(AIEqualizerAudioProcessor::ABState::B);
+            });
+
+        for (int transBlock : { 40, 80, 110 })
+        {
+            const int start = juce::jmax(0, transBlock * blockSize - 128);
+            const int len   = 24 * blockSize;
+            auto m = analyzeForClicks(result.output, result.input, start, len, 0.20f);
+            expectCleanMetrics(*this, m,
+                               "Real AB[" + phaseLabel(phaseMode) + "]@block" + juce::String(transBlock),
+                               /*maxDeltaLimit=*/ phaseMode == 0 ? 0.40f : 0.30f,
+                               /*maxClicks=*/ 0,
+                               /*peakLimit=*/ 3.0f,
+                               /*maxDropout=*/ 8);
+        }
+    }
+
+    void testRealSingleAICorrection(double sr, int blockSize, int phaseMode)
+    {
+        beginTest("Real AI single correction via applySingleCorrection() under live audio [" + phaseLabel(phaseMode) + "]");
+
+        // Inline session to access proc diagnostics after run
+        AIEqualizerAudioProcessor proc;
+        proc.prepareToPlay(sr, blockSize);
+        auto& apvts = proc.getAPVTS();
+
+        // Setup
+        setupRealisticSession(proc, apvts);
+        setChoice(apvts, "phaseMode", phaseMode);
+        AIEqualizerAudioProcessor::BandState bs = proc.getBandState(4);
+        bs.frequency = 3200.0f;
+        bs.gain = 5.5f;
+        bs.q = 1.1f;
+        bs.type = static_cast<int>(ParametricEQProcessor::HighShelf);
+        bs.enabled = true;
+        proc.setBandState(4, bs);
+
+        constexpr int numBlocks = 140;
+        juce::AudioBuffer<float> outputBuf(2, blockSize * numBlocks);
+        juce::AudioBuffer<float> inputBuf(2, blockSize * numBlocks);
+        juce::MidiBuffer midi;
+        std::mt19937 rng(42);
+
+        for (int block = 0; block < numBlocks; ++block)
+        {
+            juce::AudioBuffer<float> chunk(2, blockSize);
+            fillBroadband(chunk, sr, block * blockSize, rng);
+
+            for (int ch = 0; ch < 2; ++ch)
+                inputBuf.copyFrom(ch, block * blockSize, chunk, ch, 0, blockSize);
+
+            if (block == 50 || block == 54)
+            {
+                AIEngine::Correction c;
+                c.type = AIEngine::ProblemType::Harshness;
+                c.frequency = 3150.0f;
+                c.suggestedGain = -9.0f;
+                c.suggestedQ = 5.5f;
+                c.severity = 0.98f;
+                c.confidence = 0.99f;
+                c.approved = true;
+                c.description = "Regression test correction";
+                c.suggestedFilter = AIEngine::Correction::FilterType::Notch;
+                proc.applySingleCorrection(c);
+            }
+
+            proc.processBlock(chunk, midi);
+
+            for (int ch = 0; ch < 2; ++ch)
+                outputBuf.copyFrom(ch, block * blockSize, chunk, ch, 0, blockSize);
+        }
+
+        proc.releaseResources();
+
+        // Post-trigger window: starts exactly at correction block
+        const int startPost = 50 * blockSize;
+        // Pre-trigger baseline: just the block before correction (block 49)
+        const int startPre = juce::jmax(0, startPost - blockSize);
+        const int lenPost = 28 * blockSize;
+
+        // Print both windows for diagnostics
+        {
+            auto mPre = analyzeForClicks(outputBuf, inputBuf, startPre, blockSize, 0.20f);
+            logMessage("  [PRE-TRIGGER block49] maxDelta=" + juce::String(mPre.maxDelta, 4)
+                + " clicks=" + juce::String(mPre.clickCount)
+                + " peakAbs=" + juce::String(mPre.peakAbs, 4));
+
+            auto mPost = analyzeForClicks(outputBuf, inputBuf, startPost, lenPost, 0.20f);
+            logMessage("  [POST-TRIGGER block50+] maxDelta=" + juce::String(mPost.maxDelta, 4)
+                + " clicks=" + juce::String(mPost.clickCount)
+                + " peakAbs=" + juce::String(mPost.peakAbs, 4)
+                + " avgDelta=" + juce::String(mPost.avgDelta, 6));
+        }
+
+        // Primary metric: post-trigger only
+        auto m = analyzeForClicks(outputBuf, inputBuf, startPost, lenPost, 0.20f);
+        expectCleanMetrics(*this, m,
+                           "Real AI single correction[" + phaseLabel(phaseMode) + "]",
+                           /*maxDeltaLimit=*/ phaseMode == 0 ? 0.40f : 0.30f,
+                           /*maxClicks=*/ 0,
+                           /*peakLimit=*/ 3.0f,
+                           /*maxDropout=*/ 8);
+    }
+};
+
 static HostSessionClickTest hostSessionClickTest;
+static RealApplyPathClickRegressionTest realApplyPathClickRegressionTest;
