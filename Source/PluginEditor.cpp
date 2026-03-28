@@ -131,10 +131,9 @@ AIEqualizerAudioProcessorEditor::AIEqualizerAudioProcessorEditor(AIEqualizerAudi
     // Ensure a band is selected so the detail panel shows controls (including filter type)
     selectBand(0);
     
-    // Match the editor timer to the actual spectrum/UI refresh budget instead of
-    // running a permanent 60Hz loop. The spectrum display already adapts between
-    // 5/30/60Hz, so the editor should not out-poll it while idle/backgrounded.
-    startTimerHz(currentEditorTimerHz);
+    // Keep the editor timer responsive for meters, capture state and general UI.
+    // Spectrum/FFT work is throttled separately inside timerCallback().
+    startTimerHz(60);
 }
 
 AIEqualizerAudioProcessorEditor::~AIEqualizerAudioProcessorEditor()
@@ -1046,14 +1045,6 @@ void AIEqualizerAudioProcessorEditor::resized()
 }
 void AIEqualizerAudioProcessorEditor::timerCallback()
 {
-    const int desiredEditorHz = spectrum ? spectrum->getCurrentRefreshHz()
-                                         : (isShowing() ? 30 : 5);
-    if (desiredEditorHz != currentEditorTimerHz)
-    {
-        currentEditorTimerHz = desiredEditorHz;
-        startTimerHz(currentEditorTimerHz);
-    }
-
     ++timerTickCount;
 
     // Bug K fix: guard against timer firing during processor teardown
@@ -1072,10 +1063,13 @@ void AIEqualizerAudioProcessorEditor::timerCallback()
         outputMeter.setLevels(dbL, dbR);
     }
 
-    // Spectrum - process FFT only when audio flagged new data
-    // NOTE: Do NOT call spectrum->repaint() here — the display has its own 60Hz timer
-    // with conditional repaint (FIX 3). Double repaint was causing extra paint cycles.
-    if (processor.consumeSpectrumDataReady())
+    // Spectrum / FFT handoff - throttle only this block to the display's current
+    // adaptive refresh budget. The rest of the editor stays at 60Hz for responsive
+    // meters, capture state and general UI sync.
+    // NOTE: Do NOT call spectrum->repaint() here — the display owns repaint cadence.
+    const int spectrumRefreshHz = spectrum ? juce::jmax(5, spectrum->getCurrentRefreshHz()) : 30;
+    const int spectrumWorkDivisor = juce::jmax(1, 60 / spectrumRefreshHz);
+    if ((timerTickCount % spectrumWorkDivisor) == 0 && processor.consumeSpectrumDataReady())
     {
         processor.getSpectrumAnalyzer().processFFT();
         if (processor.getPostEQAnalyzer().hasNewData())
