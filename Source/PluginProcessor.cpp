@@ -1416,7 +1416,7 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     }
 
     // Apply smoothed band params (anti-zippering) before processing
-    applySmoothedBandParams(blockSamples);
+    applySmoothedBandParams(blockSamples, needsParamUpdate);
 
     if (autoGainEnabledLocal)
     {
@@ -2409,7 +2409,7 @@ void AIEqualizerAudioProcessor::primeBandSmoothers(double sampleRate)
     bandSmoothingPrimed = true;
 }
 
-void AIEqualizerAudioProcessor::applySmoothedBandParams(int blockSamples)
+void AIEqualizerAudioProcessor::applySmoothedBandParams(int blockSamples, bool paramsChanged)
 {
     const int activeBandsLocal = numActiveBands.load(std::memory_order_relaxed);
     const int availableBands = std::min({ activeBandsLocal, maxBands,
@@ -2430,7 +2430,7 @@ void AIEqualizerAudioProcessor::applySmoothedBandParams(int blockSamples)
         smoothedBandGain[idx].skip(blockSamples);
         smoothedBandQ[idx].skip(blockSamples);
 
-        if (!isMoving && !parametersNeedUpdate.load(std::memory_order_relaxed))
+        if (!isMoving && !paramsChanged)
             continue;
 
         const float freq = smoothedBandFreq[idx].getCurrentValue();

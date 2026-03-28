@@ -380,7 +380,7 @@ private:
                                        bool includeMid,
                                        bool includeSide) noexcept;
     void primeBandSmoothers(double sampleRate);
-    void applySmoothedBandParams(int blockSamples);
+    void applySmoothedBandParams(int blockSamples, bool paramsChanged = false);
     
     // M/S encoding/decoding helpers
     void encodeMidSide(juce::AudioBuffer<float>& buffer, int numSamples);
