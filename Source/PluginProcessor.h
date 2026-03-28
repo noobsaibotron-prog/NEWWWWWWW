@@ -600,6 +600,9 @@ private:
     {
         std::array<BandState, maxBands> bands {};
         float outputGain = 0.0f;
+        bool dynEqEnabled = true;
+        float dynEqMix = 100.0f;
+        bool dynAutoMakeup = false;
         juce::String name;
     };
     

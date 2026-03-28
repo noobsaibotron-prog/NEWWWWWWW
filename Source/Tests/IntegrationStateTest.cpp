@@ -123,11 +123,17 @@ private:
         band0.dynRange = 24.0f;
         band0.dynKnee = 6.0f;
         proc.setBandState(0, band0);
+        setBool(apvts, "dynEqEnabled", false);
+        setFloat(apvts, "dynEqMix", 0.0f);
+        setBool(apvts, "dynAutoMakeup", false);
 
         // Save A with Dynamic EQ effectively off.
         proc.setABState(AIEqualizerAudioProcessor::ABState::B);
 
         // Configure B with aggressive dynamic compression.
+        setBool(apvts, "dynEqEnabled", true);
+        setFloat(apvts, "dynEqMix", 100.0f);
+        setBool(apvts, "dynAutoMakeup", true);
         band0.dynMode = 1;
         band0.dynThreshold = -30.0f;
         band0.dynRatio = 8.0f;
@@ -152,6 +158,12 @@ private:
             expectWithinAbsoluteError(p->load(), 0.0f, 0.05f);
         if (auto* p = restoredAPVTS.getRawParameterValue("band0Ratio"))
             expectWithinAbsoluteError(p->load(), 2.0f, 0.05f);
+        if (auto* p = restoredAPVTS.getRawParameterValue("dynEqEnabled"))
+            expectWithinAbsoluteError(p->load(), 0.0f, 0.01f);
+        if (auto* p = restoredAPVTS.getRawParameterValue("dynEqMix"))
+            expectWithinAbsoluteError(p->load(), 0.0f, 0.05f);
+        if (auto* p = restoredAPVTS.getRawParameterValue("dynAutoMakeup"))
+            expectWithinAbsoluteError(p->load(), 0.0f, 0.01f);
 
         restored.setABState(AIEqualizerAudioProcessor::ABState::B);
         if (auto* p = restoredAPVTS.getRawParameterValue("band0DynMode"))
@@ -168,6 +180,12 @@ private:
             expectWithinAbsoluteError(p->load(), 24.0f, 0.05f);
         if (auto* p = restoredAPVTS.getRawParameterValue("band0Knee"))
             expectWithinAbsoluteError(p->load(), 0.0f, 0.05f);
+        if (auto* p = restoredAPVTS.getRawParameterValue("dynEqEnabled"))
+            expectWithinAbsoluteError(p->load(), 1.0f, 0.01f);
+        if (auto* p = restoredAPVTS.getRawParameterValue("dynEqMix"))
+            expectWithinAbsoluteError(p->load(), 100.0f, 0.05f);
+        if (auto* p = restoredAPVTS.getRawParameterValue("dynAutoMakeup"))
+            expectWithinAbsoluteError(p->load(), 1.0f, 0.01f);
     }
 
     void testBypassPassThrough()

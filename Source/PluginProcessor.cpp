@@ -2774,6 +2774,21 @@ void AIEqualizerAudioProcessor::saveCurrentStateToSlot(ABState slot)
     {
         targetSlot->outputGain = 0.0f; // Default if parameter not found
     }
+
+    if (auto* dynEqEnabledParam = apvts.getRawParameterValue("dynEqEnabled"))
+        targetSlot->dynEqEnabled = dynEqEnabledParam->load() > 0.5f;
+    else
+        targetSlot->dynEqEnabled = true;
+
+    if (auto* dynEqMixParam = apvts.getRawParameterValue("dynEqMix"))
+        targetSlot->dynEqMix = dynEqMixParam->load();
+    else
+        targetSlot->dynEqMix = 100.0f;
+
+    if (auto* dynAutoMakeupParam = apvts.getRawParameterValue("dynAutoMakeup"))
+        targetSlot->dynAutoMakeup = dynAutoMakeupParam->load() > 0.5f;
+    else
+        targetSlot->dynAutoMakeup = false;
 }
 
 void AIEqualizerAudioProcessor::loadStateFromSlot(ABState slot)
@@ -2843,6 +2858,53 @@ void AIEqualizerAudioProcessor::loadStateFromSlot(ABState slot)
             {
                 param->beginChangeGesture();
                 param->setValueNotifyingHost(param->convertTo0to1(gain));
+                param->endChangeGesture();
+                anyMaterialChange = true;
+            }
+        }
+    }
+
+    if (auto* param = apvts.getParameter("dynEqEnabled"))
+    {
+        const bool desired = sourceSlot->dynEqEnabled;
+        if (auto* raw = apvts.getRawParameterValue("dynEqEnabled"); raw != nullptr)
+        {
+            const bool current = raw->load() > 0.5f;
+            if (current != desired)
+            {
+                param->beginChangeGesture();
+                param->setValueNotifyingHost(param->convertTo0to1(desired ? 1.0f : 0.0f));
+                param->endChangeGesture();
+                anyMaterialChange = true;
+            }
+        }
+    }
+
+    if (auto* param = apvts.getParameter("dynEqMix"))
+    {
+        const float mix = juce::jlimit(0.0f, 100.0f, sourceSlot->dynEqMix);
+        if (auto* raw = apvts.getRawParameterValue("dynEqMix"); raw != nullptr)
+        {
+            if (std::abs(raw->load() - mix) > 0.01f)
+            {
+                param->beginChangeGesture();
+                param->setValueNotifyingHost(param->convertTo0to1(mix));
+                param->endChangeGesture();
+                anyMaterialChange = true;
+            }
+        }
+    }
+
+    if (auto* param = apvts.getParameter("dynAutoMakeup"))
+    {
+        const bool desired = sourceSlot->dynAutoMakeup;
+        if (auto* raw = apvts.getRawParameterValue("dynAutoMakeup"); raw != nullptr)
+        {
+            const bool current = raw->load() > 0.5f;
+            if (current != desired)
+            {
+                param->beginChangeGesture();
+                param->setValueNotifyingHost(param->convertTo0to1(desired ? 1.0f : 0.0f));
                 param->endChangeGesture();
                 anyMaterialChange = true;
             }
@@ -3761,6 +3823,9 @@ void AIEqualizerAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
         juce::ValueTree slotTree(id);
         slotTree.setProperty("name", slot.name, nullptr);
         slotTree.setProperty("outputGain", slot.outputGain, nullptr);
+        slotTree.setProperty("dynEqEnabled", slot.dynEqEnabled, nullptr);
+        slotTree.setProperty("dynEqMix", slot.dynEqMix, nullptr);
+        slotTree.setProperty("dynAutoMakeup", slot.dynAutoMakeup, nullptr);
 
         for (int i = 0; i < maxBands; ++i)
         {
@@ -3833,6 +3898,12 @@ void AIEqualizerAudioProcessor::setStateInformation(const void* data, int sizeIn
                     slot.name = slotTree.getProperty("name").toString();
                 if (slotTree.hasProperty("outputGain"))
                     slot.outputGain = static_cast<float>(slotTree.getProperty("outputGain"));
+                if (slotTree.hasProperty("dynEqEnabled"))
+                    slot.dynEqEnabled = static_cast<bool>(slotTree.getProperty("dynEqEnabled"));
+                if (slotTree.hasProperty("dynEqMix"))
+                    slot.dynEqMix = static_cast<float>(slotTree.getProperty("dynEqMix"));
+                if (slotTree.hasProperty("dynAutoMakeup"))
+                    slot.dynAutoMakeup = static_cast<bool>(slotTree.getProperty("dynAutoMakeup"));
 
                 for (int i = 0; i < maxBands; ++i)
                 {
