@@ -102,13 +102,13 @@ AIEqualizerAudioProcessorEditor::AIEqualizerAudioProcessorEditor(AIEqualizerAudi
         return processor.getDynamicBandMeter(band);
     });
     dynamicEQPanel->setDynamicParamsChangedCallback([this](int band) {
+        // Follow the same code path as clicking the band node on the graph.
+        // The reported bug is that touching threshold/mode does not fully wake the
+        // selected band's dynamic visuals/meter until the user clicks/drags the node.
+        // Reusing selectBand() keeps panel, graph, selected-band state and overlays in sync.
+        selectBand(band);
         if (spectrum)
-        {
-            spectrum->setSelectedBand(band);
             spectrum->repaint();
-        }
-        if (selectedBandPanel)
-            selectedBandPanel->repaint();
         repaint();
     });
     addAndMakeVisible(*dynamicEQPanel);
