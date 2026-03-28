@@ -231,6 +231,7 @@ private:
 
     uint64_t lastParameterChangeCount = 0;
     uint32_t lastBlockClampEvents = 0;
+    int currentEditorTimerHz = 60;
     
     // Timer throttle: spread heavy UI work across multiple ticks to avoid
     // message thread starvation (Ableton freeze). timerTickCount increments

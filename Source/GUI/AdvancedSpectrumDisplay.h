@@ -110,6 +110,7 @@ public:
     void capture() { captureButton.triggerClick(); }
     bool getHasCaptured() const { return hasCaptured; }
     const std::vector<float>& getCapturedSpectrum() const { return capturedSpectrum; }
+    int getCurrentRefreshHz() const { return currentTimerHz; }
     
     // Band selection API
     void setSelectedBand(int band) { selectedBandIndex = band; repaint(); }

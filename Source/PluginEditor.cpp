@@ -131,9 +131,10 @@ AIEqualizerAudioProcessorEditor::AIEqualizerAudioProcessorEditor(AIEqualizerAudi
     // Ensure a band is selected so the detail panel shows controls (including filter type)
     selectBand(0);
     
-    // FIX: 20Hz is sufficient for smooth UI and reduces risk of message thread starvation
-    // in Ableton (which can freeze the DAW if the message thread is overloaded at 30Hz).
-    startTimerHz(60); // 60Hz for responsive spectrum — processFFT is lightweight with overlap
+    // Match the editor timer to the actual spectrum/UI refresh budget instead of
+    // running a permanent 60Hz loop. The spectrum display already adapts between
+    // 5/30/60Hz, so the editor should not out-poll it while idle/backgrounded.
+    startTimerHz(currentEditorTimerHz);
 }
 
 AIEqualizerAudioProcessorEditor::~AIEqualizerAudioProcessorEditor()
@@ -1045,6 +1046,14 @@ void AIEqualizerAudioProcessorEditor::resized()
 }
 void AIEqualizerAudioProcessorEditor::timerCallback()
 {
+    const int desiredEditorHz = spectrum ? spectrum->getCurrentRefreshHz()
+                                         : (isShowing() ? 30 : 5);
+    if (desiredEditorHz != currentEditorTimerHz)
+    {
+        currentEditorTimerHz = desiredEditorHz;
+        startTimerHz(currentEditorTimerHz);
+    }
+
     ++timerTickCount;
 
     // Bug K fix: guard against timer firing during processor teardown
