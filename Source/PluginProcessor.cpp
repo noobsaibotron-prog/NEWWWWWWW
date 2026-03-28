@@ -3387,6 +3387,7 @@ void AIEqualizerAudioProcessor::applySemanticAdjustments(const std::vector<Seman
     };
 
     int desiredActiveBands = getNumActiveBands();
+    bool anyBandStateChanged = false;
 
     for (const auto& adj : adjustments)
     {
@@ -3397,17 +3398,35 @@ void AIEqualizerAudioProcessor::applySemanticAdjustments(const std::vector<Seman
         desiredActiveBands = std::max(desiredActiveBands, slot + 1);
 
         auto state = getBandState(slot);
+        const BandState previousState = state;
         state.frequency = adj.frequency;
         state.gain = adj.gain;
         state.q = adj.q;
         state.type = adj.filterType;
         state.enabled = adj.enabled;
         state.solo = false; // semantic moves should never toggle solo
-        setBandState(slot, state);
+
+        const bool materiallyChanged =
+            std::abs(previousState.frequency - state.frequency) > 1.0f ||
+            std::abs(previousState.gain - state.gain) > 0.05f ||
+            std::abs(previousState.q - state.q) > 0.02f ||
+            previousState.type != state.type ||
+            previousState.enabled != state.enabled ||
+            previousState.solo != state.solo;
+
+        if (materiallyChanged)
+        {
+            setBandState(slot, state);
+            anyBandStateChanged = true;
+        }
     }
 
+    const bool needsActiveBandCountUpdate = desiredActiveBands > getNumActiveBands();
+    if (!anyBandStateChanged && !needsActiveBandCountUpdate)
+        return;
+
     // Ensure the active band count covers any newly claimed slots
-    if (desiredActiveBands > getNumActiveBands())
+    if (needsActiveBandCountUpdate)
     {
         if (auto* param = apvts.getParameter("numActiveBands"))
         {

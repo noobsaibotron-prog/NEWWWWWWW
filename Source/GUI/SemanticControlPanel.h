@@ -117,7 +117,7 @@ public:
         intensitySlider.setColour(juce::Slider::trackColourId, juce::Colour(0xFF333333));
         intensitySlider.onValueChange = [this]() {
             semanticEngine.setIntensity(static_cast<float>(intensitySlider.getValue()));
-            updateEQFromState();
+            semanticDirty = true;
         };
         addAndMakeVisible(intensitySlider);
         
@@ -310,22 +310,11 @@ public:
                 }
                 else
                 {
-                    // FIX 1b: Throttle with immediate passthrough.
-                    // First event passes through immediately (small coefficient step → no click).
-                    // Subsequent events within kSemanticMinIntervalMs are deferred to the
-                    // 30Hz timer. This caps updateEQ at ~60Hz while keeping responsiveness
-                    // and avoiding the large coefficient jumps that cause clicks.
+                    // Strict coalescing: during drag, update the semantic engine immediately
+                    // for local UI state, but defer EQ application to the 30Hz timer.
+                    // This avoids bursting APVTS/host writes at ~60Hz while audio is running.
                     semanticEngine.setQuality(qs.quality, value);
-                    double now = juce::Time::getMillisecondCounterHiRes();
-                    if (now - lastSemanticApplyMs >= kSemanticMinIntervalMs)
-                    {
-                        updateEQFromState();
-                        lastSemanticApplyMs = now;
-                    }
-                    else
-                    {
-                        semanticDirty = true; // timer will pick it up
-                    }
+                    semanticDirty = true;
                 }
 
                 updateStatusLabel(qs.name, value);
@@ -613,9 +602,7 @@ private:
     
     std::vector<QualitySliderData> qualitySliders;
     std::vector<std::unique_ptr<juce::TextButton>> presetButtons;
-    bool semanticDirty = false;            // FIX 1: coalesce slider events to timer rate
-    double lastSemanticApplyMs = 0.0;      // FIX 1b: throttle with immediate passthrough
-    static constexpr double kSemanticMinIntervalMs = 16.0; // ~60Hz max update rate
+    bool semanticDirty = false;            // Coalesce semantic updates to timer rate
 
 #if AIEQ_GUI_DEBUG
     int debugSliderEventCount = 0;
