@@ -99,7 +99,7 @@ public:
         addAndMakeVisible(titleLabel);
         
         // Repaint/refresh hook for graph overlays and selected-band visuals.
-        auto notifyDynamicParamChanged = [this]()
+        auto notifyDynamicParamChanged = [this, &apvts]()
         {
             // If the user is editing Dynamic EQ for this band, make sure the band is active.
             // This matches the graph interaction path where touching/dragging a node can
