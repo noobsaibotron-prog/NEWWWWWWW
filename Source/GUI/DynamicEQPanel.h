@@ -98,6 +98,22 @@ public:
         titleLabel.setJustificationType(juce::Justification::centredLeft);
         addAndMakeVisible(titleLabel);
         
+        // Repaint/refresh hook for graph overlays and selected-band visuals.
+        auto notifyDynamicParamChanged = [this]()
+        {
+            if (onDynamicParamsChanged)
+                onDynamicParamsChanged(this->bandIndex);
+            repaint();
+        };
+
+        modeCombo.onChange = notifyDynamicParamChanged;
+        thresholdKnob.onValueChange = notifyDynamicParamChanged;
+        ratioKnob.onValueChange = notifyDynamicParamChanged;
+        attackKnob.onValueChange = notifyDynamicParamChanged;
+        releaseKnob.onValueChange = notifyDynamicParamChanged;
+        rangeKnob.onValueChange = notifyDynamicParamChanged;
+        kneeKnob.onValueChange = notifyDynamicParamChanged;
+
         // Start timer for gain reduction meter
         startTimerHz(30);
     }
@@ -218,6 +234,11 @@ public:
     void setBandMeterProvider(std::function<DynamicEQProcessor::BandMeter(int)> provider)
     {
         bandMeterProvider = std::move(provider);
+    }
+
+    void setDynamicParamsChangedCallback(std::function<void(int)> callback)
+    {
+        onDynamicParamsChanged = std::move(callback);
     }
     
     void setBandIndex(int newIndex)
@@ -355,6 +376,7 @@ private:
     juce::AudioProcessorValueTreeState& apvts;
     int bandIndex;
     std::function<DynamicEQProcessor::BandMeter(int)> bandMeterProvider;
+    std::function<void(int)> onDynamicParamsChanged;
     
     // UI Components
     juce::ComboBox modeCombo;

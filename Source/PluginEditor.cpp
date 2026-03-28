@@ -101,6 +101,16 @@ AIEqualizerAudioProcessorEditor::AIEqualizerAudioProcessorEditor(AIEqualizerAudi
     dynamicEQPanel->setBandMeterProvider([this](int band) {
         return processor.getDynamicBandMeter(band);
     });
+    dynamicEQPanel->setDynamicParamsChangedCallback([this](int band) {
+        if (spectrum)
+        {
+            spectrum->setSelectedBand(band);
+            spectrum->repaint();
+        }
+        if (selectedBandPanel)
+            selectedBandPanel->repaint();
+        repaint();
+    });
     addAndMakeVisible(*dynamicEQPanel);
     
     // Dynamic EQ Master Panel (global controls)
