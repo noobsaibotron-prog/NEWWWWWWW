@@ -1371,12 +1371,12 @@ private:
         // Per-band fills with individual getMagnitudeForFrequency loops cost ~20ms with 12+ bands.
         // A single fillPath on the cached curve + gradient costs ~1ms.
         juce::Path fillPath(cachedEQCurve);
-        // Close the path along the bottom to create a filled area
-        fillPath.lineTo(graphBounds.getRight(), dbToY(0.0f));
-        fillPath.lineTo(graphBounds.getX(), dbToY(0.0f));
+        // Close the path along the 0 dB center line to create a filled area
+        float zeroY = gainToY(0.0f);
+        fillPath.lineTo(graphBounds.getRight(), zeroY);
+        fillPath.lineTo(graphBounds.getX(), zeroY);
         fillPath.closeSubPath();
 
-        float zeroY = dbToY(0.0f);
         juce::ColourGradient fillGrad(
             juce::Colour(0xFFB0C8E8).withAlpha(0.12f), 0, graphBounds.getY(),
             juce::Colour(0xFFB0C8E8).withAlpha(0.02f), 0, zeroY, false);
@@ -1820,8 +1820,18 @@ public:
     }
     
     float dbToY(float db) const {
-        float p = juce::jlimit(0.0f, 1.0f, (db - spectrumMinDb) / (spectrumMaxDb - spectrumMinDb));
-        return graphBounds.getBottom() - p * graphBounds.getHeight();
+        // Map spectrum range to graph: 0 dB at center, -90 dB in lower half, +12 dB in upper half
+        const float centerY = graphBounds.getY() + graphBounds.getHeight() * 0.5f;
+        
+        if (db >= 0.0f) {
+            // Above 0 dB: map 0 → +12 to upper half
+            float p = juce::jlimit(0.0f, 1.0f, db / spectrumMaxDb);
+            return centerY - p * (graphBounds.getHeight() * 0.5f);
+        } else {
+            // Below 0 dB: map -90 → 0 to lower half
+            float p = juce::jlimit(0.0f, 1.0f, db / spectrumMinDb);
+            return centerY + p * (graphBounds.getHeight() * 0.5f);
+        }
     }
     
     // Gain to Y (for band positions, centered at 0dB)
@@ -2012,9 +2022,6 @@ private:
         dynCurveYPoints.resize(n);
         staticCurveYPoints.resize(n);
 
-        const float zeroY  = dbToY(0.0f);
-        const float yScale = graphBounds.getHeight() * 0.45f;
-
         cachedDynamicEQCurve.clear();
         bool started = false;
 
@@ -2026,13 +2033,13 @@ private:
             // Dynamic curve Y
             float dynDb = juce::Decibels::gainToDecibels(dynCurveMagnitudes[i], -48.0f);
             dynDb = juce::jlimit(-24.0f, 24.0f, dynDb);
-            dynCurveYPoints[i] = zeroY - (dynDb / 24.0f) * yScale;
+            dynCurveYPoints[i] = gainToY(dynDb);  // Use gainToY for consistent centering
 
             // Static curve Y (from already-computed magnitudes)
             float statDb = (i < eqCurveMagnitudes.size())
                 ? juce::Decibels::gainToDecibels(eqCurveMagnitudes[i], -48.0f) : 0.0f;
             statDb = juce::jlimit(-24.0f, 24.0f, statDb);
-            staticCurveYPoints[i] = zeroY - (statDb / 24.0f) * yScale;
+            staticCurveYPoints[i] = gainToY(statDb);  // Use gainToY for consistent centering
 
             if (!started) { cachedDynamicEQCurve.startNewSubPath(x, dynCurveYPoints[i]); started = true; }
             else cachedDynamicEQCurve.lineTo(x, dynCurveYPoints[i]);
@@ -2137,8 +2144,6 @@ private:
                                          eqCurveFrequencies.size(),
                                          sr);
 
-        const float zeroY = dbToY(0.0f);
-        const float yScale = graphBounds.getHeight() * 0.45f;
         bool started = false;
 
         for (size_t i = 0; i < eqCurveFrequencies.size(); ++i)
@@ -2147,7 +2152,7 @@ private:
             db = juce::jlimit(-24.0f, 24.0f, db);
 
             const float x = freqToX(eqCurveFrequencies[i]);
-            const float y = zeroY - (db / 24.0f) * yScale;
+            const float y = gainToY(db);  // Use gainToY for consistent centering
 
             if (!started)
             {
