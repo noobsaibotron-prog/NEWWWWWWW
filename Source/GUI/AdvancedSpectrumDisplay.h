@@ -139,19 +139,27 @@ public:
         float frequency = 0.0f;
         float q = 1.0f;
         float severity = 0.0f;
+        float suggestedGain = 0.0f;
+        AIEngine::Correction::FilterType filterType = AIEngine::Correction::FilterType::Peak;
         AIEngine::ProblemType type = AIEngine::ProblemType::None;
         bool active = false;
         int fadeCounter = 0;  // For fade-out animation
+        juce::Path cachedPreviewCurve;
+        bool previewCurveValid = false;
     };
-    
-    void highlightProblem(float frequency, float q, float severity, AIEngine::ProblemType type)
+
+    void highlightProblem(float frequency, float q, float severity, float suggestedGain,
+                          AIEngine::Correction::FilterType filterType, AIEngine::ProblemType type)
     {
         currentHighlight.frequency = frequency;
         currentHighlight.q = q;
         currentHighlight.severity = severity;
+        currentHighlight.suggestedGain = suggestedGain;
+        currentHighlight.filterType = filterType;
         currentHighlight.type = type;
         currentHighlight.active = true;
         currentHighlight.fadeCounter = 180;  // 3 seconds at 60fps
+        buildPreviewCurve();
         repaint();
     }
     
@@ -159,10 +167,89 @@ public:
     {
         currentHighlight.active = false;
         currentHighlight.fadeCounter = 0;
+        currentHighlight.previewCurveValid = false;
         repaint();
     }
-    
+
     ProblemHighlight currentHighlight;
+
+private:
+    void buildPreviewCurve()
+    {
+        currentHighlight.cachedPreviewCurve.clear();
+        currentHighlight.previewCurveValid = false;
+
+        if (graphBounds.isEmpty())
+            return;
+
+        const float gain = currentHighlight.suggestedGain;
+        const float freq = currentHighlight.frequency;
+        const float q = juce::jmax(0.1f, currentHighlight.q);
+
+        // Build a filter response curve (200 points across 20Hz-20kHz)
+        constexpr int numPoints = 200;
+        for (int i = 0; i < numPoints; ++i)
+        {
+            float normX = static_cast<float>(i) / static_cast<float>(numPoints - 1);
+            float f = 20.0f * std::pow(1000.0f, normX); // 20Hz to 20kHz log scale
+            float response = 0.0f;
+
+            switch (currentHighlight.filterType)
+            {
+                case AIEngine::Correction::FilterType::Peak:
+                {
+                    float omega = f / freq;
+                    float logOmega = omega - 1.0f / omega;
+                    response = gain / (1.0f + q * q * logOmega * logOmega);
+                    break;
+                }
+                case AIEngine::Correction::FilterType::LowShelf:
+                {
+                    float ratio = f / freq;
+                    response = gain / (1.0f + ratio * ratio);
+                    break;
+                }
+                case AIEngine::Correction::FilterType::HighShelf:
+                {
+                    float ratio = freq / f;
+                    response = gain / (1.0f + ratio * ratio);
+                    break;
+                }
+                case AIEngine::Correction::FilterType::LowCut:
+                {
+                    float ratio = freq / f;
+                    response = -24.0f * ratio * ratio / (1.0f + ratio * ratio);
+                    break;
+                }
+                case AIEngine::Correction::FilterType::HighCut:
+                {
+                    float ratio = f / freq;
+                    response = -24.0f * ratio * ratio / (1.0f + ratio * ratio);
+                    break;
+                }
+                case AIEngine::Correction::FilterType::Notch:
+                {
+                    float omega = f / freq;
+                    float logOmega = omega - 1.0f / omega;
+                    float notchDepth = -18.0f;
+                    response = notchDepth / (1.0f + q * q * logOmega * logOmega);
+                    break;
+                }
+            }
+
+            float px = freqToX(f);
+            float py = dbToY(response);
+
+            if (i == 0)
+                currentHighlight.cachedPreviewCurve.startNewSubPath(px, py);
+            else
+                currentHighlight.cachedPreviewCurve.lineTo(px, py);
+        }
+
+        currentHighlight.previewCurveValid = true;
+    }
+
+public:
     
     // Display range for spectrum (helps visual width/height of the curve)
     static constexpr float spectrumMinDb = -90.0f;
@@ -1739,7 +1826,18 @@ public:
         g.setFont(juce::Font(juce::FontOptions().withHeight(11.0f)));
         g.drawText(icon + " " + freqStr, static_cast<int>(markerX), static_cast<int>(markerY), markerW, markerH,
                    juce::Justification::centred);
-        
+
+        // Draw cached preview curve (dashed line showing suggested filter response)
+        if (currentHighlight.previewCurveValid)
+        {
+            g.setColour(highlightCol.withAlpha(alpha * 0.5f));
+            const float dashes[] = {4.0f, 3.0f};
+            juce::Path dashedPath;
+            juce::PathStrokeType(1.5f).createDashedStroke(dashedPath, currentHighlight.cachedPreviewCurve,
+                                                           dashes, 2);
+            g.fillPath(dashedPath);
+        }
+
         // Decrement fade counter
         currentHighlight.fadeCounter--;
         if (currentHighlight.fadeCounter <= 0)

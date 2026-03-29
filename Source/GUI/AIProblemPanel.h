@@ -17,7 +17,8 @@ class AIProblemPanel : public juce::Component,
                        public juce::ListBoxModel
 {
 public:
-    std::function<void(float frequency, float q, float severity, AIEngine::ProblemType type)> onProblemSelected;
+    std::function<void(float frequency, float q, float severity, float suggestedGain,
+                       AIEngine::Correction::FilterType filterType, AIEngine::ProblemType type)> onProblemSelected;
 
     explicit AIProblemPanel(AIEqualizerAudioProcessor& p)
         : processor(p),
@@ -325,7 +326,7 @@ public:
         
         // Highlight on spectrum
         if (onProblemSelected)
-            onProblemSelected(p.frequency, p.suggestedQ, p.severity, p.type);
+            onProblemSelected(p.frequency, p.suggestedQ, p.severity, p.suggestedGain, p.suggestedFilter, p.type);
         
         // Right-click context menu
         if (e.mods.isRightButtonDown())
@@ -1073,7 +1074,7 @@ private:
         if (onProblemSelected)
         {
             const auto& p = problems[static_cast<size_t>(row)];
-            onProblemSelected(p.frequency, p.suggestedQ, p.severity, p.type);
+            onProblemSelected(p.frequency, p.suggestedQ, p.severity, p.suggestedGain, p.suggestedFilter, p.type);
         }
     }
 

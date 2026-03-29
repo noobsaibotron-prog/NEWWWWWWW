@@ -57,10 +57,12 @@ AIEqualizerAudioProcessorEditor::AIEqualizerAudioProcessorEditor(AIEqualizerAudi
     
     // Connect AI Problem Panel to Spectrum Display
     // When user clicks a problem, highlight it on the spectrum
-    aiProblemPanel->onProblemSelected = [this](float frequency, float q, float severity, AIEngine::ProblemType type) {
+    aiProblemPanel->onProblemSelected = [this](float frequency, float q, float severity, float suggestedGain,
+                                               AIEngine::Correction::FilterType filterType,
+                                               AIEngine::ProblemType type) {
         if (spectrum)
         {
-            spectrum->highlightProblem(frequency, q, severity, type);
+            spectrum->highlightProblem(frequency, q, severity, suggestedGain, filterType, type);
         }
     };
     
