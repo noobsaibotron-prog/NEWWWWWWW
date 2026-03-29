@@ -773,6 +773,17 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     blockClampEvents.store(0, std::memory_order_relaxed);
     dryBuffer.setSize(getTotalNumInputChannels(), preallocatedMaxSamples, false, true, false);
     dryBuffer.clear();
+    // Dry/wet delay lines for phase-aligned bypass crossfade (Maximum Latency Padding)
+    dryDelayBufferSize = preallocatedMaxSamples + 8192;
+    dryDelayBuffer.setSize(getTotalNumInputChannels(), dryDelayBufferSize, false, true, false);
+    dryDelayBuffer.clear();
+    dryDelayWritePos = 0;
+    dryDelayLength = 0;
+    wetPaddingBufferSize = preallocatedMaxSamples + 8192;
+    wetPaddingDelayBuffer.setSize(getTotalNumInputChannels(), wetPaddingBufferSize, false, true, false);
+    wetPaddingDelayBuffer.clear();
+    wetPaddingWritePos = 0;
+    wetPaddingDelaySamples = 0;
     phaseTransitionBuffer.setSize(getTotalNumInputChannels(), preallocatedMaxSamples, false, true, false);
     phaseTransitionBuffer.clear();
     oversamplingTransitionBuffer.setSize(getTotalNumInputChannels(), preallocatedMaxSamples, false, true, false);
@@ -1040,44 +1051,25 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     aiAnalysisIntervalSamples = juce::jmax(static_cast<int>(std::round(sampleRate * 0.1)), samplesPerBlock);
     aiAnalysisSamples = 0;
 
-    // Declare latency based on current phase mode:
-    // - LinearPhase: partSize (128) when partitioned, hopSize (4096) when legacy OLA
-    // - NaturalPhase: only oversampling latency (much lower, typically 32-64 samples)
-    // We must NOT declare linear-phase latency in NaturalPhase - it would desync the DAW timeline.
-    const auto currentMode = currentPhaseMode.load(std::memory_order_relaxed);
-    const int linearPhaseLatency = (currentMode == PhaseMode::LinearPhase)
-                                   ? static_cast<int>(LinearPhaseProcessor::usePartitioned
-                                       ? LinearPhaseProcessor::partSize
-                                       : LinearPhaseProcessor::hopSize)
-                                   : 0;
-    int oversamplingLatency = naturalPhaseLatency;
-    if (oversampler4x)
-        oversamplingLatency = std::max(oversamplingLatency, static_cast<int>(oversampler4x->getLatencyInSamples()));
-    if (oversampler2x)
-        oversamplingLatency = std::max(oversamplingLatency, static_cast<int>(oversampler2x->getLatencyInSamples()));
-    // Report ACTUAL latency for the current mode, not worst-case.
-    // This avoids unnecessary delay compensation in ZeroLatency/NaturalPhase modes.
-    // When user switches phase mode, we update via parameterChanged().
-    // Cache worst-case for reference but report actual.
+    // === MAXIMUM LATENCY PADDING ===
+    // Always report worst-case latency to DAW. Compensate internally with delay lines.
+    // This prevents Ableton PDC recalculation glitches on mode switches.
     {
-        juce::dsp::Oversampling<float> tempOversampler(
-            static_cast<size_t>(getTotalNumInputChannels()),
-            2,
-            juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR,
-            true);
-        tempOversampler.reset();
-        worstCaseOversamplingLatency = std::max(oversamplingLatency, static_cast<int>(tempOversampler.getLatencyInSamples()));
+        const int lpLatency = static_cast<int>(LinearPhaseProcessor::usePartitioned
+                                               ? LinearPhaseProcessor::partSize
+                                               : LinearPhaseProcessor::hopSize);
+        int oversamplingLatency = naturalPhaseLatency;
+        if (oversampler4x)
+            oversamplingLatency = std::max(oversamplingLatency,
+                                           static_cast<int>(oversampler4x->getLatencyInSamples()));
+        if (oversampler2x)
+            oversamplingLatency = std::max(oversamplingLatency,
+                                           static_cast<int>(oversampler2x->getLatencyInSamples()));
+        worstCaseOversamplingLatency = oversamplingLatency;
+        worstCaseLatencySamples = std::max(lpLatency, oversamplingLatency);
     }
-    int actualLatency;
-    if (currentMode == PhaseMode::LinearPhase)
-        actualLatency = linearPhaseLatency;
-    else if (currentMode == PhaseMode::NaturalPhase)
-        actualLatency = oversamplingLatency;
-    else
-        actualLatency = 0; // ZeroLatency: truly zero
-    worstCaseLatencySamples = actualLatency;
-    setLatencySamples(actualLatency);
-    lastReportedLatency = actualLatency;
+    setLatencySamples(worstCaseLatencySamples);
+    lastReportedLatency = worstCaseLatencySamples;
 
     // Signal that processor is ready for GUI access
     processorReady.store(true, std::memory_order_release);
@@ -1267,12 +1259,42 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     const float wet = juce::jlimit(0.0f, 100.0f, dryWetPct) * 0.01f;
     const float dry = 1.0f - wet;
     const bool needsDry = dry > 0.0001f || bypassed || bypassCrossfadeRemaining > 0;
-    if (needsDry)
+
+    // ALWAYS feed the dry delay ring buffer so it has valid data when bypass is engaged.
     {
-        jassert(dryBuffer.getNumSamples() >= blockSamples);
-        const int chs = juce::jmin(buffer.getNumChannels(), dryBuffer.getNumChannels());
-        for (int ch = 0; ch < chs; ++ch)
-            dryBuffer.copyFrom(ch, 0, buffer, ch, 0, blockSamples);
+        dryDelayLength = worstCaseLatencySamples;
+        const int chs = juce::jmin(buffer.getNumChannels(), dryDelayBuffer.getNumChannels());
+
+        if (dryDelayLength > 0 && dryDelayBufferSize > 0)
+        {
+            for (int ch = 0; ch < chs; ++ch)
+            {
+                const float* src = buffer.getReadPointer(ch);
+                float* delayBuf = dryDelayBuffer.getWritePointer(ch);
+                for (int s = 0; s < blockSamples; ++s)
+                    delayBuf[(dryDelayWritePos + s) % dryDelayBufferSize] = src[s];
+            }
+            if (needsDry)
+            {
+                for (int ch = 0; ch < chs; ++ch)
+                {
+                    const float* delayBuf = dryDelayBuffer.getReadPointer(ch);
+                    float* dryOut = dryBuffer.getWritePointer(ch);
+                    for (int s = 0; s < blockSamples; ++s)
+                    {
+                        const int readPos = (dryDelayWritePos + s - dryDelayLength + dryDelayBufferSize) % dryDelayBufferSize;
+                        dryOut[s] = delayBuf[readPos];
+                    }
+                }
+            }
+            dryDelayWritePos = (dryDelayWritePos + blockSamples) % dryDelayBufferSize;
+        }
+        else if (needsDry)
+        {
+            const int chsDry = juce::jmin(buffer.getNumChannels(), dryBuffer.getNumChannels());
+            for (int ch = 0; ch < chsDry; ++ch)
+                dryBuffer.copyFrom(ch, 0, buffer, ch, 0, blockSamples);
+        }
     }
     const int qualityModeParam = static_cast<int>(std::round(loadParam(cachedQualityMode, static_cast<float>(qualityModeCached))));
     const auto phaseModeSnapshot = static_cast<PhaseMode>(paramsSnapshot.phaseMode);
@@ -1338,7 +1360,13 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
 
     if (bypassed && bypassCrossfadeRemaining <= 0)
     {
-        // Steady-state bypass: skip processing entirely
+        // Steady-state bypass: output delayed dry (must match reported latency)
+        if (needsDry)
+        {
+            const int chs = juce::jmin(buffer.getNumChannels(), dryBuffer.getNumChannels());
+            for (int ch = 0; ch < chs; ++ch)
+                buffer.copyFrom(ch, 0, dryBuffer, ch, 0, blockSamples);
+        }
         clearDynamicMeterCache();
         return;
     }
@@ -2127,22 +2155,9 @@ void AIEqualizerAudioProcessor::parameterChanged(const juce::String& parameterID
             triggerLinearPhaseIRUpdate();
         }
 
-        {
-            int newLatency = 0;
-            if (newMode == PhaseMode::LinearPhase)
-                newLatency = static_cast<int>(LinearPhaseProcessor::usePartitioned
-                    ? LinearPhaseProcessor::partSize
-                    : LinearPhaseProcessor::hopSize);
-            else if (newMode == PhaseMode::NaturalPhase)
-                newLatency = worstCaseOversamplingLatency;
-
-            if (newLatency != lastReportedLatency)
-            {
-                worstCaseLatencySamples = newLatency;
-                setLatencySamples(newLatency);
-                lastReportedLatency = newLatency;
-            }
-        }
+        // Maximum Latency Padding: do NOT change reported latency on phase mode switch.
+        // worstCaseLatencySamples is set once in prepareToPlay and never changes.
+        // The wet padding delay compensates for the difference at runtime.
     }
     else if (parameterID == "msMode")
     {
@@ -2384,11 +2399,8 @@ void AIEqualizerAudioProcessor::updateDynamicMeterCacheFromMS(const DynamicEQPro
 // FIX 8: Report a fixed worst-case latency to avoid host reconfiguration
 void AIEqualizerAudioProcessor::updateReportedLatency()
 {
-    if (worstCaseLatencySamples != lastReportedLatency)
-    {
-        setLatencySamples(worstCaseLatencySamples);
-        lastReportedLatency = worstCaseLatencySamples;
-    }
+    // Maximum Latency Padding: latency is fixed at worstCaseLatencySamples (set in prepareToPlay).
+    // This function is intentionally a no-op to prevent runtime latency changes that cause DAW PDC clicks.
 }
 
 void AIEqualizerAudioProcessor::primeBandSmoothers(double sampleRate)

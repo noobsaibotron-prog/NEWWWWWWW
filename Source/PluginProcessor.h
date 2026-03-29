@@ -501,10 +501,24 @@ private:
     // Bypass crossfade state — avoids click on bypass toggle
     bool  wasBypassed = false;
     int   bypassCrossfadeRemaining = 0;
-    int   currentBypassCrossfadeSamples = 256;
-    static constexpr int bypassCrossfadeSamples = 256;         // ~5ms @ 48kHz
+    int   currentBypassCrossfadeSamples = 2400;
+    static constexpr int bypassCrossfadeSamples = 2400;        // ~50ms @ 48kHz (report recommends 20-200ms)
     static constexpr int aiCorrectionCrossfadeSamples = 1024;  // ~21ms @ 48kHz
     static constexpr int abSwitchCrossfadeSamples = 2048;      // ~43ms @ 48kHz, bulk state restore is more discontinuous
+
+    // Dry path delay line for phase-aligned bypass crossfade.
+    // The dry signal is delayed by worstCaseLatencySamples so it matches
+    // the wet (processed) path timing during crossfade.
+    alignas(64) juce::AudioBuffer<float> dryDelayBuffer;
+    int dryDelayWritePos = 0;
+    int dryDelayLength = 0;
+    int dryDelayBufferSize = 0;
+
+    // Wet output padding delay — compensates when actual DSP latency < worstCaseLatencySamples.
+    alignas(64) juce::AudioBuffer<float> wetPaddingDelayBuffer;
+    int wetPaddingWritePos = 0;
+    int wetPaddingDelaySamples = 0;
+    int wetPaddingBufferSize = 0;
 
     // Pending A/B whole-chain crossfade: armed by message thread, dispatched by audio thread
     std::atomic<bool> abCrossfadePending { false };

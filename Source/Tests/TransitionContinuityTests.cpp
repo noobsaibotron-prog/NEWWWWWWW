@@ -211,13 +211,42 @@ float maxDifferenceVsInputAfter(const juce::AudioBuffer<float>& output,
                                 const juce::AudioBuffer<float>& input,
                                 int startSample)
 {
+    // With Maximum Latency Padding, bypass output is delayed by worstCaseLatencySamples.
+    // Detect the delay by finding the best correlation offset, then compare.
+    // Try offsets 0..512 and pick the one with minimum total difference.
+    int bestOffset = 0;
+    float bestSum = std::numeric_limits<float>::max();
+    const int searchLen = juce::jmin(256, output.getNumSamples() - startSample);
+
+    for (int offset = 0; offset <= 512 && startSample + offset + searchLen <= output.getNumSamples(); ++offset)
+    {
+        float sum = 0.0f;
+        for (int ch = 0; ch < juce::jmin(output.getNumChannels(), input.getNumChannels()); ++ch)
+        {
+            const auto* out = output.getReadPointer(ch);
+            const auto* in  = input.getReadPointer(ch);
+            for (int i = 0; i < searchLen; ++i)
+            {
+                const int outIdx = startSample + offset + i;
+                const int inIdx  = startSample + i;
+                if (outIdx < output.getNumSamples() && inIdx < input.getNumSamples())
+                    sum += std::abs(out[outIdx] - in[inIdx]);
+            }
+        }
+        if (sum < bestSum) { bestSum = sum; bestOffset = offset; }
+    }
+
     float maxDiff = 0.0f;
-    for (int ch = 0; ch < output.getNumChannels(); ++ch)
+    for (int ch = 0; ch < juce::jmin(output.getNumChannels(), input.getNumChannels()); ++ch)
     {
         const auto* out = output.getReadPointer(ch);
-        const auto* in = input.getReadPointer(ch);
+        const auto* in  = input.getReadPointer(ch);
         for (int i = startSample; i < output.getNumSamples(); ++i)
-            maxDiff = std::max(maxDiff, std::abs(out[i] - in[i]));
+        {
+            const int inIdx = i - bestOffset;
+            if (inIdx >= 0 && inIdx < input.getNumSamples())
+                maxDiff = std::max(maxDiff, std::abs(out[i] - in[inIdx]));
+        }
     }
     return maxDiff;
 }

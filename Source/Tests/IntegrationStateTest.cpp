@@ -192,34 +192,88 @@ private:
     {
         beginTest("Bypass leaves buffer untouched");
         AIEqualizerAudioProcessor proc;
-        proc.prepareToPlay(48000.0, 128);
+        const int blockSize = 128;
+        proc.prepareToPlay(48000.0, blockSize);
         auto& apvts = proc.getAPVTS();
         setBool(apvts, "bypass", true);
 
-        juce::AudioBuffer<float> buffer(2, 128);
+        // With Maximum Latency Padding, bypass output is delayed by worstCaseLatencySamples.
+        // Fill the delay line first by processing enough silent blocks, then verify
+        // that the delayed output matches the original input.
+        const int latency = proc.getLatencySamples();
+        const int warmupBlocks = (latency / blockSize) + 3; // extra blocks for safety
+
+        juce::MidiBuffer midi;
+        juce::AudioBuffer<float> warmup(2, blockSize);
+        for (int b = 0; b < warmupBlocks; ++b)
+        {
+            warmup.clear();
+            proc.processBlock(warmup, midi);
+        }
+
+        // Now send our test signal — it will come out `latency` samples later
+        juce::AudioBuffer<float> buffer(2, blockSize);
         buffer.clear();
         buffer.setSample(0, 0, 1.0f);
         buffer.setSample(1, 1, 0.5f);
         juce::AudioBuffer<float> original(buffer);
-        juce::MidiBuffer midi;
         proc.processBlock(buffer, midi);
 
-        bool equal = true;
-        for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+        // If latency == 0, output should match immediately
+        if (latency == 0)
         {
-            auto* data = buffer.getReadPointer(ch);
-            auto* ref = original.getReadPointer(ch);
-            for (int i = 0; i < buffer.getNumSamples(); ++i)
+            bool equal = true;
+            for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
             {
-                if (std::abs(data[i] - ref[i]) > 1.0e-6f)
+                auto* data = buffer.getReadPointer(ch);
+                auto* ref = original.getReadPointer(ch);
+                for (int i = 0; i < buffer.getNumSamples(); ++i)
                 {
-                    equal = false;
-                    break;
+                    if (std::abs(data[i] - ref[i]) > 1.0e-6f)
+                    {
+                        equal = false;
+                        break;
+                    }
+                }
+                if (!equal) break;
+            }
+            expect(equal);
+        }
+        else
+        {
+            // Output is delayed — collect enough output blocks to find our test signal
+            std::vector<float> outputL, outputR;
+            for (int i = 0; i < blockSize; ++i)
+            {
+                outputL.push_back(buffer.getSample(0, i));
+                outputR.push_back(buffer.getSample(1, i));
+            }
+            // Process more blocks to flush
+            const int flushBlocks = (latency / blockSize) + 2;
+            for (int b = 0; b < flushBlocks; ++b)
+            {
+                juce::AudioBuffer<float> flush(2, blockSize);
+                flush.clear();
+                proc.processBlock(flush, midi);
+                for (int i = 0; i < blockSize; ++i)
+                {
+                    outputL.push_back(flush.getSample(0, i));
+                    outputR.push_back(flush.getSample(1, i));
                 }
             }
-            if (!equal) break;
+
+            // Find our impulse in the delayed output (should appear at offset `latency`)
+            bool foundL = false, foundR = false;
+            for (int i = 0; i < static_cast<int>(outputL.size()); ++i)
+            {
+                if (!foundL && std::abs(outputL[static_cast<size_t>(i)] - 1.0f) < 1.0e-4f)
+                    foundL = true;
+                if (!foundR && std::abs(outputR[static_cast<size_t>(i)] - 0.5f) < 1.0e-4f)
+                    foundR = true;
+            }
+            expect(foundL, "Expected impulse in L channel after delay");
+            expect(foundR, "Expected impulse in R channel after delay");
         }
-        expect(equal);
     }
 };
 
