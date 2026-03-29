@@ -551,12 +551,26 @@ private:
             juce::String action = p.suggestedGain < 0 ? owner.tr("CUT", "CUT") : owner.tr("BOOST", "BOOST");
             juce::String gainStr = (p.suggestedGain > 0 ? "+" : "") + juce::String(p.suggestedGain, 1) + " dB";
             juce::String qStr = owner.tr("Q=", "Q=") + juce::String(p.suggestedQ, 1);
-            const auto fixText = owner.tr("FIX:", "FIX:") + " " + action + " " + gainStr + "  " + qStr;
+            juce::String filterName;
+            switch (p.suggestedFilter) {
+                case AIEngine::Correction::FilterType::Peak:      filterName = "Peak"; break;
+                case AIEngine::Correction::FilterType::LowShelf:  filterName = "Lo Shelf"; break;
+                case AIEngine::Correction::FilterType::HighShelf:  filterName = "Hi Shelf"; break;
+                case AIEngine::Correction::FilterType::LowCut:    filterName = "HP"; break;
+                case AIEngine::Correction::FilterType::HighCut:    filterName = "LP"; break;
+                case AIEngine::Correction::FilterType::Notch:     filterName = "Notch"; break;
+            }
+            const auto fixText = owner.tr("FIX:", "FIX:") + " " + filterName + " " + action + " " + gainStr + "  " + qStr;
             fixLabel.setText(fixText, juce::dontSendNotification);
             fixLabel.setTitle(owner.tr("Suggested fix", "Suggested fix"));
             fixLabel.setDescription(fixText);
 
-            const auto confidenceText = juce::String(confidencePercent) + "%";
+            juce::String confLevel;
+            if (p.confidence > 0.85f) confLevel = "VERY HIGH";
+            else if (p.confidence > 0.7f) confLevel = "HIGH";
+            else if (p.confidence > 0.5f) confLevel = "MEDIUM";
+            else confLevel = "LOW";
+            const auto confidenceText = confLevel + " " + juce::String(confidencePercent) + "%";
             confidenceLabel.setText(confidenceText, juce::dontSendNotification);
             confidenceLabel.setTitle(owner.tr("Confidence", "Confidence"));
             confidenceLabel.setDescription(owner.tr("AI confidence level", "AI confidence level") + ": " + confidenceText);

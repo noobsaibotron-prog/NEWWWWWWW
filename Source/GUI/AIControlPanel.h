@@ -105,8 +105,15 @@ public:
         sensitivityKnob.setTextValueSuffix("%");
         sensitivityKnob.onValueChange = [this]() {
             processor.getAIEngine().setSensitivity((float)sensitivityKnob.getValue() / 100.0f);
+            updateSensitivityDesc();
         };
         addAndMakeVisible(sensitivityKnob);
+
+        sensitivityDesc.setFont(juce::Font(juce::FontOptions().withHeight(8.0f)));
+        sensitivityDesc.setJustificationType(juce::Justification::centred);
+        sensitivityDesc.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textSecondary);
+        addAndMakeVisible(sensitivityDesc);
+        updateSensitivityDesc();
         
         // === FORZA: Controllo dell'intensità delle correzioni ===
         // Etichetta per il knob di forza
@@ -125,8 +132,15 @@ public:
         strengthKnob.setTextValueSuffix("%");
         strengthKnob.onValueChange = [this]() {
             processor.getAIEngine().setStrength((float)strengthKnob.getValue() / 100.0f);
+            updateStrengthDesc();
         };
         addAndMakeVisible(strengthKnob);
+
+        strengthDesc.setFont(juce::Font(juce::FontOptions().withHeight(8.0f)));
+        strengthDesc.setJustificationType(juce::Justification::centred);
+        strengthDesc.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textSecondary);
+        addAndMakeVisible(strengthDesc);
+        updateStrengthDesc();
         
         // === GENERE: Visualizzazione del genere musicale rilevato ===
         // Etichetta "DETECTED" per il genere
@@ -224,11 +238,13 @@ public:
         // Knob Sensibilità (sinistra)
         auto sensArea = knobRow.removeFromLeft(knobW);
         sensitivityLabel.setBounds(sensArea.removeFromTop(14));
+        sensitivityDesc.setBounds(sensArea.removeFromBottom(12));
         sensitivityKnob.setBounds(sensArea.reduced(4, 0));
-        
+
         // Knob Forza (centro)
         auto strArea = knobRow.removeFromLeft(knobW);
         strengthLabel.setBounds(strArea.removeFromTop(14));
+        strengthDesc.setBounds(strArea.removeFromBottom(12));
         strengthKnob.setBounds(strArea.reduced(4, 0));
         
         // Genere rilevato (destra)
@@ -374,6 +390,28 @@ private:
         }
     }
 
+    void updateSensitivityDesc()
+    {
+        int val = static_cast<int>(sensitivityKnob.getValue());
+        juce::String desc;
+        if (val < 25)      desc = "Low - fewer detections";
+        else if (val < 50)  desc = "Medium-Low";
+        else if (val < 75)  desc = "Medium - balanced";
+        else                desc = "High - more detections";
+        sensitivityDesc.setText(desc, juce::dontSendNotification);
+    }
+
+    void updateStrengthDesc()
+    {
+        int val = static_cast<int>(strengthKnob.getValue());
+        juce::String desc;
+        if (val < 25)      desc = "Gentle";
+        else if (val < 50)  desc = "Moderate";
+        else if (val < 75)  desc = "Assertive";
+        else                desc = "Aggressive";
+        strengthDesc.setText(desc, juce::dontSendNotification);
+    }
+
     // === MEMBER VARIABLES ===
     
     // Riferimento al processore audio principale per accedere all'AI Engine
@@ -392,8 +430,10 @@ private:
     // === Componenti UI: Knob di controllo ===
     juce::Label sensitivityLabel;     // Etichetta "SENSITIVITY"
     juce::Slider sensitivityKnob;     // Knob rotativo per regolare la sensibilità
+    juce::Label sensitivityDesc;      // Descrizione contestuale (es. "Medium - balanced")
     juce::Label strengthLabel;         // Etichetta "STRENGTH"
     juce::Slider strengthKnob;        // Knob rotativo per regolare la forza
+    juce::Label strengthDesc;          // Descrizione contestuale (es. "Moderate")
     
     // === Componenti UI: Genere e problemi ===
     juce::Label genreLabel;            // Etichetta "DETECTED"
