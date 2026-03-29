@@ -215,30 +215,59 @@ public:
         // SAFETY: Skip if processor not ready
         if (!processor.isProcessorReady())
             return;
-            
+
         auto& ai = processor.getAIEngine();
-        
+
         // Update info labels (lightweight)
-        genreLabel.setText(tr("Genre:", "Genre:") + " " + AIEngine::getGenreName(ai.getDetectedGenre()), 
+        genreLabel.setText(tr("Genre:", "Genre:") + " " + AIEngine::getGenreName(ai.getDetectedGenre()),
                           juce::dontSendNotification);
-        profileLabel.setText(tr("Profile:", "Profile:") + " " + AIEngine::getProfileName(ai.getSourceProfile()), 
+        profileLabel.setText(tr("Profile:", "Profile:") + " " + AIEngine::getProfileName(ai.getSourceProfile()),
                             juce::dontSendNotification);
-        
+
         // Sync unmasking button state
         updateUnmaskingButton(ai.isMultiTrackUnmaskingEnabled());
-        
+
         bool shouldUpdate = needsUpdate.exchange(false, std::memory_order_acq_rel);
         if (ai.isNewAnalysisAvailable())
         {
             ai.clearNewAnalysisFlag();
             shouldUpdate = true;
         }
-        
+
         if (shouldUpdate)
         {
-            updateProblemList();
-            updateButtons();
+            // Debounce rapid list updates (100ms) to avoid chaotic overlapping animations
+            auto now = juce::Time::currentTimeMillis();
+            if (now - lastListUpdateTime >= listUpdateDebounceMs)
+            {
+                updateProblemList();
+                updateButtons();
+                lastListUpdateTime = now;
+            }
+            else
+            {
+                // Re-flag so we pick it up on the next tick
+                needsUpdate.store(true, std::memory_order_release);
+            }
         }
+
+        // Centralized fade animation tick — drives all row animations from a single timer
+        bool anyAnimating = false;
+        for (int i = 0; i < getNumRows(); ++i)
+        {
+            if (auto* row = dynamic_cast<ProblemRowComponent*>(problemList.getComponentForRowNumber(i)))
+            {
+                if (row->needsFadeAnimation())
+                {
+                    row->tickFade();
+                    row->repaint();
+                    anyAnimating = true;
+                }
+            }
+        }
+
+        // Adaptive rate: 60Hz during animations for smooth fade, 10Hz at rest
+        startTimerHz(anyAnimating ? 60 : 10);
     }
     
     void updateUnmaskingButton(bool enabled)
@@ -501,8 +530,23 @@ private:
             addAndMakeVisible(hintLabel);
         }
 
+        // Fade animation state
+        float fadeAlpha = 0.0f;
+        juce::int64 fadeStartTime = 0;
+        static constexpr int fadeInMs = 250;
+        bool needsFadeAnimation() const { return fadeAlpha < 1.0f && fadeStartTime > 0; }
+        void tickFade()
+        {
+            float elapsed = static_cast<float>(juce::Time::currentTimeMillis() - fadeStartTime);
+            fadeAlpha = juce::jlimit(0.0f, 1.0f, elapsed / static_cast<float>(fadeInMs));
+        }
+
         void updateFromProblem(const AIEngine::Correction& p, int rowIndex, bool isSelected, bool rtlFlag)
         {
+            // Trigger fade-in for newly created rows
+            if (fadeStartTime == 0)
+                fadeStartTime = juce::Time::currentTimeMillis();
+
             currentIndex = rowIndex;
             rtl = rtlFlag;
             selected = isSelected;
@@ -604,6 +648,10 @@ private:
 
         void paint(juce::Graphics& g) override
         {
+            // Fade-in animation opacity
+            if (fadeAlpha < 1.0f)
+                g.setOpacity(fadeAlpha);
+
             const auto w = static_cast<float>(getWidth());
             const auto h = static_cast<float>(getHeight());
             const float badgeW = 70.0f;
@@ -1120,6 +1168,8 @@ private:
     
     std::vector<AIEngine::Correction> problems;
     std::atomic<bool> needsUpdate { true };
+    juce::int64 lastListUpdateTime { 0 };    // debounce for rapid list updates
+    static constexpr int listUpdateDebounceMs = 100;
     juce::int64 lastApplyTimeMs { 0 };      // throttle rapid apply clicks (300ms window)
     bool fixAllInProgress { false };         // guard for FIX ALL re-entry
 
