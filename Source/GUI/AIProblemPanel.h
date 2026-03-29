@@ -36,7 +36,7 @@ public:
             font.setBold(true);
             titleLabel.setFont(font);
         }
-        titleLabel.setColour(juce::Label::textColourId, juce::Colour(0xFF4A9FD9));
+        titleLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::accentBlue);
         titleLabel.setJustificationType(juce::Justification::centredLeft);
         titleLabel.setTitle(tr("AI analysis title", "AI analysis title"));
         titleLabel.setDescription(tr("Heading for AI analysis results", "Heading for AI analysis results"));
@@ -44,14 +44,14 @@ public:
         
         // Info labels
         genreLabel.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
-        genreLabel.setColour(juce::Label::textColourId, juce::Colour(0xFF888888));
+        genreLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textSecondary);
         genreLabel.setJustificationType(juce::Justification::centredLeft);
         genreLabel.setTitle(tr("Genre label", "Genre label"));
         genreLabel.setDescription(tr("Detected genre description", "Detected genre description"));
         addAndMakeVisible(genreLabel);
         
         profileLabel.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
-        profileLabel.setColour(juce::Label::textColourId, juce::Colour(0xFF666666));
+        profileLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted);
         profileLabel.setJustificationType(juce::Justification::centredLeft);
         profileLabel.setTitle(tr("Profile label", "Profile label"));
         profileLabel.setDescription(tr("Detected source profile", "Detected source profile"));
@@ -60,8 +60,8 @@ public:
         // Problem list with custom row height
         problemList.setModel(this);
         problemList.setRowHeight(140);  // Tall rows for detailed info
-        problemList.setColour(juce::ListBox::backgroundColourId, juce::Colour(0xFF1A1A1A));
-        problemList.setColour(juce::ListBox::outlineColourId, juce::Colour(0xFF333333));
+        problemList.setColour(juce::ListBox::backgroundColourId, ModernLookAndFeel::Colors::bgDark);
+        problemList.setColour(juce::ListBox::outlineColourId, ModernLookAndFeel::Colors::bgLighter);
         problemList.setOutlineThickness(1);
         problemList.setWantsKeyboardFocus(true);
         problemList.setFocusContainerType(juce::Component::FocusContainerType::keyboardFocusContainer);
@@ -88,8 +88,8 @@ public:
         addAndMakeVisible(autoFixBtn);
         
         clearBtn.setButtonText(tr("CLEAR", "CLEAR"));
-        clearBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xFF333333));
-        clearBtn.setColour(juce::TextButton::textColourOffId, juce::Colour(0xFFAAAAAA));
+        clearBtn.setColour(juce::TextButton::buttonColourId, ModernLookAndFeel::Colors::bgLighter);
+        clearBtn.setColour(juce::TextButton::textColourOffId, ModernLookAndFeel::Colors::textLabel);
         clearBtn.setTooltip(tr("Remove all detected problems from the list", "Remove all detected problems from the list"));
         clearBtn.setTitle(tr("Clear list", "Clear list"));
         clearBtn.setDescription(tr("Dismiss every detected problem without applying fixes",
@@ -102,14 +102,14 @@ public:
         addAndMakeVisible(clearBtn);
         
         undoBtn.setButtonText(tr("UNDO", "UNDO"));
-        undoBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xFF2A2A2A));
+        undoBtn.setColour(juce::TextButton::buttonColourId, ModernLookAndFeel::Colors::bgLight);
         undoBtn.onClick = [this]() { processor.undo(); updateButtons(); };
         undoBtn.setTitle(tr("Undo last action", "Undo last action"));
         undoBtn.setExplicitFocusOrder(3);
         addAndMakeVisible(undoBtn);
         
         redoBtn.setButtonText(tr("REDO", "REDO"));
-        redoBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xFF2A2A2A));
+        redoBtn.setColour(juce::TextButton::buttonColourId, ModernLookAndFeel::Colors::bgLight);
         redoBtn.onClick = [this]() { processor.redo(); updateButtons(); };
         redoBtn.setTitle(tr("Redo undone action", "Redo undone action"));
         redoBtn.setExplicitFocusOrder(4);
@@ -117,7 +117,7 @@ public:
         
         // Status
         statusLabel.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
-        statusLabel.setColour(juce::Label::textColourId, juce::Colour(0xFF777777));
+        statusLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textSecondary);
         statusLabel.setJustificationType(juce::Justification::centred);
         statusLabel.setTitle(tr("Analysis status", "Analysis status"));
         statusLabel.setDescription(tr("Shows how many problems were detected",
@@ -126,8 +126,8 @@ public:
         
         // Multi-Track Unmasking toggle
         unmaskingBtn.setButtonText("UNMASKING");
-        unmaskingBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xFF2A2A2A));
-        unmaskingBtn.setColour(juce::TextButton::textColourOffId, juce::Colour(0xFF888888));
+        unmaskingBtn.setColour(juce::TextButton::buttonColourId, ModernLookAndFeel::Colors::bgLight);
+        unmaskingBtn.setColour(juce::TextButton::textColourOffId, ModernLookAndFeel::Colors::textSecondary);
         unmaskingBtn.setTooltip("Enable Multi-Track Unmasking: Analyze frequency masking between tracks");
         unmaskingBtn.onClick = [this]() {
             bool newState = !processor.getAIEngine().isMultiTrackUnmaskingEnabled();
@@ -149,17 +149,20 @@ public:
     
     void paint(juce::Graphics& g) override
     {
-        // Background
-        g.setColour(juce::Colour(0xFF1E1E1E));
-        g.fillRoundedRectangle(getLocalBounds().toFloat(), 8.0f);
-        
+        // Background with subtle gradient for depth
+        auto bounds = getLocalBounds().toFloat();
+        juce::ColourGradient bgGrad(ModernLookAndFeel::Colors::bgPanel, 0, 0,
+                                     ModernLookAndFeel::Colors::bgDark, 0, bounds.getHeight(), false);
+        g.setGradientFill(bgGrad);
+        g.fillRoundedRectangle(bounds, 8.0f);
+
         // Top accent line
-        g.setColour(juce::Colour(0xFF4A9FD9));
-        g.fillRect(0.0f, 0.0f, static_cast<float>(getWidth()), 3.0f);
-        
+        g.setColour(ModernLookAndFeel::Colors::accentBlue);
+        g.fillRect(0.0f, 0.0f, bounds.getWidth(), 3.0f);
+
         // Border
-        g.setColour(juce::Colour(0xFF333333));
-        g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(0.5f), 8.0f, 1.0f);
+        g.setColour(ModernLookAndFeel::Colors::bgLighter);
+        g.drawRoundedRectangle(bounds.reduced(0.5f), 8.0f, 1.0f);
     }
     
     void resized() override
@@ -249,8 +252,8 @@ public:
         else
         {
             unmaskingBtn.setButtonText("UNMASKING");
-            unmaskingBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xFF2A2A2A));
-            unmaskingBtn.setColour(juce::TextButton::textColourOffId, juce::Colour(0xFF888888));
+            unmaskingBtn.setColour(juce::TextButton::buttonColourId, ModernLookAndFeel::Colors::bgLight);
+            unmaskingBtn.setColour(juce::TextButton::textColourOffId, ModernLookAndFeel::Colors::textSecondary);
         }
     }
     
@@ -438,39 +441,40 @@ private:
             setFocusContainerType(juce::Component::FocusContainerType::keyboardFocusContainer);
             setWantsKeyboardFocus(true);
             setAccessible(true);
+            setBufferedToImage(true); // Cache rendering for scroll performance
 
             {
                 auto f = juce::Font(juce::FontOptions().withHeight(13.0f));
                 f.setBold(true);
-                setupLabel(typeLabel, f, juce::Colour(0xFFFFFFFF));
+                setupLabel(typeLabel, f, ModernLookAndFeel::Colors::textBright);
             }
             {
                 auto f = juce::Font(juce::FontOptions().withHeight(14.0f));
                 f.setBold(true);
-                setupLabel(freqLabel, f, juce::Colour(0xFFFFFFFF));
+                setupLabel(freqLabel, f, ModernLookAndFeel::Colors::accentCyan);
             }
             {
                 auto f = juce::Font(juce::FontOptions().withHeight(9.0f));
                 f.setBold(true);
-                setupLabel(sevLabel, f, juce::Colour(0xFFFFFFFF), true);
+                setupLabel(sevLabel, f, ModernLookAndFeel::Colors::textBright, true);
             }
-            setupLabel(explanationLabel, juce::Font(juce::FontOptions().withHeight(11.0f)), juce::Colour(0xFFDDDDDD));
-            setupLabel(causeLabel, juce::Font(juce::FontOptions().withHeight(10.0f)), juce::Colour(0xFF999999));
+            setupLabel(explanationLabel, juce::Font(juce::FontOptions().withHeight(11.0f)), ModernLookAndFeel::Colors::textPrimary);
+            setupLabel(causeLabel, juce::Font(juce::FontOptions().withHeight(10.0f)), ModernLookAndFeel::Colors::textSecondary);
             auto italic = juce::Font(juce::FontOptions().withHeight(10.0f));
             italic.setItalic(true);
-            setupLabel(impactLabel, italic, juce::Colour(0xFF888888));
+            setupLabel(impactLabel, italic, ModernLookAndFeel::Colors::textSecondary);
             {
                 auto f = juce::Font(juce::FontOptions().withHeight(11.0f));
                 f.setBold(true);
-                setupLabel(fixLabel, f, juce::Colour(0xFF66FF66));
+                setupLabel(fixLabel, f, ModernLookAndFeel::Colors::accentGreen);
             }
             {
                 auto f = juce::Font(juce::FontOptions().withHeight(9.0f));
                 f.setBold(true);
-                setupLabel(confidenceLabel, f, juce::Colours::white, true);
+                setupLabel(confidenceLabel, f, ModernLookAndFeel::Colors::textBright, true);
             }
-            setupLabel(bandLabel, juce::Font(juce::FontOptions().withHeight(9.0f)), juce::Colour(0xFF666666));
-            setupLabel(hintLabel, juce::Font(juce::FontOptions().withHeight(9.0f)), juce::Colour(0xFF4A9FD9));
+            setupLabel(bandLabel, juce::Font(juce::FontOptions().withHeight(9.0f)), ModernLookAndFeel::Colors::textMuted);
+            setupLabel(hintLabel, juce::Font(juce::FontOptions().withHeight(9.0f)), ModernLookAndFeel::Colors::accentBlue);
             hintLabel.setVisible(false);
 
             // Focus order within the row
@@ -593,36 +597,53 @@ private:
             const float barWidth = 6.0f;
             const float barX = rtl ? w - barWidth - 4.0f : 4.0f;
 
-            juce::Colour bgCol = selected ? juce::Colour(0xFF2A3040) : juce::Colour(0xFF222222);
-            g.setColour(bgCol);
+            // Card background with subtle gradient for depth
+            juce::Colour bgCol = selected ? ModernLookAndFeel::Colors::bgLighter : ModernLookAndFeel::Colors::bgLight;
+            juce::ColourGradient cardGrad(bgCol.brighter(0.05f), 0, 2.0f, bgCol, 0, h - 2.0f, false);
+            g.setGradientFill(cardGrad);
             g.fillRoundedRectangle(4.0f, 2.0f, w - 8.0f, h - 4.0f, corner);
 
-            g.setColour(severityColour);
+            // Severity glow for critical items (drawn behind the bar)
+            if (severityColour == ModernLookAndFeel::Colors::accentRed)
+            {
+                g.setColour(severityColour.withAlpha(0.12f));
+                g.fillRoundedRectangle(barX - 3.0f, 0.0f, barWidth + 6.0f, h, 5.0f);
+            }
+
+            // Severity bar with gradient
+            juce::ColourGradient sevGrad(severityColour, barX, 2.0f,
+                                          severityColour.darker(0.4f), barX, h - 2.0f, false);
+            g.setGradientFill(sevGrad);
             g.fillRoundedRectangle(barX, 2.0f, barWidth, h - 4.0f, 3.0f);
 
+            // Severity badge with gradient
             const float badgeX = rtl ? 12.0f : w - badgeW - 12.0f;
-            g.setColour(severityColour.withAlpha(0.3f));
+            juce::ColourGradient badgeGrad(severityColour.withAlpha(0.35f), badgeX, 8.0f,
+                                            severityColour.withAlpha(0.15f), badgeX, 26.0f, false);
+            g.setGradientFill(badgeGrad);
             g.fillRoundedRectangle(badgeX, 8.0f, badgeW, 18.0f, 4.0f);
-            g.setColour(severityColour);
+            g.setColour(severityColour.withAlpha(0.6f));
             g.drawRoundedRectangle(badgeX, 8.0f, badgeW, 18.0f, 4.0f, 1.0f);
 
+            // Fix suggestion box
             const float x = 16.0f;
             const float contentW = w - x - 10.0f;
             const float fixBoxY = 82.0f;
-            g.setColour(juce::Colour(0xFF1A2A1A));
+            g.setColour(ModernLookAndFeel::Colors::bgDark.interpolatedWith(ModernLookAndFeel::Colors::accentGreen, 0.05f));
             g.fillRoundedRectangle(x, fixBoxY, contentW - 80.0f, 26.0f, 4.0f);
 
+            // Confidence bar
             const float confX = rtl ? x + 10.0f : w - 90.0f;
             const float confW = 65.0f;
-            g.setColour(juce::Colour(0xFF333333));
+            g.setColour(ModernLookAndFeel::Colors::bgLighter);
             g.fillRoundedRectangle(confX, fixBoxY + 6.0f, confW, 14.0f, 4.0f);
 
-            juce::Colour confCol = confidenceValue > 0.7f ? juce::Colour(0xFF44AA44)
-                                      : (confidenceValue > 0.4f ? juce::Colour(0xFFAAAA44) : juce::Colour(0xFFAA4444));
+            juce::Colour confCol = ModernLookAndFeel::Colors::getSeverity(1.0f - confidenceValue); // Inverted: high confidence = green
             g.setColour(confCol);
             g.fillRoundedRectangle(confX, fixBoxY + 6.0f, confW * confidenceValue, 14.0f, 4.0f);
 
-            g.setColour(juce::Colour(0xFF333333));
+            // Divider line
+            g.setColour(ModernLookAndFeel::Colors::bgLighter);
             g.drawHorizontalLine(static_cast<int>(h) - 2, 10.0f, w - 10.0f);
         }
 
@@ -702,9 +723,7 @@ private:
     
     juce::Colour getSeverityColor(float sev) const
     {
-        if (sev > 0.7f) return juce::Colour(0xFFFF4444);  // Red
-        if (sev > 0.4f) return juce::Colour(0xFFFFAA00);  // Orange
-        return juce::Colour(0xFF44BB44);  // Green
+        return ModernLookAndFeel::Colors::getSeverity(sev);
     }
 
     juce::String getSeverityLabel(float sev) const
