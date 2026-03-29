@@ -164,6 +164,20 @@ public:
         // Border
         g.setColour(ModernLookAndFeel::Colors::bgLighter);
         g.drawRoundedRectangle(bounds.reduced(0.5f), 8.0f, 1.0f);
+
+        // Pulsing "AI Active" dot next to the title when analysis has results
+        if (!problems.empty())
+        {
+            float pulse = 0.5f + 0.5f * std::sin(static_cast<float>(juce::Time::currentTimeMillis()) * 0.004f);
+            auto dotColour = ModernLookAndFeel::Colors::accentGreen.withAlpha(0.5f + 0.5f * pulse);
+            float dotX = 14.0f;
+            float dotY = 16.0f;
+            g.setColour(dotColour);
+            g.fillEllipse(dotX, dotY, 6.0f, 6.0f);
+            // Glow
+            g.setColour(ModernLookAndFeel::Colors::accentGreen.withAlpha(0.15f * pulse));
+            g.fillEllipse(dotX - 3.0f, dotY - 3.0f, 12.0f, 12.0f);
+        }
     }
     
     void resized() override
@@ -951,9 +965,25 @@ private:
         }
         else
         {
-            auto fmt = (n == 1) ? tr("%d issue detected", "%d issue detected")
-                                : tr("%d issues detected", "%d issues detected");
-            statusLabel.setText(juce::String::formatted(fmt.toRawUTF8(), n), juce::dontSendNotification);
+            // Severity breakdown for status bar
+            int critical = 0, moderate = 0, minor = 0;
+            for (const auto& prob : problems)
+            {
+                if (prob.severity > 0.7f)
+                    critical++;
+                else if (prob.severity > 0.4f)
+                    moderate++;
+                else
+                    minor++;
+            }
+            juce::String statusText = juce::String(n) + " issues: ";
+            if (critical > 0)
+                statusText += juce::String(critical) + " critical";
+            if (moderate > 0)
+                statusText += (critical > 0 ? ", " : "") + juce::String(moderate) + " moderate";
+            if (minor > 0)
+                statusText += ((critical > 0 || moderate > 0) ? ", " : "") + juce::String(minor) + " minor";
+            statusLabel.setText(statusText, juce::dontSendNotification);
         }
         
         autoFixBtn.setEnabled(n > 0);

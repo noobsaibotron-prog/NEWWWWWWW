@@ -277,7 +277,8 @@ public:
         auto genre = processor.getAIEngine().getDetectedGenre();
         // Aggiorna il testo della label con il nome del genere
         genreValue.setText(AIEngine::getGenreName(genre), juce::dontSendNotification);
-        
+        genreValue.setTooltip(getGenreTooltip(AIEngine::getGenreName(genre)));
+
         // Sincronizza stato Multi-Track Unmasking toggle con AIEngine
         bool unmaskingEnabled = processor.getAIEngine().isMultiTrackUnmaskingEnabled();
         if (unmaskingToggle.getToggleState() != unmaskingEnabled)
@@ -440,6 +441,28 @@ private:
     juce::Label genreValue;            // Label che mostra il nome del genere rilevato
     juce::Label problemsLabel;         // Etichetta "DETECTED PROBLEMS"
     
+    // Genre tooltip helper
+    static juce::String getGenreTooltip(const juce::String& genre)
+    {
+        if (genre == "Techno" || genre == "EDM")
+            return "Tolerates aggressive sub-bass and bright hi-hats.\nFocuses on kick resonances and mid-range clarity.";
+        if (genre == "Ambient")
+            return "Lower harshness thresholds.\nPreserves natural reverb tails.";
+        if (genre == "Rock")
+            return "Balances guitar presence with vocal clarity.\nTolerates distortion harmonics.";
+        if (genre == "Pop")
+            return "Prioritizes vocal clarity and balanced brightness.\nTight low-end control.";
+        if (genre == "Jazz")
+            return "Preserves instrument warmth and dynamics.\nMinimal high-frequency correction.";
+        if (genre == "Classical")
+            return "Very conservative corrections.\nPreserves natural room and instrument timbre.";
+        if (genre == "Hip Hop" || genre == "HipHop")
+            return "Emphasizes sub-bass presence and vocal punch.\nControls low-mid muddiness.";
+        if (genre == "Metal")
+            return "Manages guitar wall and cymbal harshness.\nKeeps kick and bass definition.";
+        return "General-purpose analysis thresholds.";
+    }
+
     // === Variabili di layout ===
     juce::Rectangle<int> problemsArea; // Area rettangolare dove disegnare la lista problemi
     int knobSectionY = 0;              // Posizione Y della sezione knob (per divisore)
