@@ -11,9 +11,20 @@ AIEqualizerAudioProcessorEditor::AIEqualizerAudioProcessorEditor(AIEqualizerAudi
     // Attach OpenGL context to this top-level component.
     // All child component paint() calls are composited via GPU automatically.
     // setContinuousRepainting(false): we drive repaints via our own Timer.
+    // setRenderer(this): enables renderOpenGL() for the metrological spectrum pipeline.
     openGLContext.setComponentPaintingEnabled(true);
     openGLContext.setContinuousRepainting(false);
+    openGLContext.setRenderer(this);
     openGLContext.attachTo(*this);
+
+    // Metrological 5-layer spectrum pipeline
+    glSpectrumHelper = std::make_unique<GLSpectrumHelper>();
+    spectrumPipeline = std::make_unique<NewSpectrumPipeline>(
+        processor.getPreEqFifo(),
+        processor.getPostEqFifo(),
+        12,    // fftOrder: 2^12 = 4096 samples
+        processor.getSampleRate(),
+        60.0);
 
     createHeader();
     createControlPanel();
@@ -155,9 +166,56 @@ AIEqualizerAudioProcessorEditor::~AIEqualizerAudioProcessorEditor()
     if (analysisThread && analysisThread->joinable())
         analysisThread->join();
 
+    // Detach GL context BEFORE destroying pipeline objects (cleanupGL is called during detach)
+    openGLContext.setRenderer(nullptr);
     openGLContext.detach();
+
+    // Destroy pipeline after GL context is gone — safe to release heap now
+    glSpectrumHelper.reset();
+    spectrumPipeline.reset();
+
     setLookAndFeel(nullptr);
 }
+
+//==============================================================================
+// juce::OpenGLRenderer callbacks — called on the GL thread
+//==============================================================================
+
+void AIEqualizerAudioProcessorEditor::newOpenGLContextCreated()
+{
+    if (glSpectrumHelper)
+        glSpectrumHelper->initGL(openGLContext);
+}
+
+void AIEqualizerAudioProcessorEditor::openGLContextClosing()
+{
+    if (glSpectrumHelper)
+        glSpectrumHelper->cleanupGL(openGLContext);
+}
+
+void AIEqualizerAudioProcessorEditor::renderOpenGL()
+{
+    if (!glSpectrumHelper)
+        return;
+
+    const float scale = static_cast<float>(openGLContext.getRenderingScale());
+    const int compW = getWidth();
+    const int compH = getHeight();
+
+    if (compW <= 0 || compH <= 0 || !spectrum)
+        return;
+
+    // Graph bounds in component-local coords → physical pixels (GL Y-up)
+    const auto gb = spectrum->getGraphBoundsF();
+    const int vpX = static_cast<int>(gb.getX()      * scale);
+    const int vpH = static_cast<int>(gb.getHeight() * scale);
+    const int vpW = static_cast<int>(gb.getWidth()  * scale);
+    const int vpY = static_cast<int>((static_cast<float>(compH) - gb.getBottom()) * scale);
+
+    glSpectrumHelper->renderShader(openGLContext, vpX, vpY, vpW, vpH, compW, compH);
+}
+
+//==============================================================================
 
 void AIEqualizerAudioProcessorEditor::createHeader()
 {
@@ -1073,19 +1131,41 @@ void AIEqualizerAudioProcessorEditor::timerCallback()
         outputMeter.setLevels(dbL, dbR);
     }
 
-    // Spectrum / FFT handoff — process every tick (60Hz) so the FIFO stays drained.
-    // With setContinuousRepainting(false), OpenGL only renders when repaint() is called.
-    // Without an explicit trigger, R[k] = M[k] (mouse events only) → spectrum freezes.
-    // Fix: R[k] = M[k] ∨ D[k] — force repaint whenever new FFT data is consumed.
+    // Metrological spectrum pipeline — drain FIFOs every tick regardless of legacy path.
+    // process() returns true only when at least one new FFT hop was completed.
+    if (spectrumPipeline && spectrum)
+    {
+        const size_t dispW = static_cast<size_t>(
+            juce::jmax(64.0f, spectrum->getGraphBoundsF().getWidth()));
+
+        if (spectrumPipeline->process(dispW))
+        {
+            // Feed pixel data to AdvancedSpectrumDisplay (replaces old SpectrumAnalyzer path)
+            spectrum->injectPrecomputedSpectrum(
+                spectrumPipeline->getPrePixelDB(),
+                spectrumPipeline->getPostPixelDB());
+
+            // Push same data to GLSpectrumHelper for GPU rendering
+            if (glSpectrumHelper)
+            {
+                glSpectrumHelper->updateSpectrumData(
+                    spectrumPipeline->getPrePixelDB(),
+                    spectrumPipeline->getPostPixelDB(),
+                    spectrum->getGraphBoundsF(),
+                    -90.0f, 12.0f);
+            }
+
+            // R[k] = M[k] ∨ D[k]: repaint when new data arrives
+            spectrum->repaint();
+        }
+    }
+
+    // Legacy FFT handoff — kept for fallback (pipeline not yet warmed up at startup)
     if (processor.consumeSpectrumDataReady())
     {
         processor.getSpectrumAnalyzer().processFFT();
         if (processor.getPostEQAnalyzer().hasNewData())
             processor.getPostEQAnalyzer().processFFT();
-
-        // D[k] = 1: new spectral data available → invalidate OpenGL surface
-        if (spectrum)
-            spectrum->repaint();
     }
 
     // AI problems update - every other tick (10Hz effective) to reduce message thread load

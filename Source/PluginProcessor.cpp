@@ -871,6 +871,10 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     // Prepare components
     spectrumAnalyzer.prepare(sampleRate, samplesPerBlock);
     postEQAnalyzer.prepare(sampleRate, samplesPerBlock);
+
+    // Metrological pipeline FIFOs: 32768 samples (~680ms at 48kHz)
+    preEqSpectrumFifo.prepare(32768);
+    postEqSpectrumFifo.prepare(32768);
     eqProcessor.prepare(sampleRate, samplesPerBlock, getTotalNumInputChannels());
     dynamicEQProcessor.prepare(sampleRate, samplesPerBlock, getTotalNumInputChannels());
 
@@ -1460,6 +1464,7 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
 
     // Feed pre-EQ spectrum analyzer (lock-free, FFT deferred to GUI)
     spectrumAnalyzer.pushSamples(buffer);
+    preEqSpectrumFifo.pushStereoMix(buffer);  // metrological pipeline FIFO
     spectrumDataReady.store(true, std::memory_order_release);
 
     // Skip AI analysis during offline rendering for performance
@@ -2002,6 +2007,7 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     if (showPost)
     {
         postEQAnalyzer.pushSamples(buffer);
+        postEqSpectrumFifo.pushStereoMix(buffer);  // metrological pipeline FIFO
         spectrumDataReady.store(true, std::memory_order_release);
     }
 

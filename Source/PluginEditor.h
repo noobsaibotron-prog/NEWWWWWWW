@@ -15,6 +15,8 @@
 #include "GUI/BandViewport.h"
 #include "GUI/SemanticControlPanel.h"
 #include "GUI/LevelMeter.h"
+#include "GUI/NewSpectrumPipeline.h"
+#include "GUI/GLSpectrumComponent.h"
 #include <atomic>
 #include <vector>
 
@@ -103,7 +105,8 @@ private:
  * └──────────────────────────────────────────────────────────────────────┘
  */
 class AIEqualizerAudioProcessorEditor : public juce::AudioProcessorEditor,
-                                         public juce::Timer
+                                         public juce::Timer,
+                                         public juce::OpenGLRenderer
 {
 public:
     explicit AIEqualizerAudioProcessorEditor(AIEqualizerAudioProcessor&);
@@ -113,6 +116,11 @@ public:
     void resized() override;
     void timerCallback() override;
     void mouseDoubleClick(const juce::MouseEvent&) override;
+
+    // juce::OpenGLRenderer — called on the GL thread
+    void newOpenGLContextCreated() override;
+    void openGLContextClosing() override;
+    void renderOpenGL() override;
 
 private:
     void createHeader();
@@ -178,8 +186,12 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> numBandsAtt;
     
     // OpenGL context — accelerates all JUCE software rendering via GPU compositing.
-    // Attach to the top-level editor so every child component benefits automatically.
+    // setRenderer(this) enables renderOpenGL() for the metrological spectrum pipeline.
     juce::OpenGLContext openGLContext;
+
+    // Metrological 5-layer spectrum pipeline (Parseval-correct, IIR ballistics, log LUT)
+    std::unique_ptr<NewSpectrumPipeline> spectrumPipeline;
+    std::unique_ptr<GLSpectrumHelper>    glSpectrumHelper;
 
     // Main
     std::unique_ptr<AdvancedSpectrumDisplay> spectrum;

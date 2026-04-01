@@ -42,6 +42,7 @@
 #include <thread>  // std::thread and std::stop flags are in <thread> in C++20
 
 #include "Core/LockFreeStructures.h"
+#include "Core/LockFreeAudioFIFO.h"
 #include "Core/CaptureService.h"
 #include "Core/HistoryManager.h"
 #include "DSP/SpectrumAnalyzer.h"
@@ -133,9 +134,13 @@ public:
     //==============================================================================
     [[nodiscard]] SpectrumAnalyzer& getSpectrumAnalyzer() noexcept { return spectrumAnalyzer; }
     [[nodiscard]] const SpectrumAnalyzer& getSpectrumAnalyzer() const noexcept { return spectrumAnalyzer; }
-    
+
     [[nodiscard]] SpectrumAnalyzer& getPostEQAnalyzer() noexcept { return postEQAnalyzer; }
     [[nodiscard]] const SpectrumAnalyzer& getPostEQAnalyzer() const noexcept { return postEQAnalyzer; }
+
+    // Metrological spectrum pipeline FIFOs (SPSC, audio thread writes, GUI thread reads)
+    [[nodiscard]] LockFreeAudioFIFO<float>& getPreEqFifo() noexcept  { return preEqSpectrumFifo; }
+    [[nodiscard]] LockFreeAudioFIFO<float>& getPostEqFifo() noexcept { return postEqSpectrumFifo; }
     
     [[nodiscard]] ParametricEQProcessor& getEQProcessor() noexcept { return eqProcessor; }
     [[nodiscard]] const ParametricEQProcessor& getEQProcessor() const noexcept { return eqProcessor; }
@@ -417,8 +422,13 @@ private:
     //==============================================================================
     // DSP Components
     //==============================================================================
-    SpectrumAnalyzer spectrumAnalyzer;      // Pre-EQ spectrum
-    SpectrumAnalyzer postEQAnalyzer;        // Post-EQ spectrum
+    SpectrumAnalyzer spectrumAnalyzer;      // Pre-EQ spectrum (legacy path)
+    SpectrumAnalyzer postEQAnalyzer;        // Post-EQ spectrum (legacy path)
+
+    // Metrological pipeline FIFOs — SPSC, audio thread → GUI thread
+    // Capacity: 32768 samples (~680ms at 48kHz), handles large block hosts
+    LockFreeAudioFIFO<float> preEqSpectrumFifo;
+    LockFreeAudioFIFO<float> postEqSpectrumFifo;
     
     // Main EQ processors (Zero-Latency path)
     ParametricEQProcessor eqProcessor;

@@ -567,7 +567,9 @@ set(PLUGIN_SOURCES
     Source/PluginEditor.cpp
     Source/PluginEditor.h
 
-    # DSP
+    # DSP — core spectrum pipeline (metrological, Parseval-correct)
+    Source/DSP/SpectrumAnalyzerCore.h
+    Source/DSP/SpectrumDisplayMapper.h
     Source/DSP/SpectrumAnalyzer.cpp
     Source/DSP/SpectrumAnalyzer.h
     Source/DSP/ParametricEQProcessor.cpp
@@ -598,7 +600,13 @@ set(PLUGIN_SOURCES
     Source/AI/OnlineLearningSystem.cpp
     Source/AI/OnlineLearningSystem.h
 
-    # GUI
+    # Core — lock-free FIFO for spectrum pipeline
+    Source/Core/LockFreeAudioFIFO.h
+
+    # GUI — metrological spectrum pipeline (coordinator + OpenGL renderer)
+    Source/GUI/NewSpectrumPipeline.h
+    Source/GUI/GLSpectrumComponent.h
+    Source/GUI/LogScaleMapper.h
     Source/GUI/ModernLookAndFeel.h
     Source/GUI/AdvancedSpectrumDisplay.h
     Source/GUI/AIControlPanel.h

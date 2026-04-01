@@ -116,6 +116,24 @@ public:
     void setSelectedBand(int band) { selectedBandIndex = band; repaint(); }
     int getSelectedBand() const { return selectedBandIndex; }
 
+    /** Graph bounds in component-local float coordinates (set during paint/resized). */
+    juce::Rectangle<float> getGraphBoundsF() const noexcept { return graphBounds; }
+
+    /** Inject per-pixel dB arrays from the metrological spectrum pipeline.
+     *  When set, updateSmoothedSpectrum() uses this data instead of computing from SpectrumAnalyzer.
+     *  preDB: pre-EQ spectrum, one value per pixel column of the graph area.
+     *  postDB: post-EQ spectrum (may be empty if showPost is false). */
+    void injectPrecomputedSpectrum (const std::vector<float>& preDB,
+                                    const std::vector<float>& postDB)
+    {
+        if (preDB.empty()) return;
+        const juce::SpinLock::ScopedLockType lk (spectrumDataLock);
+        smoothedSpectrum.assign (preDB.begin(), preDB.end());
+        if (!postDB.empty())
+            injectedPostSpectrum.assign (postDB.begin(), postDB.end());
+        ++injectedSpectrumVersion;
+    }
+
     // Spectrum display speed (smoothing)
     enum class SpectrumSpeed { Fast, Medium, Slow };
 
@@ -954,6 +972,14 @@ private:
 
     void updateSmoothedSpectrum()
     {
+        // If metrological pipeline has injected newer data, use it directly.
+        // smoothedSpectrum is already populated by injectPrecomputedSpectrum().
+        if (injectedSpectrumVersion != lastInjectedVersion)
+        {
+            lastInjectedVersion = injectedSpectrumVersion;
+            return;  // data already in smoothedSpectrum via injection
+        }
+
         const auto& raw = processor.getSpectrumAnalyzer().getSmoothedSpectrum();
         if (raw.empty()) return;
         
@@ -1018,8 +1044,12 @@ private:
     {
         if (graphBounds.isEmpty()) return;
 
-        const uint64_t preVer = processor.getSpectrumAnalyzer().getSpectrumVersion();
-        const uint64_t postVer = processor.getPostEQAnalyzer().getSpectrumVersion();
+        const uint64_t preVer  = (injectedSpectrumVersion != 0)
+                                 ? injectedSpectrumVersion
+                                 : processor.getSpectrumAnalyzer().getSpectrumVersion();
+        const uint64_t postVer = (injectedSpectrumVersion != 0)
+                                 ? injectedSpectrumVersion
+                                 : processor.getPostEQAnalyzer().getSpectrumVersion();
         const bool boundsChanged = (lastSpectrumBounds != graphBounds);
 
         if (preVer == lastPreSpectrumVersion && postVer == lastPostSpectrumVersion && !boundsChanged)
@@ -2191,6 +2221,11 @@ private:
     std::vector<float> smoothedSpectrum;
     std::vector<float> peakHold;
     std::vector<float> peakTimers;
+
+    // Metrological pipeline injection (set via injectPrecomputedSpectrum)
+    std::vector<float> injectedPostSpectrum;
+    uint64_t injectedSpectrumVersion = 0;
+    uint64_t lastInjectedVersion = 0;
     int hoverX = -1, hoverY = -1;
     
     // Freeze/Capture functionality
