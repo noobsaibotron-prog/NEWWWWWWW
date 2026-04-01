@@ -102,6 +102,28 @@ void AIEngine::prepare(double sampleRate, int /*samplesPerBlock*/)
     }
     correctionCoeffsNeedUpdate.store(true);
 
+    // Load MLEQ v1 weights if available (auto-enables ML detection)
+    if (!useMLDetection)
+    {
+        auto mlModelPath = juce::File::getSpecialLocation(juce::File::currentExecutableFile)
+                               .getParentDirectory()
+                               .getChildFile("models")
+                               .getChildFile("ml_weights.bin");
+        if (mlModelPath.existsAsFile())
+        {
+            if (mlEngine.loadWeights(mlModelPath))
+            {
+                useMLDetection = true;
+                AIEQ_LOG_INFO("ML model loaded: " + mlModelPath.getFullPathName());
+            }
+            else
+            {
+                AIEQ_LOG_WARNING("Failed to load ML model: " + mlModelPath.getFullPathName()
+                                 + " - using heuristic fallback.");
+            }
+        }
+    }
+
     // Attempt to load TFLite model if enabled and not already loaded
     if (enableNeuralNetworks && neuralNetwork && !neuralNetwork->isModelLoaded())
     {

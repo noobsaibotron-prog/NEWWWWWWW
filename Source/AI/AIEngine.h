@@ -602,9 +602,8 @@ private:
     //==========================================================================
     // ML Engine for improved detection
     MLEngine mlEngine;
-    // ML detection disabled: no trained weights are bundled (ml_weights.bin absent).
-    // The heuristic detector (detectProblems()) is production-ready; ML will be
-    // re-enabled once a real model is trained and shipped.
+    // ML detection auto-enabled when ml_weights.bin is found in prepare().
+    // Falls back to heuristic detectProblems() if weights are missing or corrupt.
     bool useMLDetection = false;
     
     void detectProblemsWithML();  // ML-enhanced detection
@@ -613,9 +612,9 @@ private:
     // Advanced AI Systems — Maturity Classification (v1.0)
     //
     // SHIPPING:      AIEngine (heuristic detection), SemanticEQEngine,
-    //                ReferenceMatcher, AdaptiveAIEngine, UserLearning
-    // EXPERIMENTAL:  MLEngine (no trained weights bundled — heuristic fallback active),
-    //                OnlineLearningSystem (replay buffer works, training backend absent)
+    //                ReferenceMatcher, AdaptiveAIEngine, UserLearning,
+    //                MLEngine (auto-loads ml_weights.bin; heuristic fallback if absent)
+    // EXPERIMENTAL:  OnlineLearningSystem (replay buffer works, training backend absent)
     // DISABLED:      NeuralNetworkWrapper (requires TFLite model file),
     //                MultiTrackUnmasking (requires multi-instance host support)
     //
