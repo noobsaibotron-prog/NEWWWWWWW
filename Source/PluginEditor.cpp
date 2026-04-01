@@ -1073,17 +1073,19 @@ void AIEqualizerAudioProcessorEditor::timerCallback()
         outputMeter.setLevels(dbL, dbR);
     }
 
-    // Spectrum / FFT handoff - throttle only this block to the display's current
-    // adaptive refresh budget. The rest of the editor stays at 60Hz for responsive
-    // meters, capture state and general UI sync.
-    // NOTE: Do NOT call spectrum->repaint() here — the display owns repaint cadence.
-    const int spectrumRefreshHz = spectrum ? juce::jmax(5, spectrum->getCurrentRefreshHz()) : 30;
-    const int spectrumWorkDivisor = juce::jmax(1, 60 / spectrumRefreshHz);
-    if ((timerTickCount % spectrumWorkDivisor) == 0 && processor.consumeSpectrumDataReady())
+    // Spectrum / FFT handoff — process every tick (60Hz) so the FIFO stays drained.
+    // With setContinuousRepainting(false), OpenGL only renders when repaint() is called.
+    // Without an explicit trigger, R[k] = M[k] (mouse events only) → spectrum freezes.
+    // Fix: R[k] = M[k] ∨ D[k] — force repaint whenever new FFT data is consumed.
+    if (processor.consumeSpectrumDataReady())
     {
         processor.getSpectrumAnalyzer().processFFT();
         if (processor.getPostEQAnalyzer().hasNewData())
             processor.getPostEQAnalyzer().processFFT();
+
+        // D[k] = 1: new spectral data available → invalidate OpenGL surface
+        if (spectrum)
+            spectrum->repaint();
     }
 
     // AI problems update - every other tick (10Hz effective) to reduce message thread load
