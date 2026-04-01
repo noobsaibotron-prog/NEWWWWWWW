@@ -3,6 +3,8 @@
 #include <juce_core/juce_core.h>
 #include <vector>
 #include <array>
+#include <atomic>
+#include <mutex>
 #include <cmath>
 #include <fstream>
 #include <random>
@@ -236,8 +238,9 @@ private:
     std::array<float, numProblemTypes> defaultGains;
     std::array<float, numProblemTypes> defaultQs;
     
-    bool isInitialized = false;
-    
+    std::atomic<bool> isInitialized { false };
+    std::once_flag    initFlag;
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MLEngine)
 };
 

@@ -135,28 +135,28 @@ MLEngine::MLEngine()
 
 void MLEngine::initialize()
 {
-    if (isInitialized)
-        return;
-    
-    // Create network layers
-    problemNet_fc1 = std::make_unique<DenseLayer>(melNumBands, 128);
-    problemNet_fc2 = std::make_unique<DenseLayer>(128, 64);
-    problemNet_fc3 = std::make_unique<DenseLayer>(64, numProblemTypes);
-    
-    genreNet_fc1 = std::make_unique<DenseLayer>(melNumBands, 64);
-    genreNet_fc2 = std::make_unique<DenseLayer>(64, numGenreTypes);
-    
-    freqNet_fc1 = std::make_unique<DenseLayer>(melNumBands, 32);
-    freqNet_fc2 = std::make_unique<DenseLayer>(32, numProblemTypes);
-    
-    // Initialize with pre-trained weights or random
-    if (!loadWeights(juce::File::getSpecialLocation(juce::File::currentApplicationFile)
-                        .getSiblingFile("ml_weights.bin")))
+    std::call_once(initFlag, [this]
     {
-        initializeRandomWeights();
-    }
-    
-    isInitialized = true;
+        // Create network layers
+        problemNet_fc1 = std::make_unique<DenseLayer>(melNumBands, 128);
+        problemNet_fc2 = std::make_unique<DenseLayer>(128, 64);
+        problemNet_fc3 = std::make_unique<DenseLayer>(64, numProblemTypes);
+
+        genreNet_fc1 = std::make_unique<DenseLayer>(melNumBands, 64);
+        genreNet_fc2 = std::make_unique<DenseLayer>(64, numGenreTypes);
+
+        freqNet_fc1 = std::make_unique<DenseLayer>(melNumBands, 32);
+        freqNet_fc2 = std::make_unique<DenseLayer>(32, numProblemTypes);
+
+        // Initialize with pre-trained weights or random
+        if (!loadWeights(juce::File::getSpecialLocation(juce::File::currentApplicationFile)
+                             .getSiblingFile("ml_weights.bin")))
+        {
+            initializeRandomWeights();
+        }
+
+        isInitialized.store(true, std::memory_order_release);
+    });
 }
 
 void MLEngine::reset()
@@ -199,9 +199,8 @@ void MLEngine::initializeRandomWeights()
 std::vector<MLEngine::ProblemDetection> MLEngine::detectProblems(
     const std::vector<float>& spectrum, double sampleRate)
 {
-    if (!isInitialized)
-        initialize();
-    
+    initialize();
+
     std::vector<ProblemDetection> detections;
     
     if (spectrum.empty())
@@ -289,8 +288,7 @@ std::vector<MLEngine::ProblemDetection> MLEngine::detectProblems(
 
 MLEngine::GenreDetection MLEngine::classifyGenre(const std::vector<float>& spectrum, double sampleRate)
 {
-    if (!isInitialized)
-        initialize();
+    initialize();
     
     GenreDetection result;
     result.type = GenreType::Unknown;
@@ -730,9 +728,8 @@ void MLEngine::trainOnDataset(const std::vector<TrainingSample>& dataset,
 {
     if (dataset.empty() || epochs <= 0 || learningRate <= 0.0f)
         return;
-    
-    if (!isInitialized)
-        initialize();
+
+    initialize();
     
     std::vector<TrainingSample> shuffled = dataset;
     std::mt19937 rng(1234);
@@ -936,7 +933,7 @@ bool MLEngine::loadWeights(const juce::File& modelFile)
 
 bool MLEngine::saveWeights(const juce::File& modelFile) const
 {
-    if (!isInitialized)
+    if (!isInitialized.load(std::memory_order_acquire))
         return false;
     
     try
