@@ -32,7 +32,7 @@ public:
 
     explicit AdvancedSpectrumDisplay(AIEqualizerAudioProcessor& p) : processor(p)
     {
-        setOpaque(true);
+        setOpaque(false);
         startTimerHz(60);
         smoothedSpectrum.resize(512, spectrumMinDb);
         frozenSpectrum.resize(512, spectrumMinDb);
@@ -466,17 +466,21 @@ public:
             auto delta = e.position - dragStartPos;
             
             // Calculate new frequency (horizontal, log scale)
-            float freqMult = std::pow(2.0f, delta.x / 100.0f);
+            const float freqSens  = juce::jmax(50.0f, graphBounds.getWidth()  * 0.1f);
+            const float gainSens  = juce::jmax(4.0f,  graphBounds.getHeight() * 0.04f);
+            const float qSens     = juce::jmax(75.0f, graphBounds.getWidth()  * 0.15f);
+
+            float freqMult = std::pow(2.0f, delta.x / freqSens);
             float newFreq = juce::jlimit(20.0f, 20000.0f, dragStartFreq * freqMult);
-            
+
             // Calculate new gain (vertical)
-            float newGain = juce::jlimit(-24.0f, 24.0f, dragStartGain - delta.y / 8.0f);
-            
+            float newGain = juce::jlimit(-24.0f, 24.0f, dragStartGain - delta.y / gainSens);
+
             // Q with shift modifier
             float newQ = dragStartQ;
             if (e.mods.isShiftDown())
             {
-                float qMult = std::pow(2.0f, -delta.y / 150.0f);
+                float qMult = std::pow(2.0f, -delta.y / qSens);
                 newQ = juce::jlimit(0.1f, 10.0f, dragStartQ * qMult);
             }
             

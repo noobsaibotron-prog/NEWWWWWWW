@@ -78,7 +78,11 @@ public:
     {
         shader.reset();
         fillShader.reset();
-        vbo = 0;
+        if (vbo != 0)
+        {
+            juce::gl::glDeleteBuffers(1, &vbo);
+            vbo = 0;
+        }
     }
 
     void renderOpenGL() override
