@@ -792,9 +792,9 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     phaseTransitionSamplesRemaining.store(0, std::memory_order_relaxed);
     oversamplingTransitionFromEffective.store(-1, std::memory_order_relaxed);
     oversamplingTransitionSamplesRemaining.store(0, std::memory_order_relaxed);
-    bypassStateInitialized = false;
-    wasBypassed = false;
-    bypassCrossfadeRemaining = 0;
+    bypassStateInitialized.store(false, std::memory_order_relaxed);
+    wasBypassed.store(false, std::memory_order_relaxed);
+    bypassCrossfadeRemaining.store(0, std::memory_order_relaxed);
     abCrossfadePending.store(false, std::memory_order_relaxed);
     for (int i = 0; i < maxBands; ++i)
         abCrossfadePendingBands[i].store(false, std::memory_order_relaxed);
@@ -941,14 +941,14 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     }
     for (auto& loaded : linearIRLoaded)
         loaded.store(false, std::memory_order_relaxed);
-    consecutiveIRReadyBlocks = 0;
+    consecutiveIRReadyBlocks.store(0, std::memory_order_relaxed);
     activeIRIndex.store(0);
     readyIRIndex.store(-1);
 
     // FIX: Pre-allocate crossfade buffer for smooth IR transitions
     crossfadeBuffer.setSize(getTotalNumInputChannels(), preallocatedMaxSamples);
     crossfadeBuffer.clear();
-    crossfadeSamplesRemaining = 0;
+    crossfadeSamplesRemaining.store(0, std::memory_order_relaxed);
 
     // Pre-allocate double buffers for lock-free IR handoff (builder thread -> audio thread).
     // IMPORTANT: The builder thread reads/writes pendingFreqIR.buffers concurrently.
@@ -981,7 +981,7 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
 
     // Pre-allocate silent spectrum buffer for processBlock fallback
     silentSpectrumBuffer.assign(aiSpectrumBins, -80.0f);
-    previousIRIndex = 0;
+    previousIRIndex.store(0, std::memory_order_relaxed);
 
     // Start OSC parameter server (deferred from constructor to avoid crash during plugin scan)
     if (oscParamServer && !oscParamServer->isRunning())
@@ -1140,15 +1140,15 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
 
         readyIRIndex.store(-1, std::memory_order_relaxed);
         activeIRIndex.store(0, std::memory_order_relaxed);
-        previousIRIndex = 0;
-        crossfadeSamplesRemaining = 0;
+        previousIRIndex.store(0, std::memory_order_relaxed);
+        crossfadeSamplesRemaining.store(0, std::memory_order_relaxed);
         for (auto& loaded : linearIRLoaded)
             loaded.store(false, std::memory_order_relaxed);
 
         // If we reset while in Linear Phase, force an IR rebuild immediately
         if (currentPhaseMode.load(std::memory_order_relaxed) == PhaseMode::LinearPhase)
         {
-            consecutiveIRReadyBlocks = 0;
+            consecutiveIRReadyBlocks.store(0, std::memory_order_relaxed);
             triggerLinearPhaseIRUpdate();
         }
 
@@ -1175,7 +1175,7 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         // mechanism already has the dry buffer capture and blend logic — reusing it
         // here covers the reset block with a smooth fade rather than an audible gap.
         currentBypassCrossfadeSamples = bypassCrossfadeSamples;
-        bypassCrossfadeRemaining = currentBypassCrossfadeSamples;
+        bypassCrossfadeRemaining.store(currentBypassCrossfadeSamples, std::memory_order_relaxed);
     }
 
     // Defensive clamp: if host delivers a block bigger than we pre-allocated for
@@ -1248,17 +1248,17 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
 
     // On the very first block after prepare, seed wasBypassed so we don't trigger
     // a spurious crossfade before the host has had a chance to set bypass state.
-    if (!bypassStateInitialized)
+    if (!bypassStateInitialized.load(std::memory_order_relaxed))
     {
-        wasBypassed = bypassed;
-        bypassStateInitialized = true;
+        wasBypassed.store(bypassed, std::memory_order_relaxed);
+        bypassStateInitialized.store(true, std::memory_order_relaxed);
     }
 
     // Global dry/wet mix / bypass dry reference
     const float dryWetPct = loadParam(cachedDryWet, 100.0f);
     const float wet = juce::jlimit(0.0f, 100.0f, dryWetPct) * 0.01f;
     const float dry = 1.0f - wet;
-    const bool needsDry = dry > 0.0001f || bypassed || bypassCrossfadeRemaining > 0;
+    const bool needsDry = dry > 0.0001f || bypassed || bypassCrossfadeRemaining.load(std::memory_order_relaxed) > 0;
 
     // ALWAYS feed the dry delay ring buffer so it has valid data when bypass is engaged.
     {
@@ -1327,12 +1327,12 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     processAICommands();
 
     // Check bypass — with crossfade to avoid clicks on toggle
-    if (bypassed != wasBypassed)
+    if (bypassed != wasBypassed.load(std::memory_order_relaxed))
     {
         currentBypassCrossfadeSamples = bypassCrossfadeSamples;
-        bypassCrossfadeRemaining = currentBypassCrossfadeSamples;
+        bypassCrossfadeRemaining.store(currentBypassCrossfadeSamples, std::memory_order_relaxed);
     }
-    wasBypassed = bypassed;
+    wasBypassed.store(bypassed, std::memory_order_relaxed);
 
     // AI correction: widen SmoothedValue ramp for gentler per-block coefficient steps.
     // AI correction: widen SmoothedValue ramp. Per-band crossfade for type changes
@@ -1355,10 +1355,10 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
             smoothedBandGain[idx].setCurrentAndTargetValue(curGain);
             smoothedBandQ[idx].setCurrentAndTargetValue(curQ);
         }
-        correctionSmoothingActive = true;
+        correctionSmoothingActive.store(true, std::memory_order_relaxed);
     }
 
-    if (bypassed && bypassCrossfadeRemaining <= 0)
+    if (bypassed && bypassCrossfadeRemaining.load(std::memory_order_relaxed) <= 0)
     {
         // Steady-state bypass: output delayed dry (must match reported latency)
         if (needsDry)
@@ -2045,38 +2045,41 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     smoothedOutputGain.applyGain(buffer, numSamples);
 
     // Bypass crossfade: blend processed+gained ↔ dry(ungained) to match steady-state behavior
-    if (bypassCrossfadeRemaining > 0)
     {
-        const int fadeLen = juce::jmin(bypassCrossfadeRemaining, numSamples);
-        const int fadeTotal = juce::jmax(1, currentBypassCrossfadeSamples);
-        const int fadeProgressStart = fadeTotal - bypassCrossfadeRemaining;
-        const int chs = juce::jmin(buffer.getNumChannels(), dryBuffer.getNumChannels());
-
-        for (int ch = 0; ch < chs; ++ch)
+        int remaining = bypassCrossfadeRemaining.load(std::memory_order_relaxed);
+        if (remaining > 0)
         {
-            float* out = buffer.getWritePointer(ch);
-            const float* dry = dryBuffer.getReadPointer(ch);
+            const int fadeLen = juce::jmin(remaining, numSamples);
+            const int fadeTotal = juce::jmax(1, currentBypassCrossfadeSamples);
+            const int fadeProgressStart = fadeTotal - remaining;
+            const int chs = juce::jmin(buffer.getNumChannels(), dryBuffer.getNumChannels());
 
-            for (int s = 0; s < fadeLen; ++s)
+            for (int ch = 0; ch < chs; ++ch)
             {
-                const float t = juce::jlimit(0.0f, 1.0f,
-                                static_cast<float>(fadeProgressStart + s)
-                              / static_cast<float>(fadeTotal));
-                // t: 0→1.  bypassed: wet→dry.  !bypassed: dry→wet.
+                float* out = buffer.getWritePointer(ch);
+                const float* dry = dryBuffer.getReadPointer(ch);
+
+                for (int s = 0; s < fadeLen; ++s)
+                {
+                    const float t = juce::jlimit(0.0f, 1.0f,
+                                    static_cast<float>(fadeProgressStart + s)
+                                  / static_cast<float>(fadeTotal));
+                    // t: 0→1.  bypassed: wet→dry.  !bypassed: dry→wet.
+                    if (bypassed)
+                        out[s] = out[s] * (1.0f - t) + dry[s] * t;
+                    else
+                        out[s] = dry[s] * (1.0f - t) + out[s] * t;
+                }
+
+                // After crossfade ends mid-block: rest is target signal
                 if (bypassed)
-                    out[s] = out[s] * (1.0f - t) + dry[s] * t;
-                else
-                    out[s] = dry[s] * (1.0f - t) + out[s] * t;
+                {
+                    for (int s = fadeLen; s < numSamples; ++s)
+                        out[s] = dry[s];
+                }
             }
-
-            // After crossfade ends mid-block: rest is target signal
-            if (bypassed)
-            {
-                for (int s = fadeLen; s < numSamples; ++s)
-                    out[s] = dry[s];
-            }
+            bypassCrossfadeRemaining.store(juce::jmax(0, remaining - numSamples), std::memory_order_relaxed);
         }
-        bypassCrossfadeRemaining = juce::jmax(0, bypassCrossfadeRemaining - numSamples);
     }
 
     // Output peak metering (lock-free, for GUI level meter)
@@ -2149,9 +2152,9 @@ void AIEqualizerAudioProcessor::parameterChanged(const juce::String& parameterID
 
         if (newMode == PhaseMode::LinearPhase)
         {
-            consecutiveIRReadyBlocks = 0;
+            consecutiveIRReadyBlocks.store(0, std::memory_order_relaxed);
             readyIRIndex.store(-1, std::memory_order_relaxed);
-            crossfadeSamplesRemaining = 0;
+            crossfadeSamplesRemaining.store(0, std::memory_order_relaxed);
             triggerLinearPhaseIRUpdate();
         }
 
@@ -2514,7 +2517,7 @@ void AIEqualizerAudioProcessor::applySmoothedBandParams(int blockSamples, bool p
     }
 
     // When AI correction ramp finishes, restore fast ramp for user drag responsiveness
-    if (correctionSmoothingActive)
+    if (correctionSmoothingActive.load(std::memory_order_relaxed))
     {
         bool anyStillSmoothing = false;
         for (int i = 0; i < availableBands && !anyStillSmoothing; ++i)
@@ -2542,7 +2545,7 @@ void AIEqualizerAudioProcessor::applySmoothedBandParams(int blockSamples, bool p
                 smoothedBandGain[idx].setCurrentAndTargetValue(g);
                 smoothedBandQ[idx].setCurrentAndTargetValue(qv);
             }
-            correctionSmoothingActive = false;
+            correctionSmoothingActive.store(false, std::memory_order_relaxed);
         }
     }
 }

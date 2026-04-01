@@ -452,7 +452,7 @@ private:
     std::array<bool, maxBands> targetBandSolo {};
     std::array<DynamicEQProcessor::DynamicBandParams, maxBands> targetDynamicBandParams {};
     bool bandSmoothingPrimed { false };
-    bool correctionSmoothingActive { false };
+    std::atomic<bool> correctionSmoothingActive { false };
 
     // Linear-phase delay compensation when IR is not ready
     juce::AudioBuffer<float> linearPhaseDelayBuffer;
@@ -483,7 +483,7 @@ private:
     std::atomic<int> oversamplingTransitionFromEffective { -1 };
     std::atomic<int> oversamplingTransitionSamplesRemaining { 0 };
     static constexpr int oversamplingTransitionCrossfadeSamples = 2048; // longer fade for 2x↔4x startup/warmup
-    bool bypassStateInitialized = false;
+    std::atomic<bool> bypassStateInitialized { false };
 
     // Solo acoustic monitor (band-pass audition)
     juce::IIRFilter soloMonitorFilterL;
@@ -499,8 +499,8 @@ private:
     static constexpr float soloMakeupGainDB = 6.0f;
 
     // Bypass crossfade state — avoids click on bypass toggle
-    bool  wasBypassed = false;
-    int   bypassCrossfadeRemaining = 0;
+    std::atomic<bool> wasBypassed { false };
+    std::atomic<int>  bypassCrossfadeRemaining { 0 };
     int   currentBypassCrossfadeSamples = 2400;
     static constexpr int bypassCrossfadeSamples = 2400;        // ~50ms @ 48kHz (report recommends 20-200ms)
     static constexpr int aiCorrectionCrossfadeSamples = 1024;  // ~21ms @ 48kHz
@@ -544,12 +544,12 @@ private:
     std::atomic<int> activeIRIndex { 0 };
     std::atomic<int> readyIRIndex { -1 };
     std::array<std::atomic<bool>, 2> linearIRLoaded { false, false };
-    int consecutiveIRReadyBlocks = 0;
+    std::atomic<int> consecutiveIRReadyBlocks { 0 };
     
     // IR crossfade for click-free transitions
     static constexpr int irCrossfadeSamples = 128;
-    int crossfadeSamplesRemaining = 0;
-    int previousIRIndex = 0;
+    std::atomic<int> crossfadeSamplesRemaining { 0 };
+    std::atomic<int> previousIRIndex { 0 };
     alignas(64) juce::AudioBuffer<float> crossfadeBuffer;
 
     // Lock-free double-buffer for freq-domain IR handoff (builder thread -> audio thread)
