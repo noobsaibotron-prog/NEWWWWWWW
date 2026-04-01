@@ -191,6 +191,19 @@ public:
     [[nodiscard]] uint64_t getEQCurveChangeCounter() const noexcept { return eqCurveChangeCounter.load(std::memory_order_relaxed); }
     [[nodiscard]] uint32_t getBlockClampEvents() const noexcept { return blockClampEvents.load(std::memory_order_relaxed); }
 
+    // Click detector — GUI reads these on its timer; clickEventCount resets on read
+    [[nodiscard]] uint32_t consumeClickEvents() noexcept
+    {
+        return clickEventCount.exchange(0, std::memory_order_relaxed);
+    }
+    [[nodiscard]] uint8_t getClickLastCheckpoint() const noexcept
+    {
+        return clickLastCheckpoint.load(std::memory_order_relaxed);
+    }
+    static constexpr const char* kClickCheckpointNames[] = {
+        "INPUT", "pre-EQ", "post-EQ", "crossfade", "output", "bypass"
+    };
+
     // Output peak metering (GUI reads, audio thread writes)
     [[nodiscard]] float getOutputPeakLeft() const noexcept { return outputPeakLeft.load(std::memory_order_relaxed); }
     [[nodiscard]] float getOutputPeakRight() const noexcept { return outputPeakRight.load(std::memory_order_relaxed); }
@@ -686,6 +699,15 @@ private:
     std::atomic<uint64_t> lastProcessedParameterChangeCounter { 0 };
     std::atomic<uint64_t> irCoeffVersion { 0 };
     std::atomic<uint32_t> blockClampEvents { 0 };
+
+    // ── Click detector ───────────────────────────────────────────────────────
+    // Counts glitch events detected in processBlock (threshold: delta > 0.25 linear).
+    // Reset to 0 when GUI reads it with consumeClickEvents().
+    std::atomic<uint32_t> clickEventCount { 0 };
+    // Last checkpoint that triggered (RT-safe: short string index, not heap string)
+    // 0=input 1=preEQ 2=postEQ 3=crossfade 4=output 5=bypass
+    std::atomic<uint8_t>  clickLastCheckpoint { 0 };
+    float                 clickPrevSample { 0.0f }; // last sample of previous block (ch0)
     
     //==============================================================================
     // Cached Parameter Pointers (avoid map lookups in processBlock)

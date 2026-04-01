@@ -243,6 +243,7 @@ private:
 
     uint64_t lastParameterChangeCount = 0;
     uint32_t lastBlockClampEvents = 0;
+    uint32_t totalClickEvents = 0;  // cumulative click detector counter
     
     // Timer throttle: spread heavy UI work across multiple ticks to avoid
     // message thread starvation (Ableton freeze). timerTickCount increments

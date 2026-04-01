@@ -1462,10 +1462,53 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
                        std::memory_order_relaxed);
     }
 
+    // ── Click detector helper (RT-safe, no heap alloc) ──────────────────────
+    // Checks ch0 for inter-sample delta > threshold. Logs once per glitch event
+    // via the RT-safe SPSC logger queue. Updates clickEventCount + checkpoint ID.
+    static constexpr float kClickThreshold = 0.25f; // ~-12 dBFS jump
+    auto checkClicks = [&](uint8_t checkpoint) noexcept
+    {
+        if (buffer.getNumChannels() == 0 || blockSamples == 0)
+            return;
+        const float* ch0 = buffer.getReadPointer(0);
+        float prev = (checkpoint == 0) ? clickPrevSample : ch0[0];
+        bool fired = false;
+        for (int s = (checkpoint == 0 ? 0 : 1); s < blockSamples; ++s)
+        {
+            if (std::abs(ch0[s] - prev) > kClickThreshold)
+            {
+                fired = true;
+                break;
+            }
+            prev = ch0[s];
+        }
+        // Inter-block boundary check (only at first checkpoint)
+        if (checkpoint == 0 && std::abs(ch0[0] - clickPrevSample) > kClickThreshold)
+            fired = true;
+        if (fired)
+        {
+            clickEventCount.fetch_add(1, std::memory_order_relaxed);
+            clickLastCheckpoint.store(checkpoint, std::memory_order_relaxed);
+            char msg[64];
+            std::snprintf(msg, sizeof(msg), "CLICK cp=%u delta>%.2f",
+                          static_cast<unsigned>(checkpoint), kClickThreshold);
+            AIEQLogger::getInstance().logFromRTThread(AIEQLogger::Level::Warning, msg, "ClickDetector");
+        }
+        // Update inter-block boundary sample
+        if (checkpoint == 4)
+            clickPrevSample = ch0[blockSamples - 1];
+    };
+
+    // Checkpoint 0 — INPUT (before any processing)
+    checkClicks(0);
+
     // Feed pre-EQ spectrum analyzer (lock-free, FFT deferred to GUI)
     spectrumAnalyzer.pushSamples(buffer);
     preEqSpectrumFifo.pushStereoMix(buffer);  // metrological pipeline FIFO
     spectrumDataReady.store(true, std::memory_order_release);
+
+    // Checkpoint 1 — pre-EQ (after param update / spectrum capture, before EQ processing)
+    checkClicks(1);
 
     // Skip AI analysis during offline rendering for performance
     bool isOffline = isNonRealtime();
@@ -2003,6 +2046,9 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         soloMonitorFilterR.reset();
     }
 
+    // Checkpoint 2 — post-EQ
+    checkClicks(2);
+
     // Feed post-EQ spectrum analyzer
     if (showPost)
     {
@@ -2050,6 +2096,9 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     const int numSamples = buffer.getNumSamples();
     smoothedOutputGain.applyGain(buffer, numSamples);
 
+    // Checkpoint 4 — OUTPUT (after gain, before bypass crossfade)
+    checkClicks(4);
+
     // Bypass crossfade: blend processed+gained ↔ dry(ungained) to match steady-state behavior
     {
         int remaining = bypassCrossfadeRemaining.load(std::memory_order_relaxed);
@@ -2087,6 +2136,9 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
             bypassCrossfadeRemaining.store(juce::jmax(0, remaining - numSamples), std::memory_order_relaxed);
         }
     }
+
+    // Checkpoint 5 — post bypass-crossfade (final output)
+    checkClicks(5);
 
     // Output peak metering (lock-free, for GUI level meter)
     {

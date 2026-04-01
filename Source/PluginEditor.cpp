@@ -1186,6 +1186,21 @@ void AIEqualizerAudioProcessorEditor::timerCallback()
         juce::Logger::outputDebugString("AI Equalizer Pro - block clamp events: " + juce::String((int)clampEvents));
     }
 
+    // ── Click detector readout ────────────────────────────────────────────────
+    const uint32_t newClicks = processor.consumeClickEvents();
+    if (newClicks > 0)
+    {
+        totalClickEvents += newClicks;
+        const uint8_t cp = processor.getClickLastCheckpoint();
+        const char* cpName = (cp < 6) ? AIEqualizerAudioProcessor::kClickCheckpointNames[cp] : "?";
+        juce::Logger::outputDebugString(
+            juce::String("[CLICK] total=") + juce::String(totalClickEvents)
+            + " last_cp=" + juce::String(cpName)
+            + " (+=" + juce::String(newClicks) + " this tick)");
+        if (spectrum)
+            spectrum->setClickOverlay(totalClickEvents, cpName);
+    }
+
     // Parameter-driven UI updates (bands, toggles, A/B, quality)
     // Throttled to every 2nd tick (~10Hz) - reduces message thread load in Ableton.
     // Parameter changes are still detected via counter so nothing is lost, just

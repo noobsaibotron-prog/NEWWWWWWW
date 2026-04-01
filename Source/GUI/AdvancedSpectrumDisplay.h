@@ -134,6 +134,15 @@ public:
         ++injectedSpectrumVersion;
     }
 
+    /** Click detector overlay — shows glitch count + last checkpoint in top-left corner.
+     *  Pass count=0 to clear. Thread-safe (message thread only). */
+    void setClickOverlay (uint32_t count, const char* checkpointName)
+    {
+        clickOverlayCount = count;
+        clickOverlayCP    = checkpointName ? juce::String (checkpointName) : juce::String{};
+        repaint();
+    }
+
     // Spectrum display speed (smoothing)
     enum class SpectrumSpeed { Fast, Medium, Slow };
 
@@ -312,6 +321,19 @@ public:
             }
         }
 #endif
+
+        // ── Click detector overlay ────────────────────────────────────────
+        if (clickOverlayCount > 0)
+        {
+            juce::String txt = juce::String ("CLICKS: ") + juce::String (clickOverlayCount)
+                             + juce::String ("  last@") + clickOverlayCP;
+            g.setFont (juce::Font (12.0f, juce::Font::bold));
+            const int tw = g.getCurrentFont().getStringWidth (txt) + 10;
+            g.setColour (juce::Colours::red.withAlpha (0.85f));
+            g.fillRoundedRectangle (6.0f, 6.0f, static_cast<float>(tw), 18.0f, 3.0f);
+            g.setColour (juce::Colours::white);
+            g.drawText (txt, 6, 6, tw, 18, juce::Justification::centred);
+        }
     }
 
     void resized() override
@@ -2226,6 +2248,10 @@ private:
     std::vector<float> injectedPostSpectrum;
     uint64_t injectedSpectrumVersion = 0;
     uint64_t lastInjectedVersion = 0;
+
+    // Click detector overlay
+    uint32_t     clickOverlayCount = 0;
+    juce::String clickOverlayCP;
     int hoverX = -1, hoverY = -1;
     
     // Freeze/Capture functionality
