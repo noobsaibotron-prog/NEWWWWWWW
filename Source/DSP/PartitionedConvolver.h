@@ -163,10 +163,17 @@ public:
             return;
         }
 
+        // Snapshot crossfade counter ONCE before the channel loop so that
+        // every channel sees the identical fade curve for each sample position.
+        const int cfLeftAtStart = crossfadeSamplesLeft.load(std::memory_order_acquire);
+
         for (size_t c = 0; c < numChannels; ++c)
         {
             float* data = block.getChannelPointer(c);
             auto&  ch   = chState[c];
+
+            // Each channel starts from the same snapshot — guarantees symmetric fade.
+            int cfLeft = cfLeftAtStart;
 
             for (size_t i = 0; i < numSamples; ++i)
             {
@@ -181,7 +188,7 @@ public:
                     processOneBlock(ch, irParts, ch.outputQueue.data());
 
                     // Handle crossfade with old IR
-                    if (crossfadeSamplesLeft.load(std::memory_order_acquire) > 0)
+                    if (cfLeft > 0)
                     {
                         const auto& oldParts = irSets[crossfadeFromSet];
                         processOneBlockWithFDL(ch.fdlOld, ch.overlapOld,
@@ -198,17 +205,15 @@ public:
                 {
                     float sample = ch.outputQueue[ch.outputReadPos];
 
-                    // Apply crossfade if active
-                    const int cfLeft = crossfadeSamplesLeft.load(std::memory_order_relaxed);
+                    // Apply crossfade if active — uses local counter so
+                    // all channels compute identical fade for each sample index.
                     if (cfLeft > 0)
                     {
                         const float fadeNew = 1.0f - static_cast<float>(cfLeft)
                                                      / static_cast<float>(crossfadeLength);
                         const float fadeOld = 1.0f - fadeNew;
                         sample = sample * fadeNew + ch.outputQueueOld[ch.outputReadPos] * fadeOld;
-                        // Only decrement on channel 0 to keep channels in sync
-                        if (c == 0)
-                            crossfadeSamplesLeft.store(cfLeft - 1, std::memory_order_release);
+                        --cfLeft;
                     }
 
                     data[i] = sample;
@@ -220,6 +225,14 @@ public:
                     data[i] = 0.0f;
                 }
             }
+        }
+
+        // Commit the decremented counter once, after all channels are done.
+        // Single atomic store preserves thread safety with storeFreqIR().
+        if (cfLeftAtStart > 0)
+        {
+            const int consumed = std::min(cfLeftAtStart, static_cast<int>(numSamples));
+            crossfadeSamplesLeft.store(cfLeftAtStart - consumed, std::memory_order_release);
         }
     }
 
