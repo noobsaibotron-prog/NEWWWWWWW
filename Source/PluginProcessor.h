@@ -643,6 +643,10 @@ private:
         juce::String name;
     };
     
+    // slotMutex_ guards ALL reads/writes to slotA..D and their fields.
+    // INVARIANT: NEVER acquire from the audio thread (processBlock reads APVTS, not slots).
+    // Contention is only between host thread (get/setStateInformation) and message thread (UI).
+    mutable std::recursive_mutex slotMutex_;
     EQSlot slotA, slotB, slotC, slotD;
     std::atomic<ABState> currentABState { ABState::A };
     

@@ -2818,6 +2818,10 @@ void AIEqualizerAudioProcessor::setABState(ABState state)
     if (state == current)
         return;
 
+    // RB-2 FIX: lock the full save→switch→load sequence so no other thread
+    // can observe a partial state (e.g., host calling getStateInformation mid-switch).
+    std::lock_guard<std::recursive_mutex> lock(slotMutex_);
+
     // Save current state to current slot BEFORE switching
     saveCurrentStateToSlot(current);
 
@@ -2830,14 +2834,10 @@ void AIEqualizerAudioProcessor::setABState(ABState state)
 
 void AIEqualizerAudioProcessor::saveCurrentStateToSlot(ABState slot)
 {
-    // CRITICAL: Must be called from Message Thread for APVTS access
-    // SAFETY: Runtime check (jassert is disabled in release builds)
-    auto* mm = juce::MessageManager::getInstance();
-    if (mm == nullptr || !mm->isThisTheMessageThread())
-    {
-        jassertfalse; // Debug breakpoint
-        return; // Fail silently in release to prevent crash
-    }
+    // RB-2 FIX: mutex replaces message-thread-only guard.
+    // This function only reads APVTS atomics and writes to slot structs —
+    // safe from any thread under slotMutex_.
+    std::lock_guard<std::recursive_mutex> lock(slotMutex_);
 
     EQSlot* targetSlot = nullptr;
     switch (slot)
@@ -2883,14 +2883,16 @@ void AIEqualizerAudioProcessor::saveCurrentStateToSlot(ABState slot)
 
 void AIEqualizerAudioProcessor::loadStateFromSlot(ABState slot)
 {
-    // CRITICAL: Must be called from Message Thread
-    // SAFETY: Runtime check (jassert is disabled in release builds)
+    // CRITICAL: Must be called from Message Thread (writes APVTS via gesture API)
     auto* mm = juce::MessageManager::getInstance();
     if (mm == nullptr || !mm->isThisTheMessageThread())
     {
-        jassertfalse; // Debug breakpoint
-        return; // Fail silently in release to prevent crash
+        jassertfalse;
+        return;
     }
+
+    // RB-2 FIX: mutex protects slot reads against concurrent host-thread writes
+    std::lock_guard<std::recursive_mutex> lock(slotMutex_);
 
     const EQSlot* sourceSlot = nullptr;
     switch (slot)
@@ -3011,48 +3013,56 @@ void AIEqualizerAudioProcessor::loadStateFromSlot(ABState slot)
 
 void AIEqualizerAudioProcessor::copyAtoB()
 {
+    std::lock_guard<std::recursive_mutex> lock(slotMutex_);
     saveCurrentStateToSlot(ABState::A);
     slotB = slotA;
 }
 
 void AIEqualizerAudioProcessor::copyBtoA()
 {
+    std::lock_guard<std::recursive_mutex> lock(slotMutex_);
     saveCurrentStateToSlot(ABState::B);
     slotA = slotB;
 }
 
 void AIEqualizerAudioProcessor::copyAtoC()
 {
+    std::lock_guard<std::recursive_mutex> lock(slotMutex_);
     saveCurrentStateToSlot(ABState::A);
     slotC = slotA;
 }
 
 void AIEqualizerAudioProcessor::copyAtoD()
 {
+    std::lock_guard<std::recursive_mutex> lock(slotMutex_);
     saveCurrentStateToSlot(ABState::A);
     slotD = slotA;
 }
 
 void AIEqualizerAudioProcessor::copyBtoC()
 {
+    std::lock_guard<std::recursive_mutex> lock(slotMutex_);
     saveCurrentStateToSlot(ABState::B);
     slotC = slotB;
 }
 
 void AIEqualizerAudioProcessor::copyBtoD()
 {
+    std::lock_guard<std::recursive_mutex> lock(slotMutex_);
     saveCurrentStateToSlot(ABState::B);
     slotD = slotB;
 }
 
 void AIEqualizerAudioProcessor::copyCtoD()
 {
+    std::lock_guard<std::recursive_mutex> lock(slotMutex_);
     saveCurrentStateToSlot(ABState::C);
     slotD = slotC;
 }
 
 void AIEqualizerAudioProcessor::swapAB()
 {
+    std::lock_guard<std::recursive_mutex> lock(slotMutex_);
     const ABState current = currentABState.load(std::memory_order_relaxed);
     saveCurrentStateToSlot(current);
     std::swap(slotA, slotB);
@@ -3061,6 +3071,7 @@ void AIEqualizerAudioProcessor::swapAB()
 
 void AIEqualizerAudioProcessor::swapCD()
 {
+    std::lock_guard<std::recursive_mutex> lock(slotMutex_);
     const ABState current = currentABState.load(std::memory_order_relaxed);
     saveCurrentStateToSlot(current);
     std::swap(slotC, slotD);
@@ -3872,41 +3883,52 @@ bool AIEqualizerAudioProcessor::hasEditor() const { return true; }
 //==============================================================================
 void AIEqualizerAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
 {
-    // Snapshot the active slot directly from APVTS atomics — thread-safe regardless of caller thread.
-    // Some DAWs (Pro Tools, some VST3 hosts) call getStateInformation off the message thread,
-    // which causes saveCurrentStateToSlot() to bail out silently. Since getBandState() and
-    // getRawParameterValue()->load() only read atomics, they are safe from any thread.
+    // RB-2 FIX: slotMutex_ guarantees a transactional snapshot of all 4 slots.
+    // This function can be called from ANY thread (Pro Tools, some VST3 hosts).
+    // The mutex ensures no concurrent slot mutation during serialization.
+
+    // Take a local copy of all 4 slots under the lock, then serialize outside.
+    EQSlot localA, localB, localC, localD;
+    ABState activeSlot;
     {
-        const ABState activeSlot = currentABState.load(std::memory_order_relaxed);
-        EQSlot* slot = nullptr;
+        std::lock_guard<std::recursive_mutex> lock(slotMutex_);
+
+        activeSlot = currentABState.load(std::memory_order_relaxed);
+
+        // Sync active slot from APVTS atomics (thread-safe reads)
+        EQSlot* active = nullptr;
         switch (activeSlot)
         {
-            case ABState::A: slot = &slotA; break;
-            case ABState::B: slot = &slotB; break;
-            case ABState::C: slot = &slotC; break;
-            case ABState::D: slot = &slotD; break;
+            case ABState::A: active = &slotA; break;
+            case ABState::B: active = &slotB; break;
+            case ABState::C: active = &slotC; break;
+            case ABState::D: active = &slotD; break;
         }
-        if (slot != nullptr)
+        if (active != nullptr)
         {
             for (int i = 0; i < maxBands; ++i)
-                slot->bands[static_cast<size_t>(i)] = getBandState(i);
+                active->bands[static_cast<size_t>(i)] = getBandState(i);
             if (auto* p = apvts.getRawParameterValue("outputGain"))
-                slot->outputGain = p->load();
+                active->outputGain = p->load();
         }
+
+        // Copy all 4 slots under the lock → transactional snapshot
+        localA = slotA;
+        localB = slotB;
+        localC = slotC;
+        localD = slotD;
     }
+    // Lock released — serialize from local copies (no contention during XML build)
 
     auto state = apvts.copyState();
 
-    // Add A/B/C/D slot data to state
-    state.setProperty("abState", static_cast<int>(currentABState.load(std::memory_order_relaxed)), nullptr);
-    // Save slot names
-    state.setProperty("slotAName", slotA.name, nullptr);
-    state.setProperty("slotBName", slotB.name, nullptr);
-    state.setProperty("slotCName", slotC.name, nullptr);
-    state.setProperty("slotDName", slotD.name, nullptr);
+    state.setProperty("abState", static_cast<int>(activeSlot), nullptr);
+    state.setProperty("slotAName", localA.name, nullptr);
+    state.setProperty("slotBName", localB.name, nullptr);
+    state.setProperty("slotCName", localC.name, nullptr);
+    state.setProperty("slotDName", localD.name, nullptr);
 
-    // Persist full slot contents (bands + output gain)
-    auto addSlotTree = [this, &state](const EQSlot& slot, const juce::Identifier& id)
+    auto addSlotTree = [&state](const EQSlot& slot, const juce::Identifier& id)
     {
         state.removeChild(state.getChildWithName(id), nullptr);
 
@@ -3941,10 +3963,10 @@ void AIEqualizerAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
         state.addChild(std::move(slotTree), -1, nullptr);
     };
 
-    addSlotTree(slotA, "SlotA");
-    addSlotTree(slotB, "SlotB");
-    addSlotTree(slotC, "SlotC");
-    addSlotTree(slotD, "SlotD");
+    addSlotTree(localA, "SlotA");
+    addSlotTree(localB, "SlotB");
+    addSlotTree(localC, "SlotC");
+    addSlotTree(localD, "SlotD");
 
     std::unique_ptr<juce::XmlElement> xml(state.createXml());
     copyXmlToBinary(*xml, destData);
@@ -3958,109 +3980,110 @@ void AIEqualizerAudioProcessor::setStateInformation(const void* data, int sizeIn
     {
         if (xmlState->hasTagName(apvts.state.getType()))
         {
+            // Phase 1: Restore APVTS — synchronous, audio thread sees new values immediately.
             apvts.replaceState(juce::ValueTree::fromXml(*xmlState));
 
-            // Restore A/B/C/D state
-            auto loadedState = apvts.state;
-            if (loadedState.hasProperty("abState"))
+            // Phase 2: Restore all 4 slot structs under the lock — synchronous, no async gap.
+            // RB-2 FIX: slotMutex_ ensures no concurrent reader (getStateInformation, UI)
+            // can observe a half-restored state. The entire restore is transactional.
             {
-                int abIdx = static_cast<int>(loadedState.getProperty("abState"));
-                currentABState.store(static_cast<ABState>(juce::jlimit(0, 3, abIdx)), std::memory_order_relaxed);
-            }
-            // Restore slot names
-            if (loadedState.hasProperty("slotAName"))
-                slotA.name = loadedState.getProperty("slotAName").toString();
-            if (loadedState.hasProperty("slotBName"))
-                slotB.name = loadedState.getProperty("slotBName").toString();
-            if (loadedState.hasProperty("slotCName"))
-                slotC.name = loadedState.getProperty("slotCName").toString();
-            if (loadedState.hasProperty("slotDName"))
-                slotD.name = loadedState.getProperty("slotDName").toString();
+                std::lock_guard<std::recursive_mutex> lock(slotMutex_);
 
-            // Restore full slot contents (bands + output gain)
-            auto restoreSlot = [this, &loadedState](const juce::Identifier& id, EQSlot& slot)
-            {
-                auto slotTree = loadedState.getChildWithName(id);
-                if (!slotTree.isValid())
-                    return;
+                auto loadedState = apvts.state;
 
-                if (slotTree.hasProperty("name"))
-                    slot.name = slotTree.getProperty("name").toString();
-                if (slotTree.hasProperty("outputGain"))
-                    slot.outputGain = static_cast<float>(slotTree.getProperty("outputGain"));
-                if (slotTree.hasProperty("dynEqEnabled"))
-                    slot.dynEqEnabled = static_cast<bool>(slotTree.getProperty("dynEqEnabled"));
-                if (slotTree.hasProperty("dynEqMix"))
-                    slot.dynEqMix = static_cast<float>(slotTree.getProperty("dynEqMix"));
-                if (slotTree.hasProperty("dynAutoMakeup"))
-                    slot.dynAutoMakeup = static_cast<bool>(slotTree.getProperty("dynAutoMakeup"));
-
-                for (int i = 0; i < maxBands; ++i)
+                // Restore active slot index
+                if (loadedState.hasProperty("abState"))
                 {
-                    auto bandTree = slotTree.getChildWithName("band" + juce::String(i));
-                    if (!bandTree.isValid())
-                        continue;
-
-                    auto& band = slot.bands[static_cast<size_t>(i)];
-                    if (bandTree.hasProperty("freq"))
-                        band.frequency = static_cast<float>(bandTree.getProperty("freq"));
-                    if (bandTree.hasProperty("gain"))
-                        band.gain = static_cast<float>(bandTree.getProperty("gain"));
-                    if (bandTree.hasProperty("q"))
-                        band.q = static_cast<float>(bandTree.getProperty("q"));
-                    if (bandTree.hasProperty("type"))
-                        band.type = static_cast<int>(bandTree.getProperty("type"));
-                    if (bandTree.hasProperty("enabled"))
-                        band.enabled = static_cast<bool>(bandTree.getProperty("enabled"));
-                    if (bandTree.hasProperty("solo"))
-                        band.solo = static_cast<bool>(bandTree.getProperty("solo"));
-                    if (bandTree.hasProperty("slope"))
-                        band.slope = static_cast<int>(bandTree.getProperty("slope"));
-                    if (bandTree.hasProperty("dynMode"))
-                        band.dynMode = static_cast<int>(bandTree.getProperty("dynMode"));
-                    if (bandTree.hasProperty("dynThreshold"))
-                        band.dynThreshold = static_cast<float>(bandTree.getProperty("dynThreshold"));
-                    if (bandTree.hasProperty("dynRatio"))
-                        band.dynRatio = static_cast<float>(bandTree.getProperty("dynRatio"));
-                    if (bandTree.hasProperty("dynAttack"))
-                        band.dynAttack = static_cast<float>(bandTree.getProperty("dynAttack"));
-                    if (bandTree.hasProperty("dynRelease"))
-                        band.dynRelease = static_cast<float>(bandTree.getProperty("dynRelease"));
-                    if (bandTree.hasProperty("dynRange"))
-                        band.dynRange = static_cast<float>(bandTree.getProperty("dynRange"));
-                    if (bandTree.hasProperty("dynKnee"))
-                        band.dynKnee = static_cast<float>(bandTree.getProperty("dynKnee"));
+                    int abIdx = static_cast<int>(loadedState.getProperty("abState"));
+                    currentABState.store(static_cast<ABState>(juce::jlimit(0, 3, abIdx)), std::memory_order_relaxed);
                 }
-            };
 
-            restoreSlot("SlotA", slotA);
-            restoreSlot("SlotB", slotB);
-            restoreSlot("SlotC", slotC);
-            restoreSlot("SlotD", slotD);
+                // Restore slot names
+                if (loadedState.hasProperty("slotAName"))
+                    slotA.name = loadedState.getProperty("slotAName").toString();
+                if (loadedState.hasProperty("slotBName"))
+                    slotB.name = loadedState.getProperty("slotBName").toString();
+                if (loadedState.hasProperty("slotCName"))
+                    slotC.name = loadedState.getProperty("slotCName").toString();
+                if (loadedState.hasProperty("slotDName"))
+                    slotD.name = loadedState.getProperty("slotDName").toString();
 
-            // Make sure the active slot struct reflects the APVTS state (for legacy presets).
-            // setStateInformation can be called from any thread (Pro Tools, some VST3 hosts call
-            // it off the message thread). Use callAsync to always run on the message thread.
-            // Also trigger an IR rebuild if the loaded state has Linear Phase active - without
-            // this the LP processor starts silent until the user touches a parameter.
-            {
-                const int slotIdx = static_cast<int>(currentABState.load(std::memory_order_relaxed));
-                const bool needsIRRebuild = (currentPhaseMode.load(std::memory_order_relaxed) == PhaseMode::LinearPhase);
-
-                // Use WeakReference to prevent use-after-free if processor is
-                // destroyed before the async callback fires (matches pattern
-                // used elsewhere in this file, e.g. lines 2391, 2717, 3076).
-                juce::WeakReference<AIEqualizerAudioProcessor> weakThis(this);
-                auto doRestore = [weakThis, slotIdx, needsIRRebuild]()
+                // Restore full slot contents (bands + output gain)
+                auto restoreSlot = [&loadedState](const juce::Identifier& id, EQSlot& slot)
                 {
-                    auto* self = weakThis.get();
-                    if (self == nullptr)
+                    auto slotTree = loadedState.getChildWithName(id);
+                    if (!slotTree.isValid())
                         return;
-                    // No processorReady guard here: slot sync must always happen after restore,
-                    // regardless of whether the processor has finished initialising yet.
-                    self->saveCurrentStateToSlot(static_cast<ABState>(slotIdx));
 
-                    if (needsIRRebuild)
+                    if (slotTree.hasProperty("name"))
+                        slot.name = slotTree.getProperty("name").toString();
+                    if (slotTree.hasProperty("outputGain"))
+                        slot.outputGain = static_cast<float>(slotTree.getProperty("outputGain"));
+                    if (slotTree.hasProperty("dynEqEnabled"))
+                        slot.dynEqEnabled = static_cast<bool>(slotTree.getProperty("dynEqEnabled"));
+                    if (slotTree.hasProperty("dynEqMix"))
+                        slot.dynEqMix = static_cast<float>(slotTree.getProperty("dynEqMix"));
+                    if (slotTree.hasProperty("dynAutoMakeup"))
+                        slot.dynAutoMakeup = static_cast<bool>(slotTree.getProperty("dynAutoMakeup"));
+
+                    for (int i = 0; i < maxBands; ++i)
+                    {
+                        auto bandTree = slotTree.getChildWithName("band" + juce::String(i));
+                        if (!bandTree.isValid())
+                            continue;
+
+                        auto& band = slot.bands[static_cast<size_t>(i)];
+                        if (bandTree.hasProperty("freq"))
+                            band.frequency = static_cast<float>(bandTree.getProperty("freq"));
+                        if (bandTree.hasProperty("gain"))
+                            band.gain = static_cast<float>(bandTree.getProperty("gain"));
+                        if (bandTree.hasProperty("q"))
+                            band.q = static_cast<float>(bandTree.getProperty("q"));
+                        if (bandTree.hasProperty("type"))
+                            band.type = static_cast<int>(bandTree.getProperty("type"));
+                        if (bandTree.hasProperty("enabled"))
+                            band.enabled = static_cast<bool>(bandTree.getProperty("enabled"));
+                        if (bandTree.hasProperty("solo"))
+                            band.solo = static_cast<bool>(bandTree.getProperty("solo"));
+                        if (bandTree.hasProperty("slope"))
+                            band.slope = static_cast<int>(bandTree.getProperty("slope"));
+                        if (bandTree.hasProperty("dynMode"))
+                            band.dynMode = static_cast<int>(bandTree.getProperty("dynMode"));
+                        if (bandTree.hasProperty("dynThreshold"))
+                            band.dynThreshold = static_cast<float>(bandTree.getProperty("dynThreshold"));
+                        if (bandTree.hasProperty("dynRatio"))
+                            band.dynRatio = static_cast<float>(bandTree.getProperty("dynRatio"));
+                        if (bandTree.hasProperty("dynAttack"))
+                            band.dynAttack = static_cast<float>(bandTree.getProperty("dynAttack"));
+                        if (bandTree.hasProperty("dynRelease"))
+                            band.dynRelease = static_cast<float>(bandTree.getProperty("dynRelease"));
+                        if (bandTree.hasProperty("dynRange"))
+                            band.dynRange = static_cast<float>(bandTree.getProperty("dynRange"));
+                        if (bandTree.hasProperty("dynKnee"))
+                            band.dynKnee = static_cast<float>(bandTree.getProperty("dynKnee"));
+                    }
+                };
+
+                restoreSlot("SlotA", slotA);
+                restoreSlot("SlotB", slotB);
+                restoreSlot("SlotC", slotC);
+                restoreSlot("SlotD", slotD);
+
+                // RB-2 FIX: sync active slot from APVTS synchronously (was callAsync — async gap
+                // allowed stale slot data if user switched slots before callback fired).
+                // saveCurrentStateToSlot now works from any thread under slotMutex_.
+                const ABState activeSlot = currentABState.load(std::memory_order_relaxed);
+                saveCurrentStateToSlot(activeSlot);
+            }
+            // Lock released — slots are fully consistent with APVTS.
+
+            // IR rebuild must still happen on message thread (triggers background work).
+            if (currentPhaseMode.load(std::memory_order_relaxed) == PhaseMode::LinearPhase)
+            {
+                juce::WeakReference<AIEqualizerAudioProcessor> weakThis(this);
+                auto doIRRebuild = [weakThis]()
+                {
+                    if (auto* self = weakThis.get())
                     {
                         for (auto& loaded : self->linearIRLoaded)
                             loaded.store(false, std::memory_order_relaxed);
@@ -4071,9 +4094,9 @@ void AIEqualizerAudioProcessor::setStateInformation(const void* data, int sizeIn
                 if (auto* mm = juce::MessageManager::getInstance())
                 {
                     if (mm->isThisTheMessageThread())
-                        doRestore();
+                        doIRRebuild();
                     else
-                        juce::MessageManager::callAsync(doRestore);
+                        juce::MessageManager::callAsync(doIRRebuild);
                 }
             }
         }
