@@ -1045,6 +1045,7 @@ if(HAVE_JUCE)
         Source/Tests/SoloModeTransitionTest.cpp
         Source/Tests/BandDragContinuityTest.cpp
         Source/Tests/HostSessionClickTest.cpp
+        Source/Tests/RBValidationTest.cpp
         Source/Tests/TestMain.cpp
     )
     target_compile_features(AIEqualizerPro_IntegrationTests PRIVATE cxx_std_20)
