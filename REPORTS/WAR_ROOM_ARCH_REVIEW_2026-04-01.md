@@ -43,9 +43,9 @@ Flusso stato: `Open -> In Progress -> Fixed -> Verified`.
 
 ### Release blockers not yet verified
 - **RB-1** — ✅ Verified (2026-04-02)
-- **RB-2** — Fixed (pending Verified) — `b42f244f`
-- **RB-3** — Fixed (pending Verified) — resolved by RB-2 (`b42f244f`)
-- **RB-4** — Fixed (pending Verified) — `7a285d09`
+- **RB-2** — Fixed (pending Verified) — `b42f244f` — programmatic roundtrip validation passed (`a80f8d0f`)
+- **RB-3** — Fixed (pending Verified) — resolved by RB-2 (`b42f244f`) — synchronous restore validation passed (`a80f8d0f`)
+- **RB-4** — Fixed (pending Verified) — `7a285d09` + `352ded2f` — programmatic mode-switch stress test passed (`a80f8d0f`)
 
 ### Mandatory non-blocking items still open
 - **T-5** — Oversized block fallback clears tail destructively
@@ -88,6 +88,34 @@ Additionally required:
 
 ---
 
+## 3.1 Programmatic Integration Validation (2026-04-02)
+
+**Test harness commit:** `a80f8d0f`
+**File:** `Source/Tests/RBValidationTest.cpp`
+**Runner:** `AIEqualizerPro_IntegrationTests --category=Integration`
+
+| Test | RB | Description | Result |
+|------|-----|-------------|--------|
+| `testRB2_SlotCoherenceDuringSwitching` | RB-2 | 10 rapid A↔B round-trips with processBlock between switches; verifies freq/gain preserved | **PASS** |
+| `testRB2_SlotRoundTripSaveLoad` | RB-2 | Configure A+B with distinct params, save, restore into fresh processor, verify both slots | **PASS** |
+| `testRB3_SynchronousRestoreNoStaleSlots` | RB-3 | setStateInformation → immediate getBandState (no processBlock, no message loop) → verify coherent | **PASS** |
+| `testRB4_QualityModeSwitchDuringProcess` | RB-4 | 50 ZL↔HQ toggles interleaved with processBlock | **PASS** |
+| `testRB4_ZeroLatencyToHQRoundTrip` | RB-4 | Save in HQ, restore into ZL processor, verify qualityMode=1 restored and processBlock runs | **PASS** |
+
+**What this proves:**
+- Slot protection (RB-2) holds under rapid concurrent switching + serialization round-trip
+- Synchronous restore (RB-3) delivers coherent state immediately, with no async gap
+- Quality mode switch (RB-4) survives stress toggle and save/load without crash
+
+**What this does not yet prove:**
+- RB-2: full equivalence / bitwise roundtrip stability under stricter criteria
+- RB-3: host-side restore behavior (host-specific callback ordering)
+- RB-4: numerical correctness of lookahead effect (measurable latency/GR timing delta)
+
+**Governance note:** These results are strong validation evidence but do not constitute automatic promotion to Verified. Governance decision remains pending explicit review.
+
+---
+
 ## 4. Issue Ledger
 
 | ID | Severity | Prob. | Confidence | Evidence | Status | Owner | Risk if Deferred | Target Release |
@@ -95,7 +123,7 @@ Additionally required:
 | RB-1 | Critical | Medium | High | Direct | ✅ Verified | Core / Infrastructure | — | Closed |
 | RB-2 | Critical | Medium | Medium-High | Direct + inferential | Fixed (pending Verified) | State / Persistence | High | Must fix before beta |
 | RB-3 | High | Medium | High | Direct + flow inference | Fixed (pending Verified) — resolved by RB-2 | Host Integration / State Pipeline | — | Closed by RB-2 |
-| RB-4 | High | High | Medium-High | Direct + inferential | Open | DSP Runtime Reconfiguration | High | Must fix before paid launch |
+| RB-4 | High | High | Medium-High | Direct + inferential | Fixed (pending Verified) | DSP Runtime Reconfiguration | High | Must fix before paid launch |
 | T-5  | Medium | Medium | High | Direct | Open | Core / DSP Buffering | Medium | Must fix before paid launch |
 | T-6  | Medium | High | High | Direct | Open | Infrastructure / Tooling | Medium | Can defer post-1.0 only with Risk Acceptance |
 
@@ -201,10 +229,11 @@ Additionally required:
 
 ### Validation Evidence
 - Code inspection: `Pass` — all slot access sites protected by `slotMutex_`
-- Roundtrip test: `Pending`
+- Roundtrip test: `Pass` — programmatic save→load into fresh processor, both slots verified (`a80f8d0f`)
+- Slot coherence test: `Pass` — 10 rapid A↔B switches with processBlock interleaved (`a80f8d0f`)
 - Concurrent mutation test: `Pending`
 - Manual host validation: `Pending`
-- Linked test artifact: `—`
+- Linked test artifact: `Source/Tests/RBValidationTest.cpp`
 
 ### Residual Risk
 | Risk | Probability | Impact |
@@ -243,9 +272,10 @@ Additionally required:
 
 ### Validation Evidence
 - Code inspection: `Pass` — `callAsync` removed from slot restore path, only IR rebuild remains async
+- Synchronous restore test: `Pass` — immediate getBandState after setStateInformation returns coherent values, no message loop needed (`a80f8d0f`)
 - Host matrix validation: `Pending`
 - Session reopen validation: `Pending`
-- Linked test artifact: `—`
+- Linked test artifact: `Source/Tests/RBValidationTest.cpp`
 
 ### Residual Risk
 | Risk | Probability | Impact |
@@ -285,10 +315,12 @@ A fix is not `Verified` unless all are met:
 ### Validation Evidence
 - Code inspection: `Pass` — `setLookahead()` now updates all derived state; `prepare()` pre-allocates for worst case (20ms)
 - Build: `Pass` — compiles clean (no new warnings)
-- Behavioral lookahead test: `Pending` (DAW runtime test needed)
+- Mode-switch stress test: `Pass` — 50 ZL↔HQ toggles interleaved with processBlock, zero crash (`a80f8d0f`)
+- Save/load round-trip: `Pass` — HQ mode persists after restore into fresh processor (`a80f8d0f`)
+- Behavioral lookahead test: `Pending` — numerical verification of lookahead effect delta not yet done
 - Offline/render comparison: `Pending`
 - Manual listening validation: `Pending`
-- Linked test artifact: `—`
+- Linked test artifact: `Source/Tests/RBValidationTest.cpp`
 
 ### Residual Risk
 - `lookaheadBuffer.clear()` in `setLookahead()` zeroes the entire pre-allocated buffer (max 20ms worth), which may cause a brief transient silence on the lookahead channel during mode switch. This is acceptable — the alternative (partial clear) would require tracking exact valid region, adding complexity for no audible benefit since the crossfade in processBlock masks it.
