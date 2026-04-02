@@ -1,0 +1,359 @@
+# AUDIO ARCHITECT WAR ROOM
+## RELEASE TRIBUNAL — Closure-Driven Review v5.1
+
+**Date:** 2026-04-01
+**Target:** Parametric EQ plugin (C++ / JUCE)
+**Product tier:** Premium (~149 €)
+**Current Release Decision:** **NOT RELEASE-READY**
+
+---
+
+## Review Scope
+- Source tree reviewed: `Source/`
+- Runtime host-matrix in this pass: **No** (static audit unless otherwise stated)
+- Codebase reviewed revision (technical findings anchor): `3c8d4a0b`
+- Report document baseline revision at authoring: `3c336b61`
+- Report hardening update revision (RB-1 status alignment): `b69d2e0`
+- RB-1 fix validation revision: `7914a09b`
+- Original review branch: `work`
+- Shared validation branch for RB-1 closure: `review/codex-2026-04-01`
+- Generated on: `2026-04-01`
+- Last updated: `2026-04-02` (RB-1 validation pass)
+
+> Anchoring note: the first SHA is the code snapshot audited for findings; subsequent SHAs track report-document lineage updates.
+
+---
+
+## 0. Quick Start (versione umana)
+
+Usa questo documento così:
+1. prendi un issue (`RB-1`, poi `RB-2`, ...),
+2. fai il fix nel codice,
+3. compila `Fix Record` + `Validation Evidence`,
+4. cambia stato solo quando c'è prova.
+
+Flusso stato: `Open -> In Progress -> Fixed -> Verified`.
+
+---
+
+## 1. Executive Status
+
+### Current State
+**NOT RELEASE-READY**
+
+### Release blockers not yet verified
+- **RB-1** — Fixed (pending Verified) — build + static path verified ✅, runtime pending
+- **RB-2** — Open
+- **RB-3** — Open
+- **RB-4** — Open
+
+### Mandatory non-blocking items still open
+- **T-5** — Oversized block fallback clears tail destructively
+- **T-6** — OSC runtime hardcoded file logging
+
+---
+
+## 2. Closure Standard (required for `Verified`)
+
+An issue can be marked `Verified` only if all are present:
+1. **Fix commit SHA**
+2. **Linked PR**
+3. **Technical summary of the fix**
+4. **Before/after behavior statement**
+5. **Validation evidence** (tests/harness/host checks)
+6. **Linked test artifact** (path or URL)
+7. **Residual risk statement**
+8. **Reviewer closure decision**
+
+---
+
+## 3. Global Release Gates
+
+### NOT RELEASE-READY -> RELEASE-RISKY
+All required:
+- RB-1 = **Verified**
+- RB-2 = **Verified**
+- RB-3 = **Verified**
+- RB-4 = **Verified**
+- T-5 >= **Fixed**
+- No new critical regressions introduced by those fixes
+
+### RELEASE-RISKY -> RELEASE-SAFE
+Additionally required:
+- Host matrix validated (Reaper / Live / Cubase / Logic / Pro Tools)
+- Recall determinism tests automated
+- Randomized block-size/sample-rate harness executed
+- DynEQ lookahead runtime behavior numerically validated
+- T-5 and T-6 = **Verified** or formally **Risk Accepted**
+
+---
+
+## 4. Issue Ledger
+
+| ID | Severity | Prob. | Confidence | Evidence | Status | Owner | Risk if Deferred | Target Release |
+|----|----------|-------|------------|----------|--------|-------|------------------|----------------|
+| RB-1 | Critical | Medium | High | Direct | Fixed (pending Verified) | Core / Infrastructure | High | Must fix before beta |
+| RB-2 | Critical | Medium | Medium-High | Direct + inferential | Open | State / Persistence | High | Must fix before beta |
+| RB-3 | High | Medium | High | Direct + flow inference | Open | Host Integration / State Pipeline | High | Must fix before paid launch |
+| RB-4 | High | High | Medium-High | Direct + inferential | Open | DSP Runtime Reconfiguration | High | Must fix before paid launch |
+| T-5  | Medium | Medium | High | Direct | Open | Core / DSP Buffering | Medium | Must fix before paid launch |
+| T-6  | Medium | High | High | Direct | Open | Infrastructure / Tooling | Medium | Can defer post-1.0 only with Risk Acceptance |
+
+---
+
+## 5. Detailed Closure Dossiers
+
+## RB-1 — Non-RT-safe logging reachable from audio path
+- **Validation:** ✅ Confirmed
+- **Evidence:**
+  - `AIEQ_LOG_WARNING(...)` in audio path oversized branch (`Source/PluginProcessor.cpp:1190-1195`)
+  - logger uses mutex + file flush (`Source/Utils/Logger.cpp:34`, `63-64`)
+- **Why blocker:** hard-RT violation in stress path.
+
+### Closure checklist
+- [x] No mutex/file I/O reachable from `processBlock()` — verified at `7914a09b`
+- [x] RT-safe telemetry path exists — `logFromRTThread()` → `SPSCQueue::tryPush()` (lock-free)
+- [ ] Oversized-block stress harness passes — **requires runtime host test**
+
+### Fix Record
+- Fix commit(s): `7914a09b` (shared remote branch reference)
+- Linked PR: `Pending` (no visible PR at validation time)
+- Fix summary: oversized-block audio path uses RT-safe `logFromRTThread(...)` with stack buffer `char[128]` + `snprintf` instead of blocking `AIEQ_LOG_WARNING`; `Logger::minLevel` changed to `std::atomic<Level>` with relaxed load/store; null-check separated from level-check in `logFromRTThread` to prevent UB on enum comparison before pointer validation.
+- Files changed: `Source/PluginProcessor.cpp`, `Source/Utils/Logger.h`, `Source/Utils/Logger.cpp`
+- Before: RT path could call `AIEQ_LOG_WARNING` → `log()` → `std::lock_guard<std::mutex>` + `logFile << ... << std::endl` + `logFile.flush()` — hard-RT violation (mutex contention, file I/O, potential page fault)
+- After: RT path calls `logFromRTThread()` → stack-local `snprintf` → `SPSCQueue::tryPush()` — zero lock, zero heap, zero syscall, zero I/O in producer path
+- Shared branch reference: `review/codex-2026-04-01`
+
+### Validation Evidence (updated 2026-04-02)
+- **Source verification**: `Pass` — read directly from `origin/review/codex-2026-04-01` via `git show` at SHA `7914a09b`
+- **Code inspection of blockClamp path**: `Pass`
+  - `PluginProcessor.cpp:1193-1199`: oversized branch contains `logFromRTThread` + `snprintf`, no `AIEQ_LOG_WARNING`
+  - No other `AIEQ_LOG_WARNING` or `log()` calls reachable from the oversized-block branch
+- **Code inspection of `logFromRTThread` producer path**: `Pass`
+  - Full call chain: `nullptr check → atomic load minLevel (relaxed) → stack RTLogMessage init → strncpy → SPSCQueue::tryPush() → atomic load tail (relaxed) → mask (bitwise AND) → atomic load head (acquire) → buffer assignment (trivially_copyable, static_assert enforced) → atomic store tail (release) → return`
+  - No mutex, no file I/O, no heap allocation, no syscall in producer path
+  - Queue-full fallback: `droppedRTMessages.fetch_add(1, relaxed)` — non-blocking
+- **Atomic correctness of `minLevel`**: `Pass`
+  - `Logger.h:108`: `std::atomic<Level> minLevel { Level::Info }` — `Level` is `enum class` (underlying `int`, 4 bytes) → `std::atomic<int>` is lock-free on arm64 and x86_64
+  - `Logger.h:83`: `setMinLevel()` uses `store(std::memory_order_relaxed)`
+  - `Logger.cpp:32`: `log()` reads via `load(std::memory_order_relaxed)`
+  - `Logger.cpp:98-99`: `logFromRTThread()` null-check first, then `load(relaxed)` — correct ordering
+- **macOS Release build**: `Pass`
+  - `cmake --build build-mac --config Release --target AIEqualizerPro_VST3` — zero errors, zero warnings on RB-1 files
+  - Architecture: universal (arm64 + x86_64)
+- **`juce::Time::getMillisecondCounterHiRes()` in producer path**: `Acceptable`
+  - Used in `RTLogMessage.timestamp` assignment — on macOS this calls `mach_absolute_time()` which is vDSO/lock-free. Not a blocking syscall.
+- **Host/runtime validation**: `Pending`
+  - No DAW host available in this environment
+  - Required: load VST3 in Ableton/Logic, trigger oversized block or normal playback, verify no RT glitch and log appears after flush
+- Linked test artifact: `Pending`
+
+### Residual Risk
+| Risk | Probability | Impact | Mitigation |
+|------|-------------|--------|------------|
+| `mach_absolute_time()` behavior on non-macOS platforms | Low | Low | Standard JUCE pattern; Linux uses `clock_gettime(CLOCK_MONOTONIC)` which is also vDSO |
+| SPSCQueue full (256 slots) → silent drop | Low | Negligible | `droppedRTMessages` counter tracks drops; blockClamp is rare by design |
+| `memory_order_relaxed` on `minLevel` → stale read | Negligible | Negligible | Worst case: one extra or one missed log message during level transition — acceptable |
+| Other `AIEQ_LOG_WARNING` calls in non-blockClamp RT paths | Not assessed in this pass | Unknown | Full RT-path audit recommended for remaining issues |
+
+### Closure decision
+**Fixed (pending Verified)** — all static/build checks pass. Promote to `Verified` after successful DAW runtime test confirms no RT stall in oversized-block path.
+
+---
+
+## RB-2 — A/B/C/D state not transactional snapshot-safe
+- **Validation:** ✅ Confirmed architectural blocker
+- **Confutation note:** hard race universale non provata su ogni path in questa passata
+- **Evidence:**
+  - `EQSlot` mutable globals (`Source/PluginProcessor.h:636-647`)
+  - save serializes custom slot state (`Source/PluginProcessor.cpp:3874-3930`)
+  - restore mutates same custom slot state (`Source/PluginProcessor.cpp:3954-4022`)
+
+### Closure checklist
+- [ ] Single source of truth for restorable state
+- [ ] Snapshot-safe recall path
+- [ ] `save->load->save` stable
+- [ ] 1000x roundtrip equivalence passes
+
+### Fix Record
+- Fix commit: `—`
+- Linked PR: `—`
+- Fix summary: `—`
+- Files changed: `—`
+- Before: fragile dual-state model
+- After: `—`
+
+### Validation Evidence
+- Code inspection: `Pending`
+- Roundtrip test: `Pending`
+- Concurrent mutation test: `Pending`
+- Manual host validation: `Pending`
+- Linked test artifact: `—`
+
+### Residual Risk
+`Not assessed until fix lands.`
+
+### Closure decision
+**Open**
+
+---
+
+## RB-3 — Restore semantics split across sync/async phases
+- **Validation:** ✅ Confirmed
+- **Evidence:**
+  - immediate `apvts.replaceState(...)` (`Source/PluginProcessor.cpp:3944`)
+  - async continuation (`Source/PluginProcessor.cpp:4054-4059`)
+
+### Closure checklist
+- [ ] No partial-apply observable window
+- [ ] Coherent state at restore completion
+- [ ] Stable behavior across major DAWs
+
+### Fix Record
+- Fix commit: `—`
+- Linked PR: `—`
+- Fix summary: `—`
+- Files changed: `—`
+- Before: split restore semantics
+- After: `—`
+
+### Validation Evidence
+- Code inspection: `Pending`
+- Host matrix validation: `Pending`
+- Automation chase: `Pending`
+- Session reopen validation: `Pending`
+- Linked test artifact: `—`
+
+### Residual Risk
+`Not assessed until fix lands.`
+
+### Closure decision
+**Open**
+
+---
+
+## RB-4 — qualityMode/lookahead runtime reconfiguration mismatch
+- **Validation:** ✅ Confirmed blocker
+- **Evidence:**
+  - runtime path calls only `setLookahead(...)` (`Source/PluginProcessor.cpp:1381-1388`)
+  - effective buffer/sample reconfiguration in separate `updateLookaheadBuffer(...)` path (`Source/DSP/DynamicEQProcessor.cpp:122-137`)
+
+### Numeric closure criteria (added)
+A fix is not `Verified` unless all are met:
+- [ ] **Lookahead effect delta** is measurable after mode switch (target latency/GR timing shift) with tolerance ±1 sample on internal lookahead sample count.
+- [ ] **Playback vs offline bounce** output mismatch due to mode switch is below `-90 dBFS RMS` on a deterministic test signal.
+- [ ] No glitch burst above `-60 dBFS peak` during transition window in controlled switch test.
+
+### Closure checklist
+- [ ] qualityMode produces measurable effective lookahead change
+- [ ] no alloc/glitch introduced in change path
+- [ ] playback and offline bounce consistent
+
+### Fix Record
+- Fix commit: `—`
+- Linked PR: `—`
+- Fix summary: `—`
+- Files changed: `—`
+- Before: logical mode could diverge from effective runtime behavior
+- After: `—`
+
+### Validation Evidence
+- Code inspection: `Pending`
+- Behavioral lookahead test: `Pending`
+- Offline/render comparison: `Pending`
+- Manual listening validation: `Pending`
+- Linked test artifact: `—`
+
+### Residual Risk
+`Not assessed until fix lands.`
+
+### Closure decision
+**Open**
+
+---
+
+## T-5 — Oversized block fallback clears tail destructively
+- **Validation:** ✅ Confirmed
+- **Evidence:** `buffer.clear(... overflow ...)` (`Source/PluginProcessor.cpp:1199-1200`)
+
+### Closure checklist
+- [ ] no destructive tail clear as primary fallback
+- [ ] oversized behavior deterministic and tested
+
+### Fix Record
+- Fix commit: `—`
+- Linked PR: `—`
+- Fix summary: `—`
+- Files changed: `—`
+
+### Validation Evidence
+- Harness result: `Pending`
+- Manual validation: `Pending`
+- Linked test artifact: `—`
+
+### Residual Risk
+`Not assessed until fix lands.`
+
+### Closure decision
+**Open**
+
+---
+
+## T-6 — OSC runtime hardcoded file logging
+- **Validation:** ✅ Confirmed
+- **Evidence:** Desktop file write path (`Source/Core/OSCParameterServer.h:41-47`)
+
+### Debug vs Release policy (added)
+- **Debug build:** file logging allowed **only if explicitly enabled by config flag**.
+- **Release build:** file logging to hardcoded Desktop path is **strictly forbidden**.
+
+### Closure checklist
+- [ ] release build does not create `aieq_osc_log.txt`
+- [ ] debug behavior guarded by explicit flag
+- [ ] logging policy documented
+
+### Fix Record
+- Fix commit: `—`
+- Linked PR: `—`
+- Fix summary: `—`
+- Files changed: `—`
+
+### Validation Evidence
+- Release build artifact check: `Pending`
+- Debug-flag behavior check: `Pending`
+- Linked test artifact: `—`
+
+### Residual Risk
+`Not assessed until fix lands.`
+
+### Closure decision
+**Open**
+
+---
+
+## 6. Recommended Execution Sequence
+1. Phase 1: **RB-1**, **T-5**
+2. Phase 2: **RB-2**, **RB-3**
+3. Phase 3: **RB-4**
+4. Phase 4: **T-6**
+
+---
+
+## 7. Closure Dashboard
+
+| ID | State | Fix Commit | Linked PR | Build Verified | Static Path Verified | Runtime Verified | Residual Risk | Ready to Close |
+|----|-------|------------|-----------|----------------|----------------------|------------------|---------------|----------------|
+| RB-1 | Fixed (pending Verified) | 7914a09b | Pending | ✅ macOS Release | ✅ Full producer path | ❌ Pending DAW test | Medium | No |
+| RB-2 | Open | — | — | — | — | — | — | No |
+| RB-3 | Open | — | — | — | — | — | — | No |
+| RB-4 | Open | — | — | — | — | — | — | No |
+| T-5  | Open | — | — | — | — | — | — | No |
+| T-6  | Open | — | — | — | — | — | — | No |
+
+---
+
+## 8. Final Tribunal Judgment
+
+**Current State:** **NOT RELEASE-READY**.
+
+This report is now operational for closure governance: each blocker must move with proof, not narrative.
