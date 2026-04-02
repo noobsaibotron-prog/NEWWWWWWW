@@ -90,9 +90,11 @@ Additionally required:
 
 ## 3.1 Programmatic Integration Validation (2026-04-02)
 
-**Test harness commit:** `a80f8d0f`
-**File:** `Source/Tests/RBValidationTest.cpp`
+**Test harness commits:** `a80f8d0f` (stability), `b4afd5b7` (behavioral)
+**Files:** `Source/Tests/RBValidationTest.cpp`, `Source/Tests/RB4BehavioralTest.cpp`
 **Runner:** `AIEqualizerPro_IntegrationTests --category=Integration`
+
+### Stability & roundtrip tests
 
 | Test | RB | Description | Result |
 |------|-----|-------------|--------|
@@ -102,15 +104,25 @@ Additionally required:
 | `testRB4_QualityModeSwitchDuringProcess` | RB-4 | 50 ZL↔HQ toggles interleaved with processBlock | **PASS** |
 | `testRB4_ZeroLatencyToHQRoundTrip` | RB-4 | Save in HQ, restore into ZL processor, verify qualityMode=1 restored and processBlock runs | **PASS** |
 
+### Behavioral / numerical tests (RB-4 specific)
+
+| Test | Evidence | Result |
+|------|----------|--------|
+| `testLookaheadReducesTransientOvershoot` | ZL peak=3.50, HQ peak=1.53 → **-7.21 dB** reduction on step transient | **PASS** |
+| `testLookaheadSamplesActuallyChange` | ZL and HQ impulse responses differ (delay path active) | **PASS** |
+| `testRuntimeSwitchChangesProcessing` | RMS ZL=2.09 → HQ=0.04 after runtime switch (not a no-op) | **PASS** |
+
 **What this proves:**
 - Slot protection (RB-2) holds under rapid concurrent switching + serialization round-trip
 - Synchronous restore (RB-3) delivers coherent state immediately, with no async gap
 - Quality mode switch (RB-4) survives stress toggle and save/load without crash
+- Lookahead (RB-4) produces a real, measurable DSP effect: 7.21 dB transient peak reduction
+- Runtime switch (RB-4) is not a no-op: output changes measurably after ZL→HQ switch
 
 **What this does not yet prove:**
 - RB-2: full equivalence / bitwise roundtrip stability under stricter criteria
 - RB-3: host-side restore behavior (host-specific callback ordering)
-- RB-4: numerical correctness of lookahead effect (measurable latency/GR timing delta)
+- RB-4: offline/render comparison, manual listening validation
 
 **Governance note:** These results are strong validation evidence but do not constitute automatic promotion to Verified. Governance decision remains pending explicit review.
 
@@ -317,10 +329,13 @@ A fix is not `Verified` unless all are met:
 - Build: `Pass` — compiles clean (no new warnings)
 - Mode-switch stress test: `Pass` — 50 ZL↔HQ toggles interleaved with processBlock, zero crash (`a80f8d0f`)
 - Save/load round-trip: `Pass` — HQ mode persists after restore into fresh processor (`a80f8d0f`)
-- Behavioral lookahead test: `Pending` — numerical verification of lookahead effect delta not yet done
+- Behavioral lookahead test: `Pass` — deterministic numerical verification (`b4afd5b7`):
+  - Transient overshoot: HQ peak 7.21 dB lower than ZL (lookahead pre-applies GR)
+  - Impulse response: ZL and HQ outputs differ (delay path active)
+  - Runtime switch: RMS changes from 2.09 (ZL) to 0.04 (HQ) after mode switch
 - Offline/render comparison: `Pending`
 - Manual listening validation: `Pending`
-- Linked test artifact: `Source/Tests/RBValidationTest.cpp`
+- Linked test artifacts: `Source/Tests/RBValidationTest.cpp`, `Source/Tests/RB4BehavioralTest.cpp`
 
 ### Residual Risk
 - `lookaheadBuffer.clear()` in `setLookahead()` zeroes the entire pre-allocated buffer (max 20ms worth), which may cause a brief transient silence on the lookahead channel during mode switch. This is acceptable — the alternative (partial clear) would require tracking exact valid region, adding complexity for no audible benefit since the crossfade in processBlock masks it.
