@@ -33,6 +33,8 @@ public:
         testActiveSlotInvariance();
         testCrossInstanceEquivalence();
         testFullParameterSaturation();
+        testSoak250Cycles();
+        testRandomizedSoak();
     }
 
 private:
@@ -433,6 +435,134 @@ private:
         if (match)
             logMessage("  Saturated XML size: " + juce::String(xml1.length()) +
                        " chars — identical after roundtrip");
+    }
+
+    // ── Test 6: 250-cycle soak ───────────────────────────────────────────
+    void testSoak250Cycles()
+    {
+        beginTest("RB-2 Soak: 250 consecutive save/load cycles — zero drift");
+
+        AIEqualizerAudioProcessor proc;
+        proc.prepareToPlay(48000.0, 512);
+        auto& apvts = proc.getAPVTS();
+
+        configureAll4Slots(proc, apvts);
+
+        // Capture reference
+        juce::MemoryBlock blob;
+        proc.getStateInformation(blob);
+        auto xmlRef = blobToXmlString(proc, blob);
+
+        int failedCycle = -1;
+        for (int cycle = 0; cycle < 250; ++cycle)
+        {
+            proc.setStateInformation(blob.getData(), static_cast<int>(blob.getSize()));
+
+            juce::MemoryBlock newBlob;
+            proc.getStateInformation(newBlob);
+            auto xmlCurrent = blobToXmlString(proc, newBlob);
+
+            if (xmlCurrent != xmlRef)
+            {
+                failedCycle = cycle;
+                compareXml(xmlRef, xmlCurrent, "Soak cycle " + juce::String(cycle));
+                break;
+            }
+            blob = newBlob;
+        }
+
+        expect(failedCycle == -1,
+               failedCycle >= 0
+                   ? "Drift detected at cycle " + juce::String(failedCycle)
+                   : "");
+
+        if (failedCycle == -1)
+            logMessage("  250 cycles: XML stable (" +
+                       juce::String(xmlRef.length()) + " chars, zero drift)");
+    }
+
+    // ── Test 7: 50 random seeds, each with roundtrip ─────────────────────
+    void testRandomizedSoak()
+    {
+        beginTest("RB-2 Soak: 50 randomized configurations — each roundtrip stable");
+
+        juce::Random rng(42); // deterministic seed
+        int failures = 0;
+
+        for (int seed = 0; seed < 50; ++seed)
+        {
+            AIEqualizerAudioProcessor proc;
+            proc.prepareToPlay(48000.0, 512);
+            auto& apvts = proc.getAPVTS();
+
+            // Random number of active bands (1-8)
+            const int numBands = 1 + rng.nextInt(8);
+            proc.setNumActiveBands(numBands);
+
+            // Random band config
+            for (int i = 0; i < numBands; ++i)
+            {
+                AIEqualizerAudioProcessor::BandState b;
+                b.frequency = 20.0f + rng.nextFloat() * 19980.0f;
+                b.gain      = -12.0f + rng.nextFloat() * 24.0f;
+                b.q         = 0.1f + rng.nextFloat() * 9.9f;
+                b.type      = rng.nextInt(4);
+                b.enabled   = rng.nextBool();
+                b.solo      = (rng.nextInt(10) == 0); // rare
+                b.dynMode   = rng.nextInt(3);
+                b.dynThreshold = -60.0f + rng.nextFloat() * 60.0f;
+                b.dynRatio  = 1.0f + rng.nextFloat() * 19.0f;
+                b.dynAttack = 0.1f + rng.nextFloat() * 99.9f;
+                b.dynRelease = 1.0f + rng.nextFloat() * 499.0f;
+                b.dynRange  = 0.0f + rng.nextFloat() * 48.0f;
+                b.dynKnee   = rng.nextFloat() * 12.0f;
+                proc.setBandState(i, b);
+            }
+
+            // Random globals
+            setFloat(apvts, "outputGain", -12.0f + rng.nextFloat() * 24.0f);
+            setFloat(apvts, "dryWet", rng.nextFloat() * 100.0f);
+            setBool(apvts, "dynEqEnabled", rng.nextBool());
+            setFloat(apvts, "dynEqMix", rng.nextFloat() * 100.0f);
+            setBool(apvts, "dynAutoMakeup", rng.nextBool());
+            setChoice(apvts, "qualityMode", rng.nextInt(2));
+            setChoice(apvts, "phaseMode", rng.nextInt(3));
+            setChoice(apvts, "oversamplingFactor", rng.nextInt(3));
+
+            // Random active slot
+            const int slotIdx = rng.nextInt(4);
+            const AIEqualizerAudioProcessor::ABState slots[] = {
+                AIEqualizerAudioProcessor::ABState::A,
+                AIEqualizerAudioProcessor::ABState::B,
+                AIEqualizerAudioProcessor::ABState::C,
+                AIEqualizerAudioProcessor::ABState::D
+            };
+            if (slotIdx > 0)
+                proc.setABState(slots[slotIdx]);
+
+            // save₁
+            juce::MemoryBlock blob1;
+            proc.getStateInformation(blob1);
+            auto xml1 = blobToXmlString(proc, blob1);
+
+            // load → save₂
+            proc.setStateInformation(blob1.getData(), static_cast<int>(blob1.getSize()));
+            juce::MemoryBlock blob2;
+            proc.getStateInformation(blob2);
+            auto xml2 = blobToXmlString(proc, blob2);
+
+            if (xml1 != xml2)
+            {
+                compareXml(xml1, xml2, "Seed " + juce::String(seed));
+                ++failures;
+            }
+        }
+
+        expect(failures == 0,
+               juce::String(failures) + " of 50 random seeds failed roundtrip");
+
+        if (failures == 0)
+            logMessage("  50 random seeds: all roundtrips stable");
     }
 };
 
