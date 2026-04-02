@@ -1507,6 +1507,18 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     // Checkpoint 0 — INPUT (before any processing)
     checkClicks(0);
 
+    // RT heartbeat — proves logFromRTThread→SPSCQueue→flushRTLogs chain end-to-end
+    {
+        rtHeartbeatCounter += blockSamples;
+        const int sr = static_cast<int>(currentSampleRate.load(std::memory_order_relaxed));
+        if (sr > 0 && rtHeartbeatCounter >= sr * 5) // every ~5 seconds
+        {
+            rtHeartbeatCounter = 0;
+            AIEQLogger::getInstance().logFromRTThread(
+                AIEQLogger::Level::Info, "RT heartbeat", "AudioThread");
+        }
+    }
+
     // Feed pre-EQ spectrum analyzer (lock-free, FFT deferred to GUI)
     spectrumAnalyzer.pushSamples(buffer);
     preEqSpectrumFifo.pushStereoMix(buffer);  // metrological pipeline FIFO

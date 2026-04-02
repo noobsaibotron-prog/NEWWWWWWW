@@ -708,7 +708,10 @@ private:
     // 0=input 1=preEQ 2=postEQ 3=crossfade 4=output 5=bypass
     std::atomic<uint8_t>  clickLastCheckpoint { 0 };
     float                 clickPrevSample { 0.0f }; // last sample of previous block (ch0)
-    
+
+    // RT heartbeat — accumulates samples, fires logFromRTThread every ~5s
+    int                   rtHeartbeatCounter { 0 };
+
     //==============================================================================
     // Cached Parameter Pointers (avoid map lookups in processBlock)
     //==============================================================================
