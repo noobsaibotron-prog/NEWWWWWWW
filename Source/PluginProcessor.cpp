@@ -1002,10 +1002,13 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     linearPhaseDelayWritePos = 0;
 
     // Apply quality/latency mode to dynamic EQ lookahead
+    // RB-4 FIX: prepare() already pre-allocates for max 20ms and setLookahead()
+    // updates lookaheadSamples + clears buffer.  Do NOT call updateLookaheadBuffer()
+    // afterwards — it would shrink/deallocate the pre-allocated buffer when lookahead=0,
+    // breaking the runtime switch path (Zero Latency → HQ).
     int qualityMode = static_cast<int>(apvts.getRawParameterValue("qualityMode")->load());
     float lookaheadMs = (qualityMode == 1) ? 5.0f : 0.0f; // HQ: 5ms lookahead, Zero-latency: 0ms
     dynamicEQProcessor.setLookahead(lookaheadMs);
-    dynamicEQProcessor.updateLookaheadBuffer(sampleRate, samplesPerBlock, getTotalNumInputChannels());
     qualityModeCached = qualityMode;
     aiEngine.prepare(sampleRate, samplesPerBlock);
     referenceMatcher.prepare(sampleRate, samplesPerBlock);
