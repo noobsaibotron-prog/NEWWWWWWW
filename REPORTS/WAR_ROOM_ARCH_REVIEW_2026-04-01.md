@@ -143,10 +143,19 @@ Additionally required:
   - Architecture: universal (arm64 + x86_64)
 - **`juce::Time::getMillisecondCounterHiRes()` in producer path**: `Acceptable`
   - Used in `RTLogMessage.timestamp` assignment — on macOS this calls `mach_absolute_time()` which is vDSO/lock-free. Not a blocking syscall.
-- **Host/runtime validation**: `Pending`
-  - No DAW host available in this environment
-  - Required: load VST3 in Ableton/Logic, trigger oversized block or normal playback, verify no RT glitch and log appears after flush
-- Linked test artifact: `Pending`
+- **Host/runtime DAW smoke test (2026-04-02 14:10–14:20)**: `Executed — C2 Inconclusive`
+  - Build: `7914a09b`, installed at `/Library/Audio/Plug-Ins/VST3/AI Equalizer Pro.vst3`, timestamp `2 Apr 14:06`
+  - Host: Ableton Live, macOS
+  - Log path discovered: `~/Library/Caches/AI Equalizer Pro/AIEqualizerPro.log` (not `/tmp/` as originally assumed)
+  - Log confirms correct build loaded: `"ML model loaded: /Library/Audio/Plug-Ins/VST3/..."` at `14:10:06` and `14:17:59`
+  - **C1 (Stability)**: `Pass` — no crash, no freeze during 45s playback + buffer size change
+  - **C3 (No lock-induced dropout)**: `Pass` — no periodic dropout observed
+  - **C2 (RT log evidence)**: `Inconclusive` — zero `CLICK` and zero `BlockClamp` lines in log after: 30s normal playback, buffer size change during playback, rapid +24 dB gain sweep + bypass toggle
+  - Root cause of C2 inconclusive: blockClamp requires host to send oversized block (Ableton did not); click detector threshold (0.25 linear) not exceeded by JUCE-smoothed parameter changes
+  - Non-RT `log()` path confirmed working (INFO lines from prepare/loadFactoryPresets present)
+  - **Conclusion**: RT producer path (`logFromRTThread → SPSCQueue::tryPush`) was never invoked during test — no positive or negative runtime evidence for the RT-specific path
+- **Log path correction**: runtime log is at `~/Library/Caches/AI Equalizer Pro/AIEqualizerPro.log`, not `/tmp/AIEqualizerPro.log`. JUCE `tempDirectory` on macOS resolves to user Caches, not `/tmp/`.
+- Linked test artifact: `Pending` (requires dedicated stress harness to trigger RT path)
 
 ### Residual Risk
 | Risk | Probability | Impact | Mitigation |
@@ -157,7 +166,7 @@ Additionally required:
 | Other `AIEQ_LOG_WARNING` calls in non-blockClamp RT paths | Not assessed in this pass | Unknown | Full RT-path audit recommended for remaining issues |
 
 ### Closure decision
-**Fixed (pending Verified)** — all static/build checks pass. Promote to `Verified` after successful DAW runtime test confirms no RT stall in oversized-block path.
+**Fixed (pending Verified)** — all static/build checks pass. DAW smoke test passed C1+C3 but C2 inconclusive (RT path not triggered). Promote to `Verified` only when at least one `CLICK` or `BlockClamp` line appears in runtime log, proving the `logFromRTThread → SPSCQueue → flushRTLogs` chain works end-to-end under real host conditions.
 
 ---
 
@@ -343,7 +352,7 @@ A fix is not `Verified` unless all are met:
 
 | ID | State | Fix Commit | Linked PR | Build Verified | Static Path Verified | Runtime Verified | Residual Risk | Ready to Close |
 |----|-------|------------|-----------|----------------|----------------------|------------------|---------------|----------------|
-| RB-1 | Fixed (pending Verified) | 7914a09b | Pending | ✅ macOS Release | ✅ Full producer path | ❌ Pending DAW test | Medium | No |
+| RB-1 | Fixed (pending Verified) | 7914a09b | Pending | ✅ macOS Release | ✅ Full producer path | ⚠️ C1+C3 Pass, C2 Inconclusive | Medium | No |
 | RB-2 | Open | — | — | — | — | — | — | No |
 | RB-3 | Open | — | — | — | — | — | — | No |
 | RB-4 | Open | — | — | — | — | — | — | No |
