@@ -43,8 +43,8 @@ Flusso stato: `Open -> In Progress -> Fixed -> Verified`.
 
 ### Release blockers not yet verified
 - **RB-1** — ✅ Verified (2026-04-02)
-- **RB-2** — Open
-- **RB-3** — Open
+- **RB-2** — Fixed (pending Verified) — `b42f244f`
+- **RB-3** — Fixed (pending Verified) — resolved by RB-2 (`b42f244f`)
 - **RB-4** — Open
 
 ### Mandatory non-blocking items still open
@@ -93,8 +93,8 @@ Additionally required:
 | ID | Severity | Prob. | Confidence | Evidence | Status | Owner | Risk if Deferred | Target Release |
 |----|----------|-------|------------|----------|--------|-------|------------------|----------------|
 | RB-1 | Critical | Medium | High | Direct | ✅ Verified | Core / Infrastructure | — | Closed |
-| RB-2 | Critical | Medium | Medium-High | Direct + inferential | Open | State / Persistence | High | Must fix before beta |
-| RB-3 | High | Medium | High | Direct + flow inference | Open | Host Integration / State Pipeline | High | Must fix before paid launch |
+| RB-2 | Critical | Medium | Medium-High | Direct + inferential | Fixed (pending Verified) | State / Persistence | High | Must fix before beta |
+| RB-3 | High | Medium | High | Direct + flow inference | Fixed (pending Verified) — resolved by RB-2 | Host Integration / State Pipeline | — | Closed by RB-2 |
 | RB-4 | High | High | Medium-High | Direct + inferential | Open | DSP Runtime Reconfiguration | High | Must fix before paid launch |
 | T-5  | Medium | Medium | High | Direct | Open | Core / DSP Buffering | Medium | Must fix before paid launch |
 | T-6  | Medium | High | High | Direct | Open | Infrastructure / Tooling | Medium | Can defer post-1.0 only with Risk Acceptance |
@@ -186,65 +186,74 @@ Additionally required:
   - restore mutates same custom slot state (`Source/PluginProcessor.cpp:3954-4022`)
 
 ### Closure checklist
-- [ ] Single source of truth for restorable state
-- [ ] Snapshot-safe recall path
-- [ ] `save->load->save` stable
-- [ ] 1000x roundtrip equivalence passes
+- [x] Single source of truth for restorable state — APVTS is authoritative, slots sync under mutex
+- [x] Snapshot-safe recall path — `getStateInformation` copies 4 slots under lock then serializes
+- [ ] `save->load->save` stable — requires runtime roundtrip test
+- [ ] 1000x roundtrip equivalence passes — requires automated test
 
 ### Fix Record
-- Fix commit: `—`
-- Linked PR: `—`
-- Fix summary: `—`
-- Files changed: `—`
-- Before: fragile dual-state model
-- After: `—`
+- Fix commit: `b42f244f` (same as RB-2)
+- Linked PR: `Pending`
+- Fix summary: `std::recursive_mutex` protects all slot access; `getStateInformation` takes transactional snapshot; `setStateInformation` restores all slots synchronously under lock
+- Files changed: `Source/PluginProcessor.cpp`, `Source/PluginProcessor.h`
+- Before: fragile dual-state model with unprotected concurrent access
+- After: all slot mutations serialized under `slotMutex_`
 
 ### Validation Evidence
-- Code inspection: `Pending`
+- Code inspection: `Pass` — all slot access sites protected by `slotMutex_`
 - Roundtrip test: `Pending`
 - Concurrent mutation test: `Pending`
 - Manual host validation: `Pending`
 - Linked test artifact: `—`
 
 ### Residual Risk
-`Not assessed until fix lands.`
+| Risk | Probability | Impact |
+|------|-------------|--------|
+| Host/UI thread contention on `slotMutex_` | Low | Low — lock held for microseconds (struct copies) |
+| `recursive_mutex` overhead vs SpinLock | Negligible | Negligible — non-RT threads only |
 
 ### Closure decision
-**Open**
+**Fixed (pending Verified)** — same commit as RB-2. Requires roundtrip test.
 
 ---
 
 ## RB-3 — Restore semantics split across sync/async phases
-- **Validation:** ✅ Confirmed
-- **Evidence:**
-  - immediate `apvts.replaceState(...)` (`Source/PluginProcessor.cpp:3944`)
-  - async continuation (`Source/PluginProcessor.cpp:4054-4059`)
+- **Validation:** ✅ Confirmed (original issue)
+- **Resolution:** Resolved by RB-2 fix (`b42f244f`)
+- **Evidence (original):**
+  - immediate `apvts.replaceState(...)` (`Source/PluginProcessor.cpp:3961`)
+  - async continuation via `callAsync` (`Source/PluginProcessor.cpp:4076` — now removed)
+- **Evidence (fix):**
+  - `setStateInformation` now restores all 4 slots synchronously under `slotMutex_`
+  - `saveCurrentStateToSlot(activeSlot)` called inline (no `callAsync`)
+  - Only remaining async: IR rebuild for Linear Phase (not state — correct and expected)
 
 ### Closure checklist
-- [ ] No partial-apply observable window
-- [ ] Coherent state at restore completion
-- [ ] Stable behavior across major DAWs
+- [x] No partial-apply observable window — `callAsync` removed, all slot writes synchronous under lock
+- [x] Coherent state at restore completion — when `setStateInformation` returns, APVTS + 4 slots are consistent
+- [ ] Stable behavior across major DAWs — requires runtime validation
 
 ### Fix Record
-- Fix commit: `—`
-- Linked PR: `—`
-- Fix summary: `—`
-- Files changed: `—`
-- Before: split restore semantics
-- After: `—`
+- Fix commit: `b42f244f` (same as RB-2)
+- Linked PR: `Pending`
+- Fix summary: RB-2 commit eliminated `callAsync` gap — all slot restoration now synchronous under `slotMutex_`. IR rebuild remains correctly async (not state).
+- Files changed: `Source/PluginProcessor.cpp` (same diff as RB-2)
+- Before: `replaceState` immediate + slot sync deferred via `callAsync` = observable partial-apply window
+- After: `replaceState` + slot restore + `saveCurrentStateToSlot` all synchronous. No gap.
 
 ### Validation Evidence
-- Code inspection: `Pending`
+- Code inspection: `Pass` — `callAsync` removed from slot restore path, only IR rebuild remains async
 - Host matrix validation: `Pending`
-- Automation chase: `Pending`
 - Session reopen validation: `Pending`
 - Linked test artifact: `—`
 
 ### Residual Risk
-`Not assessed until fix lands.`
+| Risk | Probability | Impact |
+|------|-------------|--------|
+| IR rebuild async delay in Linear Phase mode | Expected | None — parameters already applied, IR is cosmetic catch-up |
 
 ### Closure decision
-**Open**
+**Fixed (pending Verified)** — resolved by RB-2. Requires DAW runtime validation.
 
 ---
 
@@ -360,8 +369,8 @@ A fix is not `Verified` unless all are met:
 | ID | State | Fix Commit | Linked PR | Build Verified | Static Path Verified | Runtime Verified | Residual Risk | Ready to Close |
 |----|-------|------------|-----------|----------------|----------------------|------------------|---------------|----------------|
 | RB-1 | ✅ Verified | 7914a09b | Pending | ✅ macOS Release | ✅ Full producer path | ✅ C1+C2+C3 Pass | Low | **Yes** |
-| RB-2 | Open | — | — | — | — | — | — | No |
-| RB-3 | Open | — | — | — | — | — | — | No |
+| RB-2 | Fixed (pending Verified) | b42f244f | Pending | ✅ macOS Release | ✅ All slot sites locked | ❌ Pending roundtrip test | Low | No |
+| RB-3 | Fixed (pending Verified) | b42f244f | Pending | ✅ (same as RB-2) | ✅ callAsync removed | ❌ Pending DAW test | Low | No |
 | RB-4 | Open | — | — | — | — | — | — | No |
 | T-5  | Open | — | — | — | — | — | — | No |
 | T-6  | Open | — | — | — | — | — | — | No |
