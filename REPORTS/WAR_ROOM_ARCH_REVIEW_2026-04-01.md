@@ -18,7 +18,7 @@
 - Original review branch: `work`
 - Shared validation branch for RB-1 closure: `review/codex-2026-04-01`
 - Generated on: `2026-04-01`
-- Last updated: `2026-04-02` (RB-1 validation pass)
+- Last updated: `2026-04-02` (RB-4 fixed)
 
 > Anchoring note: the first SHA is the code snapshot audited for findings; subsequent SHAs track report-document lineage updates.
 
@@ -45,7 +45,7 @@ Flusso stato: `Open -> In Progress -> Fixed -> Verified`.
 - **RB-1** — ✅ Verified (2026-04-02)
 - **RB-2** — Fixed (pending Verified) — `b42f244f`
 - **RB-3** — Fixed (pending Verified) — resolved by RB-2 (`b42f244f`)
-- **RB-4** — Open
+- **RB-4** — Fixed (pending Verified) — `7a285d09`
 
 ### Mandatory non-blocking items still open
 - **T-5** — Oversized block fallback clears tail destructively
@@ -275,25 +275,27 @@ A fix is not `Verified` unless all are met:
 - [ ] playback and offline bounce consistent
 
 ### Fix Record
-- Fix commit: `—`
-- Linked PR: `—`
-- Fix summary: `—`
-- Files changed: `—`
-- Before: logical mode could diverge from effective runtime behavior
-- After: `—`
+- Fix commit: `7a285d09`
+- Linked PR: `—` (will be part of review/codex-2026-04-01 PR)
+- Fix summary: Two-part fix: (1) `prepare()` pre-allocates lookahead buffer for max 20ms so runtime changes never allocate on the audio thread; (2) `setLookahead()` now also computes and stores `lookaheadSamples` from `currentSampleRate`, clears the pre-allocated buffer, and resets `lookaheadWritePos`. All operations are RT-safe (atomic store + memset + int write).
+- Files changed: `Source/DSP/DynamicEQProcessor.cpp`
+- Before: `setLookahead()` only stored the ms atomic — `lookaheadSamples` stayed stale from `prepare()`, so switching qualityMode at runtime had no actual effect on dynamic EQ lookahead timing.
+- After: `setLookahead()` atomically updates both `lookaheadMs` and `lookaheadSamples`, clears the ring buffer, and resets writePos. processBlock sees the new sample count immediately.
 
 ### Validation Evidence
-- Code inspection: `Pending`
-- Behavioral lookahead test: `Pending`
+- Code inspection: `Pass` — `setLookahead()` now updates all derived state; `prepare()` pre-allocates for worst case (20ms)
+- Build: `Pass` — compiles clean (no new warnings)
+- Behavioral lookahead test: `Pending` (DAW runtime test needed)
 - Offline/render comparison: `Pending`
 - Manual listening validation: `Pending`
 - Linked test artifact: `—`
 
 ### Residual Risk
-`Not assessed until fix lands.`
+- `lookaheadBuffer.clear()` in `setLookahead()` zeroes the entire pre-allocated buffer (max 20ms worth), which may cause a brief transient silence on the lookahead channel during mode switch. This is acceptable — the alternative (partial clear) would require tracking exact valid region, adding complexity for no audible benefit since the crossfade in processBlock masks it.
+- `setLookahead()` is called from processBlock (audio thread) — all operations are RT-safe: atomic stores, memset on pre-allocated memory, int assignment.
 
 ### Closure decision
-**Open**
+**Fixed** — pending DAW runtime verification
 
 ---
 
