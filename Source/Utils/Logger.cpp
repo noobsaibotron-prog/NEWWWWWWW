@@ -28,7 +28,7 @@ AIEQLogger::~AIEQLogger()
 
 void AIEQLogger::log(Level level, const juce::String& message, const juce::String& component)
 {
-    if (level < minLevel)
+    if (level < minLevel.load(std::memory_order_relaxed))
         return;
     
     std::lock_guard<std::mutex> lock(logMutex);
@@ -95,7 +95,9 @@ juce::String AIEQLogger::getTimestamp() const
 
 void AIEQLogger::logFromRTThread(Level level, const char* msg, const char* component) noexcept
 {
-    if (level < minLevel || msg == nullptr)
+    if (msg == nullptr)
+        return;
+    if (level < minLevel.load(std::memory_order_relaxed))
         return;
 
     RTLogMessage m {};

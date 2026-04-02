@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <complex>
 #include <cmath>
+#include <cstdio>
 
 namespace
 {
@@ -1190,9 +1191,13 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     if (inputBlockSamples > blockSamples)
     {
         blockClampEvents.fetch_add(1, std::memory_order_relaxed);
-        AIEQ_LOG_WARNING("processBlock: host delivered " + juce::String(inputBlockSamples)
-                         + " samples, pre-allocated max is " + juce::String(preallocatedMaxSamples)
-                         + ". Silencing overflow region.");
+        {
+            // RT-SAFE: use lock-free logger queue (no mutex/file I/O in audio thread)
+            char msg[128];
+            std::snprintf(msg, sizeof(msg), "BlockClamp host=%d max=%d",
+                          inputBlockSamples, preallocatedMaxSamples);
+            AIEQLogger::getInstance().logFromRTThread(AIEQLogger::Level::Warning, msg, "BlockClamp");
+        }
        #if JUCE_DEBUG
         jassertfalse; // host is sending blocks larger than maximumBlockSize - investigate
        #endif

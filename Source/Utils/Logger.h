@@ -80,7 +80,7 @@ public:
     // Configuration
     void setLogToFile(bool enable) { logToFile = enable; }
     void setLogToConsole(bool enable) { logToConsole = enable; }
-    void setMinLevel(Level level) { minLevel = level; }
+    void setMinLevel(Level level) { minLevel.store(level, std::memory_order_relaxed); }
     void setLogFilePath(const juce::String& path) { logFilePath = path; }
     
     // Get recent log entries (for debugging UI)
@@ -105,7 +105,7 @@ private:
     mutable std::mutex logMutex;
     bool logToFile = true;
     bool logToConsole = true;
-    Level minLevel = Level::Info;
+    std::atomic<Level> minLevel { Level::Info };
     juce::String logFilePath;
     std::ofstream logFile;
     std::vector<juce::String> recentLogs;
