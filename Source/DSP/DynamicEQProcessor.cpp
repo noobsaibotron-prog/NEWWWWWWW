@@ -76,15 +76,18 @@ void DynamicEQProcessor::prepare(double sampleRate, int samplesPerBlock, int cha
         state.scQApplied = smoothedSidechainQ[i].getCurrentValue();
     }
     
-    // Prepare lookahead buffer
-    const float laMsVal = lookaheadMs.load(std::memory_order_relaxed);
-    const int laSamples = static_cast<int>((laMsVal / 1000.0f) * sampleRate);
-    lookaheadSamples.store(laSamples, std::memory_order_relaxed);
-    
-    if (laSamples > 0)
+    // RB-4 FIX: always allocate lookahead buffer for the maximum possible delay (20ms)
+    // so that runtime mode changes (setLookahead) never need heap allocation.
     {
-        lookaheadBuffer.setSize(channels, laSamples + samplesPerBlock);
+        static constexpr float kMaxLookaheadMs = 20.0f;
+        const int maxLaSamples = static_cast<int>((kMaxLookaheadMs / 1000.0f) * sampleRate);
+        lookaheadBuffer.setSize(channels, maxLaSamples + samplesPerBlock);
         lookaheadBuffer.clear();
+
+        // Set actual current lookahead from the stored ms value
+        const float laMsVal = lookaheadMs.load(std::memory_order_relaxed);
+        const int laSamples = static_cast<int>((laMsVal / 1000.0f) * sampleRate);
+        lookaheadSamples.store(laSamples, std::memory_order_relaxed);
     }
     lookaheadWritePos = 0;
     
@@ -116,7 +119,20 @@ void DynamicEQProcessor::reset()
 //==============================================================================
 void DynamicEQProcessor::setLookahead(float ms)
 {
-    lookaheadMs.store(juce::jlimit(0.0f, 20.0f, ms), std::memory_order_relaxed);
+    const float clamped = juce::jlimit(0.0f, 20.0f, ms);
+    lookaheadMs.store(clamped, std::memory_order_relaxed);
+
+    // RB-4 FIX: also update the derived sample count so processBlock sees the
+    // new value immediately.  The buffer was pre-allocated for max 20 ms in
+    // prepare(), so clear + writePos reset are just memset + int write (RT-safe).
+    const double sr = currentSampleRate.load(std::memory_order_relaxed);
+    if (sr > 0.0)
+    {
+        const int laSamples = static_cast<int>((clamped / 1000.0f) * sr);
+        lookaheadSamples.store(laSamples, std::memory_order_relaxed);
+        lookaheadBuffer.clear();
+        lookaheadWritePos = 0;
+    }
 }
 
 void DynamicEQProcessor::updateLookaheadBuffer(double sampleRate, int samplesPerBlock, int channels)
