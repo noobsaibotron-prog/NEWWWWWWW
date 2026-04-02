@@ -3913,6 +3913,13 @@ void AIEqualizerAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
                 active->bands[static_cast<size_t>(i)] = getBandState(i);
             if (auto* p = apvts.getRawParameterValue("outputGain"))
                 active->outputGain = p->load();
+            // RB-2 FIX: sync all slot-level APVTS fields (same as saveCurrentStateToSlot)
+            if (auto* p = apvts.getRawParameterValue("dynEqEnabled"))
+                active->dynEqEnabled = p->load() > 0.5f;
+            if (auto* p = apvts.getRawParameterValue("dynEqMix"))
+                active->dynEqMix = p->load();
+            if (auto* p = apvts.getRawParameterValue("dynAutoMakeup"))
+                active->dynAutoMakeup = p->load() > 0.5f;
         }
 
         // Copy all 4 slots under the lock → transactional snapshot
