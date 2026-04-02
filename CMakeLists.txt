@@ -1046,6 +1046,7 @@ if(HAVE_JUCE)
         Source/Tests/BandDragContinuityTest.cpp
         Source/Tests/HostSessionClickTest.cpp
         Source/Tests/RBValidationTest.cpp
+        Source/Tests/RB4BehavioralTest.cpp
         Source/Tests/TestMain.cpp
     )
     target_compile_features(AIEqualizerPro_IntegrationTests PRIVATE cxx_std_20)
