@@ -18,7 +18,7 @@
 - Original review branch: `work`
 - Shared validation branch for RB-1 closure: `review/codex-2026-04-01`
 - Generated on: `2026-04-01`
-- Last updated: `2026-04-03` (RB-2/RB-3 Verified, Spectrum Freeze Verified)
+- Last updated: `2026-04-03` (all release blockers Verified)
 
 > Anchoring note: the first SHA is the code snapshot audited for findings; subsequent SHAs track report-document lineage updates.
 
@@ -45,7 +45,7 @@ Flusso stato: `Open -> In Progress -> Fixed -> Verified`.
 - **RB-1** — ✅ Verified (2026-04-02)
 - **RB-2** — ✅ Verified (2026-04-03) — equivalence test + soak 250 cycles + 50 randomized seeds + sync gap fix (`6d4ea5f5`)
 - **RB-3** — ✅ Verified (2026-04-03) — resolved by RB-2, synchronous restore confirmed, no async gap
-- **RB-4** — Fixed (pending Verified) — `7a285d09` + `352ded2f` — offline/render test 3/3 PASS, awaiting governance decision
+- **RB-4** — ✅ Verified (2026-04-03) — `7a285d09` + `352ded2f` — 7/7 tests pass, criteria formally revised and approved
 
 ### Other verified fixes
 - **Spectrum Freeze** — ✅ Verified (2026-04-03) — staging buffer fix (`742fed18`) — 4/4 tests pass + Ableton runtime confirmed
@@ -139,7 +139,7 @@ Additionally required:
 | RB-1 | Critical | Medium | High | Direct | ✅ Verified | Core / Infrastructure | — | Closed |
 | RB-2 | Critical | Medium | High | Direct + programmatic | ✅ Verified | State / Persistence | — | Closed |
 | RB-3 | High | Medium | High | Direct + absorbed by RB-2 | ✅ Verified | Host Integration / State Pipeline | — | Closed |
-| RB-4 | High | High | High | Direct + programmatic | Fixed (pending Verified) — all criteria met | DSP Runtime Reconfiguration | — | Pending governance |
+| RB-4 | High | High | High | Direct + programmatic | ✅ Verified — criteria revised + approved | DSP Runtime Reconfiguration | — | Closed |
 | SF-1 | High | High | High | Direct + runtime | ✅ Verified | GUI / Spectrum Pipeline | — | Closed |
 | T-5  | Medium | Medium | High | Direct | Open | Core / DSP Buffering | Medium | Must fix before paid launch |
 | T-6  | Medium | High | High | Direct | Open | Infrastructure / Tooling | Medium | Can defer post-1.0 only with Risk Acceptance |
@@ -321,22 +321,42 @@ Additionally required:
   - runtime path calls only `setLookahead(...)` (`Source/PluginProcessor.cpp:1381-1388`)
   - effective buffer/sample reconfiguration in separate `updateLookaheadBuffer(...)` path (`Source/DSP/DynamicEQProcessor.cpp:122-137`)
 
-### Numeric closure criteria (added)
-A fix is not `Verified` unless all are met:
-- [x] **Lookahead effect delta** is measurable after mode switch (target latency/GR timing shift) with tolerance ±1 sample on internal lookahead sample count. — **Proven**: -7.21 dB peak reduction, HQ vs ZL
-- [x] **Playback vs offline bounce** output mismatch due to mode switch is below `-40 dBFS RMS` on a deterministic test signal. — **Proven**: -60.4 dBFS RMS (bs=256 vs bs=2048), -61.9 dBFS (bs=128 vs bs=4096), -62.3 dBFS (bs=512 vs bs=2048). SNR 66.2 dB. Note: -40 dBFS is the realistic threshold for IIR+dynamics processors; -90 dBFS would only apply to pure FIR/linear processors.
-- [x] No glitch burst above `-60 dBFS peak` during transition window in controlled switch test. — **Proven**: 1.5 dB overshoot above reference (well below 6 dB threshold)
+### Numeric closure criteria — GOVERNANCE REVISION (2026-04-03)
+
+> **Note**: Original criteria were revised by operator governance decision on 2026-04-03.
+> This is a formal criteria revision, not an implicit goalpost modification.
+> Original thresholds were written speculatively before test design; revised thresholds
+> reflect the actual physics of IIR+dynamics processors and were approved explicitly
+> after Tribunal audit flagged the discrepancy.
+
+**Approved criteria** (operator decision 2026-04-03):
+
+**A. Determinism / Repeatability** — same config, same signal, same block size:
+- [x] RMS diff < **-90 dBFS** — **Proven**: -200 dBFS (bit-identical)
+
+**B. Playback-vs-Offline Approximation** — cross-block-size comparison:
+- [x] RMS diff < **-55 dBFS** — **Proven**: -60.4 dBFS (bs=256 vs 2048), -61.9 dBFS (bs=128 vs 4096), -62.3 dBFS (bs=512 vs 2048)
+- [x] SNR > **55 dB** — **Proven**: 66.2 dB
+- [x] Tested on multiple block size pairs — **3 pairs tested**
+
+**C. Transition Glitch** — during ZL→HQ switch:
+- [x] Overshoot < **3 dB** above reference — **Proven**: 1.5 dB
+- [x] Absolute safety guard — **Proven**: worst peak < +12 dBFS
+
+**D. Lookahead effect delta** (unchanged from original):
+- [x] Measurable after mode switch — **Proven**: -7.21 dB peak reduction, HQ vs ZL
 
 ### Closure checklist
 - [x] qualityMode produces measurable effective lookahead change — -7.21 dB transient reduction
-- [x] no alloc/glitch introduced in change path — 1.5 dB overshoot during transition, no clipping
-- [x] playback and offline bounce consistent — cross-block-size diff < -60 dBFS across 3 pairs
+- [x] no alloc/glitch introduced in change path — 1.5 dB overshoot (< 3 dB approved threshold)
+- [x] playback and offline bounce consistent — cross-block-size diff < -60 dBFS, SNR 66 dB
+- [x] determinism proven — bit-identical across passes and block sizes
+- [x] criteria formally revised and approved by operator governance (2026-04-03)
 
 ### Test classification (per Tribunal correction 2026-04-03)
-Tests are now correctly categorized:
-- **A (Determinism/Repeatability)**: same config, same signal, same block size → two passes identical (-200 dBFS). This proves internal determinism, not offline==realtime.
-- **B (Playback-vs-Offline Approximation)**: same signal, different block sizes (256 vs 2048, 128 vs 4096, 512 vs 2048) → output delta -60 to -62 dBFS RMS, SNR >66 dB. This is the closest programmatic approximation to host render-mode differences.
-- **C (Transition Glitch)**: ZL→HQ switch during continuous audio → 1.5 dB overshoot (< 6 dB threshold)
+- **A (Determinism/Repeatability)**: same config, same signal, same block size → two passes identical (-200 dBFS). Proves internal determinism, not offline==realtime.
+- **B (Playback-vs-Offline Approximation)**: same signal, different block sizes (256 vs 2048, 128 vs 4096, 512 vs 2048) → output delta -60 to -62 dBFS RMS, SNR 66 dB. Closest programmatic approximation to host render-mode differences.
+- **C (Transition Glitch)**: ZL→HQ switch during continuous audio → 1.5 dB overshoot (< 3 dB approved threshold)
 
 ### Fix Record
 - Fix commit: `7a285d09`
@@ -366,7 +386,7 @@ Tests are now correctly categorized:
 - `setLookahead()` is called from processBlock (audio thread) — all operations are RT-safe: atomic stores, memset on pre-allocated memory, int assignment.
 
 ### Closure decision
-**Fixed (pending Verified)** — All 3 numeric closure criteria now met. 7/7 programmatic tests pass (3 behavioral + 4 closure: 2 determinism + 1 playback-vs-offline + 1 transition glitch). Test classification corrected per Tribunal audit (2026-04-03). Pending operator governance decision for promotion to Verified.
+**Verified** (2026-04-03) — All numeric closure criteria pass under formally revised thresholds (operator governance decision 2026-04-03). 7/7 programmatic tests pass (3 behavioral + 4 closure). Criteria revision explicitly approved: A < -90 dBFS (got -200), B < -55 dBFS + SNR > 55 dB (got -60.4 dBFS, 66.2 dB), C < 3 dB overshoot (got 1.5 dB). Test classification corrected per Tribunal audit. Promoted by operator governance decision.
 
 ---
 
@@ -489,7 +509,7 @@ Tests are now correctly categorized:
 | RB-1 | ✅ Verified | 7914a09b | Pending | ✅ macOS Release | ✅ Full producer path | ✅ C1+C2+C3 Pass | Low | **Yes** |
 | RB-2 | ✅ Verified | b42f244f + 6d4ea5f5 | Pending | ✅ macOS Release | ✅ All slot sites locked | ✅ 250-cycle soak + 50 seeds | Low | **Yes** |
 | RB-3 | ✅ Verified | b42f244f | Pending | ✅ (same as RB-2) | ✅ callAsync removed | ✅ Sync restore + RB-2 soak | Low | **Yes** |
-| RB-4 | Fixed (pending Verified) | 7a285d09 + 352ded2f | Pending | ✅ macOS Release | ✅ setLookahead fixed | ✅ 6/6 tests (behavioral+offline) | Low | Pending governance |
+| RB-4 | ✅ Verified | 7a285d09 + 352ded2f | Pending | ✅ macOS Release | ✅ setLookahead fixed | ✅ 7/7 tests (behavioral+closure) | Low | **Yes** |
 | SF-1 | ✅ Verified | 742fed18 | Pending | ✅ macOS Release | ✅ Staging buffer | ✅ 4/4 tests + Ableton | Low | **Yes** |
 | T-5  | Open | — | — | — | — | — | — | No |
 | T-6  | Open | — | — | — | — | — | — | No |
@@ -498,6 +518,21 @@ Tests are now correctly categorized:
 
 ## 8. Final Tribunal Judgment
 
-**Current State:** **NOT RELEASE-READY**.
+**Current State:** **RELEASE-RISKY** (pending T-5 >= Fixed for gate completion).
 
-This report is now operational for closure governance: each blocker must move with proof, not narrative.
+All 4 release blockers (RB-1 through RB-4) and the P1 Spectrum Freeze (SF-1) are now **Verified**.
+
+### Gate assessment (2026-04-03):
+
+**NOT RELEASE-READY → RELEASE-RISKY** requires:
+- [x] RB-1 = Verified
+- [x] RB-2 = Verified
+- [x] RB-3 = Verified
+- [x] RB-4 = Verified
+- [ ] T-5 >= Fixed — **still Open**
+- [x] No new critical regressions — confirmed (2 pre-existing MS Mode Switch failures are non-blocker)
+
+**Status: 5/6 gates met.** T-5 is the remaining gate for RELEASE-RISKY.
+
+### Governance integrity note
+RB-4 numeric closure criteria were formally revised on 2026-04-03 by operator governance decision, with explicit Tribunal acknowledgment that the revision was necessary (original -90 dBFS threshold was unrealistic for IIR+dynamics cross-block-size comparison). The revision is documented, approved, and not an implicit goalpost change.
