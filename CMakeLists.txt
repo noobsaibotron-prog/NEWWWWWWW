@@ -1048,6 +1048,7 @@ if(HAVE_JUCE)
         Source/Tests/RBValidationTest.cpp
         Source/Tests/RB4BehavioralTest.cpp
         Source/Tests/RB2EquivalenceTest.cpp
+        Source/Tests/SpectrumPipelineTest.cpp
         Source/Tests/TestMain.cpp
     )
     target_compile_features(AIEqualizerPro_IntegrationTests PRIVATE cxx_std_20)

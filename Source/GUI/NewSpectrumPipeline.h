@@ -53,6 +53,9 @@ public:
           preFftFrame (fftSize, 0.0f),
           postFftFrame (fftSize, 0.0f)
     {
+        // Pre-allocate staging buffers for partial-pull accumulation
+        preStagingBuffer.resize (fftSize * 2, 0.0f);
+        postStagingBuffer.resize (fftSize * 2, 0.0f);
     }
 
     /** Call once per GUI timer tick. Drains ALL pending hops from the FIFO,
@@ -63,27 +66,44 @@ public:
         const juce::SpinLock::ScopedLockType lock (pipelineLock);
         bool anyNewData = false;
 
-        // -- Pre-EQ path: drain all queued hops --
+        // -- Pre-EQ path: drain FIFO into staging, process hops, repeat --
+        // Staging buffer is smaller than the FIFO, so we loop: drain → process hops → drain more
         static constexpr int kMaxHopsPerTick = 16;  // safety cap
-        for (int i = 0; i < kMaxHopsPerTick; ++i)
         {
-            if (! processOneFIFO (preEqFIFO, *preCore, *preMapper, preLogMapper,
-                                  inputBuffer, overlapBuffer, preFftFrame, prePixelDB, displayWidthPixels))
-                break;
-            anyNewData = true;
+            int preHops = 0;
+            while (preHops < kMaxHopsPerTick)
+            {
+                drainFIFOToStaging (preEqFIFO, preStagingBuffer, preStagingCount, stats.pre);
+                if (! processOneHopFromStaging (preStagingBuffer, preStagingCount,
+                                                 *preCore, *preMapper, preLogMapper,
+                                                 overlapBuffer, preFftFrame, prePixelDB, displayWidthPixels))
+                    break;
+                anyNewData = true;
+                ++stats.pre.hopsCompleted;
+                ++preHops;
+            }
         }
 
-        // -- Post-EQ path: drain all queued hops --
-        for (int i = 0; i < kMaxHopsPerTick; ++i)
+        // -- Post-EQ path: same pattern --
         {
-            if (! processOneFIFO (postEqFIFO, *postCore, *postMapper, postLogMapper,
-                                  postInputBuffer, postOverlapBuffer, postFftFrame, postPixelDB, displayWidthPixels))
-                break;
-            anyNewData = true;
+            int postHops = 0;
+            while (postHops < kMaxHopsPerTick)
+            {
+                drainFIFOToStaging (postEqFIFO, postStagingBuffer, postStagingCount, stats.post);
+                if (! processOneHopFromStaging (postStagingBuffer, postStagingCount,
+                                                 *postCore, *postMapper, postLogMapper,
+                                                 postOverlapBuffer, postFftFrame, postPixelDB, displayWidthPixels))
+                    break;
+                anyNewData = true;
+                ++stats.post.hopsCompleted;
+                ++postHops;
+            }
         }
 
         if (anyNewData)
             ++version;
+        else
+            ++stats.noUpdateTicks;
 
         return anyNewData;
     }
@@ -96,6 +116,34 @@ public:
 
     /** Version counter for cache invalidation. */
     uint64_t getVersion() const noexcept { return version; }
+
+    // ── Instrumentation ─────────────────────────────────────────────────
+    struct FIFOStats
+    {
+        uint64_t samplesPulled   = 0;  // total samples pulled from FIFO
+        uint64_t samplesStaged   = 0;  // total samples accumulated in staging
+        uint64_t hopsCompleted   = 0;  // total hops successfully processed
+        uint64_t backlogPeak     = 0;  // peak staging count observed
+    };
+
+    struct PipelineStats
+    {
+        FIFOStats pre;
+        FIFOStats post;
+        uint64_t  noUpdateTicks = 0;   // ticks where no hop was completed (freeze indicator)
+    };
+
+    PipelineStats getStats() const noexcept
+    {
+        const juce::SpinLock::ScopedLockType lock (pipelineLock);
+        return stats;
+    }
+
+    void resetStats() noexcept
+    {
+        const juce::SpinLock::ScopedLockType lock (pipelineLock);
+        stats = {};
+    }
 
     /** Update FFT resolution. Call from message thread.
      *  SpinLock guarantees this never executes concurrently with process(). */
@@ -124,6 +172,12 @@ public:
         postOverlapBuffer.assign (fftSize, 0.0f);
         preFftFrame.assign (fftSize, 0.0f);
         postFftFrame.assign (fftSize, 0.0f);
+
+        // Re-allocate staging buffers and reset counts
+        preStagingBuffer.assign (fftSize * 2, 0.0f);
+        postStagingBuffer.assign (fftSize * 2, 0.0f);
+        preStagingCount = 0;
+        postStagingCount = 0;
     }
 
     /** Update display ballistics (speed setting). */
@@ -156,39 +210,86 @@ private:
     // Output: per-pixel dB values
     std::vector<float> prePixelDB, postPixelDB;
 
+    // ── Staging buffers: accumulate partial FIFO pulls ──────────────────
+    // These prevent the silent sample loss that caused spectrum freezes.
+    // Samples are pulled from the FIFO into staging; hops are consumed from
+    // staging only when stagingCount >= hopSize.  Residual samples are
+    // shifted to the front and preserved for the next tick.
+    std::vector<float> preStagingBuffer;
+    std::vector<float> postStagingBuffer;
+    size_t preStagingCount  = 0;
+    size_t postStagingCount = 0;
+
     uint64_t version = 0;
 
     // Serializes process() vs setFFTOrder()/setSpeed() (Fix 3)
-    juce::SpinLock pipelineLock;
+    mutable juce::SpinLock pipelineLock;
 
-    /** Process one FIFO->Core->Mapper->LogMapper chain.
-     *  fftFrame is a pre-allocated scratch buffer (no per-frame allocation). */
-    bool processOneFIFO (LockFreeAudioFIFO<float>& fifo,
-                         SpectrumAnalyzerCore& core,
-                         SpectrumDisplayMapper& mapper,
-                         LogScaleMapper& logMapper,
-                         std::vector<float>& inBuf,
-                         std::vector<float>& overlap,
-                         std::vector<float>& fftFrame,
-                         std::vector<float>& pixelOut,
-                         size_t displayWidth)
+    // Instrumentation
+    PipelineStats stats;
+
+    // ── Pull all available samples from FIFO into staging buffer ─────────
+    void drainFIFOToStaging (LockFreeAudioFIFO<float>& fifo,
+                             std::vector<float>& staging,
+                             size_t& stagingCount,
+                             FIFOStats& fifoStats)
     {
-        // Try to read hopSize (50% overlap) samples from FIFO
-        const size_t pulled = fifo.pullAudioBlock (inBuf.data(), hopSize);
-        if (pulled < hopSize)
+        // Pull in chunks up to what staging can hold
+        const size_t stagingCapacity = staging.size();
+
+        // Pull whatever the FIFO has, appending to staging
+        while (stagingCount < stagingCapacity)
+        {
+            const size_t space = stagingCapacity - stagingCount;
+            // Pull in hop-sized chunks for efficiency, but accept partials
+            const size_t requestSize = std::min (hopSize, space);
+            const size_t pulled = fifo.pullAudioBlock (staging.data() + stagingCount, requestSize);
+            if (pulled == 0)
+                break;
+            stagingCount += pulled;
+            fifoStats.samplesPulled += pulled;
+            fifoStats.samplesStaged += pulled;
+        }
+
+        // Track peak backlog
+        if (stagingCount > fifoStats.backlogPeak)
+            fifoStats.backlogPeak = stagingCount;
+    }
+
+    // ── Process one hop from staging buffer ──────────────────────────────
+    bool processOneHopFromStaging (std::vector<float>& staging,
+                                   size_t& stagingCount,
+                                   SpectrumAnalyzerCore& core,
+                                   SpectrumDisplayMapper& mapper,
+                                   LogScaleMapper& logMapper,
+                                   std::vector<float>& overlap,
+                                   std::vector<float>& fftFrame,
+                                   std::vector<float>& pixelOut,
+                                   size_t displayWidth)
+    {
+        if (stagingCount < hopSize)
             return false;
 
-        // Build FFT frame: [overlap | new data]
-        // Reuse pre-allocated fftFrame (zero-fill then copy)
+        // Build FFT frame: [overlap | new data from staging]
         std::fill (fftFrame.begin(), fftFrame.end(), 0.0f);
         std::copy (overlap.begin(), overlap.begin() + static_cast<std::ptrdiff_t>(hopSize),
                    fftFrame.begin());
-        std::copy (inBuf.begin(), inBuf.begin() + static_cast<std::ptrdiff_t>(hopSize),
+        std::copy (staging.begin(), staging.begin() + static_cast<std::ptrdiff_t>(hopSize),
                    fftFrame.begin() + static_cast<std::ptrdiff_t>(hopSize));
 
         // Save current data as overlap for next frame
-        std::copy (inBuf.begin(), inBuf.begin() + static_cast<std::ptrdiff_t>(hopSize),
+        std::copy (staging.begin(), staging.begin() + static_cast<std::ptrdiff_t>(hopSize),
                    overlap.begin());
+
+        // Consume hop from staging: shift remaining samples to front
+        const size_t remaining = stagingCount - hopSize;
+        if (remaining > 0)
+        {
+            std::memmove (staging.data(),
+                          staging.data() + hopSize,
+                          remaining * sizeof (float));
+        }
+        stagingCount = remaining;
 
         // Strato 1: FFT -> PSD
         const auto& psd = core.processBlock (fftFrame.data());
