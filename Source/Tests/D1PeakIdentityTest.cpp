@@ -151,7 +151,8 @@ private:
         params.dynamicMode = DynamicEQProcessor::DynamicMode_Off;
         proc.setBandParams(0, params);
 
-        // Use broadband signal (multi-frequency) for comb detection
+        // Single-frequency probe: allpass rotates phase of any frequency,
+        // so even one sine suffices to detect non-identity behavior.
         auto input = makeSine(1000.0f, kBlockSize);
 
         auto processed = input;
