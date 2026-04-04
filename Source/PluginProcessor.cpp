@@ -794,7 +794,7 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     phaseTransitionFromMode.store(-1, std::memory_order_relaxed);
     phaseTransitionSamplesRemaining.store(0, std::memory_order_relaxed);
     msModeTransitionSamplesRemaining.store(0, std::memory_order_relaxed);
-    previousMSModeForCrossfade = currentMSMode.load(std::memory_order_relaxed);
+    previousMSModeForCrossfade.store(static_cast<int>(currentMSMode.load(std::memory_order_relaxed)), std::memory_order_relaxed);
     oversamplingTransitionFromEffective.store(-1, std::memory_order_relaxed);
     oversamplingTransitionSamplesRemaining.store(0, std::memory_order_relaxed);
     bypassStateInitialized.store(false, std::memory_order_relaxed);
@@ -1905,8 +1905,9 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         decodeMidSide(buffer, blockSamples);
 
     // ── M/S crossfade: save post-EQ output before solo section (for non-MSLinked transitions) ──
+    const auto previousMSMode = static_cast<MSMode>(previousMSModeForCrossfade.load(std::memory_order_acquire));
     const bool msNonLinkedTransition = msModeTransitionActive
-        && previousMSModeForCrossfade != MSMode::MSLinked
+        && previousMSMode != MSMode::MSLinked
         && msModeSnapshot != MSMode::MSLinked;
     if (msNonLinkedTransition)
     {
@@ -1941,7 +1942,7 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     // ── M/S mode crossfade: blend old mode output with new mode output ──
     if (msModeTransitionActive)
     {
-        const auto oldMode = previousMSModeForCrossfade;
+        const auto oldMode = previousMSMode;  // already loaded atomically above
         const bool oldIsLinked = (oldMode == MSMode::MSLinked);
         const bool newIsLinked = (msModeSnapshot == MSMode::MSLinked);
 
@@ -2375,7 +2376,7 @@ void AIEqualizerAudioProcessor::parameterChanged(const juce::String& parameterID
         const auto oldMode = currentMSMode.exchange(newMode);
         if (oldMode != newMode)
         {
-            previousMSModeForCrossfade = oldMode;
+            previousMSModeForCrossfade.store(static_cast<int>(oldMode), std::memory_order_relaxed);
             msModeTransitionSamplesRemaining.store(msModeTransitionCrossfadeSamples, std::memory_order_release);
         }
     }

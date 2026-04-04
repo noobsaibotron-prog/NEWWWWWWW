@@ -615,7 +615,7 @@ private:
     std::atomic<MSMode> currentMSMode { MSMode::Stereo };
 
     // M/S mode crossfade state — avoids click/pop on mode switch
-    MSMode previousMSModeForCrossfade { MSMode::Stereo };
+    std::atomic<int> previousMSModeForCrossfade { static_cast<int>(MSMode::Stereo) };
     std::atomic<int> msModeTransitionSamplesRemaining { 0 };
     static constexpr int msModeTransitionCrossfadeSamples = 1024; // ~21ms @ 48kHz
     std::atomic<bool> eqCurveNeedsUpdate { true };
