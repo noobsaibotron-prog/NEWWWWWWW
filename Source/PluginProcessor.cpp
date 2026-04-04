@@ -391,11 +391,11 @@ void AIEqualizerAudioProcessor::irBuilderThreadFunc()
             for (size_t n = 0; n < LinearPhaseProcessor::irSize; ++n)
                 scaledIR[n] = irBuf[n] * irScale;
 
-            // Pre-compute FFT of the IR here (builder thread, NOT audio thread)
-            // Then hand off the freq-domain data for the audio thread to pick up.
-            std::vector<float> freqBuf(LinearPhaseProcessor::fftSize * 2, 0.0f);
-            std::copy(scaledIR.begin(), scaledIR.end(), freqBuf.begin());
-            fft.performRealOnlyForwardTransform(freqBuf.data());
+            // Pre-partition the time-domain IR here (builder thread, NOT audio thread).
+            // This avoids the expensive IFFT + 32x FFT that was previously done on the audio thread.
+            // The packed format is numParts * fftPartSize * 2 floats = 16384 (same size as old freqBuf).
+            std::vector<float> freqBuf(PartitionedConvolver::numParts * PartitionedConvolver::fftPartSize * 2, 0.0f);
+            PartitionedConvolver::buildPackedPartitions(scaledIR.data(), scaledIR.size(), freqBuf.data());
 
             // Lock-free double-buffer write.
             // ABA guard: spin until the audio thread is not reading our target buffer.
@@ -800,7 +800,7 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     bypassStateInitialized.store(false, std::memory_order_relaxed);
     wasBypassed.store(false, std::memory_order_relaxed);
     bypassCrossfadeRemaining.store(0, std::memory_order_relaxed);
-    abCrossfadePending.store(false, std::memory_order_relaxed);
+    abCrossfadeSnapshotNeeded.store(false, std::memory_order_relaxed);
     for (int i = 0; i < maxBands; ++i)
         abCrossfadePendingBands[i].store(false, std::memory_order_relaxed);
 
@@ -973,9 +973,11 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
             irBuilderThread.join();
         }
 
-        const size_t freqBufSize = LinearPhaseProcessor::fftSize * 2;
-        pendingFreqIR.buffers[0].assign(freqBufSize, 0.0f);
-        pendingFreqIR.buffers[1].assign(freqBufSize, 0.0f);
+        // Buffer size: numParts * fftPartSize * 2 = 32 * 512 = 16384 floats
+        // (holds pre-partitioned freq-domain IR data from builder thread)
+        const size_t partBufSize = PartitionedConvolver::numParts * PartitionedConvolver::fftPartSize * 2;
+        pendingFreqIR.buffers[0].assign(partBufSize, 0.0f);
+        pendingFreqIR.buffers[1].assign(partBufSize, 0.0f);
         pendingFreqIR.readyIndex.store(-1, std::memory_order_relaxed);
         pendingFreqIR.writeIndex.store(0, std::memory_order_relaxed);
         pendingFreqIR.readingIndex.store(-1, std::memory_order_relaxed);
@@ -1440,13 +1442,14 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
 
     // Dispatch pending A/B whole-chain crossfade BEFORE updating coefficients,
     // so beginWholeChainCrossfade() snapshots the OLD coefficients/filter state.
-    if (abCrossfadePending.load(std::memory_order_acquire))
+    // The flag is armed by setABState() on the message thread BEFORE it calls
+    // loadStateFromSlot(), guaranteeing the snapshot precedes coefficient changes.
+    if (abCrossfadeSnapshotNeeded.exchange(false, std::memory_order_acq_rel))
     {
         eqProcessor.beginWholeChainCrossfade(abSwitchCrossfadeSamples);
         eqProcessorHQ.beginWholeChainCrossfade(abSwitchCrossfadeSamples);
         eqProcessorMid.beginWholeChainCrossfade(abSwitchCrossfadeSamples);
         eqProcessorSide.beginWholeChainCrossfade(abSwitchCrossfadeSamples);
-        abCrossfadePending.store(false, std::memory_order_release);
     }
 
     // Update EQ parameters only when something actually changed
@@ -1675,8 +1678,43 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
                 : resolveNaturalOsEffective();
             processNaturalStereo(targetBuffer, osEffective, updateMeters);
         }
+        else if (targetMode == PhaseMode::LinearPhase)
+        {
+            // Linear Phase path for crossfade transitions
+            updateLinearPhaseIRIfNeeded();
+            const bool irLoaded = linearIRLoaded[0].load(std::memory_order_acquire);
+            if (irLoaded)
+            {
+                auto* lp = linearPhaseProcessors[0].get();
+                if (lp != nullptr)
+                {
+                    juce::dsp::AudioBlock<float> block(targetBuffer.getArrayOfWritePointers(),
+                                                       static_cast<size_t>(targetBuffer.getNumChannels()),
+                                                       static_cast<size_t>(targetBuffer.getNumSamples()));
+                    juce::dsp::ProcessContextReplacing<float> ctx(block);
+                    lp->process(ctx);
+                }
+                else
+                {
+                    eqProcessor.process(targetBuffer);
+                }
+            }
+            else
+            {
+                // No IR yet: fall back to zero-latency EQ
+                eqProcessor.process(targetBuffer);
+            }
+
+            if (dynEqEnabledLocal)
+            {
+                dynamicEQProcessor.process(targetBuffer);
+                if (updateMeters)
+                    updateDynamicMeterCacheFrom(dynamicEQProcessor);
+            }
+        }
         else
         {
+            // ZeroLatency mode
             eqProcessor.process(targetBuffer);
 
             if (dynEqEnabledLocal)
@@ -1711,8 +1749,60 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     if (useMS)
         encodeMidSide(buffer, blockSamples);
 
+    // ── Phase transition crossfade involving Linear Phase ──────────────
+    // When crossfading to/from LP, we handle it here BEFORE the mode-specific
+    // blocks to avoid double-processing. processStereoForPhaseMode handles all modes.
+    bool lpTransitionHandled = false;
+    {
+        const int transitionRemaining = phaseTransitionSamplesRemaining.load(std::memory_order_acquire);
+        const auto transitionFromMode = static_cast<PhaseMode>(phaseTransitionFromMode.load(std::memory_order_acquire));
+        const bool lpTransitionActive = transitionRemaining > 0
+            && (mode == PhaseMode::LinearPhase || transitionFromMode == PhaseMode::LinearPhase);
+
+        if (lpTransitionActive
+            && phaseTransitionBuffer.getNumChannels() >= buffer.getNumChannels()
+            && phaseTransitionBuffer.getNumSamples() >= blockSamples)
+        {
+            lpTransitionHandled = true;
+
+            const int chs = juce::jmin(buffer.getNumChannels(), phaseTransitionBuffer.getNumChannels());
+            for (int ch = 0; ch < chs; ++ch)
+                phaseTransitionBuffer.copyFrom(ch, 0, buffer, ch, 0, blockSamples);
+
+            // Process main buffer through new (current) mode
+            processStereoForPhaseMode(buffer, mode, true);
+
+            // Process transition buffer through old mode
+            juce::AudioBuffer<float> oldModeView(phaseTransitionBuffer.getArrayOfWritePointers(),
+                                                  buffer.getNumChannels(),
+                                                  blockSamples);
+            processStereoForPhaseMode(oldModeView, transitionFromMode, false);
+
+            // Crossfade old → new
+            const int fadeLen = juce::jmin(transitionRemaining, blockSamples);
+            const int fadeProgressStart = phaseTransitionCrossfadeSamples - transitionRemaining;
+            for (int ch = 0; ch < chs; ++ch)
+            {
+                float* newPtr = buffer.getWritePointer(ch);
+                const float* oldPtr = phaseTransitionBuffer.getReadPointer(ch);
+                for (int s = 0; s < fadeLen; ++s)
+                {
+                    const float tBase = static_cast<float>(fadeProgressStart + s)
+                                      / static_cast<float>(phaseTransitionCrossfadeSamples);
+                    const float t = juce::jlimit(0.0f, 1.0f, tBase);
+                    newPtr[s] = oldPtr[s] * (1.0f - t) + newPtr[s] * t;
+                }
+            }
+
+            const int remaining = juce::jmax(0, transitionRemaining - blockSamples);
+            phaseTransitionSamplesRemaining.store(remaining, std::memory_order_release);
+            if (remaining == 0)
+                phaseTransitionFromMode.store(-1, std::memory_order_release);
+        }
+    }
+
     // Skip zero-latency/Natural processing when in Linear Phase to avoid double-processing
-    if (mode != PhaseMode::LinearPhase)
+    if (mode != PhaseMode::LinearPhase && !lpTransitionHandled)
     {
         if (useMS)
         {
@@ -1855,7 +1945,7 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     // (ch0=Mid, ch1=Side). LP processes both channels identically with the same EQ curve,
     // which is correct for MSLinked (same EQ on both components). Mid/Side solo modes
     // are handled after decodeMidSide below, so they do not reach this path in M/S domain.
-    if (mode == PhaseMode::LinearPhase)
+    if (mode == PhaseMode::LinearPhase && !lpTransitionHandled)
     {
         updateLinearPhaseIRIfNeeded();
 
@@ -2340,21 +2430,11 @@ void AIEqualizerAudioProcessor::parameterChanged(const juce::String& parameterID
 
         if (newMode != oldMode)
         {
-            const bool zeroNaturalSwap =
-                (oldMode == PhaseMode::ZeroLatency && newMode == PhaseMode::NaturalPhase)
-             || (oldMode == PhaseMode::NaturalPhase && newMode == PhaseMode::ZeroLatency);
-
-            if (zeroNaturalSwap)
-            {
-                phaseTransitionFromMode.store(static_cast<int>(oldMode), std::memory_order_release);
-                phaseTransitionSamplesRemaining.store(phaseTransitionCrossfadeSamples, std::memory_order_release);
-            }
-            else
-            {
-                phaseTransitionFromMode.store(-1, std::memory_order_release);
-                phaseTransitionSamplesRemaining.store(0, std::memory_order_release);
-                pendingReset.store(true, std::memory_order_release);
-            }
+            // Arm crossfade for ALL phase mode transitions (including Linear Phase).
+            // Previously only ZeroLatency <-> NaturalPhase used crossfade; LP transitions
+            // used pendingReset which caused audible clicks.
+            phaseTransitionFromMode.store(static_cast<int>(oldMode), std::memory_order_release);
+            phaseTransitionSamplesRemaining.store(phaseTransitionCrossfadeSamples, std::memory_order_release);
         }
 
         if (newMode == PhaseMode::LinearPhase)
@@ -2459,11 +2539,12 @@ void AIEqualizerAudioProcessor::updateLinearPhaseIRIfNeeded()
     // Must be set before we dereference buffers[ri].data().
     pendingFreqIR.readingIndex.store(ri, std::memory_order_release);
 
-    // Feed pre-computed freq-domain IR to LinearPhaseProcessor.
-    // LinearPhaseProcessor handles the internal A/B crossfade.
+    // Feed pre-partitioned IR data to LinearPhaseProcessor.
+    // The builder thread already did the heavy IFFT + partition FFTs;
+    // this only copies the partitions and arms the crossfade (no FFT work).
     auto* lp = linearPhaseProcessors[0].get();
     if (lp != nullptr)
-        lp->storeFreqIRDirect(pendingFreqIR.buffers[ri].data());
+        lp->storePrePartitionedIRDirect(pendingFreqIR.buffers[ri].data());
 
     // Signal that the read is complete so the builder may reuse this buffer.
     pendingFreqIR.readingIndex.store(-1, std::memory_order_release);
@@ -2966,6 +3047,10 @@ void AIEqualizerAudioProcessor::setABState(ABState state)
     // Switch to new state atomically
     currentABState.store(state, std::memory_order_release);
 
+    // Arm crossfade snapshot BEFORE loading new parameters so the audio thread
+    // will snapshot the OLD filter state before applying the new coefficients.
+    abCrossfadeSnapshotNeeded.store(true, std::memory_order_release);
+
     // Load new state (must be on Message Thread for APVTS access)
     loadStateFromSlot(state);
 }
@@ -3141,12 +3226,8 @@ void AIEqualizerAudioProcessor::loadStateFromSlot(ABState slot)
         }
     }
 
-    // Arm pending A/B whole-chain crossfade for audio thread dispatch.
-    // Do NOT arm the dry↔wet bypass crossfade — it would overwrite the whole-chain blend.
-    if (anyMaterialChange)
-    {
-        abCrossfadePending.store(true, std::memory_order_release);
-    }
+    // NOTE: crossfade snapshot is armed in setABState() BEFORE loadStateFromSlot()
+    // is called, so the audio thread snapshots old state before seeing new coefficients.
 }
 
 void AIEqualizerAudioProcessor::copyAtoB()

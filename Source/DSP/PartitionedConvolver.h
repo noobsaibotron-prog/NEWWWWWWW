@@ -106,6 +106,43 @@ public:
         buildSet = 1 - buildSet;
     }
 
+    /** Accept pre-partitioned frequency-domain data (numParts * fftPartSize*2 floats, packed).
+     *  Each partition is fftPartSize*2 floats in JUCE interleaved complex format.
+     *  Skips the IFFT + re-FFT — intended for use on the audio thread with data
+     *  pre-computed by the builder thread. Only copies + swap + crossfade arm. */
+    void storePrePartitionedIR(const float* packedPartitions)
+    {
+        auto& dest = irSets[buildSet];
+        dest.partitions.resize(numParts);
+        for (size_t p = 0; p < numParts; ++p)
+        {
+            auto& part = dest.partitions[p];
+            part.assign(fftPartSize * 2, 0.0f);
+            std::copy(packedPartitions + p * fftPartSize * 2,
+                      packedPartitions + (p + 1) * fftPartSize * 2,
+                      part.begin());
+        }
+        dest.valid = true;
+
+        // Start crossfade, swap (same as storeFreqIR)
+        const int oldActive = activeSet.load(std::memory_order_relaxed);
+        if (irSets[oldActive].valid)
+        {
+            crossfadeFromSet = oldActive;
+            crossfadeSamplesLeft.store(crossfadeLength, std::memory_order_release);
+            for (auto& ch : chState)
+            {
+                ch.fdlOld.resize(numParts);
+                for (size_t i = 0; i < numParts; ++i)
+                    ch.fdlOld[i] = ch.fdl[i];
+                ch.overlapOld = ch.overlap;
+            }
+        }
+
+        activeSet.store(buildSet, std::memory_order_release);
+        buildSet = 1 - buildSet;
+    }
+
     /** Accept a time-domain IR (up to irSize samples) directly. */
     void storeTimeDomainIR(const float* irTimeDomain, size_t len)
     {
@@ -133,6 +170,29 @@ public:
 
         activeSet.store(buildSet, std::memory_order_release);
         buildSet = 1 - buildSet;
+    }
+
+    /** Pre-partition a time-domain IR into packed frequency-domain partitions.
+     *  Output buffer must hold numParts * fftPartSize * 2 floats.
+     *  Safe to call from any thread (uses its own FFT instance). */
+    static void buildPackedPartitions(const float* timeDomainIR, size_t irLen, float* packedOut)
+    {
+        juce::dsp::FFT partFFT(fftPartOrder);
+        std::vector<float> buf(fftPartSize * 2, 0.0f);
+
+        for (size_t p = 0; p < numParts; ++p)
+        {
+            std::fill(buf.begin(), buf.end(), 0.0f);
+            const size_t offset = p * partSize;
+            const size_t count = (offset + partSize <= irLen) ? partSize
+                               : (offset < irLen ? irLen - offset : 0);
+            if (count > 0)
+                std::copy(timeDomainIR + offset, timeDomainIR + offset + count, buf.begin());
+
+            partFFT.performRealOnlyForwardTransform(buf.data());
+
+            std::copy(buf.begin(), buf.end(), packedOut + p * fftPartSize * 2);
+        }
     }
 
     /** @return true if a valid IR is loaded. */

@@ -990,6 +990,12 @@ void AIEqualizerAudioProcessorEditor::paint(juce::Graphics& g)
         g.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
         g.drawText("v2.1.1", getWidth() - 44, getHeight() - 14, 40, 12,
                    juce::Justification::centredRight);
+
+        // Build marker — temporary, remove before release
+        g.setColour(ModernLookAndFeel::Colors::accentBlue.withAlpha(0.4f));
+        g.setFont(juce::Font(juce::FontOptions().withHeight(8.0f)));
+        g.drawText("V1", 4, getHeight() - 12, 16, 10,
+                   juce::Justification::centredLeft);
     }
 }
 

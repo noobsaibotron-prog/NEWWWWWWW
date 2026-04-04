@@ -544,8 +544,10 @@ private:
     int wetPaddingDelaySamples = 0;
     int wetPaddingBufferSize = 0;
 
-    // Pending A/B whole-chain crossfade: armed by message thread, dispatched by audio thread
-    std::atomic<bool> abCrossfadePending { false };
+    // Pending A/B whole-chain crossfade: armed by message thread BEFORE parameter
+    // changes, consumed by audio thread BEFORE updateEQFromParameters() so the
+    // snapshot captures the OLD filter state, not the already-updated one.
+    std::atomic<bool> abCrossfadeSnapshotNeeded { false };
     std::array<std::atomic<bool>, maxBands> abCrossfadePendingBands {};
     // IR build debounce: accumulate rapid drag events, rebuild only after silence
     std::atomic<int64_t> irBuildRequestedAt { 0 };    // ms timestamp of last request

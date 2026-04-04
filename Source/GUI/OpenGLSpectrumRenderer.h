@@ -52,7 +52,7 @@ public:
         const int w = static_cast<int>(graphBounds.getWidth());
         if (w <= 0) return;
 
-        // CRITICAL FIX: Protect vector copies with SpinLock. 
+        // CRITICAL FIX: Protect vector copies with SpinLock.
         // Atomic flag alone is not enough for non-atomic vector assignments.
         {
             const juce::SpinLock::ScopedLockType lock(bufferLock);

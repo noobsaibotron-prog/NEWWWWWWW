@@ -63,6 +63,12 @@ public:
         Triggers the internal A/B crossfade. No FFT is performed. */
     void storeFreqIRDirect(const float* freqDomainData);
 
+    /** Store pre-partitioned frequency-domain IR data (audio-thread safe).
+        Accepts numParts * fftPartSize * 2 packed floats, pre-computed by
+        PartitionedConvolver::buildPackedPartitions(). No FFT/IFFT performed —
+        only a memcpy + swap + crossfade arm. */
+    void storePrePartitionedIRDirect(const float* packedPartitions);
+
 private:
     // ── Partitioned convolver (used when usePartitioned == true) ───────
     PartitionedConvolver partConvolver;

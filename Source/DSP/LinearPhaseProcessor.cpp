@@ -259,6 +259,26 @@ void LinearPhaseProcessor::storeFreqIRDirect(const float* freqDomainData)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// storePrePartitionedIRDirect  — accept pre-partitioned freq-domain data
+// ═══════════════════════════════════════════════════════════════════════════
+
+void LinearPhaseProcessor::storePrePartitionedIRDirect(const float* packedPartitions)
+{
+    if constexpr (usePartitioned)
+    {
+        // Lightweight: copies partitions into build set + swap + crossfade arm.
+        // No IFFT or FFT — all heavy lifting was done by the builder thread.
+        partConvolver.storePrePartitionedIR(packedPartitions);
+    }
+    else
+    {
+        // OLA path not supported for pre-partitioned data; fall back would require
+        // reconstructing the full freq-domain IR. Not needed since usePartitioned == true.
+        jassertfalse;
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // storeIRToSlot  — FFT the time-domain IR and swap into the active slot
 // ═══════════════════════════════════════════════════════════════════════════
 
