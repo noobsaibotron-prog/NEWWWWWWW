@@ -19,6 +19,8 @@ libtorch/
 tensorflow/
 flatbuffers/
 models/
+# Exception: tracked ML model in Resources/
+!Resources/Models/
 
 # Temp & debug files
 *.log

@@ -605,7 +605,7 @@ private:
     MLEngine mlEngine;
     // ML detection auto-enabled when ml_weights.bin is found in prepare().
     // Falls back to heuristic detectProblems() if weights are missing or corrupt.
-    bool useMLDetection = false;
+    std::atomic<bool> useMLDetection { false };
     
     void detectProblemsWithML();  // ML-enhanced detection
     
