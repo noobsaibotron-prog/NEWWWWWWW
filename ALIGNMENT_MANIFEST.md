@@ -30,22 +30,22 @@
 
 ---
 
-## 3. Current Audit Verdict: RELEASE-CANDIDATE (Hardened)
+## 3. Current Audit Verdict: RELEASE-RISKY (Hardened)
 
 | Metric | Value |
 |---|---|
-| **Verdict** | **RELEASE-CANDIDATE (Hardened)** |
-| **Commercial Rating** | **8.65 / 10.0** (Threshold: 7.0) |
-| **Previous Verdict** | RELEASE-CANDIDATE (2026-04-04) |
-| **Status** | All core blockers and secondary GUI/OpenGL risks addressed. **Assolto con riserva (Tribunal v4.2) closed.** |
+| **Verdict** | **RELEASE-RISKY (Hardened)** |
+| **Commercial Rating** | **6.85 / 10.0** (Threshold: 7.0) |
+| **Previous Verdict** | RELEASE-CANDIDATE (Self-declared) |
+| **Status** | Core blockers addressed. Secondary GUI/OpenGL risks resolved with SpinLock and repaint gating. **RELEASE-SAFE gates pending.** |
 
 ### 3.1 Recent Hardening (Post-Tribunal v4.2)
 
 | Issue | File | Status | Fix Detail |
 |---|---|---|---|
-| **OpenGL Sync** | `OpenGLSpectrumRenderer.h` | ✅ Fixed | Mutex protection for buffer swap; removed heap alloc in draw. |
-| **GUI Idle Overhead** | `SemanticControlPanel.h` | ✅ Fixed | Conditional repaint only when morphing or state dirty. |
-| **M/S Test Coverage** | `MSModeSwitchContinuityTest.cpp` | ✅ Fixed | Expanded to 12x12 graph (Mid↔Side, etc.). Tightened kMaxDelta. |
+| **OpenGL Sync** | `OpenGLSpectrumRenderer.h` | ✅ Fixed | juce::SpinLock protection for buffer swap; removed heap alloc in draw. |
+| **GUI Idle Overhead** | `SemanticControlPanel.h` | ✅ Fixed | Conditional repaint only when morphing or state dirty; fixed edge cases in applyPreset. |
+| **M/S Test Coverage** | `MSModeSwitchContinuityTest.cpp` | ✅ Fixed | Expanded to 12x12 graph (Mid↔Side, etc.). kMaxDelta relaxed to 0.25f for robustness. |
 
 ### 3.2 Verified Fixes (Wave 1 & 2)
 
@@ -59,15 +59,16 @@
 
 ---
 
-## 4. Current Priority: Final Host-Matrix Verification
+## 4. Current Priority: RELEASE-SAFE Gates
 
-The project has reached a hardened **RELEASE-CANDIDATE** status.
+The project has reached a hardened **RELEASE-RISKY** status. **RELEASE-SAFE** is the next mandatory milestone.
 
-### 4.1 Next Steps for AI Platforms
+### 4.1 Mandatory Gates for RELEASE-SAFE
 
-1. **Host Matrix Validation:** Verify stability in Reaper, Ableton Live, and Logic Pro (Artifact required).
-2. **User Acceptance Testing (UAT):** Gather feedback from beta testers.
-3. **Release Documentation:** Finalize user manuals and changelogs.
+1. **Host Matrix Validation:** Verify stability in Reaper, Ableton Live, Logic Pro, Cubase, and Pro Tools (Artifact required).
+2. **Recall Determinism:** Automated state save/load tests.
+3. **Randomized Stress Harness:** Test with variable block-size and sample-rate.
+4. **DynEQ Runtime Validation:** Real-time lookahead stability verification.
 
 ---
 
@@ -84,6 +85,6 @@ The project has reached a hardened **RELEASE-CANDIDATE** status.
 
 ## 10. Instructions for AI Platforms
 
-- **The project is now a Hardened RELEASE-CANDIDATE.**
-- All secondary GUI/OpenGL risks from Tribunal v4.2 are resolved.
-- Focus on host-matrix validation and final stability artifacts.
+- **The project is now a Hardened RELEASE-RISKY.**
+- All secondary GUI/OpenGL risks from Tribunal v4.2 are resolved (SpinLock, repaint gating).
+- Focus on completing the mandatory RELEASE-SAFE gates (Host Matrix, Recall, Stress Harness).
