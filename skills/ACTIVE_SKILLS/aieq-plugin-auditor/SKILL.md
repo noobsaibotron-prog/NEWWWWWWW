@@ -10,7 +10,7 @@ metadata:
     excluded:
       - LEGAL
       - MARKETING
-  version: "1.2"
+  version: "1.3"
   orchestrator_for:
     - dsp-safety-audit
     - gui-performance-audit
@@ -22,10 +22,12 @@ metadata:
     - plugin-compliance-audit
     - dsp-correctness-audit
     - code-hygiene-audit
+    - release-verdict-engine
   promotion_history:
     - v1.0: Initial Composite Skill for AI Equalizer Pro
     - v1.1: Promoted dsp-safety-audit and gui-performance-audit based on test_001 feedback
     - v1.2: Added 7 new sub-skills for comprehensive full-codebase coverage
+    - v1.3: Added release-verdict-engine as the definitive Meta-Auditor for release decisions
   model_requirements:
     context_window: 128k
     tool_use: required
@@ -48,7 +50,8 @@ This is a **Composite Skill**. It performs no direct audits itself. Its sole res
 3. **Aggregate Findings:** Collect the `Proven` and `Missed` findings from each sub-skill.
 4. **Execute Regression Matrix:** Read `REGRESSION_MATRIX.md` and verify each conflict pair using its Verification Protocol. Use the Conflict Severity Matrix to classify cross-domain severity.
 5. **Synthesize:** Identify any cross-domain conflicts and emit `[CONFLICT FLAG]` for each.
-6. **Output Hierarchical Report:** Generate the final report using the Layered Proof Map format.
+6. **Output Hierarchical Report:** Generate the intermediate report using the Layered Proof Map format.
+7. **Execute Release Verdict Engine:** Pass all sub-skill CSV data, the Cross-Module Synthesis, and the Regression Matrix results to `release-verdict-engine`. It will produce the definitive, unequivocal Release Verdict with Commercial Rating and Maximum ROI Remediation Plan. Read `release-verdict-engine/SCORING_MODEL.md` for the mathematical model.
 
 > **On sub-skill promotion:** Before finalizing any promotion, re-run all sub-skill evals on the same artifact bundle and execute the full regression protocol (see `REGRESSION_MATRIX.md` Section 3).
 
