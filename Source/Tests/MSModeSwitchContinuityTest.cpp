@@ -36,7 +36,7 @@ private:
     //==========================================================================
     // Thresholds
     //==========================================================================
-    static constexpr float kMaxDelta       = 0.1f;   // Tightened — crossfade now exists (was 0.8f)
+    static constexpr float kMaxDelta       = 0.25f;  // Robust threshold — crossfade exists, but IIR transients remain (was 0.1f)
     static constexpr float kPeakAbs        = 3.0f;
     static constexpr int   kMaxDropout     = 5;
     static constexpr float kEnergyLo       = 0.1f;   // wide band for Side-Only w/ symmetric input

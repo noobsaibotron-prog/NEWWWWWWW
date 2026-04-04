@@ -3,7 +3,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <juce_opengl/juce_opengl.h>
 #include <vector>
-#include <mutex>
+#include <juce_core/juce_core.h>
 #include <atomic>
 
 /**
@@ -52,10 +52,10 @@ public:
         const int w = static_cast<int>(graphBounds.getWidth());
         if (w <= 0) return;
 
-        // CRITICAL FIX: Protect vector copies with mutex. 
+        // CRITICAL FIX: Protect vector copies with SpinLock. 
         // Atomic flag alone is not enough for non-atomic vector assignments.
         {
-            const std::lock_guard<std::mutex> lock(bufferMutex);
+            const juce::SpinLock::ScopedLockType lock(bufferLock);
             pending.spectrum = spectrum;
             pending.peakHold = peakHold;
             pending.bounds   = graphBounds;
@@ -93,7 +93,7 @@ public:
         // Swap pending → active
         if (pendingDirty.exchange(false, std::memory_order_acq_rel))
         {
-            const std::lock_guard<std::mutex> lock(bufferMutex);
+            const juce::SpinLock::ScopedLockType lock(bufferLock);
             active = pending;
         }
 
@@ -366,7 +366,7 @@ private:
     std::vector<float> fillVerts;
     std::vector<float> pkVerts; // Cached to avoid heap allocation in render loop
 
-    std::mutex bufferMutex; // Protects 'pending' buffer during cross-thread copy
+    juce::SpinLock bufferLock; // Protects 'pending' buffer during cross-thread copy
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(OpenGLSpectrumRenderer)
 };
