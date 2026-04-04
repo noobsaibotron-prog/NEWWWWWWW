@@ -1,0 +1,52 @@
+skill_test_record:
+  skill_name: ""
+  skill_version: ""
+  skill_category: ""   # capacity-uplift | encoded-preference
+  date: ""
+  domain: ""
+
+  artifact_under_review: ""
+  artifact_type: ""    # document | code | dataset | protocol | model | brief | other
+  why_chosen: ""
+
+  proof_map:
+    local_evidence:
+      - ""
+    cross_artifact_evidence:
+      - ""
+    inferred_points:
+      - ""
+
+  boundary_flags:
+    - ""
+
+  findings:
+    correct:
+      - ""
+    missed:
+      - ""
+    overstated:
+      - ""
+    unverified:
+      - ""
+
+  weakness_classification:
+    - type: ""
+      description: ""
+      severity: ""
+      recurring: false
+
+  lesson: ""
+  recommendation: ""   # promote | consolidate | rollback | retire
+
+  promotion_justification:
+    weakness_targeted: ""
+    times_observed: 0
+    proposed_module: ""
+    why_now: ""
+
+  retest_requirement:
+    known_artifact_required: true
+    new_artifact_required: true
+
+  governance_state_after_test: ""

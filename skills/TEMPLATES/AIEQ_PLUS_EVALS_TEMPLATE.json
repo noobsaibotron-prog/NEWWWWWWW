@@ -1,0 +1,53 @@
+{
+  "skill_name": "skill-name",
+  "skill_category": "capacity-uplift",
+  "version": "1.0",
+  "evals": [
+    {
+      "id": "eval_001",
+      "domain": "general",
+      "prompt": "Analyze the provided artifact using the skill.",
+      "artifact_files": [
+        "evals/artifacts/example_artifact_001.txt"
+      ],
+      "expected_outcome": "The skill should identify at least one supported issue, distinguish proven from inferred points, and avoid unsupported closure language.",
+      "assertions": [
+        "The output identifies at least one grounded finding",
+        "The output separates proven from inferred claims",
+        "The output does not use closure language without evidence",
+        "The output emits a boundary flag if the artifact crosses domain scope",
+        "The output classifies at least one uncertainty explicitly"
+      ]
+    },
+    {
+      "id": "eval_002",
+      "domain": "general",
+      "prompt": "Review the claim against the attached artifact and classify the governance state.",
+      "artifact_files": [
+        "evals/artifacts/example_artifact_002.txt"
+      ],
+      "expected_outcome": "The skill should resist premature agreement, identify missing evidence, and classify the current governance state correctly.",
+      "assertions": [
+        "The output does not agree before checking",
+        "The output identifies what remains unverified",
+        "The output assigns an explicit governance state",
+        "The output distinguishes local evidence from cross-artifact evidence"
+      ]
+    },
+    {
+      "id": "eval_003",
+      "domain": "general",
+      "prompt": "Evaluate whether this skill should be promoted based on the test record provided.",
+      "artifact_files": [
+        "evals/artifacts/example_test_record.yaml"
+      ],
+      "expected_outcome": "The skill should determine whether promotion is justified, identify the weakness class, and recommend promote, consolidate, rollback, or retire.",
+      "assertions": [
+        "The output identifies the relevant weakness class",
+        "The output states whether promotion is justified",
+        "The output gives a recommendation from the allowed set",
+        "The output explains why the recommendation follows from the evidence"
+      ]
+    }
+  ]
+}
