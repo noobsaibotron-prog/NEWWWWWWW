@@ -1,0 +1,58 @@
+---
+name: dsp-safety-audit
+description: >
+  Use this skill to audit C++/JUCE DSP code for real-time safety, memory allocation, and lock-free concurrency.
+  Do not use it for GUI or AI code analysis.
+category: capacity-uplift
+domain_boundaries:
+  primary: ENGINEERING/DSP
+  excluded:
+    - ENGINEERING/GUI
+    - ENGINEERING/AI
+version: "1.0"
+promotion_history:
+  - v1.0: Initial release (Real-time safety and lock-free checks)
+model_requirements:
+  context_window: 32k
+  tool_use: optional
+  reasoning_depth: high
+---
+
+# DSP Safety Audit
+
+## Core Principle
+The audio thread (`processBlock`) must never wait. It cannot allocate memory, acquire blocking locks, or perform unbounded loops.
+
+## Forbidden Actions
+- Do not approve code that uses `new`, `delete`, `std::vector::push_back`, or `std::string` inside `processBlock`.
+- Do not approve code that uses `std::mutex` or `juce::CriticalSection` inside `processBlock`.
+- Do not infer that a data structure is lock-free just because it has "atomic" in the name; verify the implementation.
+
+## Mandatory Grounding Pass
+Before judging anything:
+1. Identify the real artifact(s) (the exact text of the C++ file).
+2. Classify each proof as local (in the file) / cross-artifact (compared to a reference).
+3. If an assertion relies on external context, flag it as `[EVIDENCE FLAG]`.
+
+## Specialized Audits
+
+### Audit 1: Allocation Safety
+- **What to check:** Verify that no memory allocations occur in `processBlock`.
+- **Proof requirement:** The code must use pre-allocated buffers (e.g., `juce::AudioBuffer` initialized in `prepareToPlay`) or stack variables.
+- **Classification if failed:** `Real-Time Safety Weakness`.
+
+### Audit 2: Lock-Free Concurrency
+- **What to check:** Verify that communication between the audio thread and other threads (GUI, AI) uses lock-free structures (e.g., `std::atomic`, lock-free FIFOs).
+- **Proof requirement:** Explicit use of `std::atomic` with memory ordering (e.g., `std::memory_order_acquire`), or bounded CAS loops.
+- **Classification if failed:** `Real-Time Safety Weakness`.
+
+### Audit 3: Phase & Latency Management
+- **What to check:** Verify that lookahead and latency reporting are correctly synchronized.
+- **Proof requirement:** `setLatencySamples()` must be called correctly, and lookahead buffers must be correctly sized.
+- **Classification if failed:** `DSP Logic Weakness`.
+
+## Output Format
+Use the standard AIEQ+ Output Protocol (Executive Summary, Classification & Flags, Findings/Proof Map, Governance State Assessment, Next Steps).
+
+## Promotion Criteria
+This skill may be promoted only when a real weakness is demonstrated by testing (e.g., a specific SIMD optimization failure).
