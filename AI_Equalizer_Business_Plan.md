@@ -345,6 +345,147 @@ Questa storia rappresenta un **asset marketing potente**:
 
 ---
 
+## 13. PIANO DI LANCIO CALIBRATO
+
+### 13.1 Fase 0 - Preparazione (Settimana 0-2)
+
+| Attività | Descrizione | Durata |
+|----------|-------------|--------|
+| **0.1** | Verifica build finale (.vst3/.aax/.component) su Win/Mac | 3 giorni |
+| **0.2** | Test in almeno 3 DAW (Logic, Ableton, FL Studio, Cubase) | 5 giorni |
+| **0.3** | Crea account Plugin Boutique, Gumroad | 1 giorno |
+| **0.4** | Prepara materiali: screenshot, logo, descrizione | 2 giorni |
+| **0.5** | Scrittura product page + changelog | 1 giorno |
+
+**Milestone**: Build testato e pronto per distribuzione.
+
+---
+
+### 13.2 Fase 1 - Soft Launch (Settimana 3-6)
+
+| Attività | Canale | Budget |
+|----------|--------|--------|
+| **1.1** | Upload su Gumroad (early access a prezzo ridotto €79) | €0 |
+| **1.2** | Post su KVR Audio (forum plugin development) | €0 |
+| **1.3** | Post su Gearspace "New Product Alert" | €0 |
+| **1.4** | Beta tester: 20-50 utenti (gratis o scontati) | €0 |
+| **1.5** | Collect feedback, fix bug critici | - |
+
+**Target**: 20-50 vendite | **Revenue**: ~€1.500-4.000
+
+**Messaging**: "AI Equalizer V2.1 - Early Access. Feedback wanted."
+
+---
+
+### 13.3 Fase 2 - Lancio Pubblico (Settimana 7-10)
+
+| Attività | Canale | Budget |
+|----------|--------|--------|
+| **2.1** | Upload su Plugin Boutique | €0 (20% fee) |
+| **2.2** | Press release: send to music tech blogs | €0 |
+| **2.3** | YouTube: demo/tutorial (5-10 min) | €0 (solo tempo) |
+| **2.4** | Post su Reddit r/wearethemusicmakers | €0 |
+| **2.5** | Lancio pricing: €149 (Early Bird discount €99 per 30 giorni) | - |
+
+**Target**: 100-200 vendite | **Revenue**: ~€10.000-20.000
+
+**Messaging**: "Il primo plugin EQ professionale costruito con AI da uno sound designer."
+
+---
+
+### 13.4 Fase 3 - Crescita (Mese 4-6)
+
+| Attività | Canale | Budget |
+|----------|--------|--------|
+| **3.1** | Tutorial YouTube serie (5 video) | €0 (tempo) |
+| **3.2** | Collaborazione YouTuber/influencer (1-2) | €500-1.500 |
+| **3.3** | KVR Audio "Developer Challenge" (se presente) | €0 |
+| **3.4** | Aggiornamento v2.1.1 (bug fix + piccole feature) | - |
+| **3.5** | Email list: newsletter ai clienti | €0 |
+
+**Target**: 300-500 vendite totali | **Revenue**: ~€30.000-50.000
+
+---
+
+### 13.5 Fase 4 - Consolidamento (Mese 7-12)
+
+| Attività | Note |
+|----------|------|
+| **4.1** | v2.2: preset marketplace, plugin-to-plugin |
+| **4.2** | Considerare bundle con altri plugin indie |
+| **4.3** | Explore: plugin subscription model |
+| **4.4** | B2B: licenze studio (prezzo maggiorato) |
+
+**Target anno 1**: 500-1.000 vendite | **Revenue**: €50.000-100.000
+
+---
+
+### 13.6 Budget Totale Anno 1
+
+| Voce | Costo (EUR) |
+|------|-------------|
+| YouTuber/influencer | 500-1.500 |
+| Marketing (ads base) | 1.000-2.000 |
+| Dominio + hosting | 200 |
+| Licenze software | 500 |
+| **Totale** | **€2.200-4.200** |
+
+---
+
+### 13.7 KPI da Monitorare
+
+| KPI | Target Mese 3 | Target Mese 6 | Target Mese 12 |
+|-----|---------------|---------------|----------------|
+| Vendite mese | 30 | 60 | 100 |
+| Revenue mese | €3.000 | €6.000 | €10.000 |
+| Email list | 100 | 300 | 500 |
+| Beta tester attivi | 20 | 50 | 50 |
+| Reviews | 5 | 15 | 30 |
+
+---
+
+### 13.8 Timeline Visiva
+
+```
+MESE 1-2        MESE 3           MESE 4-6         MESE 7-12
+|-----------|----|-----------|----|-----------|----|
+Preparazione Soft Launch  Lancio Pubblico  Crescita
+  ✅            ✅         ✅           ✅
+              20-50      100-200        500-1000
+             vendite    vendite        vendite
+```
+
+---
+
+## 14. RISCHI E MITIGAZIONI CALIBRATI
+
+| Rischio | Probabilità | Impatto | Mitigazione |
+|---------|-------------|---------|-------------|
+| **Zero vendite** | Media | Alto | Early access + community building pre-lancio |
+| **Bug critici** | Media | Alto | Beta tester + test in 3+ DAW |
+| **Zero visibilità** | Alta | Alto | KVR + YouTube + Reddit sono gratuiti |
+| **Competitor copy** | Bassa | Medio | Accelerare updates, Unique features (Semantic, OSC) |
+| **Supporto insostenibile** | Media | Medio | FAQ, video tutorial, email template |
+
+---
+
+## 15. PROSSIMI PASSI IMMEDIATI
+
+### Settimana Prossima
+
+1. ☐ Testare build finale in almeno 2 DAW
+2. ☐ Creare account Gumroad + Plugin Boutique
+3. ☐ Preparare 3-5 screenshot del plugin
+4. ☐ Scrivere descrizione breve (200 parole)
+
+### Entro 2 Settimane
+
+5. ☐ Aggiornare repo con tag "v2.1.0-RC1"
+6. ☐ Identificare 20 beta tester (community, colleghi)
+7. ☐ Iniziare a preparare video demo (anche solo screen record)
+
+---
+
 ## APPENDICE A: Fonti Dati
 
 1. Audio Plugin Market Size: LinkedIn Market Research (2025) - $1.5B (2024) → $3.2B (2033)
