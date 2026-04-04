@@ -756,7 +756,7 @@ BiquadCoeffs DynamicEQProcessor::makeEQCoefficients(
                 sr, freq, q, juce::Decibels::decibelsToGain(gain));
         case 2: // Peak
             if (std::abs(gain) < 0.05f)
-                return BiquadCoeffs::makeAllPass(sr, 20.0f, 0.1f);
+                return BiquadCoeffs::makeBypass();
             return BiquadCoeffs::makePeakFilter(
                 sr, freq, q, juce::Decibels::decibelsToGain(gain));
         case 3: // HighShelf

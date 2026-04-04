@@ -950,6 +950,7 @@ if(HAVE_JUCE)
         Source/Tests/LinearPhaseIRSmokeTest.cpp
         Source/Tests/LinearPhaseGainRegressionTest.cpp
         Source/Tests/DynamicEQRegressionTest.cpp
+        Source/Tests/D1PeakIdentityTest.cpp
         Source/Tests/DynamicEQSidechainBehaviorTest.cpp
         Source/Tests/DynamicEQGlobalMixBehaviorTest.cpp
         Source/Tests/FuzzBlockSizeTest.cpp

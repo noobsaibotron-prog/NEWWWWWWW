@@ -69,7 +69,9 @@ void LinearPhaseProcessor::process(const juce::dsp::ProcessContextReplacing<floa
     const auto numChannels = block.getNumChannels();
     const auto numSamples  = block.getNumSamples();
 
-    ensureChannels(numChannels);
+    // ensureChannels removed from process() — RT-unsafe (heap alloc).
+    // Channels are pre-allocated in prepare(). Assert guards misuse.
+    jassert(channels.size() >= numChannels);
 
     // Cache activeSlot once per block — single load for validity check + processing
     const int cachedSlot = activeSlot.load(std::memory_order_acquire);
