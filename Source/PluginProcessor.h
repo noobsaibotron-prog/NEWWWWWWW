@@ -499,6 +499,7 @@ private:
     alignas(64) juce::AudioBuffer<float> sideProcessBuffer;
     alignas(64) juce::AudioBuffer<float> dryBuffer;
     alignas(64) juce::AudioBuffer<float> phaseTransitionBuffer;
+    alignas(64) juce::AudioBuffer<float> msModeTransitionBuffer;
     alignas(64) juce::AudioBuffer<float> oversamplingTransitionBuffer;
     std::atomic<int> phaseTransitionFromMode { -1 };
     std::atomic<int> phaseTransitionSamplesRemaining { 0 };
@@ -612,6 +613,11 @@ private:
     int preparedNumInputChannels = 0;
     std::atomic<PhaseMode> currentPhaseMode { PhaseMode::ZeroLatency };
     std::atomic<MSMode> currentMSMode { MSMode::Stereo };
+
+    // M/S mode crossfade state — avoids click/pop on mode switch
+    MSMode previousMSModeForCrossfade { MSMode::Stereo };
+    std::atomic<int> msModeTransitionSamplesRemaining { 0 };
+    static constexpr int msModeTransitionCrossfadeSamples = 1024; // ~21ms @ 48kHz
     std::atomic<bool> eqCurveNeedsUpdate { true };
     std::atomic<bool> processorReady { false };  // Set true after prepareToPlay completes
     

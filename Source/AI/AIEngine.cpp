@@ -153,9 +153,19 @@ void AIEngine::prepare(double sampleRate, int /*samplesPerBlock*/)
 
 void AIEngine::analyzeSpectrum(const std::vector<float>& spectrum, bool force)
 {
+    // Lazy-apply profile thresholds on the AI thread (avoids data race with audio thread).
+    // Only re-applies when the profile has actually changed.
+    const int currentProfile = sourceProfile.load(std::memory_order_acquire);
+    const int appliedProfile = lastAppliedProfile.load(std::memory_order_relaxed);
+    if (currentProfile != appliedProfile)
+    {
+        applyProfileThresholds();
+        lastAppliedProfile.store(currentProfile, std::memory_order_relaxed);
+    }
+
     // FORCE: Always run detection, even if spectrum is empty or disabled
     // (detectProblems will create test problem if no real problems found)
-    
+
     if (spectrum.empty())
     {
         // Spectrum empty - still run detection to create test problem
@@ -163,8 +173,8 @@ void AIEngine::analyzeSpectrum(const std::vector<float>& spectrum, bool force)
         newAnalysisAvailable = true;
         return;
     }
-    
-    if (!enabled && !force)
+
+    if (!isEnabled() && !force)
         return;  // Only skip if disabled AND not forced
     
     // Reuse pre-allocated buffer to avoid heap allocation per call
@@ -254,7 +264,7 @@ void AIEngine::analyzeSpectrum(const std::vector<float>& spectrum, bool force)
 // FIX 4: Separate lock for coefficient updates to avoid data race
 void AIEngine::processCorrections(juce::AudioBuffer<float>& buffer)
 {
-    if (!enabled || correctionMode == CorrectionMode::Off)
+    if (!isEnabled() || getCorrectionMode() == CorrectionMode::Off)
         return;
     
     if (buffer.getNumSamples() == 0 || buffer.getNumChannels() == 0)
@@ -457,9 +467,12 @@ void AIEngine::updateCachedCoefficients(int bufferIndex, const std::vector<Corre
 
 void AIEngine::setSourceProfile(SourceProfile profile)
 {
-    // FIX RT-SAFETY: Use atomic store
-    sourceProfile.store(static_cast<int>(profile), std::memory_order_relaxed);
-    applyProfileThresholds();
+    // FIX RT-SAFETY: Only store the profile atomically. Do NOT call
+    // applyProfileThresholds() here — this method is called from the audio
+    // thread (processBlock), and applyProfileThresholds() writes a non-atomic
+    // struct (ProfileThresholds) that the AI thread reads. Thresholds are now
+    // applied lazily on the AI thread in analyzeSpectrum().
+    sourceProfile.store(static_cast<int>(profile), std::memory_order_release);
 }
 
 void AIEngine::applyProfileThresholds()

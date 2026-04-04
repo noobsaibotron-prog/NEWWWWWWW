@@ -789,8 +789,12 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     phaseTransitionBuffer.clear();
     oversamplingTransitionBuffer.setSize(getTotalNumInputChannels(), preallocatedMaxSamples, false, true, false);
     oversamplingTransitionBuffer.clear();
+    msModeTransitionBuffer.setSize(getTotalNumInputChannels(), preallocatedMaxSamples, false, true, false);
+    msModeTransitionBuffer.clear();
     phaseTransitionFromMode.store(-1, std::memory_order_relaxed);
     phaseTransitionSamplesRemaining.store(0, std::memory_order_relaxed);
+    msModeTransitionSamplesRemaining.store(0, std::memory_order_relaxed);
+    previousMSModeForCrossfade = currentMSMode.load(std::memory_order_relaxed);
     oversamplingTransitionFromEffective.store(-1, std::memory_order_relaxed);
     oversamplingTransitionSamplesRemaining.store(0, std::memory_order_relaxed);
     bypassStateInitialized.store(false, std::memory_order_relaxed);
@@ -1684,6 +1688,16 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         }
     };
 
+    // ── M/S mode crossfade: save pre-M/S input if transition is active ──
+    const int msTransitionRemaining = msModeTransitionSamplesRemaining.load(std::memory_order_acquire);
+    const bool msModeTransitionActive = msTransitionRemaining > 0 && totalNumInputChannels >= 2;
+    if (msModeTransitionActive)
+    {
+        const int chs = juce::jmin(buffer.getNumChannels(), msModeTransitionBuffer.getNumChannels());
+        for (int ch = 0; ch < chs; ++ch)
+            msModeTransitionBuffer.copyFrom(ch, 0, buffer, ch, 0, blockSamples);
+    }
+
     // Encode to M/S if needed (available for all phase modes)
     // Bug N/O fix: Mid-Only and Side-Only modes must NOT use M/S path - they should
     // process the corresponding component through the standard stereo EQ and then
@@ -1890,6 +1904,19 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     if (useMS)
         decodeMidSide(buffer, blockSamples);
 
+    // ── M/S crossfade: save post-EQ output before solo section (for non-MSLinked transitions) ──
+    const bool msNonLinkedTransition = msModeTransitionActive
+        && previousMSModeForCrossfade != MSMode::MSLinked
+        && msModeSnapshot != MSMode::MSLinked;
+    if (msNonLinkedTransition)
+    {
+        // Both old and new modes use the same stereo EQ — difference is only solo encoding.
+        // Save post-EQ output so we can apply old mode's solo pattern on a copy.
+        const int chs = juce::jmin(buffer.getNumChannels(), msModeTransitionBuffer.getNumChannels());
+        for (int ch = 0; ch < chs; ++ch)
+            msModeTransitionBuffer.copyFrom(ch, 0, buffer, ch, 0, blockSamples);
+    }
+
     // Bug N/O fix: Mid Only and Side Only solo modes.
     // Encode to M/S, keep only the desired component, decode back.
     // This avoids the -3dB / phase-inversion artifacts from the old approach.
@@ -1909,6 +1936,104 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
             buffer.clear(0, 0, blockSamples); // zero Mid channel
             decodeMidSide(buffer, blockSamples);
         }
+    }
+
+    // ── M/S mode crossfade: blend old mode output with new mode output ──
+    if (msModeTransitionActive)
+    {
+        const auto oldMode = previousMSModeForCrossfade;
+        const bool oldIsLinked = (oldMode == MSMode::MSLinked);
+        const bool newIsLinked = (msModeSnapshot == MSMode::MSLinked);
+
+        if (oldIsLinked != newIsLinked)
+        {
+            // Case A: MSLinked ↔ non-MSLinked — different EQ paths, need dual processing.
+            // msModeTransitionBuffer holds pre-M/S input (saved earlier).
+            if (mode != PhaseMode::LinearPhase)
+            {
+                if (oldIsLinked)
+                {
+                    // Old was MSLinked: encode → process mid+side → decode
+                    encodeMidSide(msModeTransitionBuffer, blockSamples);
+                    {
+                        const int samples = blockSamples;
+                        midProcessBuffer.copyFrom(0, 0, msModeTransitionBuffer, 0, 0, samples);
+                        sideProcessBuffer.copyFrom(0, 0, msModeTransitionBuffer, 1, 0, samples);
+                        juce::AudioBuffer<float> midView(midProcessBuffer.getArrayOfWritePointers(), 1, samples);
+                        eqProcessorMid.process(midView);
+                        if (dynEqEnabledLocal) dynamicEQProcessorMid.process(midView);
+                        juce::AudioBuffer<float> sideView(sideProcessBuffer.getArrayOfWritePointers(), 1, samples);
+                        eqProcessorSide.process(sideView);
+                        if (dynEqEnabledLocal) dynamicEQProcessorSide.process(sideView);
+                        msModeTransitionBuffer.copyFrom(0, 0, midProcessBuffer, 0, 0, samples);
+                        msModeTransitionBuffer.copyFrom(1, 0, sideProcessBuffer, 0, 0, samples);
+                    }
+                    decodeMidSide(msModeTransitionBuffer, blockSamples);
+                }
+                else
+                {
+                    // Old was Stereo/Mid/Side: process through stereo EQ
+                    processStereoForPhaseMode(msModeTransitionBuffer, mode, false);
+                    // Apply old mode's solo encoding
+                    if (totalNumInputChannels >= 2)
+                    {
+                        if (oldMode == MSMode::Mid)
+                        {
+                            encodeMidSide(msModeTransitionBuffer, blockSamples);
+                            msModeTransitionBuffer.clear(1, 0, blockSamples);
+                            decodeMidSide(msModeTransitionBuffer, blockSamples);
+                        }
+                        else if (oldMode == MSMode::Side)
+                        {
+                            encodeMidSide(msModeTransitionBuffer, blockSamples);
+                            msModeTransitionBuffer.clear(0, 0, blockSamples);
+                            decodeMidSide(msModeTransitionBuffer, blockSamples);
+                        }
+                    }
+                }
+            }
+        }
+        else
+        {
+            // Case B: Both modes use the same EQ path (Stereo/Mid/Side ↔ Stereo/Mid/Side,
+            // or MSLinked ↔ MSLinked). msModeTransitionBuffer holds post-EQ output
+            // (saved before the solo section). Apply old mode's solo encoding.
+            if (totalNumInputChannels >= 2)
+            {
+                if (oldMode == MSMode::Mid)
+                {
+                    encodeMidSide(msModeTransitionBuffer, blockSamples);
+                    msModeTransitionBuffer.clear(1, 0, blockSamples);
+                    decodeMidSide(msModeTransitionBuffer, blockSamples);
+                }
+                else if (oldMode == MSMode::Side)
+                {
+                    encodeMidSide(msModeTransitionBuffer, blockSamples);
+                    msModeTransitionBuffer.clear(0, 0, blockSamples);
+                    decodeMidSide(msModeTransitionBuffer, blockSamples);
+                }
+                // else oldMode == Stereo: no encode/decode needed, buffer is already stereo EQ output
+            }
+        }
+
+        // Sample-by-sample linear crossfade: old → new
+        const int fadeLen = juce::jmin(msTransitionRemaining, blockSamples);
+        const int fadeProgressStart = msModeTransitionCrossfadeSamples - msTransitionRemaining;
+        const int chs = juce::jmin(buffer.getNumChannels(), msModeTransitionBuffer.getNumChannels());
+        for (int ch = 0; ch < chs; ++ch)
+        {
+            float* newOut = buffer.getWritePointer(ch);
+            const float* oldOut = msModeTransitionBuffer.getReadPointer(ch);
+            for (int s = 0; s < fadeLen; ++s)
+            {
+                const float t = juce::jlimit(0.0f, 1.0f,
+                    static_cast<float>(fadeProgressStart + s)
+                  / static_cast<float>(msModeTransitionCrossfadeSamples));
+                newOut[s] = oldOut[s] * (1.0f - t) + newOut[s] * t;
+            }
+        }
+        msModeTransitionSamplesRemaining.store(
+            juce::jmax(0, msTransitionRemaining - blockSamples), std::memory_order_release);
     }
 
     // Apply global dry/wet mix
@@ -2243,7 +2368,13 @@ void AIEqualizerAudioProcessor::parameterChanged(const juce::String& parameterID
     else if (parameterID == "msMode")
     {
         const int modeIdx = juce::jlimit(0, 3, static_cast<int>(std::round(newValue)));
-        currentMSMode.store(static_cast<MSMode>(modeIdx));
+        const auto newMode = static_cast<MSMode>(modeIdx);
+        const auto oldMode = currentMSMode.exchange(newMode);
+        if (oldMode != newMode)
+        {
+            previousMSModeForCrossfade = oldMode;
+            msModeTransitionSamplesRemaining.store(msModeTransitionCrossfadeSamples, std::memory_order_release);
+        }
     }
     else if (parameterID == "oversamplingFactor")
     {

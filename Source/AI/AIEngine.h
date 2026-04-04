@@ -137,8 +137,8 @@ public:
     
     //==============================================================================
     // Settings
-    void setEnabled(bool e) { enabled = e; }
-    bool isEnabled() const { return enabled; }
+    void setEnabled(bool e) { enabled.store(e, std::memory_order_relaxed); }
+    bool isEnabled() const { return enabled.load(std::memory_order_relaxed); }
     
     void setSensitivity(float s) { sensitivity.store(juce::jlimit(0.0f, 1.0f, s), std::memory_order_relaxed); }
     float getSensitivity() const { return sensitivity.load(std::memory_order_relaxed); }
@@ -170,8 +170,8 @@ public:
     void setStrength(float s);
     float getStrength() const { return strength.load(std::memory_order_relaxed); }
     
-    void setCorrectionMode(CorrectionMode mode) { correctionMode = mode; }
-    CorrectionMode getCorrectionMode() const { return correctionMode; }
+    void setCorrectionMode(CorrectionMode mode) { correctionMode.store(static_cast<int>(mode), std::memory_order_relaxed); }
+    CorrectionMode getCorrectionMode() const { return static_cast<CorrectionMode>(correctionMode.load(std::memory_order_relaxed)); }
     
     // Source profile
     void setSourceProfile(SourceProfile profile);
@@ -335,11 +335,12 @@ private:
     
     double currentSampleRate = 44100.0;
     
-    bool enabled = true;
+    std::atomic<bool> enabled { true };  // FIX RT-SAFETY: atomic for cross-thread access (audio→AI)
     std::atomic<float> sensitivity { 0.5f };  // FIX RT-SAFETY: atomic for thread-safe access
     std::atomic<float> strength { 0.7f };     // FIX RT-SAFETY: atomic for thread-safe access
-    CorrectionMode correctionMode = CorrectionMode::Suggest;
+    std::atomic<int> correctionMode { static_cast<int>(CorrectionMode::Suggest) };  // FIX RT-SAFETY: atomic
     std::atomic<int> sourceProfile { static_cast<int>(SourceProfile::Generic) };  // FIX RT-SAFETY: atomic
+    std::atomic<int> lastAppliedProfile { static_cast<int>(SourceProfile::Generic) };  // For lazy threshold apply
     
     // Profile-specific thresholds
     struct ProfileThresholds
