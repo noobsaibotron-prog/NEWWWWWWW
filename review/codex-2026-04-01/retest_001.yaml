@@ -1,0 +1,45 @@
+---
+test_id: "retest_001"
+date: "2026-04-04"
+target_artifact: "AI Equalizer Pro (review/codex-2026-04-01)"
+tested_skill_version: "v1.1"
+auditor: "aieq-plugin-auditor"
+purpose: "Verify v1.1 promotion fixes both documented weaknesses without introducing regressions"
+
+retest_known_artifact_1:
+  file: "PluginProcessor.cpp"
+  sub_skill: "dsp-safety-audit (v1.1)"
+  audit_applied: "Audit 4 — Call Chain Verification"
+  v1_0_result: "CRITICAL — claimed analyzeSpectrum() blocks audio thread"
+  v1_1_result: "PASS — traced call chain: processBlock -> SPSC queue -> aiAnalysisThread (separate std::thread). Audio thread is NOT blocked."
+  evidence:
+    - "aiAnalysisThread = std::thread([this]() { aiAnalysisThreadFunc(); });"
+    - "aiAnalysisThreadFunc() runs while(!stopAIAnalysis.load()) with 10ms sleep"
+    - "Comments document: 'Use lock-free SPSC queue for passing spectrum data from processBlock to AI thread'"
+  conclusion: "v1.1 Audit 4 correctly prevents the overclaim. The mutex in AI is HIGH (wrong primitive) but NOT CRITICAL (not RT-blocking)."
+
+retest_known_artifact_2:
+  file: "LevelMeter.h"
+  sub_skill: "gui-performance-audit (v1.1)"
+  audit_applied: "Audit 3 — Resource Management (with JUCE 7+ exception)"
+  v1_0_result: "MEDIUM — flagged Colour/Font creation in paint() as resource violation"
+  v1_1_result: "CLEAN — all Colour usages are static constexpr POD uint32; Font uses COW FontOptions pattern"
+  evidence:
+    - "g.setColour(ModernLookAndFeel::Colors::bgDark) — static constexpr Colour"
+    - "g.setColour(juce::Colours::red) — static constexpr Colour"
+    - "juce::Font(juce::FontOptions().withHeight(10.0f)) — COW in JUCE 7+"
+  conclusion: "v1.1 exception correctly prevents the false positive. LevelMeter.h is CLEAN for resource management."
+
+retest_new_artifact:
+  file: "AIEngine.cpp"
+  sub_skill: "dsp-safety-audit (v1.1) + ai-integration-audit (v1.0)"
+  audit_applied: "Audit 4 — Call Chain Verification (cross-domain)"
+  v1_1_result: "HIGH (not CRITICAL) — AI inference runs on dedicated thread, but uses std::mutex for shared state instead of lock-free primitives"
+  evidence:
+    - "aiAnalysisThread is a separate std::thread started in constructor"
+    - "Data flows: processBlock -> lock-free queue -> aiAnalysisThread -> mutex-protected results"
+    - "The mutex protects result reading, not the audio path directly"
+  conclusion: "Correct severity is HIGH. Architecture is weak (mutex where lock-free needed) but does not cause audio dropouts."
+
+overall_verdict: "PROMOTION VALIDATED — v1.1 correctly fixes both documented weaknesses without introducing regressions."
+---
