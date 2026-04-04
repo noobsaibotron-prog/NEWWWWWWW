@@ -10,8 +10,8 @@
  * MSModeSwitchContinuityTest
  *
  * Verifies that switching between M/S processing modes (Stereo, Mid, Side, MSLinked)
- * does not introduce audible clicks or dropouts. The plugin currently has NO crossfade
- * on M/S mode switches, so this test may reveal real bugs.
+ * does not introduce audible clicks or dropouts. The plugin uses a 1024-sample
+ * (~21ms @ 48kHz) linear crossfade on M/S mode switches to prevent discontinuities.
  *
  * Input variants:
  *   - Symmetric (L=R): Mid = L√2, Side ≈ 0

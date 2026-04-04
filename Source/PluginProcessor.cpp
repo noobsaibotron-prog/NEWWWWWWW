@@ -1949,6 +1949,9 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         {
             // Case A: MSLinked ↔ non-MSLinked — different EQ paths, need dual processing.
             // msModeTransitionBuffer holds pre-M/S input (saved earlier).
+            // In LinearPhase mode, M/S processing is not used (LP convolver processes stereo),
+            // so the transition buffer stays as raw input — the crossfade acts as a simple
+            // fade between raw and LP-processed output, which is acceptable.
             if (mode != PhaseMode::LinearPhase)
             {
                 if (oldIsLinked)
