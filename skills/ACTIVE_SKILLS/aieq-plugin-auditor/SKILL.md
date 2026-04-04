@@ -10,14 +10,22 @@ metadata:
     excluded:
       - LEGAL
       - MARKETING
-  version: "1.1"
+  version: "1.2"
   orchestrator_for:
     - dsp-safety-audit
     - gui-performance-audit
     - ai-integration-audit
+    - test-quality-audit
+    - state-management-audit
+    - build-system-audit
+    - parameter-architecture-audit
+    - plugin-compliance-audit
+    - dsp-correctness-audit
+    - code-hygiene-audit
   promotion_history:
     - v1.0: Initial Composite Skill for AI Equalizer Pro
     - v1.1: Promoted dsp-safety-audit and gui-performance-audit based on test_001 feedback
+    - v1.2: Added 7 new sub-skills for comprehensive full-codebase coverage
   model_requirements:
     context_window: 128k
     tool_use: required
@@ -50,7 +58,7 @@ This is a **Composite Skill**. It performs no direct audits itself. Its sole res
 [1–3 sentence summary of the overall readiness.]
 
 ### Vectorized Governance State
-- **State Vector:** `[DSP: <state>] | [GUI: <state>] | [AI: <state>]`
+- **State Vector:** `[DSP: <st>] | [GUI: <st>] | [AI: <st>] | [Test: <st>] | [State: <st>] | [Build: <st>] | [Param: <st>] | [Compliance: <st>] | [Math: <st>] | [Hygiene: <st>]`
 - **Overall State:** `[Lowest common denominator state]`
 - **Justification:** [Brief explanation of the lowest state]
 
@@ -65,6 +73,34 @@ This is a **Composite Skill**. It performs no direct audits itself. Its sole res
 - ❌ **Missed:** [list]
 
 #### 3. AI Integration Analysis (`ai-integration-audit`)
+- ✅ **Proven:** [list]
+- ❌ **Missed:** [list]
+
+#### 4. Test Quality Analysis (`test-quality-audit`)
+- ✅ **Proven:** [list]
+- ❌ **Missed:** [list]
+
+#### 5. State Management Analysis (`state-management-audit`)
+- ✅ **Proven:** [list]
+- ❌ **Missed:** [list]
+
+#### 6. Build System Analysis (`build-system-audit`)
+- ✅ **Proven:** [list]
+- ❌ **Missed:** [list]
+
+#### 7. Parameter Architecture Analysis (`parameter-architecture-audit`)
+- ✅ **Proven:** [list]
+- ❌ **Missed:** [list]
+
+#### 8. Plugin Compliance Analysis (`plugin-compliance-audit`)
+- ✅ **Proven:** [list]
+- ❌ **Missed:** [list]
+
+#### 9. DSP Correctness Analysis (`dsp-correctness-audit`)
+- ✅ **Proven:** [list]
+- ❌ **Missed:** [list]
+
+#### 10. Code Hygiene Analysis (`code-hygiene-audit`)
 - ✅ **Proven:** [list]
 - ❌ **Missed:** [list]
 
