@@ -52,7 +52,10 @@ Status: Scaffolding ready. No domain modules created yet.
 
 ## /EXAMPLES
 Complete examples of skills, evals, and tests for training and reference.
-Status: Scaffolding ready. No examples created yet.
+
+| Example | Domain | Version | Description |
+|---|---|---|---|
+| `example_suno_prompt_audit/` | CREATIVE | v1.1 | Full lifecycle example: Suno V5 prompt audit skill with 2 audits, changelog, evals, and test record |
 
 ## /ACTIVE_SKILLS
 Live, operational skills currently in use.

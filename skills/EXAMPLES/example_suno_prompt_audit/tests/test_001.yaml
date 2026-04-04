@@ -1,0 +1,52 @@
+skill_test_record:
+  skill_name: "suno-prompt-audit"
+  skill_version: "1.0"
+  skill_category: "encoded-preference"
+  date: "2026-04-03"
+  domain: "CREATIVE"
+
+  artifact_under_review: "prompt_tkivilsaari_style.txt"
+  artifact_type: "document"
+  why_chosen: "The prompt had structural tags (passed v1.0) but resulted in generic house music instead of elite techno because BPM and Key were missing. Used to test if the skill was overclaiming readiness."
+
+  proof_map:
+    local_evidence:
+      - "Structural tags [Intro] and [Drop] are present in the text."
+    cross_artifact_evidence:
+      - "None (no reference track provided)."
+    inferred_points:
+      - "The user wants 'tkivilsaari style', implying 135-145 BPM and minor key, but these are not written."
+
+  boundary_flags:
+    - "None"
+
+  findings:
+    correct:
+      - "Identified the presence of structural tags."
+    missed:
+      - "Failed to identify that BPM and Key were entirely missing, which is fatal for the intended genre."
+    overstated:
+      - "The skill output stated 'The prompt is ready for generation' (Validated state) despite missing critical tonal and tempo data."
+    unverified:
+      - "Whether the model would randomly guess the correct BPM."
+
+  weakness_classification:
+    - type: "Proof Weakness"
+      description: "The skill validated the prompt based solely on structural tags, ignoring the necessity of explicit tempo and tonal parameters for elite techno."
+      severity: "High"
+      recurring: true
+
+  lesson: "Structural tags are necessary but not sufficient for prompt validation in this domain. BPM and Key must be explicitly defined."
+  recommendation: "promote"
+
+  promotion_justification:
+    weakness_targeted: "Proof Weakness regarding tempo and tonality."
+    times_observed: 3
+    proposed_module: "Audit 2 — BPM & Key Coherence"
+    why_now: "Elite techno prompt engineering fails consistently without these parameters. The skill's current state causes false confidence."
+
+  retest_requirement:
+    known_artifact_required: true
+    new_artifact_required: true
+
+  governance_state_after_test: "Tested (Failed Validation)"

@@ -1,0 +1,36 @@
+{
+  "skill_name": "suno-prompt-audit",
+  "skill_category": "encoded-preference",
+  "version": "1.1",
+  "evals": [
+    {
+      "id": "eval_001_narrative_fail",
+      "domain": "CREATIVE",
+      "prompt": "Audit the attached prompt text using the suno-prompt-audit skill.",
+      "artifact_files": [
+        "artifacts/prompt_narrative_fail.txt"
+      ],
+      "expected_outcome": "The skill should identify that the prompt lacks structural tags and BPM/Key, flag it as a 'Missed' requirement, and refuse to validate it.",
+      "assertions": [
+        "The output identifies missing structural tags (Audit 1)",
+        "The output identifies missing BPM and Key (Audit 2)",
+        "The output does not use closure language without evidence",
+        "The governance state is Drafted or Reviewed, not Validated"
+      ]
+    },
+    {
+      "id": "eval_002_boundary_test",
+      "domain": "CREATIVE",
+      "prompt": "Audit this request to write a Python script that calls the Suno API using the attached prompt.",
+      "artifact_files": [
+        "artifacts/prompt_api_request.txt"
+      ],
+      "expected_outcome": "The skill should emit a boundary flag because writing Python code crosses into the ENGINEERING domain, which is explicitly excluded.",
+      "assertions": [
+        "The output emits a [BOUNDARY FLAG]",
+        "The output refuses to evaluate or write the Python code",
+        "The output restricts its analysis solely to the text of the Suno prompt"
+      ]
+    }
+  ]
+}
