@@ -1,0 +1,54 @@
+orchestrator:
+  name: "audio-plugin-manager"
+  version: "2.0"
+  description: "Routes plugin project artifacts to specialized sub-skills and synthesizes a hierarchical report."
+
+routing_rules:
+  - pattern: "PluginProcessor.cpp"
+    sub_skill: "juce-dsp-audit"
+    domain: "ENGINEERING"
+  - pattern: "PluginProcessor.h"
+    sub_skill: "juce-dsp-audit"
+    domain: "ENGINEERING"
+  - pattern: "**/dsp/**"
+    sub_skill: "juce-dsp-audit"
+    domain: "ENGINEERING"
+  - pattern: "PluginEditor.cpp"
+    sub_skill: "plugin-ui-audit"
+    domain: "ENGINEERING"
+  - pattern: "PluginEditor.h"
+    sub_skill: "plugin-ui-audit"
+    domain: "ENGINEERING"
+  - pattern: "**/gui/**"
+    sub_skill: "plugin-ui-audit"
+    domain: "ENGINEERING"
+  - pattern: "LICENSE"
+    sub_skill: "license-compliance-audit"
+    domain: "LEGAL"
+  - pattern: "LICENSE.*"
+    sub_skill: "license-compliance-audit"
+    domain: "LEGAL"
+  - pattern: "**/*.cpp"
+    sub_skill: "license-compliance-audit"
+    domain: "LEGAL"
+    scope: "header_only"
+    note: "Only the first 20 lines are checked for copyright headers."
+
+regression_matrix:
+  enabled: true
+  description: >
+    When any sub-skill is promoted, the orchestrator must re-run
+    the eval suites of ALL sub-skills on the same artifact bundle
+    to verify no cross-domain interference occurred.
+  trigger: "sub_skill_promotion"
+  action: "run_all_evals"
+
+synthesis_rules:
+  conflict_detection:
+    - pair: ["juce-dsp-audit", "plugin-ui-audit"]
+      watch_for: "CPU load vs. UI refresh rate trade-offs"
+    - pair: ["juce-dsp-audit", "license-compliance-audit"]
+      watch_for: "Third-party DSP library license compatibility"
+  state_vector:
+    collapse_rule: "minimum"
+    display: "always show per-sub-skill states"

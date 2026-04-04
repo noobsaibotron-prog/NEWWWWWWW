@@ -1,7 +1,7 @@
 # AIEQ+ Repo Map
 
 This index maps the AIEQ+ repository structure.
-Last updated: 2026-04-04 (Phase 3 complete)
+Last updated: 2026-04-04 (Phase 3 complete + Composite Skill example)
 
 ---
 
@@ -56,6 +56,7 @@ Complete examples of skills, evals, and tests for training and reference.
 | Example | Domain | Version | Description |
 |---|---|---|---|
 | `example_suno_prompt_audit/` | CREATIVE | v1.1 | Full lifecycle example: Suno V5 prompt audit skill with 2 audits, changelog, evals, and test record |
+| `example_audio_plugin_manager/` | ENGINEERING + LEGAL | v2.0 | **Composite Skill** example: Orchestrator + 3 sub-skills (juce-dsp-audit, plugin-ui-audit, license-compliance-audit) with hierarchical output, vectorized states, and regression matrix |
 
 ## /ACTIVE_SKILLS
 Live, operational skills currently in use.
