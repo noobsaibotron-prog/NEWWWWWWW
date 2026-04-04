@@ -1,7 +1,7 @@
 # AIEQ+ Repo Map
 
 This index maps the AIEQ+ repository structure.
-Last updated: 2026-04-04
+Last updated: 2026-04-04 (Phase 3 complete)
 
 ---
 
@@ -11,8 +11,8 @@ The constitution of the method. Defines principles, vocabulary, and rules.
 | File | Status | Description |
 |---|---|---|
 | `AIEQ_PLUS_METHOD_BASE.md` | Active | Core principles and canonical cycle |
-| `AIEQ_PLUS_GLOSSARY.md` | Planned | Terminology |
-| `AIEQ_PLUS_PROMOTION_POLICY.md` | Planned | Rules for promoting skills |
+| `AIEQ_PLUS_GLOSSARY.md` | Active | Core terminology and shared vocabulary |
+| `AIEQ_PLUS_PROMOTION_POLICY.md` | Active | Evidence-based promotion criteria and cycle |
 
 ## /RUNTIME
 Executable prompt fragments and protocols for the agent while working.
@@ -21,7 +21,7 @@ Executable prompt fragments and protocols for the agent while working.
 |---|---|---|
 | `AIEQ_PLUS_SYSTEM_PROMPT_CORE.md` | Active | The core system prompt |
 | `AIEQ_PLUS_RUNTIME_QUICKSTART.md` | Active | Quick operational discipline |
-| `AIEQ_PLUS_OUTPUT_PROTOCOL.md` | Planned | Standard output formats |
+| `AIEQ_PLUS_OUTPUT_PROTOCOL.md` | Active | Standard output structure and forbidden behaviors |
 | `AIEQ_PLUS_BOUNDARY_AND_FLAG_PROTOCOL.md` | Active | Rules for emitting flags |
 
 ## /TEMPLATES
