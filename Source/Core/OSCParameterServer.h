@@ -37,14 +37,8 @@ public:
         if (running.load())
             return true;
 
-        // Log to file for debugging
-        juce::File logFile(juce::File::getSpecialLocation(juce::File::userDesktopDirectory)
-                           .getChildFile("aieq_osc_log.txt"));
-        logFile.appendText("OSCParameterServer::start() called at " + juce::Time::getCurrentTime().toString(true, true) + "\n");
-
         socket = std::make_unique<juce::DatagramSocket>(false);
         bool bound = socket->bindToPort(listenPort);
-        logFile.appendText("bindToPort(" + juce::String(listenPort) + ") = " + (bound ? "OK" : "FAILED") + "\n");
 
         if (!bound)
         {
@@ -54,21 +48,16 @@ public:
                 bound = socket->bindToPort(alt);
                 if (bound)
                 {
-                    logFile.appendText("Bound to alternative port " + juce::String(alt) + "\n");
                     listenPort = alt;
                     break;
                 }
             }
             if (!bound)
-            {
-                logFile.appendText("All ports failed\n");
                 return false;
-            }
         }
 
         running.store(true);
         serverThread = std::make_unique<std::thread>([this]() { run(); });
-        logFile.appendText("Server thread started on port " + juce::String(listenPort) + "\n");
         return true;
     }
 
