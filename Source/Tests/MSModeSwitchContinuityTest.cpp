@@ -36,7 +36,7 @@ private:
     //==========================================================================
     // Thresholds
     //==========================================================================
-    static constexpr float kMaxDelta       = 0.8f;   // relaxed — no crossfade exists
+    static constexpr float kMaxDelta       = 0.1f;   // Tightened — crossfade now exists (was 0.8f)
     static constexpr float kPeakAbs        = 3.0f;
     static constexpr int   kMaxDropout     = 5;
     static constexpr float kEnergyLo       = 0.1f;   // wide band for Side-Only w/ symmetric input
@@ -262,10 +262,13 @@ private:
         constexpr int switchBlock = 30;
 
         // MSMode enum: Stereo=0, Mid=1, Side=2, MSLinked=3
-        const std::array<std::pair<int,int>, 6> transitions {{
+        const std::array<std::pair<int,int>, 12> transitions {{
             {0, 3}, {3, 0},   // Stereo ↔ MSLinked
             {0, 1}, {1, 0},   // Stereo ↔ Mid
-            {0, 2}, {2, 0}    // Stereo ↔ Side
+            {0, 2}, {2, 0},   // Stereo ↔ Side
+            {1, 2}, {2, 1},   // Mid ↔ Side (New: Case B transition)
+            {1, 3}, {3, 1},   // Mid ↔ MSLinked (New: Case A transition)
+            {2, 3}, {3, 2}    // Side ↔ MSLinked (New: Case A transition)
         }};
 
         const char* modeNames[] = { "Stereo", "Mid", "Side", "MSLinked" };
@@ -329,10 +332,14 @@ private:
         constexpr int numBlocks  = 60;
         constexpr int switchBlock = 30;
 
-        // Only the transitions most likely to reveal issues with asymmetric input
-        const std::array<std::pair<int,int>, 4> transitions {{
+        // Full graph coverage for asymmetric input to ensure phase alignment
+        const std::array<std::pair<int,int>, 12> transitions {{
             {0, 3}, {3, 0},   // Stereo ↔ MSLinked
-            {0, 1}, {0, 2}    // Stereo → Mid, Stereo → Side
+            {0, 1}, {1, 0},   // Stereo ↔ Mid
+            {0, 2}, {2, 0},   // Stereo ↔ Side
+            {1, 2}, {2, 1},   // Mid ↔ Side
+            {1, 3}, {3, 1},   // Mid ↔ MSLinked
+            {2, 3}, {3, 2}    // Side ↔ MSLinked
         }};
 
         const char* modeNames[] = { "Stereo", "Mid", "Side", "MSLinked" };

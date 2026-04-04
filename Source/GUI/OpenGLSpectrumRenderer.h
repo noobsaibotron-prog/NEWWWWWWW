@@ -49,17 +49,20 @@ public:
                         juce::Rectangle<float> graphBounds,
                         float minDb, float maxDb)
     {
-        // Write to pending buffer; OpenGL thread reads from active buffer
         const int w = static_cast<int>(graphBounds.getWidth());
         if (w <= 0) return;
 
-        auto& buf = pending;
-        buf.spectrum   = spectrum;
-        buf.peakHold   = peakHold;
-        buf.bounds     = graphBounds;
-        buf.minDb      = minDb;
-        buf.maxDb      = maxDb;
-        buf.width      = w;
+        // CRITICAL FIX: Protect vector copies with mutex. 
+        // Atomic flag alone is not enough for non-atomic vector assignments.
+        {
+            const std::lock_guard<std::mutex> lock(bufferMutex);
+            pending.spectrum = spectrum;
+            pending.peakHold = peakHold;
+            pending.bounds   = graphBounds;
+            pending.minDb    = minDb;
+            pending.maxDb    = maxDb;
+            pending.width    = w;
+        }
 
         pendingDirty.store(true, std::memory_order_release);
     }
@@ -89,7 +92,10 @@ public:
     {
         // Swap pending → active
         if (pendingDirty.exchange(false, std::memory_order_acq_rel))
+        {
+            const std::lock_guard<std::mutex> lock(bufferMutex);
             active = pending;
+        }
 
         if (active.spectrum.empty() || !shader || !fillShader)
             return;
@@ -294,7 +300,8 @@ private:
     {
         if (!shader) return;
 
-        std::vector<float> pkVerts;
+        // CRITICAL FIX: Reuse member vector to avoid per-frame heap allocation
+        pkVerts.clear();
         pkVerts.reserve(peakHold.size() * 2);
 
         const float bx = bounds.getX();
@@ -357,6 +364,9 @@ private:
 
     std::vector<float> lineVerts;
     std::vector<float> fillVerts;
+    std::vector<float> pkVerts; // Cached to avoid heap allocation in render loop
+
+    std::mutex bufferMutex; // Protects 'pending' buffer during cross-thread copy
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(OpenGLSpectrumRenderer)
 };

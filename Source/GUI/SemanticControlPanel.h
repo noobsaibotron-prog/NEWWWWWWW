@@ -258,12 +258,15 @@ public:
     
     void timerCallback() override
     {
+        bool needsRepaint = false;
+
         // Update morph progress
         if (semanticEngine.isMorphing())
         {
             semanticEngine.updateMorph(33.0f);  // ~30fps
             syncSlidersFromEngine();
             semanticDirty = true;
+            needsRepaint = true; // Animation active
         }
 
         // FIX 1: Coalesce — apply semantic EQ updates at timer rate (30Hz max),
@@ -273,9 +276,13 @@ public:
         {
             updateEQFromState();
             semanticDirty = false;
+            needsRepaint = true; // State changed
         }
 
-        repaint();  // For visualizer animation
+        // CRITICAL FIX: Only repaint if something actually changed (morphing or dirty)
+        // This eliminates idle overhead (30Hz repaint even when doing nothing).
+        if (needsRepaint)
+            repaint();
     }
     
     //==========================================================================
