@@ -1,0 +1,55 @@
+orchestrator:
+  name: "aieq-plugin-auditor"
+  version: "1.1"
+  description: "Routes AIEQ plugin project artifacts to specialized sub-skills and synthesizes a hierarchical report."
+
+routing_rules:
+  - pattern: "Source/DSP/**"
+    sub_skill: "dsp-safety-audit"
+    domain: "ENGINEERING"
+  - pattern: "Source/Core/**"
+    sub_skill: "dsp-safety-audit"
+    domain: "ENGINEERING"
+  - pattern: "Source/GUI/**"
+    sub_skill: "gui-performance-audit"
+    domain: "ENGINEERING"
+  - pattern: "Source/AI/**"
+    sub_skill: "ai-integration-audit"
+    domain: "ENGINEERING"
+  - pattern: "PluginProcessor.*"
+    sub_skill: "dsp-safety-audit"
+    domain: "ENGINEERING"
+  - pattern: "PluginEditor.*"
+    sub_skill: "gui-performance-audit"
+    domain: "ENGINEERING"
+
+regression_matrix:
+  enabled: true
+  description: >
+    When any sub-skill is promoted, the orchestrator must re-run
+    the eval suites of ALL sub-skills on the same artifact bundle
+    to verify no cross-domain interference occurred.
+  trigger: "sub_skill_promotion"
+  action: "run_all_evals"
+
+synthesis_rules:
+  conflict_detection:
+    - pair: ["dsp-safety-audit", "ai-integration-audit"]
+      watch_for: "AI Inference Blocking the Audio Path"
+      evidence_anchor: "PluginProcessor calling AI engine methods that trigger synchronous inference or acquire mutexes."
+      resolution_priority: "dsp-safety-audit"
+    - pair: ["gui-performance-audit", "dsp-safety-audit"]
+      watch_for: "Spectrum Pipeline Contention"
+      evidence_anchor: "Shared locks (e.g., juce::SpinLock) between GUI rendering and DSP processing."
+      resolution_priority: "dsp-safety-audit"
+    - pair: ["ai-integration-audit", "dsp-safety-audit"]
+      watch_for: "CaptureService Consumer Stall"
+      evidence_anchor: "AI thread stalling and causing lock-free ring buffer overflow from the DSP thread."
+      resolution_priority: "dsp-safety-audit"
+    - pair: ["gui-performance-audit", "ai-integration-audit"]
+      watch_for: "Direct Processor Calls vs APVTS"
+      evidence_anchor: "GUI panels calling processor/AI methods directly instead of using lock-free APVTS attachments."
+      resolution_priority: "gui-performance-audit"
+  state_vector:
+    collapse_rule: "minimum"
+    display: "always show per-sub-skill states"

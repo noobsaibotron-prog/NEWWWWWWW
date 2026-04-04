@@ -35,15 +35,14 @@ This is a **Composite Skill**. It performs no direct audits itself. Its sole res
 - Do not silently resolve conflicts between sub-skills (e.g., if GUI demands high refresh rate but DSP demands low lock contention).
 
 ## Orchestration Workflow
-1. **Identify Artifacts:** Map the provided project files to their respective domains:
-   - `Source/DSP/*` $\rightarrow$ `dsp-safety-audit`
-   - `Source/GUI/*` $\rightarrow$ `gui-performance-audit`
-   - `Source/AI/*` $\rightarrow$ `ai-integration-audit`
-   - `Source/Core/*` $\rightarrow$ Relevant sub-skills based on context.
+1. **Identify Artifacts:** Map the provided project files to their respective domains using `ORCHESTRATOR_CONFIG.yaml` routing rules.
 2. **Execute Sub-Skills:** Run the sub-skills sequentially or in parallel.
 3. **Aggregate Findings:** Collect the `Proven` and `Missed` findings from each sub-skill.
-4. **Synthesize:** Identify any cross-domain conflicts (e.g., a lock in the AI engine that might block the audio thread).
-5. **Output Hierarchical Report:** Generate the final report using the Layered Proof Map format.
+4. **Execute Regression Matrix:** Read `REGRESSION_MATRIX.md` and verify each conflict pair using its Verification Protocol. Use the Conflict Severity Matrix to classify cross-domain severity.
+5. **Synthesize:** Identify any cross-domain conflicts and emit `[CONFLICT FLAG]` for each.
+6. **Output Hierarchical Report:** Generate the final report using the Layered Proof Map format.
+
+> **On sub-skill promotion:** Before finalizing any promotion, re-run all sub-skill evals on the same artifact bundle and execute the full regression protocol (see `REGRESSION_MATRIX.md` Section 3).
 
 ## Output Format (Layered Proof Map)
 
@@ -69,9 +68,10 @@ This is a **Composite Skill**. It performs no direct audits itself. Its sole res
 - ✅ **Proven:** [list]
 - ❌ **Missed:** [list]
 
-### Cross-Module Synthesis
-- ⚠️ **Inferred Risks:** [Cross-domain inferences, e.g., thread contention]
-- 🚩 **Conflicts:** [List any `[CONFLICT FLAG]` between sub-skill findings]
+### Cross-Module Synthesis (from Regression Matrix)
+- ⚠️ **Inferred Risks:** [Cross-domain inferences from conflict pair verification]
+- 🚩 **Conflicts:** [List any `[CONFLICT FLAG]` with severity from Conflict Severity Matrix]
+- 🔄 **Regression Check:** [If this is a post-promotion audit: New / Resolved / Persistent / Shifted findings]
 
 ### Next Steps
 [Actionable remediation steps, grouped by domain.]
