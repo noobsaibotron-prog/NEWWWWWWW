@@ -1,0 +1,144 @@
+{
+  "project_info": {
+    "title": "AIEQ+ Release Verdict Engine — Official Report",
+    "created": 1775293386.2316854,
+    "last_updated": 1775294147.4676628,
+    "total_slides": 11
+  },
+  "slides": [
+    {
+      "id": "slide_1",
+      "state": "edited",
+      "pageNum": 1
+    },
+    {
+      "id": "slide_2",
+      "state": "edited",
+      "pageNum": 2
+    },
+    {
+      "id": "slide_3",
+      "state": "edited",
+      "pageNum": 3
+    },
+    {
+      "id": "slide_4",
+      "state": "edited",
+      "pageNum": 4
+    },
+    {
+      "id": "slide_5",
+      "state": "edited",
+      "pageNum": 5
+    },
+    {
+      "id": "slide_6",
+      "state": "edited",
+      "pageNum": 6
+    },
+    {
+      "id": "slide_7",
+      "state": "edited",
+      "pageNum": 7
+    },
+    {
+      "id": "slide_8",
+      "state": "edited",
+      "pageNum": 8
+    },
+    {
+      "id": "slide_9",
+      "state": "edited",
+      "pageNum": 9
+    },
+    {
+      "id": "slide_10",
+      "state": "edited",
+      "pageNum": 10
+    },
+    {
+      "id": "slide_11",
+      "state": "edited",
+      "pageNum": 11
+    }
+  ],
+  "outline": [
+    {
+      "id": "slide_1",
+      "title": "AIEQ+ Release Verdict Engine — Official Report",
+      "summary": "Title slide with project details, date, and engine version.",
+      "image_plan": "Use a suitable image if needed",
+      "slide_template_key": ""
+    },
+    {
+      "id": "slide_2",
+      "title": "Verdetto Definitivo: DO-NOT-RELEASE — Commercial Rating 5.61 / 10.0",
+      "summary": "The definitive verdict, showing the failure to meet the commercial threshold and key impact metrics.",
+      "image_plan": "Use a suitable image if needed",
+      "slide_template_key": ""
+    },
+    {
+      "id": "slide_3",
+      "title": "State Vector a 10 Dimensioni — La Fotografia del Plugin",
+      "summary": "A breakdown of the 10 domain scores, states, and weights, highlighting that 60% are in Drafted state.",
+      "image_plan": "Use a suitable image if needed",
+      "slide_template_key": ""
+    },
+    {
+      "id": "slide_4",
+      "title": "Dashboard: ogni quadrante racconta un aspetto diverso dello stesso problema",
+      "summary": "The verdict dashboard showing domain scores, commercial rating, state distribution, and active conflict flags.",
+      "image_plan": "Use a suitable image if needed",
+      "slide_template_key": ""
+    },
+    {
+      "id": "slide_5",
+      "title": "3 blocchi sistemici impediscono la release: AI rotto, GUI contaminata, conflitti cross-dominio",
+      "summary": "Detailed explanation of the 3 critical blockers: AI Integration, GUI Performance, and Cross-Domain Conflicts.",
+      "image_plan": "Use a suitable image if needed",
+      "slide_template_key": ""
+    },
+    {
+      "id": "slide_6",
+      "title": "Il DSP core è di livello commerciale elite — il cuore del plugin funziona",
+      "summary": "Highlighting the strengths of the project, specifically the elite-level DSP core and testing suite.",
+      "image_plan": "Use a suitable image if needed",
+      "slide_template_key": ""
+    },
+    {
+      "id": "slide_7",
+      "title": "Radar di Proiezione — Current vs. After Remediation",
+      "summary": "Radar chart comparing the current state to the projected state after all 3 waves of remediation.",
+      "image_plan": "Use a suitable image if needed",
+      "slide_template_key": ""
+    },
+    {
+      "id": "slide_8",
+      "title": "14 file da fixare in 3 onde per portare il rating da 5.61 a 7.2",
+      "summary": "The 3-wave remediation roadmap detailing the files to fix and the projected impact on the commercial rating.",
+      "image_plan": "Use a suitable image if needed",
+      "slide_template_key": ""
+    },
+    {
+      "id": "slide_9",
+      "title": "Il percorso da DO-NOT-RELEASE a RELEASE-CONDITIONAL richiede tutte e 3 le onde",
+      "summary": "Progression table showing the projected state of key domains and the overall verdict after each remediation wave.",
+      "image_plan": "Use a suitable image if needed",
+      "slide_template_key": ""
+    },
+    {
+      "id": "slide_10",
+      "title": "PluginProcessor.h è l'hub centrale — ogni problema AI si propaga a 24+ file attraverso di esso",
+      "summary": "Dependency analysis highlighting PluginProcessor.h as the central hub and the most dangerous propagation chain.",
+      "image_plan": "Use a suitable image if needed",
+      "slide_template_key": ""
+    },
+    {
+      "id": "slide_11",
+      "title": "HITL Required — Il motore fornisce i dati, l'umano prende la decisione",
+      "summary": "Governance overview and immediate next steps for the remediation process.",
+      "image_plan": "Use a suitable image if needed",
+      "slide_template_key": ""
+    }
+  ]
+}
