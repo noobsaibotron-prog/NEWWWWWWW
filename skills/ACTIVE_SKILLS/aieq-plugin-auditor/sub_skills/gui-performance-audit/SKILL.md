@@ -9,9 +9,10 @@ domain_boundaries:
   excluded:
     - ENGINEERING/DSP
     - ENGINEERING/AI
-version: "1.0"
+version: "1.1"
 promotion_history:
   - v1.0: Initial release (Rendering performance and thread safety checks)
+  - v1.1: Updated Audit 3 to exclude juce::Colour and juce::Font from expensive resource checks (justified by test_001)
 model_requirements:
   context_window: 32k
   tool_use: optional
@@ -27,6 +28,7 @@ The GUI must run efficiently, usually at 60 FPS, without stalling the message th
 - Do not approve code that performs heavy computations (e.g., FFT, ML inference) on the message thread.
 - Do not approve code that continuously repaints without a timer or proper invalidation regions.
 - Do not assume that `repaint()` is cost-free; verify what triggers it.
+- **[v1.1]** Do not flag the creation of `juce::Colour` or `juce::Font` inside `paint()` as a resource management violation. In JUCE 7+, `Colour` is a POD uint32 wrapper and `Font` is Copy-On-Write, making them safe to instantiate locally.
 
 ## Mandatory Grounding Pass
 Before judging anything:
@@ -46,10 +48,11 @@ Before judging anything:
 - **Proof requirement:** Complex graphics (like a spectrum analyzer) must not be redrawn entirely on every frame unless necessary; use staging buffers or VBOs if OpenGL is used.
 - **Classification if failed:** `Rendering Weakness`.
 
-### Audit 3: Resource Management
-- **What to check:** Verify that images, fonts, and other resources are cached and not re-loaded continuously.
-- **Proof requirement:** Resources must be loaded once (e.g., in the constructor or a LookAndFeel class) and reused.
-- **Classification if failed:** `Resource Management Weakness`.
+### Audit 3: Resource Management [v1.1]
+- **What to check:** Verify that expensive resources (images, paths, complex gradients, SVGs) are cached and not re-loaded continuously.
+- **Proof requirement:** Expensive resources must be loaded once (e.g., in the constructor or a LookAndFeel class) and reused.
+- **Exception:** `juce::Colour` and `juce::Font` are lightweight in modern JUCE and may be created locally in `paint()`.
+- **Classification if failed:** `Resource Management Weakness` or `Encoded-Preference Weakness` if falsely flagged.
 
 ## Output Format
 Use the standard AIEQ+ Output Protocol (Executive Summary, Classification & Flags, Findings/Proof Map, Governance State Assessment, Next Steps).

@@ -10,13 +10,14 @@ metadata:
     excluded:
       - LEGAL
       - MARKETING
-  version: "1.0"
+  version: "1.1"
   orchestrator_for:
     - dsp-safety-audit
     - gui-performance-audit
     - ai-integration-audit
   promotion_history:
     - v1.0: Initial Composite Skill for AI Equalizer Pro
+    - v1.1: Promoted dsp-safety-audit and gui-performance-audit based on test_001 feedback
   model_requirements:
     context_window: 128k
     tool_use: required
