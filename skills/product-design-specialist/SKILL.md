@@ -15,8 +15,11 @@ description: >
 > - Category: `encoded-preference`
 > - Domain (primary): Audio Plugin UI/UX Design, Digital Product Design
 > - Domain (excluded): C++/JUCE Implementation, Web Development, DSP Algorithm Design, Generic Graphic Design (non-product)
-> - Version: `1.0`
-> - Promotion History: v1.0 — Versione iniziale basata sul protocollo AIEQ+ 2.0 per Marco.
+> - Version: `1.1`
+> - Governance State: `Validated`
+> - Promotion History:
+>   - v1.0 — Versione iniziale basata sul protocollo AIEQ+ 2.0 per Marco.
+>   - v1.1 — Promossa a Validated dopo 5 test su AIEQ Pro/1-Meld. Aggiunto criterio Identità Emotiva, Known Limitations, TEST_RECORD.yaml. Gate per v2.0 Esclusivo definiti.
 
 Questa skill trasforma l'IA in uno specialista di product design per interfacce audio professionali e prodotti digitali. Opera con la disciplina AIEQ+: ogni proposta di redesign è ancorata ad artefatti reali, ogni claim estetico è giustificato, ogni variante è comparabile.
 
@@ -81,6 +84,7 @@ Ogni proposta deve essere valutata rispetto alla baseline con il seguente framew
 | Premium Feel | | | | |
 | Leggibilità | | | | |
 | Innovazione | | | | |
+| Identità Emotiva | | | | |
 
 La proposta è valida solo se il delta medio è positivo e nessun criterio singolo ha un delta negativo superiore a -2.
 
@@ -103,6 +107,27 @@ Ogni variante deve ridefinire l'intero color system, non solo sostituire un colo
 
 Temi predefiniti disponibili in `/home/ubuntu/skills/product-design-specialist/references/premium_color_systems.md`:
 Electric Blue, Violet Haze, Emerald Night, Warm Gold, Rose Platinum, Arctic Silver, Sunset Amber, Deep Crimson.
+
+## Known Limitations (v1.1)
+
+Limiti documentati e verificati durante i test reali:
+
+| # | Tipo | Descrizione | Gravità | Bloccante per v2.0? |
+|---|------|-------------|---------|---------------------|
+| L1 | Boundary Weakness | Testata su un solo tipo di plugin (EQ). Non verificata su compressori, synth, o interfacce non-audio. | Alta | Sì |
+| L3 | Proof Weakness | Density Audit basato su stima visiva, non misurazioni pixel-precise. | Media | No |
+| L4 | Validation Weakness | Nessun feedback loop con implementazione JUCE reale. | Alta | Sì |
+| L5 | Scope Weakness | Nessun audit per stati interattivi (hover, animazioni, responsive). | Media | No |
+
+## Gate per Promozione a v2.0 (Esclusivo)
+
+| Gate | Descrizione | Stato |
+|------|-------------|-------|
+| M1 | Test su interfaccia compressore/limiter (layout diverso) | Pending |
+| M2 | Test su interfaccia synth/strumento virtuale (paradigma diverso) | Pending |
+| M3 | Feedback loop con implementazione JUCE reale (almeno 1 token verificato) | Pending |
+| M4 | Aggiunta audit per stati interattivi (modulo testato su almeno 1 artefatto) | Pending |
+| M5 | Promozione a v2.0 Esclusivo | Blocked (requires M1-M4) |
 
 ## Riferimenti Bundle
 
