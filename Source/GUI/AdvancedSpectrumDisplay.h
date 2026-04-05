@@ -3,6 +3,7 @@
 #include <juce_audio_basics/juce_audio_basics.h>
 #include "../PluginProcessor.h"
 #include "ModernLookAndFeel.h"
+#include "DesignTokens.h"
 #include <array>
 #include <cmath>
 #include <limits>
@@ -38,20 +39,27 @@ public:
         frozenSpectrum.resize(512, spectrumMinDb);
         capturedSpectrum.resize(512, spectrumMinDb);
         
-        // Initialize band colors (repeat palette for all supported bands)
-        constexpr int paletteSize = 8;
-        for (int i = 0; i < AIEqualizerAudioProcessor::maxBands; ++i)
-        {
-            bandColors[i] = ModernLookAndFeel::Colors::getBandColor(i % paletteSize);
-        }
+        // Initialize band colors from ThemeManager
+        refreshBandColorsFromTheme();
+        
+        // Listen for theme changes to repaint and refresh
+        ThemeManager::getInstance().addListener([this]() {
+            refreshBandColorsFromTheme();
+            gridCacheDirty = true;
+            lavaStripDirty = true;
+            ghostCurveDirty = true;
+            eqCurveDirty = true;
+            repaint();
+        });
         
         // Spectrum toolbar — semi-transparent buttons that blend with the display
         auto setupToolbarBtn = [](juce::TextButton& btn, const juce::String& text) {
+            auto& theme = ThemeManager::getInstance().getTheme();
             btn.setButtonText(text);
-            btn.setColour(juce::TextButton::buttonColourId, juce::Colour(0x40202030));
-            btn.setColour(juce::TextButton::buttonOnColourId, juce::Colour(0x804A90D9));
-            btn.setColour(juce::TextButton::textColourOffId, juce::Colour(0xBBD0D0D8));
-            btn.setColour(juce::TextButton::textColourOnId, juce::Colours::white);
+            btn.setColour(juce::TextButton::buttonColourId, theme.toolbarBtnBg);
+            btn.setColour(juce::TextButton::buttonOnColourId, theme.toolbarBtnBgActive);
+            btn.setColour(juce::TextButton::textColourOffId, theme.toolbarBtnText);
+            btn.setColour(juce::TextButton::textColourOnId, theme.toolbarBtnTextActive);
         };
 
         setupToolbarBtn(freezeButton, "FREEZE");
@@ -216,12 +224,13 @@ public:
 
         auto bounds = getLocalBounds().toFloat();
 
-        // === PREMIUM BACKGROUND — subtle vertical gradient ===
+        // === PREMIUM BACKGROUND — themed vertical gradient ===
         {
+            auto& theme = ThemeManager::getInstance().getTheme();
             juce::ColourGradient bgGrad(
-                juce::Colour(0xFF101018), bounds.getX(), bounds.getY(),
-                juce::Colour(0xFF0A0A12), bounds.getX(), bounds.getBottom(), false);
-            bgGrad.addColour(0.5, juce::Colour(0xFF0E0E16));
+                theme.bgSecondary, bounds.getX(), bounds.getY(),
+                theme.bgPrimary, bounds.getX(), bounds.getBottom(), false);
+            bgGrad.addColour(0.5, theme.bgSecondary.interpolatedWith(theme.bgPrimary, 0.5f));
             g.setGradientFill(bgGrad);
             g.fillRoundedRectangle(bounds, 4.0f);
         }
@@ -234,7 +243,7 @@ public:
         // Subtle inner shadow at top of graph area
         {
             juce::ColourGradient shadowGrad(
-                juce::Colour(0x18000000), graphBounds.getX(), graphBounds.getY(),
+                juce::Colours::black.withAlpha(0.10f), graphBounds.getX(), graphBounds.getY(),
                 juce::Colours::transparentBlack, graphBounds.getX(), graphBounds.getY() + 30, false);
             g.setGradientFill(shadowGrad);
             g.fillRect(graphBounds.getX(), graphBounds.getY(), graphBounds.getWidth(), 30.0f);
@@ -281,6 +290,8 @@ public:
 
         drawEQBands(g);
         drawAIMarkers(g);
+        drawLavaStrip(g);
+        drawGhostCurve(g);
 
         if (hoverX >= 0) drawHover(g);
 
@@ -288,9 +299,12 @@ public:
         tBands = lap() - t0;
 #endif
 
-        // Subtle border
-        g.setColour(juce::Colour(0xFF222230));
-        g.drawRoundedRectangle(bounds.reduced(0.5f), 4.0f, 1.0f);
+        // Subtle border — themed
+        {
+            auto& theme = ThemeManager::getInstance().getTheme();
+            g.setColour(theme.border);
+            g.drawRoundedRectangle(bounds.reduced(0.5f), 4.0f, 1.0f);
+        }
 
 #if AIEQ_GUI_DEBUG
         {
@@ -914,8 +928,9 @@ private:
             if (x < graphBounds.getX() || x > graphBounds.getRight())
                 continue;
 
-            juce::Colour base = peak.fromAI ? ModernLookAndFeel::Colors::accentOrange
-                                            : ModernLookAndFeel::Colors::textSecondary;
+            auto& theme = ThemeManager::getInstance().getTheme();
+            juce::Colour base = peak.fromAI ? theme.warning
+                                            : theme.textSecondary;
 
             g.setColour(base.withAlpha(0.35f));
             g.drawVerticalLine(static_cast<int>(x), graphBounds.getY(), graphBounds.getBottom());
@@ -939,12 +954,12 @@ private:
                 int ty = static_cast<int>(y) - 32;
                 if (ty < graphBounds.getY() + 4) ty = static_cast<int>(y) + 12;
 
-                g.setColour(ModernLookAndFeel::Colors::bgLight.withAlpha(0.95f));
+                g.setColour(theme.bgTertiary.withAlpha(0.95f));
                 g.fillRoundedRectangle((float)tx, (float)ty, (float)w, (float)h, 4.0f);
                 g.setColour(base);
                 g.drawRoundedRectangle((float)tx, (float)ty, (float)w, (float)h, 4.0f, 1.4f);
 
-                g.setColour(ModernLookAndFeel::Colors::textBright);
+                g.setColour(theme.textPrimary);
                 g.setFont(juce::Font(juce::FontOptions().withHeight(11.0f)));
                 g.drawText(label, tx, ty, w, h, juce::Justification::centred);
             }
@@ -953,8 +968,9 @@ private:
 
     void drawPianoRollOverlay(juce::Graphics& g)
     {
+        auto& theme = ThemeManager::getInstance().getTheme();
         auto area = juce::Rectangle<float>(graphBounds.getX(), graphBounds.getBottom(), graphBounds.getWidth(), 18.0f);
-        g.setColour(ModernLookAndFeel::Colors::bgLight);
+        g.setColour(theme.bgTertiary);
         g.fillRect(area);
 
         auto isWhite = [](int midi)
@@ -974,17 +990,17 @@ private:
 
             float w = x2 - x1;
             juce::Rectangle<float> keyRect(x1, area.getY(), w, area.getHeight());
-            g.setColour(isWhite(midi) ? ModernLookAndFeel::Colors::bgDark.brighter(0.08f)
-                                      : ModernLookAndFeel::Colors::bgDark);
+            g.setColour(isWhite(midi) ? theme.bgSecondary.brighter(0.08f)
+                                      : theme.bgPrimary);
             g.fillRect(keyRect);
 
-            g.setColour(ModernLookAndFeel::Colors::bgLighter);
+            g.setColour(theme.bgTertiary);
             g.drawLine(x1, area.getY(), x1, area.getBottom(), 0.5f);
 
             if (midi % 12 == 0)
             {
                 juce::String name = juce::MidiMessage::getMidiNoteName(midi, true, true, 3);
-                g.setColour(ModernLookAndFeel::Colors::textMuted);
+                g.setColour(theme.textMuted);
                 g.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
                 g.drawText(name, (int)x1 - 8, (int)area.getY(), 40, (int)area.getHeight(),
                            juce::Justification::centredLeft, false);
@@ -1214,50 +1230,54 @@ private:
         // Offset so paths (which use graphBounds coordinates) render at image origin
         ig.addTransform(juce::AffineTransform::translation(-graphBounds.getX(), -graphBounds.getY()));
 
-        // Pre fill + line
+        auto& theme = ThemeManager::getInstance().getTheme();
+
+        // Pre fill + line — themed 3-stop gradient
         if (!cachedPreFill.isEmpty())
         {
             juce::ColourGradient fillGrad(
-                ModernLookAndFeel::Colors::textSecondary.withAlpha(0.28f), 0, graphBounds.getY(),
-                ModernLookAndFeel::Colors::textSecondary.withAlpha(0.05f), 0, graphBounds.getBottom(), false);
+                theme.spectrumFillBottom, 0, graphBounds.getBottom(),
+                theme.spectrumFillTop, 0, graphBounds.getY(), false);
+            fillGrad.addColour(0.5, theme.spectrumFillMid);
             ig.setGradientFill(fillGrad);
             ig.fillPath(cachedPreFill);
         }
         if (!cachedPreLine.isEmpty())
         {
-            ig.setColour(ModernLookAndFeel::Colors::textSecondary.withAlpha(0.55f));
+            ig.setColour(theme.spectrumLineColor);
             ig.strokePath(cachedPreLine, juce::PathStrokeType(1.4f));
         }
 
-        // Post line
+        // Post line — themed
         if (!cachedPostLine.isEmpty())
         {
-            juce::Colour front = ModernLookAndFeel::Colors::accentGreen.brighter(0.05f);
             juce::ColourGradient postGrad(
-                ModernLookAndFeel::Colors::accentYellow.withAlpha(0.85f), 0, graphBounds.getY(),
-                front.withAlpha(0.85f), 0, graphBounds.getBottom(), false);
+                theme.spectrumPostFillTop, 0, graphBounds.getY(),
+                theme.spectrumPostLineColor, 0, graphBounds.getBottom(), false);
             ig.setGradientFill(postGrad);
             ig.strokePath(cachedPostLine, juce::PathStrokeType(1.8f));
         }
 
-        // Delta line
+        // Delta line — themed info color
         if (!cachedDeltaLine.isEmpty())
         {
-            ig.setColour(ModernLookAndFeel::Colors::accentCyan.withAlpha(0.8f));
+            ig.setColour(theme.info.withAlpha(0.8f));
             ig.strokePath(cachedDeltaLine, juce::PathStrokeType(1.6f));
         }
 
-        // Peak-hold line
+        // Peak-hold line — themed warning color
         if (!cachedPeakLine.isEmpty())
         {
-            ig.setColour(ModernLookAndFeel::Colors::accentOrange.withAlpha(0.9f));
+            ig.setColour(theme.warning.withAlpha(0.9f));
             ig.strokePath(cachedPeakLine, juce::PathStrokeType(1.2f));
         }
     }
 
     void drawGrid(juce::Graphics& g)
     {
-        // === Ultra-subtle frequency grid lines ===
+        auto& theme = ThemeManager::getInstance().getTheme();
+
+        // === Ultra-subtle frequency grid lines — themed ===
         const float freqs[] = { 20, 30, 40, 50, 60, 80, 100, 200, 300, 400, 500, 600, 800,
                                 1000, 2000, 3000, 4000, 5000, 6000, 8000, 10000, 20000 };
         for (float f : freqs)
@@ -1269,14 +1289,14 @@ private:
             bool decade = (f == 20 || f == 200 || f == 2000 || f == 20000);
             
             if (major || decade)
-                g.setColour(juce::Colour(0xFF1E1E2A));  // Slightly visible
+                g.setColour(theme.gridMajor);
             else
-                g.setColour(juce::Colour(0xFF151520));  // Nearly invisible
+                g.setColour(theme.gridMinor);
             
             g.drawVerticalLine((int)x, graphBounds.getY(), graphBounds.getBottom());
         }
         
-        // === Horizontal dB lines — finer grid ===
+        // === Horizontal dB lines — themed ===
         for (float db = spectrumMinDb; db <= spectrumMaxDb; db += 6.0f)
         {
             float y = dbToY(db);
@@ -1284,21 +1304,13 @@ private:
             bool isMajor = (std::fmod(std::abs(db), 12.0f) < 0.01f);
             
             if (isZero)
-            {
-                // 0 dB line — slightly brighter, dashed feel
-                g.setColour(juce::Colour(0xFF2A2A3A));
-                g.drawHorizontalLine((int)y, graphBounds.getX(), graphBounds.getRight());
-            }
+                g.setColour(theme.gridMajor.brighter(0.3f));
             else if (isMajor)
-            {
-                g.setColour(juce::Colour(0xFF1A1A28));
-                g.drawHorizontalLine((int)y, graphBounds.getX(), graphBounds.getRight());
-            }
+                g.setColour(theme.gridMajor);
             else
-            {
-                g.setColour(juce::Colour(0xFF131320));
-                g.drawHorizontalLine((int)y, graphBounds.getX(), graphBounds.getRight());
-            }
+                g.setColour(theme.gridMinor);
+            
+            g.drawHorizontalLine((int)y, graphBounds.getX(), graphBounds.getRight());
         }
     }
 
@@ -1352,7 +1364,7 @@ private:
                 capturedPathDirty = false;
             }
 
-            g.setColour(juce::Colour(0xFFE6A23C).withAlpha(0.6f));
+            g.setColour(ThemeManager::getInstance().getTheme().warning.withAlpha(0.6f));
             g.strokePath(cachedCapturedDash, juce::PathStrokeType(1.5f));
         }
 
@@ -1376,16 +1388,17 @@ private:
                                      graphBounds.getX(), graphBounds.getBottom(),
                                      frozenLinePath, &frozenFillPath, 3);
 
+            auto& thm = ThemeManager::getInstance().getTheme();
             juce::ColourGradient frozenGrad(
-                ModernLookAndFeel::Colors::accentBlue.withAlpha(0.35f), 0, graphBounds.getY(),
-                ModernLookAndFeel::Colors::accentBlue.withAlpha(0.03f), 0, graphBounds.getBottom(), false);
+                thm.info.withAlpha(0.35f), 0, graphBounds.getY(),
+                thm.info.withAlpha(0.03f), 0, graphBounds.getBottom(), false);
             g.setGradientFill(frozenGrad);
             g.fillPath(frozenFillPath);
 
-            g.setColour(ModernLookAndFeel::Colors::accentBlue);
+            g.setColour(thm.info);
             g.strokePath(frozenLinePath, juce::PathStrokeType(2.0f));
 
-            g.setColour(ModernLookAndFeel::Colors::accentBlue);
+            g.setColour(thm.info);
             g.setFont(juce::Font(juce::FontOptions().withHeight(12.0f)));
             g.drawText("FROZEN",
                       static_cast<int>(graphBounds.getX() + 10.0f),
@@ -1394,6 +1407,7 @@ private:
                       juce::Justification::centredLeft);
 
             g.fillEllipse(graphBounds.getRight() - 16.0f, graphBounds.getY() + 10.0f, 8.0f, 8.0f);
+            // (frozen indicator uses thm.info from above)
         }
 
         //----------------------------------------------------------------------
@@ -1433,9 +1447,10 @@ private:
         fillPath.lineTo(graphBounds.getX(), zeroY);
         fillPath.closeSubPath();
 
+        auto& theme = ThemeManager::getInstance().getTheme();
         juce::ColourGradient fillGrad(
-            juce::Colour(0xFFB0C8E8).withAlpha(0.12f), 0, graphBounds.getY(),
-            juce::Colour(0xFFB0C8E8).withAlpha(0.02f), 0, zeroY, false);
+            theme.eqCurveFill.withAlpha(0.12f), 0, graphBounds.getY(),
+            theme.eqCurveFill.withAlpha(0.02f), 0, zeroY, false);
         g.setGradientFill(fillGrad);
         g.fillPath(fillPath);
     }
@@ -1450,21 +1465,23 @@ private:
         if (cachedEQCurve.isEmpty())
             return;
 
+        auto& theme = ThemeManager::getInstance().getTheme();
+
         if (!isDraggingBand)
         {
-            // === GLOW LAYER 1: Wide soft outer glow ===
-            g.setColour(juce::Colour(0xFFB0C8E8).withAlpha(0.08f));
+            // === GLOW LAYER 1: Wide soft outer glow — themed ===
+            g.setColour(theme.eqCurveGlow.withAlpha(0.08f));
             g.strokePath(cachedEQCurve, juce::PathStrokeType(10.0f, juce::PathStrokeType::mitered,
                                                                juce::PathStrokeType::rounded));
 
-            // === GLOW LAYER 2: Medium glow ===
-            g.setColour(juce::Colour(0xFFB0C8E8).withAlpha(0.16f));
+            // === GLOW LAYER 2: Medium glow — themed ===
+            g.setColour(theme.eqCurveGlow.withAlpha(0.16f));
             g.strokePath(cachedEQCurve, juce::PathStrokeType(5.0f, juce::PathStrokeType::mitered,
                                                                juce::PathStrokeType::rounded));
         }
 
-        // === MAIN CURVE: Bright crisp line ===
-        g.setColour(juce::Colour(0xFFE8F0FA));
+        // === MAIN CURVE: Bright crisp line — themed ===
+        g.setColour(theme.eqCurveColor);
         g.strokePath(cachedEQCurve, juce::PathStrokeType(2.5f, juce::PathStrokeType::mitered,
                                                            juce::PathStrokeType::rounded));
     }
@@ -1474,7 +1491,8 @@ private:
         // SAFETY: Skip if processor not ready
         if (!processor.isProcessorReady())
             return;
-            
+
+        auto& theme = ThemeManager::getInstance().getTheme();
         const auto corrections = processor.getAIEngine().getPendingCorrections();
         
         for (const auto& c : corrections)
@@ -1482,26 +1500,31 @@ private:
             float x = freqToX(c.frequency);
             if (x < graphBounds.getX() || x > graphBounds.getRight()) continue;
             
-            juce::Colour col = c.approved ? ModernLookAndFeel::Colors::accentGreen 
-                                          : ModernLookAndFeel::Colors::accentOrange;
+            // Ember/Bio marker — themed
+            juce::Colour col = c.approved ? theme.markerApproved : theme.markerCore;
+            juce::Colour glow = c.approved ? theme.markerApproved : theme.markerGlow;
             
-            // Vertical highlight line
-            g.setColour(col.withAlpha(0.15f));
-            g.fillRect(x - 2, graphBounds.getY(), 4.0f, graphBounds.getHeight());
+            // Soft vertical glow line (not a hard rect)
+            g.setColour(glow.withAlpha(0.10f));
+            g.fillRect(x - 3, graphBounds.getY(), 6.0f, graphBounds.getHeight());
             
-            // Marker circle
+            // Marker position
             float my = graphBounds.getY() + 12;
             
-            // Outer ring
-            g.setColour(col.withAlpha(0.3f));
-            g.drawEllipse(x - 10, my - 10, 20, 20, 2.0f);
+            // Outer glow ring
+            g.setColour(glow.withAlpha(0.20f));
+            g.fillEllipse(x - 12, my - 12, 24, 24);
             
-            // Inner filled circle
+            // Mid ring
+            g.setColour(glow.withAlpha(0.35f));
+            g.drawEllipse(x - 8, my - 8, 16, 16, 1.5f);
+            
+            // Inner filled core
             g.setColour(col);
-            g.fillEllipse(x - 6, my - 6, 12, 12);
+            g.fillEllipse(x - 5, my - 5, 10, 10);
             
-            // White center
-            g.setColour(ModernLookAndFeel::Colors::textBright);
+            // Bright center dot
+            g.setColour(theme.textPrimary);
             g.fillEllipse(x - 2, my - 2, 4, 4);
         }
     }
@@ -1705,8 +1728,9 @@ public:
             float x = freqToX(f);
             if (x >= graphBounds.getX() && x <= graphBounds.getRight())
             {
+                auto& thm = ThemeManager::getInstance().getTheme();
                 bool isMajor = (f == 100 || f == 1000 || f == 10000);
-                g.setColour(isMajor ? juce::Colour(0xFF505068) : juce::Colour(0xFF3A3A4A));
+                g.setColour(isMajor ? thm.gridLabelMajor : thm.gridLabel);
                 g.drawText(lbl, (int)x - 15, (int)graphBounds.getBottom() + 3, 30, 12, 
                           juce::Justification::centred);
             }
@@ -1730,28 +1754,30 @@ public:
         float leftX = freqToX(juce::jmax(20.0f, lowFreq));
         float rightX = freqToX(juce::jmin(20000.0f, highFreq));
         
-        // Get color based on problem type
+        auto& theme = ThemeManager::getInstance().getTheme();
+
+        // Get color based on problem type — themed
         juce::Colour highlightCol;
         switch (currentHighlight.type)
         {
             case AIEngine::ProblemType::Resonance:
-                highlightCol = juce::Colour(0xFFFF4444);  // Red
+                highlightCol = theme.critical;  // Themed critical
                 break;
             case AIEngine::ProblemType::Harshness:
             case AIEngine::ProblemType::Sibilance:
-                highlightCol = juce::Colour(0xFFFF8800);  // Orange
+                highlightCol = theme.warning;  // Themed warning
                 break;
             case AIEngine::ProblemType::Muddiness:
             case AIEngine::ProblemType::Boxyness:
             case AIEngine::ProblemType::LowEndBoom:
-                highlightCol = juce::Colour(0xFFBB6600);  // Brown/Orange
+                highlightCol = theme.warning.darker(0.3f);  // Themed warning darker
                 break;
             case AIEngine::ProblemType::ThinSound:
             case AIEngine::ProblemType::DullSound:
-                highlightCol = juce::Colour(0xFF4488FF);  // Blue (boost)
+                highlightCol = theme.info;  // Themed info (boost)
                 break;
             default:
-                highlightCol = juce::Colour(0xFFFFFF00);  // Yellow
+                highlightCol = theme.accent;  // Themed accent
                 break;
         }
         
@@ -1806,10 +1832,11 @@ public:
     {
         if (hoverX < graphBounds.getX() || hoverX > graphBounds.getRight()) return;
         
+        auto& theme = ThemeManager::getInstance().getTheme();
         float freq = xToFreq((float)hoverX);
         
-        // Vertical line
-        g.setColour(ModernLookAndFeel::Colors::textSecondary.withAlpha(0.3f));
+        // Vertical line — themed
+        g.setColour(theme.textSecondary.withAlpha(0.3f));
         g.drawVerticalLine(hoverX, graphBounds.getY(), graphBounds.getBottom());
         
         // Tooltip
@@ -1824,14 +1851,93 @@ public:
         int tx = juce::jlimit((int)graphBounds.getX(), (int)graphBounds.getRight() - tw, hoverX - tw/2);
         int ty = (int)graphBounds.getY() - th - 4;
         
-        g.setColour(ModernLookAndFeel::Colors::bgLight.withAlpha(0.95f));
+        // Tooltip — vetro affumicato themed
+        g.setColour(theme.tooltipBg);
         g.fillRoundedRectangle((float)tx, (float)ty, (float)tw, (float)th, 3.0f);
-        g.setColour(ModernLookAndFeel::Colors::accentBlue);
+        g.setColour(theme.tooltipBorder);
         g.drawRoundedRectangle((float)tx, (float)ty, (float)tw, (float)th, 3.0f, 1.0f);
         
-        g.setColour(ModernLookAndFeel::Colors::textBright);
+        g.setColour(theme.tooltipText);
         g.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
         g.drawText(txt, tx, ty, tw, th, juce::Justification::centred);
+    }
+
+    // ── Premium Rebranding: Lava Strip Heatmap ───────────────────────────────
+    void drawLavaStrip(juce::Graphics& g)
+    {
+        auto& theme = ThemeManager::getInstance().getTheme();
+        auto area = juce::Rectangle<float>(graphBounds.getX(), graphBounds.getBottom() - theme.lavaStripHeight, 
+                                           graphBounds.getWidth(), theme.lavaStripHeight);
+        
+        if (lavaStripDirty || lavaStripCache.isNull() || lavaStripCache.getWidth() != (int)area.getWidth())
+        {
+            lavaStripCache = juce::Image(juce::Image::ARGB, (int)area.getWidth(), (int)area.getHeight(), true);
+            juce::Graphics ig(lavaStripCache);
+            
+            // Background strip
+            ig.setColour(theme.lavaStripCold);
+            ig.fillAll();
+            
+            // Draw hot spots from detected peaks
+            for (const auto& peak : detectedPeaks)
+            {
+                float x = freqToX(peak.frequency) - graphBounds.getX();
+                float intensity = juce::jlimit(0.0f, 1.0f, (peak.magnitude + 60.0f) / 60.0f);
+                
+                juce::ColourGradient grad(theme.lavaStripHot.withAlpha(intensity * 0.8f), x, 0,
+                                          theme.lavaStripMid.withAlpha(0.0f), x + 40, 0, true);
+                ig.setGradientFill(grad);
+                ig.fillRect(x - 40, 0.0f, 80.0f, area.getHeight());
+            }
+            lavaStripDirty = false;
+        }
+        
+        g.drawImageAt(lavaStripCache, (int)area.getX(), (int)area.getY());
+        
+        // Top border line for the strip
+        g.setColour(theme.lavaStripHot.withAlpha(0.3f));
+        g.drawHorizontalLine((int)area.getY(), area.getX(), area.getRight());
+    }
+
+    // ── Premium Rebranding: Ghost Curve AI Suggestion ────────────────────────
+    void drawGhostCurve(juce::Graphics& g)
+    {
+        auto& theme = ThemeManager::getInstance().getTheme();
+        const auto corrections = processor.getAIEngine().getPendingCorrections();
+        if (corrections.empty()) return;
+
+        // Rebuild path if AI corrections changed
+        uint64_t currentVer = processor.getAIEngine().getCorrectionVersion();
+        if (ghostCurveDirty || currentVer != lastGhostCurveVersion)
+        {
+            ghostCurvePath.clear();
+            // Simple reconstruction of the "target" curve from corrections
+            // (In a real implementation, this would query the AI engine for the full target response)
+            bool started = false;
+            for (float f = 20.0f; f <= 20000.0f; f *= 1.05f)
+            {
+                float x = freqToX(f);
+                float totalGain = 0.0f;
+                for (const auto& c : corrections)
+                {
+                    // Bell filter approximation for preview
+                    float dist = std::abs(std::log2(f / c.frequency));
+                    if (dist < 1.0f) totalGain += c.gain * (1.0f - dist);
+                }
+                float y = gainToY(totalGain);
+                if (!started) { ghostCurvePath.startNewSubPath(x, y); started = true; }
+                else ghostCurvePath.lineTo(x, y);
+            }
+            lastGhostCurveVersion = currentVer;
+            ghostCurveDirty = false;
+        }
+
+        if (!ghostCurvePath.isEmpty())
+        {
+            float dashLengths[] = { theme.ghostCurveDash, theme.ghostCurveDash };
+            g.setColour(theme.ghostCurveColor.withAlpha(theme.ghostCurveAlpha));
+            g.strokePath(ghostCurvePath, juce::PathStrokeType(1.5f).withDashPattern(dashLengths, 2));
+        }
     }
 
 public:
@@ -2148,13 +2254,13 @@ private:
             fillArea.lineTo(dynCurveXPoints[static_cast<size_t>(i)], dynCurveYPoints[static_cast<size_t>(i)]);
         fillArea.closeSubPath();
 
-        // Warm amber fill, ~20% alpha
-        const juce::Colour overlayColour { 0xFFC89040u };
-        g.setColour(overlayColour.withAlpha(0.20f));
+        // Themed overlay fill
+        auto& theme = ThemeManager::getInstance().getTheme();
+        g.setColour(theme.dynOverlayFill.withAlpha(0.20f));
         g.fillPath(fillArea);
 
-        // Dynamic (live) curve — bright white line
-        g.setColour(juce::Colours::white.withAlpha(0.80f));
+        // Dynamic (live) curve — themed
+        g.setColour(theme.dynOverlayCurve.withAlpha(0.80f));
         g.strokePath(cachedDynamicEQCurve,
                      juce::PathStrokeType(1.8f, juce::PathStrokeType::mitered,
                                           juce::PathStrokeType::rounded));
@@ -2284,6 +2390,14 @@ private:
     float dragStartGain = 0.0f;
     float dragStartQ = 0.0f;
     std::array<juce::Colour, AIEqualizerAudioProcessor::maxBands> bandColors;
+
+    // Refresh band colors from ThemeManager (called on theme change and init)
+    void refreshBandColorsFromTheme()
+    {
+        auto& tm = ThemeManager::getInstance();
+        for (int i = 0; i < AIEqualizerAudioProcessor::maxBands; ++i)
+            bandColors[static_cast<size_t>(i)] = tm.getBandColor(i);
+    }
     std::vector<SpectrumPeak> detectedPeaks;
     int hoveredPeakIndex = -1;
 
@@ -2321,6 +2435,14 @@ private:
 
     // Adaptive timer — tracks current rate to avoid redundant startTimerHz calls
     int currentTimerHz = 60;
+
+    // ── Premium Rebranding Layers ───────────────────────────────────────────
+    juce::Image lavaStripCache;
+    bool lavaStripDirty = true;
+    juce::Path ghostCurvePath;
+    bool ghostCurveDirty = true;
+    uint64_t lastGhostCurveVersion = 0;
+    // ────────────────────────────────────────────────────────────────────────
 
     // ── Dynamic EQ GR overlay (TDR Nova style) ──────────────────────────────
     // Per-band smoothed gain reduction values (1-pole IIR)

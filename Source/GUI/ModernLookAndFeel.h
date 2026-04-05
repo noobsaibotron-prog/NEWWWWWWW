@@ -1,385 +1,154 @@
 #pragma once
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <juce_graphics/juce_graphics.h>
+#include "DesignTokens.h"
 
 //==============================================================================
 /**
- * TDR Nova Style Look and Feel
+ * Premium Rebranding Look and Feel (T5 Iconic)
  * 
- * - Industrial metallic knobs with grip texture
- * - Clean blue-gray color scheme
- * - Professional control panel layout
+ * - Filament Knobs with glass cover and internal glow
+ * - Dynamic theme switching (Deep Crimson / Emerald Night)
+ * - Professional high-density control panel layout
  */
 class ModernLookAndFeel : public juce::LookAndFeel_V4
 {
 public:
-    // High-contrast mode support
-    void setHighContrastMode(bool enabled) { highContrastMode = enabled; }
-    bool isHighContrastMode() const { return highContrastMode; }
-    
-    struct Colors
-    {
-        // === BACKGROUNDS ===
-        inline static const juce::Colour bgDark        { 0xFF16161E };
-        inline static const juce::Colour bgMid         { 0xFF1E1E28 };
-        inline static const juce::Colour bgLight       { 0xFF282834 };
-        inline static const juce::Colour bgLighter     { 0xFF32323E };
-        inline static const juce::Colour bgPanel       { 0xFF24242E };
-        
-        // === ACCENTS ===
-        inline static const juce::Colour accentBlue    { 0xFF4A90D9 };
-        inline static const juce::Colour accentCyan    { 0xFF5BA8E0 };
-        inline static const juce::Colour accentYellow  { 0xFFD4A843 };
-        inline static const juce::Colour accentGreen   { 0xFF4CAF50 };
-        inline static const juce::Colour accentOrange  { 0xFFFF9800 };
-        inline static const juce::Colour accentRed     { 0xFFE53935 };
-        
-        // === TEXT ===
-        inline static const juce::Colour textBright    { 0xFFFFFFFF };
-        inline static const juce::Colour textPrimary   { 0xFFD0D0D8 };
-        inline static const juce::Colour textSecondary { 0xFF808090 };
-        inline static const juce::Colour textMuted     { 0xFF505060 };
-        inline static const juce::Colour textLabel     { 0xFF909098 };
-        
-        // === SPECTRUM ===
-        inline static const juce::Colour spectrumFill  { 0xFF4A7DB8 };
-        inline static const juce::Colour spectrumLine  { 0xFF6AAAE8 };
-        inline static const juce::Colour eqCurve       { 0xFFD0D0D8 };
-        inline static const juce::Colour grid          { 0xFF252530 };
-        inline static const juce::Colour gridMajor     { 0xFF2A2A38 };
-        
-        // === KNOBS ===
-        inline static const juce::Colour knobOuter     { 0xFF585868 };
-        inline static const juce::Colour knobOuterLight{ 0xFF6A6A7A };
-        inline static const juce::Colour knobOuterDark { 0xFF404050 };
-        inline static const juce::Colour knobInner     { 0xFF2A2A34 };
-        inline static const juce::Colour knobPointer   { 0xFFE0E0E8 };
-        inline static const juce::Colour knobGrip      { 0xFF404048 };
-        
-        // === BAND COLORS ===
-        inline static const juce::Colour band1         { 0xFFD4A843 };
-        inline static const juce::Colour band2         { 0xFF4A90D9 };
-        inline static const juce::Colour band3         { 0xFF5BA8E0 };
-        inline static const juce::Colour band4         { 0xFF4CAF50 };
-        inline static const juce::Colour band5         { 0xFF9C27B0 };
-        inline static const juce::Colour band6         { 0xFFE91E63 };
-        inline static const juce::Colour band7         { 0xFFFF5722 };
-        inline static const juce::Colour band8         { 0xFFD4A843 };
-        
-        static juce::Colour getBandColor(int idx) {
-            const juce::Colour cols[] = { band1, band2, band3, band4, band5, band6, band7, band8 };
-            return cols[idx % 8];
-        }
-        
-        static juce::Colour getSeverity(float s) {
-            if (s < 0.33f) return accentGreen;
-            if (s < 0.66f) return accentOrange;
-            return accentRed;
-        }
-        
-        // High-contrast colors
-        inline static const juce::Colour hcBgDark      { 0xFF000000 };
-        inline static const juce::Colour hcBgMid       { 0xFF1A1A1A };
-        inline static const juce::Colour hcBgLight     { 0xFF2A2A2A };
-        inline static const juce::Colour hcTextBright   { 0xFFFFFFFF };
-        inline static const juce::Colour hcTextPrimary { 0xFFFFFFFF };
-        inline static const juce::Colour hcAccent      { 0xFFFFD700 }; // Gold for high visibility
-    };
-    
-    // Get current color based on high-contrast mode
-    juce::Colour getCurrentBgDark() const { return highContrastMode ? Colors::hcBgDark : Colors::bgDark; }
-    juce::Colour getCurrentBgMid() const { return highContrastMode ? Colors::hcBgMid : Colors::bgMid; }
-    juce::Colour getCurrentBgLight() const { return highContrastMode ? Colors::hcBgLight : Colors::bgLight; }
-    juce::Colour getCurrentTextPrimary() const { return highContrastMode ? Colors::hcTextPrimary : Colors::textPrimary; }
-    juce::Colour getCurrentTextBright() const { return highContrastMode ? Colors::hcTextBright : Colors::textBright; }
-    juce::Colour getCurrentAccent() const { return highContrastMode ? Colors::hcAccent : Colors::accentBlue; }
-
     ModernLookAndFeel()
     {
-        setColour(juce::ResizableWindow::backgroundColourId, Colors::bgMid);
-        setColour(juce::Label::textColourId, Colors::textPrimary);
-        setColour(juce::TextButton::buttonColourId, Colors::bgLighter);
-        setColour(juce::TextButton::buttonOnColourId, Colors::accentBlue);
-        setColour(juce::TextButton::textColourOffId, Colors::textPrimary);
-        setColour(juce::TextButton::textColourOnId, Colors::textBright);
-        setColour(juce::ComboBox::backgroundColourId, Colors::bgLight);
-        setColour(juce::ComboBox::textColourId, Colors::textPrimary);
-        setColour(juce::ComboBox::outlineColourId, Colors::bgLighter);
-        setColour(juce::PopupMenu::backgroundColourId, Colors::bgLight);
-        setColour(juce::PopupMenu::textColourId, Colors::textPrimary);
-        setColour(juce::PopupMenu::highlightedBackgroundColourId, Colors::accentBlue);
-        setColour(juce::Slider::thumbColourId, Colors::accentBlue);
-        setColour(juce::Slider::trackColourId, Colors::bgLighter);
-    }
-    
-    void updateHighContrastColors()
-    {
-        if (highContrastMode)
-        {
-            setColour(juce::ResizableWindow::backgroundColourId, Colors::hcBgMid);
-            setColour(juce::Label::textColourId, Colors::hcTextPrimary);
-            setColour(juce::TextButton::buttonColourId, Colors::hcBgLight);
-            setColour(juce::TextButton::buttonOnColourId, Colors::hcAccent);
-            setColour(juce::TextButton::textColourOffId, Colors::hcTextPrimary);
-            setColour(juce::TextButton::textColourOnId, Colors::hcTextBright);
-            setColour(juce::ComboBox::backgroundColourId, Colors::hcBgLight);
-            setColour(juce::ComboBox::textColourId, Colors::hcTextPrimary);
-            setColour(juce::Slider::thumbColourId, Colors::hcAccent);
-        }
-        else
-        {
-            setColour(juce::ResizableWindow::backgroundColourId, Colors::bgMid);
-            setColour(juce::Label::textColourId, Colors::textPrimary);
-            setColour(juce::TextButton::buttonColourId, Colors::bgLighter);
-            setColour(juce::TextButton::buttonOnColourId, Colors::accentBlue);
-            setColour(juce::TextButton::textColourOffId, Colors::textPrimary);
-            setColour(juce::TextButton::textColourOnId, Colors::textBright);
-            setColour(juce::ComboBox::backgroundColourId, Colors::bgLight);
-            setColour(juce::ComboBox::textColourId, Colors::textPrimary);
-            setColour(juce::Slider::thumbColourId, Colors::accentBlue);
-        }
+        updateThemeColors();
+        
+        // Listen for theme changes to update internal LookAndFeel colors
+        ThemeManager::getInstance().addListener([this]() {
+            updateThemeColors();
+        });
     }
 
-private:
-    bool highContrastMode = false;
+    void updateThemeColors()
+    {
+        auto& thm = ThemeManager::getInstance().getTheme();
+        
+        setColour(juce::ResizableWindow::backgroundColourId, thm.bgMid);
+        setColour(juce::Label::textColourId, thm.textPrimary);
+        
+        // Buttons
+        setColour(juce::TextButton::buttonColourId, thm.bgLighter);
+        setColour(juce::TextButton::buttonOnColourId, thm.accent);
+        setColour(juce::TextButton::textColourOffId, thm.textPrimary);
+        setColour(juce::TextButton::textColourOnId, thm.textBright);
+        
+        // ComboBox
+        setColour(juce::ComboBox::backgroundColourId, thm.bgLight);
+        setColour(juce::ComboBox::textColourId, thm.textPrimary);
+        setColour(juce::ComboBox::outlineColourId, thm.bgLighter);
+        
+        // Popup
+        setColour(juce::PopupMenu::backgroundColourId, thm.bgLight);
+        setColour(juce::PopupMenu::textColourId, thm.textPrimary);
+        setColour(juce::PopupMenu::highlightedBackgroundColourId, thm.accent);
+        
+        // Slider
+        setColour(juce::Slider::thumbColourId, thm.accent);
+        setColour(juce::Slider::trackColourId, thm.bgLighter);
+        setColour(juce::Slider::rotarySliderFillColourId, thm.accent);
+        setColour(juce::Slider::rotarySliderOutlineColourId, thm.bgDark);
+    }
 
     //==========================================================================
-    // METALLIC KNOB - TDR Nova Style
+    // FILAMENT KNOB - T5 Iconic Style
     //==========================================================================
     void drawRotarySlider(juce::Graphics& g, int x, int y, int w, int h,
                           float sliderPos, float startAngle, float endAngle,
-                          juce::Slider&) override
+                          juce::Slider& slider) override
     {
-        auto bounds = juce::Rectangle<int>(x, y, w, h).toFloat().reduced(2);
+        auto bounds = juce::Rectangle<int>(x, y, w, h).toFloat().reduced(2.0f);
         auto radius = juce::jmin(bounds.getWidth(), bounds.getHeight()) / 2.0f;
         auto cx = bounds.getCentreX();
         auto cy = bounds.getCentreY();
         auto angle = startAngle + sliderPos * (endAngle - startAngle);
+        
+        auto& thm = ThemeManager::getInstance().getTheme();
 
-        // === OUTER METALLIC RING ===
-        float outerR = radius;
-        float innerR = radius * 0.70f;
+        // 1. OUTER METAL RING (Brushed Copper/Chrome)
+        g.setGradientFill(juce::ColourGradient(
+            thm.knobOuterLight, cx - radius, cy - radius,
+            thm.knobOuterDark, cx + radius, cy + radius, false));
+        g.fillEllipse(bounds);
         
-        // 3D metallic gradient (top-left light, bottom-right dark)
-        juce::ColourGradient metalGrad(
-            Colors::knobOuterLight, cx - outerR * 0.7f, cy - outerR * 0.7f,
-            Colors::knobOuterDark, cx + outerR * 0.7f, cy + outerR * 0.7f, false);
-        g.setGradientFill(metalGrad);
-        g.fillEllipse(cx - outerR, cy - outerR, outerR * 2, outerR * 2);
-        
-        // Outer highlight ring
-        g.setColour(Colors::knobOuterLight.withAlpha(0.4f));
-        g.drawEllipse(cx - outerR + 0.5f, cy - outerR + 0.5f, (outerR - 0.5f) * 2, (outerR - 0.5f) * 2, 1.0f);
-        
-        // Inner shadow
-        g.setColour(Colors::knobOuterDark.darker(0.3f));
-        g.drawEllipse(cx - innerR - 2, cy - innerR - 2, (innerR + 2) * 2, (innerR + 2) * 2, 2.0f);
+        // Subtle outer rim highlight
+        g.setColour(thm.knobOuterLight.withAlpha(0.2f));
+        g.drawEllipse(bounds.reduced(0.5f), 1.0f);
 
-        // === GRIP LINES (radial texture) ===
-        g.setColour(Colors::knobGrip);
-        int numGrips = 32;
-        float gripR1 = radius * 0.76f;
-        float gripR2 = radius * 0.94f;
-        for (int i = 0; i < numGrips; ++i)
+        // 2. GLASS COVER (Smoked Glass Effect)
+        auto glassBounds = bounds.reduced(radius * 0.15f);
+        auto glassRadius = glassBounds.getWidth() / 2.0f;
+        
+        juce::ColourGradient glassGrad(
+            thm.tooltipBg.withAlpha(0.8f), cx, cy - glassRadius,
+            thm.tooltipBg.withAlpha(0.95f), cx, cy + glassRadius, false);
+        g.setGradientFill(glassGrad);
+        g.fillEllipse(glassBounds);
+        
+        // Glass inner shadow
+        g.setColour(juce::Colours::black.withAlpha(0.4f));
+        g.drawEllipse(glassBounds.reduced(1.0f), 2.0f);
+
+        // 3. INTERNAL FILAMENT (The "Glow" indicator)
+        // A thin curved line that looks like a glowing wire inside the glass
+        float filamentR = glassRadius * 0.75f;
+        juce::Path filament;
+        
+        // Pointer line (filament)
+        float px1 = cx + std::sin(angle) * (filamentR * 0.2f);
+        float py1 = cy - std::cos(angle) * (filamentR * 0.2f);
+        float px2 = cx + std::sin(angle) * filamentR;
+        float py2 = cy - std::cos(angle) * filamentR;
+        
+        // Outer glow for the filament
+        g.setColour(thm.accent.withAlpha(0.4f));
+        g.drawLine(px1, py1, px2, py2, 4.0f);
+        
+        // Core filament (bright)
+        g.setColour(thm.textBright);
+        g.drawLine(px1, py1, px2, py2, 1.5f);
+        
+        // Filament tip "hot spot"
+        g.setColour(thm.accent);
+        g.fillEllipse(px2 - 2.5f, py2 - 2.5f, 5.0f, 5.0f);
+        g.setColour(thm.textBright);
+        g.fillEllipse(px2 - 1.0f, py2 - 1.0f, 2.0f, 2.0f);
+
+        // 4. VALUE ARC (Internal to glass)
+        if (sliderPos > 0.01f)
         {
-            float a = juce::MathConstants<float>::twoPi * i / numGrips;
-            float x1 = cx + std::cos(a) * gripR1;
-            float y1 = cy + std::sin(a) * gripR1;
-            float x2 = cx + std::cos(a) * gripR2;
-            float y2 = cy + std::sin(a) * gripR2;
-            g.drawLine(x1, y1, x2, y2, 1.2f);
-        }
-
-        // === INNER DARK CENTER ===
-        juce::ColourGradient innerGrad(
-            Colors::knobInner.brighter(0.15f), cx, cy - innerR,
-            Colors::knobInner.darker(0.15f), cx, cy + innerR, false);
-        g.setGradientFill(innerGrad);
-        g.fillEllipse(cx - innerR, cy - innerR, innerR * 2, innerR * 2);
-        
-        // Inner ring highlight
-        g.setColour(Colors::bgDark.brighter(0.1f));
-        g.drawEllipse(cx - innerR, cy - innerR, innerR * 2, innerR * 2, 1.5f);
-
-        // === VALUE ARC ===
-        float arcR = radius * 0.52f;
-        juce::Path arcBg;
-        arcBg.addCentredArc(cx, cy, arcR, arcR, 0, startAngle, endAngle, true);
-        g.setColour(Colors::bgDark);
-        g.strokePath(arcBg, juce::PathStrokeType(3.5f, juce::PathStrokeType::curved,
-                                                  juce::PathStrokeType::rounded));
-        
-        // Value arc (filled portion)
-        if (sliderPos > 0.005f)
-        {
-            juce::Path arcVal;
-            arcVal.addCentredArc(cx, cy, arcR, arcR, 0, startAngle, angle, true);
-            g.setColour(Colors::accentBlue);
-            g.strokePath(arcVal, juce::PathStrokeType(3.5f, juce::PathStrokeType::curved,
-                                                      juce::PathStrokeType::rounded));
-        }
-
-        // === POINTER LINE ===
-        float ptrInner = innerR * 0.25f;
-        float ptrOuter = innerR * 0.75f;
-        float px1 = cx + std::sin(angle) * ptrInner;
-        float py1 = cy - std::cos(angle) * ptrInner;
-        float px2 = cx + std::sin(angle) * ptrOuter;
-        float py2 = cy - std::cos(angle) * ptrOuter;
-        
-        g.setColour(Colors::knobPointer);
-        g.drawLine(px1, py1, px2, py2, 2.5f);
-        
-        // Pointer end dot
-        g.fillEllipse(px2 - 3.0f, py2 - 3.0f, 6.0f, 6.0f);
-    }
-
-    //==========================================================================
-    // LINEAR SLIDER
-    //==========================================================================
-    void drawLinearSlider(juce::Graphics& g, int x, int y, int w, int h,
-                          float sliderPos, float, float,
-                          const juce::Slider::SliderStyle style, juce::Slider&) override
-    {
-        if (style == juce::Slider::LinearHorizontal)
-        {
-            float trackH = 4.0f;
-            float trackY = y + (h - trackH) / 2.0f;
-
-            g.setColour(Colors::bgDark);
-            g.fillRoundedRectangle((float)x, trackY, (float)w, trackH, 2.0f);
-
-            float fillW = sliderPos - x;
-            if (fillW > 0)
-            {
-                g.setColour(Colors::accentBlue);
-                g.fillRoundedRectangle((float)x, trackY, fillW, trackH, 2.0f);
-            }
-
-            // Metallic thumb
-            float thumbR = 7.0f;
-            juce::ColourGradient thumbGrad(
-                Colors::knobOuterLight, sliderPos - thumbR, trackY,
-                Colors::knobOuterDark, sliderPos + thumbR, trackY + thumbR * 2, false);
-            g.setGradientFill(thumbGrad);
-            g.fillEllipse(sliderPos - thumbR, trackY + trackH/2 - thumbR, thumbR*2, thumbR*2);
+            float arcR = glassRadius * 0.88f;
+            juce::Path arc;
+            arc.addCentredArc(cx, cy, arcR, arcR, 0, startAngle, angle, true);
             
-            g.setColour(Colors::textBright);
-            g.fillEllipse(sliderPos - 2.0f, trackY + trackH/2 - 2.0f, 4.0f, 4.0f);
+            // Glow under the arc
+            g.setColour(thm.accent.withAlpha(0.2f));
+            g.strokePath(arc, juce::PathStrokeType(2.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+            
+            // Main arc
+            g.setColour(thm.accent.withAlpha(0.6f));
+            g.strokePath(arc, juce::PathStrokeType(1.2f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
         }
+
+        // 5. GLASS REFLECTIONS (Top-down lighting)
+        juce::Path reflections;
+        reflections.addCentredArc(cx, cy, glassRadius * 0.85f, glassRadius * 0.85f, 0, 
+                                  juce::MathConstants<float>::pi * 1.1f, 
+                                  juce::MathConstants<float>::pi * 1.4f, true);
+        g.setColour(juce::Colours::white.withAlpha(0.15f));
+        g.strokePath(reflections, juce::PathStrokeType(2.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
     }
 
-    //==========================================================================
-    // BUTTON
-    //==========================================================================
-    void drawButtonBackground(juce::Graphics& g, juce::Button& btn,
-                              const juce::Colour&, bool hover, bool down) override
+    // Helper for legacy code that still uses ModernLookAndFeel::Colors
+    struct Colors
     {
-        auto bounds = btn.getLocalBounds().toFloat().reduced(1);
-        const bool isQualityToggle = (btn.getComponentID() == "qualityToggle");
-        const float corner = isQualityToggle ? 12.0f : 4.0f;
-        
-        juce::Colour base = btn.getToggleState() ? Colors::accentBlue : Colors::bgLighter;
-        if (isQualityToggle && !btn.getToggleState())
-            base = base.withAlpha(0.85f);
-        if (down) base = base.darker(0.18f);
-        else if (hover) base = base.brighter(0.15f);
+        static juce::Colour getBandColor(int idx) { return ThemeManager::getInstance().getBandColor(idx); }
+    };
 
-        g.setColour(base);
-        g.fillRoundedRectangle(bounds, corner);
-
-        // Hover glow effect — subtle luminous border
-        auto outline = btn.getToggleState()
-            ? Colors::accentCyan.withAlpha(hover ? 0.7f : 0.45f)
-            : Colors::bgLighter.brighter(hover ? 0.35f : 0.15f);
-        g.setColour(outline);
-        g.drawRoundedRectangle(bounds, corner, hover ? 1.5f : 1.2f);
-    }
-
-    void drawToggleButton(juce::Graphics& g, juce::ToggleButton& btn,
-                          bool hover, bool down) override
-    {
-        drawButtonBackground(g, btn, {}, hover, down);
-        
-        auto bounds = btn.getLocalBounds().toFloat();
-        g.setColour(btn.getToggleState() ? Colors::textBright : Colors::textSecondary);
-        auto font = juce::Font(juce::FontOptions().withHeight(11.0f));
-        font.setBold(true);
-        g.setFont(font);
-        g.drawText(btn.getButtonText(), bounds, juce::Justification::centred);
-    }
-
-    void drawComboBox(juce::Graphics& g, int w, int h, bool,
-                      int, int, int, int, juce::ComboBox&) override
-    {
-        auto bounds = juce::Rectangle<int>(0, 0, w, h).toFloat().reduced(1);
-        
-        g.setColour(Colors::bgLight);
-        g.fillRoundedRectangle(bounds, 4.0f);
-        g.setColour(Colors::bgLighter);
-        g.drawRoundedRectangle(bounds, 4.0f, 1.0f);
-
-        juce::Path arrow;
-        float ax = w - 14.0f, ay = h / 2.0f;
-        arrow.addTriangle(ax - 4, ay - 2, ax + 4, ay - 2, ax, ay + 3);
-        g.setColour(Colors::textSecondary);
-        g.fillPath(arrow);
-    }
-
-    juce::Font getComboBoxFont(juce::ComboBox&) override { return juce::Font(juce::FontOptions().withHeight(12.0f)); }
-    juce::Font getLabelFont(juce::Label&) override { return juce::Font(juce::FontOptions().withHeight(11.0f)); }
-    juce::Font getTextButtonFont(juce::TextButton&, int) override
-    {
-        auto font = juce::Font(juce::FontOptions().withHeight(11.0f));
-        font.setBold(true);
-        return font;
-    }
-
-    //==========================================================================
-    // CUSTOM TOOLTIP — premium styled, semi-transparent rounded box
-    //==========================================================================
-    juce::Rectangle<int> getTooltipBounds(const juce::String& tipText,
-                                           juce::Point<int> screenPos,
-                                           juce::Rectangle<int> parentArea) override
-    {
-        auto font = juce::Font(juce::FontOptions().withHeight(12.0f));
-        const int maxWidth = 280;
-        juce::AttributedString s;
-        s.setJustification(juce::Justification::centredLeft);
-        s.append(tipText, font, Colors::textPrimary);
-
-        juce::TextLayout tl;
-        tl.createLayout(s, static_cast<float>(maxWidth));
-
-        int w = static_cast<int>(tl.getWidth()) + 18;
-        int h = static_cast<int>(tl.getHeight()) + 12;
-
-        int x = screenPos.x > parentArea.getCentreX() ? screenPos.x - w - 8 : screenPos.x + 12;
-        int y = screenPos.y + 20;
-
-        return { x, y, w, h };
-    }
-
-    void drawTooltip(juce::Graphics& g, const juce::String& text, int w, int h) override
-    {
-        auto bounds = juce::Rectangle<int>(0, 0, w, h).toFloat();
-
-        // Drop shadow
-        g.setColour(juce::Colours::black.withAlpha(0.35f));
-        g.fillRoundedRectangle(bounds.translated(1.5f, 1.5f), 6.0f);
-
-        // Background — semi-transparent dark panel
-        g.setColour(juce::Colour(0xF0202030));
-        g.fillRoundedRectangle(bounds, 6.0f);
-
-        // Subtle border
-        g.setColour(Colors::accentBlue.withAlpha(0.35f));
-        g.drawRoundedRectangle(bounds.reduced(0.5f), 6.0f, 1.0f);
-
-        // Text
-        g.setColour(Colors::textPrimary);
-        g.setFont(juce::Font(juce::FontOptions().withHeight(12.0f)));
-        g.drawFittedText(text, 9, 5, w - 18, h - 10,
-                         juce::Justification::centredLeft, 4);
-    }
+private:
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ModernLookAndFeel)
 };

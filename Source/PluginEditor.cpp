@@ -85,18 +85,29 @@ AIEqualizerAudioProcessorEditor::AIEqualizerAudioProcessorEditor(AIEqualizerAudi
         processor.applySemanticAdjustments(adjustments);
     };
     
-    // Tab buttons for switching between AI Detect and Semantic panels
-    aiTabBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xFF4A9FD9));
-    aiTabBtn.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
+    // Tab buttons for switching between AI Detect and Semantic panels — themed
+    auto& theme = ThemeManager::getInstance().getTheme();
+    aiTabBtn.setColour(juce::TextButton::buttonColourId, theme.accent);
+    aiTabBtn.setColour(juce::TextButton::textColourOffId, theme.textBright);
     aiTabBtn.setTooltip("AI Problem Detection - Automatic issue identification");
     aiTabBtn.onClick = [this]() { switchRightTab(0); };
     addAndMakeVisible(aiTabBtn);
     
-    semanticTabBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xFF333333));
-    semanticTabBtn.setColour(juce::TextButton::textColourOffId, juce::Colour(0xFFAAAAAA));
+    semanticTabBtn.setColour(juce::TextButton::buttonColourId, theme.bgLighter);
+    semanticTabBtn.setColour(juce::TextButton::textColourOffId, theme.textSecondary);
     semanticTabBtn.setTooltip("Semantic Control - Shape sound with words like 'Air', 'Warmth', 'Punch'");
     semanticTabBtn.onClick = [this]() { switchRightTab(1); };
     addAndMakeVisible(semanticTabBtn);
+
+    // Listen for theme changes to update tab button colors
+    ThemeManager::getInstance().addListener([this]() {
+        auto& thm = ThemeManager::getInstance().getTheme();
+        aiTabBtn.setColour(juce::TextButton::buttonColourId, thm.accent);
+        aiTabBtn.setColour(juce::TextButton::textColourOffId, thm.textBright);
+        semanticTabBtn.setColour(juce::TextButton::buttonColourId, thm.bgLighter);
+        semanticTabBtn.setColour(juce::TextButton::textColourOffId, thm.textSecondary);
+        repaint();
+    });
 
     optionsBtn.setTooltip("Global options and analyzer settings");
     optionsBtn.onClick = [this]() { showOptionsMenu(); };
@@ -138,10 +149,10 @@ AIEqualizerAudioProcessorEditor::AIEqualizerAudioProcessorEditor(AIEqualizerAudi
     // Output level meter (stereo VU with peak hold)
     addAndMakeVisible(outputMeter);
 
-    // Version label (bottom-right branding)
-    versionLabel.setText("v2.1.1", juce::dontSendNotification);
+    // Version label (bottom-right branding) — themed
+    versionLabel.setText("v2.1.1 PREMIUM", juce::dontSendNotification);
     versionLabel.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
-    versionLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted);
+    versionLabel.setColour(juce::Label::textColourId, theme.textMuted);
     versionLabel.setJustificationType(juce::Justification::centredRight);
     addAndMakeVisible(versionLabel);
 

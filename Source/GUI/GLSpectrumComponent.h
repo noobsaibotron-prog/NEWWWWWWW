@@ -23,9 +23,15 @@
  *   - All GL types/constants/functions live in juce::gl:: namespace
  *   - VBO extension calls go through context.extensions.glXxx()
  *   - We use 'using namespace juce::gl' for readability
+ *
+ * Premium Rebranding (v2):
+ *   - 3-stop gradient fill shader (bottom → mid → top) for lava/bioluminescence
+ *   - Colors sourced from ThemeManager at render time
+ *   - Zero performance impact: one extra mix() per fragment
  */
 
 #include <juce_opengl/juce_opengl.h>
+#include "DesignTokens.h"
 #include <vector>
 #include <atomic>
 
@@ -115,29 +121,34 @@ public:
         const float minDb = activeData.minDb;
         const float maxDb = activeData.maxDb;
 
+        // Read current theme colors (lock-free read, theme changes are rare)
+        const auto& theme = ThemeManager::getInstance().getTheme();
+
         // Physical-pixel viewport positioned at the spectrum component's location
         glViewport (vpX, vpY, vpW, vpH);
         glEnable (GL_BLEND);
         glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-        // Pre-EQ spectrum (blue gradient fill + bright line)
+        // Pre-EQ spectrum (themed 3-stop gradient fill + bright line)
         if (showPre.load (std::memory_order_relaxed) && ! activeData.preDB.empty())
         {
             drawSpectrumFill (ctx, activeData.preDB, gb, minDb, maxDb, logicalW, logicalH,
-                              juce::Colour (0x5520A0FF),   // top: blue semi-transparent
-                              juce::Colour (0x0820A0FF));  // bottom: blue nearly transparent
+                              theme.spectrumFillTop,
+                              theme.spectrumFillMid,
+                              theme.spectrumFillBottom);
             drawSpectrumLine (ctx, activeData.preDB, gb, minDb, maxDb, logicalW, logicalH,
-                              juce::Colour (0xCC40C0FF));  // bright blue line
+                              theme.spectrumLineColor);
         }
 
-        // Post-EQ spectrum (green gradient fill + bright line)
+        // Post-EQ spectrum (themed gradient fill + bright line)
         if (showPost.load (std::memory_order_relaxed) && ! activeData.postDB.empty())
         {
             drawSpectrumFill (ctx, activeData.postDB, gb, minDb, maxDb, logicalW, logicalH,
-                              juce::Colour (0x4440FF80),   // top: green semi-transparent
-                              juce::Colour (0x0840FF80));  // bottom: green nearly transparent
+                              theme.spectrumPostFillTop,
+                              theme.spectrumFillMid.withAlpha (0.2f),
+                              theme.spectrumPostFillBottom);
             drawSpectrumLine (ctx, activeData.postDB, gb, minDb, maxDb, logicalW, logicalH,
-                              juce::Colour (0xCC60FFA0));  // bright green line
+                              theme.spectrumPostLineColor);
         }
 
         glDisable (GL_BLEND);
@@ -174,6 +185,9 @@ private:
     //==========================================================================
     // Shader sources — GLSL 1.20 compatible (macOS compatibility profile)
     //==========================================================================
+
+    // 3-stop gradient fill shader: bottom → mid → top
+    // vYNorm ranges from 0.0 (bottom of fill) to 1.0 (top of fill)
     static const char* fillVertexShader()
     {
         return R"(
@@ -186,14 +200,23 @@ private:
         )";
     }
 
+    // 3-stop gradient: bottom (0.0) → mid (0.5) → top (1.0)
+    // One extra mix() per fragment — zero measurable cost on any GPU
     static const char* fillFragmentShader()
     {
         return R"(
             varying float vYNorm;
             uniform vec4 topColour;
+            uniform vec4 midColour;
             uniform vec4 bottomColour;
             void main() {
-                gl_FragColor = mix(bottomColour, topColour, vYNorm);
+                vec4 col;
+                if (vYNorm < 0.5) {
+                    col = mix(bottomColour, midColour, vYNorm * 2.0);
+                } else {
+                    col = mix(midColour, topColour, (vYNorm - 0.5) * 2.0);
+                }
+                gl_FragColor = col;
             }
         )";
     }
@@ -277,12 +300,13 @@ private:
         return graphBottom - norm * (graphBottom - graphTop);
     }
 
+    // 3-stop gradient fill: topCol at peak energy, midCol at mid, bottomCol at silence
     void drawSpectrumFill (juce::OpenGLContext& ctx,
                            const std::vector<float>& pixelDB,
                            const juce::Rectangle<float>& gb,
                            float minDb, float maxDb,
                            int compW, int compH,
-                           juce::Colour topCol, juce::Colour bottomCol)
+                           juce::Colour topCol, juce::Colour midCol, juce::Colour bottomCol)
     {
         const int dataW  = static_cast<int> (pixelDB.size());
         const int graphW = static_cast<int> (gb.getWidth());
@@ -295,7 +319,6 @@ private:
         const float cW   = static_cast<float> (compW);
         const float cH   = static_cast<float> (compH);
 
-        // Triangle strip: for each x, two vertices (spectrum top, graph bottom)
         fillVerts.resize (static_cast<size_t> (count * 4));
         for (int i = 0; i < count; ++i)
         {
@@ -314,6 +337,9 @@ private:
         fillShader->setUniform ("topColour",
             topCol.getFloatRed(), topCol.getFloatGreen(),
             topCol.getFloatBlue(), topCol.getFloatAlpha());
+        fillShader->setUniform ("midColour",
+            midCol.getFloatRed(), midCol.getFloatGreen(),
+            midCol.getFloatBlue(), midCol.getFloatAlpha());
         fillShader->setUniform ("bottomColour",
             bottomCol.getFloatRed(), bottomCol.getFloatGreen(),
             bottomCol.getFloatBlue(), bottomCol.getFloatAlpha());
