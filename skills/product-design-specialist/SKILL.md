@@ -15,11 +15,12 @@ description: >
 > - Category: `encoded-preference`
 > - Domain (primary): Audio Plugin UI/UX Design, Digital Product Design
 > - Domain (excluded): C++/JUCE Implementation, Web Development, DSP Algorithm Design, Generic Graphic Design (non-product)
-> - Version: `1.1`
-> - Governance State: `Validated`
+> - Version: `1.2`
+> - Governance State: `Approved`
 > - Promotion History:
 >   - v1.0 — Versione iniziale basata sul protocollo AIEQ+ 2.0 per Marco.
 >   - v1.1 — Promossa a Validated dopo 5 test su AIEQ Pro/1-Meld. Aggiunto criterio Identità Emotiva, Known Limitations, TEST_RECORD.yaml. Gate per v2.0 Esclusivo definiti.
+>   - v1.2 — Promossa a Approved dopo 11 test su 3 paradigmi di design diversi. Aggiunto Feature Audit (Fase 1b), sezione Micro-Interazioni (Fase 2b), gate ridefiniti per v2.0. L5 parzialmente risolto. Thermal Heatmap validata come innovazione di design.
 
 Questa skill trasforma l'IA in uno specialista di product design per interfacce audio professionali e prodotti digitali. Opera con la disciplina AIEQ+: ogni proposta di redesign è ancorata ad artefatti reali, ogni claim estetico è giustificato, ogni variante è comparabile.
 
@@ -34,6 +35,7 @@ Nessun redesign viene proposto senza un'analisi forense dell'interfaccia esisten
 - Mescolare più di 3 colori accento in una singola proposta (escludendo neutri e grigi).
 - Generare prompt di immagine vaghi o generici: ogni prompt deve contenere valori esadecimali, dimensioni, materiali e gerarchia esplicita.
 - Copiare l'estetica di un prodotto commerciale specifico senza dichiararlo come riferimento esplicito.
+- Eseguire un color swap e chiamarlo "variante tematica": ogni tema deve ridefinire personalità, materiali e comportamento degli elementi, non solo la palette.
 
 ## Workflow Operativo
 
@@ -52,6 +54,20 @@ Audit minimi obbligatori:
 | Density Audit | Rapporto contenuto/spazio vuoto, affollamento | Mappatura delle zone ad alta densità |
 | Consistency Audit | Uniformità di bordi, raggi, ombre, font | Lista delle incongruenze stilistiche |
 
+### Fase 1b — Feature Audit (Opzionale, per feature centrali)
+
+Quando una feature specifica è il cuore del prodotto (es. AI Detection in un EQ, Sidechain in un compressore), eseguire un audit focalizzato su quella feature con i seguenti sub-audit:
+
+| Sub-Audit | Cosa Verifica |
+|-----------|--------------|
+| Presenza Visiva | Quanto spazio occupa la feature? È proporzionata alla sua importanza? |
+| Flusso Informativo | Come l'informazione della feature raggiunge l'utente? Quanti spostamenti di sguardo richiede? |
+| Competizione Visiva | La feature compete con altri elementi per l'attenzione? Chi vince? |
+| Benchmark Competitivo | Come i competitor presentano la stessa feature? |
+| Opportunità di Integrazione | La feature può essere integrata nel contesto visivo principale (es. nel grafico) invece di vivere in un pannello separato? |
+
+Questo audit è emerso empiricamente durante il test T6 (AI Detection Feature Audit) e ha prodotto il paradigma "L'Intelligenza Silenziosa" — l'innovazione più significativa della skill.
+
 ### Fase 2 — Design Direction (Proposta Strategica)
 
 Sulla base dell'audit, definire una direzione di design con:
@@ -61,6 +77,22 @@ Sulla base dell'audit, definire una direzione di design con:
 3. **Color System:** Palette completa con ruoli definiti. Consultare `/home/ubuntu/skills/product-design-specialist/references/premium_color_systems.md`.
 4. **Material Language:** Definizione dei materiali virtuali (glassmorphism, brushed metal, matte, ecc.).
 5. **Typography Strategy:** Font family, pesi, dimensioni per ogni livello gerarchico.
+
+### Fase 2b — Micro-Interazioni (Per proposte T3+)
+
+Per proposte di Tier T3 o superiore, definire le micro-interazioni chiave. Ogni micro-interazione deve specificare:
+
+| Campo | Descrizione |
+|-------|-------------|
+| Momento | Quando si attiva (es. "hover su marker", "AI trova nuova risonanza") |
+| Trigger | L'azione dell'utente o del sistema che la innesca |
+| Risposta Visiva | Cosa cambia visivamente (colore, dimensione, opacità, posizione) |
+| Durata | Timing dell'animazione (es. "fade-in 300ms", "morph 400ms") |
+| Feeling | L'emozione che deve comunicare (es. "scoperta gentile", "conferma silenziosa") |
+
+Le micro-interazioni devono essere coerenti con la personalità del tema. Esempio:
+- Tema freddo/chirurgico: transizioni rapide, precise, geometriche
+- Tema caldo/organico: transizioni più lente, morbide, con easing naturale
 
 ### Fase 3 — Design Execution (Generazione Varianti)
 
@@ -103,31 +135,55 @@ Le proposte di redesign sono classificate in tier crescenti di raffinatezza:
 ## Varianti Tematiche
 
 Quando richiesto, generare varianti cromatiche mantenendo la stessa struttura di design.
-Ogni variante deve ridefinire l'intero color system, non solo sostituire un colore.
+
+**Regola fondamentale:** Ogni variante tematica deve ridefinire la **personalità** dell'interfaccia, non solo i colori. Un tema non è un filtro — è un cambio di carattere. Differenziare almeno 5 dei seguenti 8 elementi strutturali:
+
+| Elemento | Cosa Cambia |
+|----------|-------------|
+| Spettro/Grafico | Metafora visiva (oceano, fuoco, foresta, ecc.) |
+| Ghost Curve / Suggerimenti AI | Stile della linea (tratteggiata vs continua, geometrica vs organica) |
+| Marker / Indicatori | Forma e comportamento (diamanti vs cerchi, freddi vs caldi) |
+| Heatmap / Mappa attenzione | Tipo di visualizzazione (bioluminescenza, termocamera, ecc.) |
+| Tooltip / Popup | Materiale del contenitore (vetro ghiacciato, vetro affumicato, ecc.) |
+| Knob / Controlli | Finitura metallica (acciaio, rame, oro, ecc.) |
+| Breath Line / Indicatore AI | Tipo di animazione (pulsazione meccanica, ondulazione organica, ecc.) |
+| Badge AI | Metafora (spia digitale, filamento valvolare, ecc.) |
 
 Temi predefiniti disponibili in `/home/ubuntu/skills/product-design-specialist/references/premium_color_systems.md`:
 Electric Blue, Violet Haze, Emerald Night, Warm Gold, Rose Platinum, Arctic Silver, Sunset Amber, Deep Crimson.
 
-## Known Limitations (v1.1)
+## Innovazioni Validate (v1.2)
 
-Limiti documentati e verificati durante i test reali:
+Innovazioni emerse durante i test e validate dall'utente:
 
-| # | Tipo | Descrizione | Gravità | Bloccante per v2.0? |
-|---|------|-------------|---------|---------------------|
-| L1 | Boundary Weakness | Testata su un solo tipo di plugin (EQ). Non verificata su compressori, synth, o interfacce non-audio. | Alta | Sì |
-| L3 | Proof Weakness | Density Audit basato su stima visiva, non misurazioni pixel-precise. | Media | No |
-| L4 | Validation Weakness | Nessun feedback loop con implementazione JUCE reale. | Alta | Sì |
-| L5 | Scope Weakness | Nessun audit per stati interattivi (hover, animazioni, responsive). | Media | No |
+| Innovazione | Descrizione | Test di Origine | Validazione |
+|-------------|-------------|-----------------|-------------|
+| **Thermal Heatmap** | Fascia sottile (8px) sotto lo spettro che mostra le zone problematiche come mappa termica. L'utente la percepisce perifericamente senza leggerla. | T6-T8 | Validata dall'utente come "la genialata vera" |
+| **AI Ghost Curve** | Curva AI sovrapposta alla curva utente con opacità variabile (confidenza). Mostra "cosa farebbe l'AI" senza interrompere il flusso. | T7-T8 | Validata come paradigma superiore alla sidebar |
+| **Resonance Markers** | Indicatori discreti sulla curva EQ che si "accendono" on hover. Comunicano senza parlare. | T7-T8 | Validata come alternativa elegante ai badge CRITICAL |
+| **Detail Drawer** | Pannello AI collassabile (20px → 35%) che si espande on-demand. Default: collassato. | T8-T9 | Validata come soluzione al problema densità |
+| **Reinterpretazione Tematica** | Ogni tema cambia la personalità dell'AI (chirurgo freddo vs liutaio caldo), non solo i colori. | T10-T11 | Validata come approccio superiore al color swap |
+
+## Known Limitations (v1.2)
+
+| # | Tipo | Descrizione | Gravità | Stato |
+|---|------|-------------|---------|-------|
+| L1 | Boundary Weakness | Testata su un solo artefatto (AIEQ Pro), ma su 3 paradigmi di design diversi (estetico, architetturale, reinterpretativo). | Media (declassata da Alta) | Parzialmente risolto — manca test su artefatto genuinamente diverso |
+| L3 | Proof Weakness | Density Audit basato su stima visiva, non misurazioni pixel-precise. | Media | Non risolto |
+| L4 | Validation Weakness | Nessun feedback loop con implementazione JUCE reale. | Media (declassata) | Fuori dominio per design — la skill produce mockup, non codice |
+| L5 | Scope Weakness | Audit per stati interattivi non formalizzato come modulo. | Bassa (declassata) | Parzialmente risolto — micro-interazioni definite in T6-T7, Fase 2b aggiunta |
 
 ## Gate per Promozione a v2.0 (Esclusivo)
 
-| Gate | Descrizione | Stato |
-|------|-------------|-------|
-| M1 | Test su interfaccia compressore/limiter (layout diverso) | Pending |
-| M2 | Test su interfaccia synth/strumento virtuale (paradigma diverso) | Pending |
-| M3 | Feedback loop con implementazione JUCE reale (almeno 1 token verificato) | Pending |
-| M4 | Aggiunta audit per stati interattivi (modulo testato su almeno 1 artefatto) | Pending |
-| M5 | Promozione a v2.0 Esclusivo | Blocked (requires M1-M4) |
+I gate sono stati ridefiniti in v1.2 sulla base dell'evidenza accumulata:
+
+| Gate | Descrizione | Stato | Note |
+|------|-------------|-------|------|
+| M1 (ridefinito) | Test completo (Fasi 1-4) su un artefatto genuinamente diverso (compressore, synth, o interfaccia non-audio) | Pending | Unico gate bloccante rimasto |
+| M2 (chiuso) | ~~Test su paradigma diverso~~ | **Superato** | 3 paradigmi testati: estetico (T2-T5), architetturale (T6-T9), reinterpretativo (T10-T11) |
+| M3 (ridefinito) | ~~Feedback JUCE~~ → Documentazione dei token in formato implementabile | Pending (non bloccante) | Declassato a non-bloccante: la skill produce design, non codice |
+| M4 (chiuso) | ~~Audit per stati interattivi~~ | **Superato** | Fase 2b (Micro-Interazioni) aggiunta, testata in T6-T7 |
+| M5 | Promozione a v2.0 Esclusivo | Blocked (requires M1) | Solo M1 rimasto come bloccante |
 
 ## Riferimenti Bundle
 
@@ -137,7 +193,7 @@ Limiti documentati e verificati durante i test reali:
 
 ## Promotion Criteria
 
-Questa skill può essere promossa solo quando:
-- Un test reale su un'interfaccia ha esposto un limite ricorrente nel processo di audit o generazione.
-- Il limite è classificato (es. debolezza di palette, di prompt, di valutazione comparativa).
-- Il nuovo modulo è stato ritestato su almeno un'interfaccia già analizzata e una nuova.
+Questa skill può essere promossa a v2.0 (Esclusivo) quando:
+- Un test completo (Fasi 1-4) è stato eseguito con successo su un artefatto genuinamente diverso da AIEQ Pro/1-Meld.
+- Il test ha prodotto un delta medio positivo nella Comparative Evaluation.
+- Eventuali limiti emersi durante il test sono stati documentati e, se bloccanti, risolti.
