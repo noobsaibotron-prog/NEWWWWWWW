@@ -276,7 +276,10 @@ public:
                         --cfLeft;
                     }
 
-                    data[i] = sample;
+                    // Safety clamp: prevent numerical explosions from propagating
+                    // to the output. ±4.0 ≈ +12dBFS — well above any musical signal
+                    // but catches runaway convolution from extreme IR scaling.
+                    data[i] = juce::jlimit(-4.0f, 4.0f, sample);
                     ch.outputReadPos++;
                     ch.outputAvailable--;
                 }
@@ -308,7 +311,10 @@ private:
     int buildSet = 1;
 
     // Crossfade
-    static constexpr int crossfadeLength = static_cast<int>(partSize); // 128 samples
+    // Crossfade must span the full IR length (32 partition blocks = 4096 samples)
+    // so that ALL FDL slots cycle out under the old IR before switching to 100% new.
+    // Was partSize (128) — caused 4 clicks per LP switch (one per partition boundary).
+    static constexpr int crossfadeLength = static_cast<int>(irSize); // 4096 samples
     std::atomic<int> crossfadeSamplesLeft { 0 };
     int crossfadeFromSet = 0;
 

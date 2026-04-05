@@ -377,7 +377,7 @@ void AIEqualizerAudioProcessor::irBuilderThreadFunc()
 
             constexpr float minReasonableIR = 1e-02f;   // -40 dBFS threshold
             constexpr float targetIR = 0.1f;            // -20 dBFS target
-            constexpr float maxScaleBoost = 1.0e4f;     // +80 dB max
+            constexpr float maxScaleBoost = 10.0f;      // +20 dB max (was 1e4 = +80dB — caused explosions under stress)
 
             float irScale = 1.0f;
             if (maxAbs > 0.0f && maxAbs < minReasonableIR)
@@ -1763,41 +1763,70 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
             && phaseTransitionBuffer.getNumChannels() >= buffer.getNumChannels()
             && phaseTransitionBuffer.getNumSamples() >= blockSamples)
         {
+            // Check if LP is in fallback mode (IR not yet loaded).
+            // When both old and new modes would use the same eqProcessor.process(),
+            // running it twice corrupts filter state and causes clicks.
+            // In that case, skip the crossfade and process once through the current mode.
+            // Detect when both sides of the crossfade would use the same eqProcessor.
+            // Case 1: ZL→LP but IR not ready — new mode falls back to ZL EQ
+            // Case 2: LP→ZL but IR not ready — old mode falls back to ZL EQ
+            // In both cases, running eqProcessor.process() twice corrupts filter state.
+            const bool lpIRReady = linearIRLoaded[0].load(std::memory_order_acquire);
+            const bool newModeIsFallbackZL = (mode == PhaseMode::LinearPhase) && !lpIRReady;
+            const bool oldModeIsFallbackZL = (transitionFromMode == PhaseMode::LinearPhase) && !lpIRReady;
+            const bool newIsZL = (mode == PhaseMode::ZeroLatency);
+            const bool oldIsZL = (transitionFromMode == PhaseMode::ZeroLatency);
+            const bool skipCrossfade = (newModeIsFallbackZL && oldIsZL)
+                                    || (oldModeIsFallbackZL && newIsZL);
+
             lpTransitionHandled = true;
 
-            const int chs = juce::jmin(buffer.getNumChannels(), phaseTransitionBuffer.getNumChannels());
-            for (int ch = 0; ch < chs; ++ch)
-                phaseTransitionBuffer.copyFrom(ch, 0, buffer, ch, 0, blockSamples);
-
-            // Process main buffer through new (current) mode
-            processStereoForPhaseMode(buffer, mode, true);
-
-            // Process transition buffer through old mode
-            juce::AudioBuffer<float> oldModeView(phaseTransitionBuffer.getArrayOfWritePointers(),
-                                                  buffer.getNumChannels(),
-                                                  blockSamples);
-            processStereoForPhaseMode(oldModeView, transitionFromMode, false);
-
-            // Crossfade old → new
-            const int fadeLen = juce::jmin(transitionRemaining, blockSamples);
-            const int fadeProgressStart = phaseTransitionCrossfadeSamples - transitionRemaining;
-            for (int ch = 0; ch < chs; ++ch)
+            if (skipCrossfade)
             {
-                float* newPtr = buffer.getWritePointer(ch);
-                const float* oldPtr = phaseTransitionBuffer.getReadPointer(ch);
-                for (int s = 0; s < fadeLen; ++s)
-                {
-                    const float tBase = static_cast<float>(fadeProgressStart + s)
-                                      / static_cast<float>(phaseTransitionCrossfadeSamples);
-                    const float t = juce::jlimit(0.0f, 1.0f, tBase);
-                    newPtr[s] = oldPtr[s] * (1.0f - t) + newPtr[s] * t;
-                }
+                // Both paths would use eqProcessor — just process once to preserve filter state.
+                processStereoForPhaseMode(buffer, PhaseMode::ZeroLatency, true);
+                // Drain the crossfade counter so it ends normally
+                const int remaining = juce::jmax(0, transitionRemaining - blockSamples);
+                phaseTransitionSamplesRemaining.store(remaining, std::memory_order_release);
+                if (remaining == 0)
+                    phaseTransitionFromMode.store(-1, std::memory_order_release);
             }
+            else
+            {
+                const int chs = juce::jmin(buffer.getNumChannels(), phaseTransitionBuffer.getNumChannels());
+                for (int ch = 0; ch < chs; ++ch)
+                    phaseTransitionBuffer.copyFrom(ch, 0, buffer, ch, 0, blockSamples);
 
-            const int remaining = juce::jmax(0, transitionRemaining - blockSamples);
-            phaseTransitionSamplesRemaining.store(remaining, std::memory_order_release);
-            if (remaining == 0)
-                phaseTransitionFromMode.store(-1, std::memory_order_release);
+                // Process main buffer through new (current) mode
+                processStereoForPhaseMode(buffer, mode, true);
+
+                // Process transition buffer through old mode
+                juce::AudioBuffer<float> oldModeView(phaseTransitionBuffer.getArrayOfWritePointers(),
+                                                      buffer.getNumChannels(),
+                                                      blockSamples);
+                processStereoForPhaseMode(oldModeView, transitionFromMode, false);
+
+                // Crossfade old → new
+                const int fadeLen = juce::jmin(transitionRemaining, blockSamples);
+                const int fadeProgressStart = phaseTransitionCrossfadeSamples - transitionRemaining;
+                for (int ch = 0; ch < chs; ++ch)
+                {
+                    float* newPtr = buffer.getWritePointer(ch);
+                    const float* oldPtr = phaseTransitionBuffer.getReadPointer(ch);
+                    for (int s = 0; s < fadeLen; ++s)
+                    {
+                        const float tBase = static_cast<float>(fadeProgressStart + s)
+                                          / static_cast<float>(phaseTransitionCrossfadeSamples);
+                        const float t = juce::jlimit(0.0f, 1.0f, tBase);
+                        newPtr[s] = oldPtr[s] * (1.0f - t) + newPtr[s] * t;
+                    }
+                }
+
+                const int remaining = juce::jmax(0, transitionRemaining - blockSamples);
+                phaseTransitionSamplesRemaining.store(remaining, std::memory_order_release);
+                if (remaining == 0)
+                    phaseTransitionFromMode.store(-1, std::memory_order_release);
+            }
         }
     }
 
@@ -1954,6 +1983,7 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         if (!irLoaded)
         {
             // No IR yet: fall back to zero-latency EQ
+            lpWasFallback = true;
             eqProcessor.process(buffer);
             if (dynEqEnabledLocal)
             {
@@ -1963,7 +1993,25 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         }
         else
         {
-            // Single LP processor with internal OLA crossfade (4096-sample, hop-aligned)
+            // IR just became ready — arm crossfade from fallback ZL to LP convolution
+            if (lpWasFallback)
+            {
+                lpWasFallback = false;
+                lpFirstLoadCrossfadeRemaining = lpFirstLoadCrossfadeSamples;
+            }
+
+            // If crossfade is active, save a copy of the raw input BEFORE
+            // LP convolution so we can render a ZL version for blending.
+            // Without this, we'd re-process the previous block's ZL *output*
+            // through the EQ again, causing exponential gain accumulation.
+            if (lpFirstLoadCrossfadeRemaining > 0)
+            {
+                lpFirstLoadFallbackBuf.setSize(buffer.getNumChannels(), blockSamples, false, false, true);
+                for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+                    lpFirstLoadFallbackBuf.copyFrom(ch, 0, buffer, ch, 0, blockSamples);
+            }
+
+            // Process through LP convolution (primary path)
             auto* lp = linearPhaseProcessors[0].get();
             if (lp != nullptr)
             {
@@ -1976,6 +2024,30 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
             else
             {
                 eqProcessor.process(buffer);
+            }
+
+            // Crossfade from fallback ZL output to LP convolution output
+            if (lpFirstLoadCrossfadeRemaining > 0)
+            {
+                // Process the fresh input copy through ZL EQ for blending
+                eqProcessor.process(lpFirstLoadFallbackBuf);
+
+                const int samplesToFade = juce::jmin(lpFirstLoadCrossfadeRemaining, blockSamples);
+                const int fadeStart = lpFirstLoadCrossfadeSamples - lpFirstLoadCrossfadeRemaining;
+
+                for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+                {
+                    auto* lpOut = buffer.getWritePointer(ch);
+                    const auto* zlOut = lpFirstLoadFallbackBuf.getReadPointer(ch);
+
+                    for (int i = 0; i < samplesToFade; ++i)
+                    {
+                        const float t = static_cast<float>(fadeStart + i)
+                                      / static_cast<float>(lpFirstLoadCrossfadeSamples);
+                        lpOut[i] = zlOut[i] * (1.0f - t) + lpOut[i] * t;
+                    }
+                }
+                lpFirstLoadCrossfadeRemaining -= samplesToFade;
             }
 
             // Bug fix: Dynamic EQ must run after LP convolution in Linear Phase mode.
@@ -2378,6 +2450,26 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
 
     // Checkpoint 5 — post bypass-crossfade (final output)
     checkClicks(5);
+
+    // ── Safety output clamp ──────────────────────────────────────────────
+    // Prevent numerical explosions from reaching the DAW output.
+    // ±4.0 ≈ +12 dBFS — well above any musical signal but catches runaway
+    // filter states from rapid parameter changes or unstable coefficients.
+    // This is a last-resort guard; the EQ/convolver should not produce such levels.
+    {
+        constexpr float kSafetyCeiling = 4.0f;
+        for (int ch = 0; ch < totalNumInputChannels; ++ch)
+        {
+            auto* data = buffer.getWritePointer(ch);
+            for (int s = 0; s < numSamples; ++s)
+            {
+                if (std::isnan(data[s]) || std::isinf(data[s]))
+                    data[s] = 0.0f;
+                else
+                    data[s] = juce::jlimit(-kSafetyCeiling, kSafetyCeiling, data[s]);
+            }
+        }
+    }
 
     // Output peak metering (lock-free, for GUI level meter)
     {

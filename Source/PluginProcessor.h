@@ -571,6 +571,14 @@ private:
     std::atomic<int> readyIRIndex { -1 };
     std::array<std::atomic<bool>, 2> linearIRLoaded { false, false };
     std::atomic<int> consecutiveIRReadyBlocks { 0 };
+
+    // LP IR first-load crossfade: when the IR becomes ready while we were in
+    // fallback ZL-EQ mode, crossfade from ZL output to LP convolution output
+    // over 1024 samples to avoid a hard cut.
+    bool lpWasFallback = false;    // true while LP mode is active but IR not yet loaded
+    int  lpFirstLoadCrossfadeRemaining = 0;
+    static constexpr int lpFirstLoadCrossfadeSamples = 1024;
+    juce::AudioBuffer<float> lpFirstLoadFallbackBuf;
     
     // IR crossfade for click-free transitions
     static constexpr int irCrossfadeSamples = 128;
