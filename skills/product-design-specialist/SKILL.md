@@ -15,12 +15,13 @@ description: >
 > - Category: `encoded-preference`
 > - Domain (primary): Audio Plugin UI/UX Design, Digital Product Design
 > - Domain (excluded): C++/JUCE Implementation, Web Development, DSP Algorithm Design, Generic Graphic Design (non-product)
-> - Version: `1.2`
+> - Version: `1.3`
 > - Governance State: `Approved`
 > - Promotion History:
 >   - v1.0 — Versione iniziale basata sul protocollo AIEQ+ 2.0 per Marco.
 >   - v1.1 — Promossa a Validated dopo 5 test su AIEQ Pro/1-Meld. Aggiunto criterio Identità Emotiva, Known Limitations, TEST_RECORD.yaml. Gate per v2.0 Esclusivo definiti.
 >   - v1.2 — Promossa a Approved dopo 11 test su 3 paradigmi di design diversi. Aggiunto Feature Audit (Fase 1b), sezione Micro-Interazioni (Fase 2b), gate ridefiniti per v2.0. L5 parzialmente risolto. Thermal Heatmap validata come innovazione di design.
+>   - v1.3 — Aggiunta Fase 5 (Design-to-Code): sub-skill per convertire mockup in codice C++/JUCE. 3 nuovi reference files. Gate M3 chiuso (token in formato implementabile). L4 risolto.
 
 Questa skill trasforma l'IA in uno specialista di product design per interfacce audio professionali e prodotti digitali. Opera con la disciplina AIEQ+: ogni proposta di redesign è ancorata ad artefatti reali, ogni claim estetico è giustificato, ogni variante è comparabile.
 
@@ -120,6 +121,40 @@ Ogni proposta deve essere valutata rispetto alla baseline con il seguente framew
 
 La proposta è valida solo se il delta medio è positivo e nessun criterio singolo ha un delta negativo superiore a -2.
 
+### Fase 5 — Design-to-Code (Conversione Mockup → C++/JUCE)
+
+Fase opzionale. Quando richiesto, convertire il mockup approvato (Fase 3) e il Design Token Sheet in codice C++/JUCE production-ready.
+
+**Scope:** Genera SOLO il rendering UI (paint, resized, LookAndFeel). NON genera DSP, PluginProcessor, o build system.
+
+**Workflow in 4 step:**
+
+**Step 1 — Visual Decomposition:** Dall'immagine del mockup, catalogare ogni elemento visivo in una tabella strutturata con zona, tipo JUCE, posizione %, colore hex, materiale, interattività e animazione.
+Consultare `/home/ubuntu/skills/product-design-specialist/references/visual_decomposition_template.md`.
+
+**Step 2 — Token-to-Code Mapping:** Convertire il Design Token Sheet in un namespace C++ con struct Theme, Sizing e Animation.
+Consultare `/home/ubuntu/skills/product-design-specialist/references/design_token_cpp_template.md`.
+
+**Step 3 — Component Tree Generation:** Raggruppare gli elementi in Component JUCE seguendo le regole: elementi che repaintano insieme → stesso Component; rate di repaint diversi → Component separati; elementi interattivi → proprio Component.
+
+**Step 4 — Code Generation:** Per ogni Component, generare header (.h) e implementation (.cpp) con paint(), resized() e callback. Per controlli non-standard (Filament Knob, Lava Strip), generare LookAndFeel custom.
+Consultare `/home/ubuntu/skills/product-design-specialist/references/juce_component_patterns.md`.
+
+**Regole di codice:**
+- Posizioni SEMPRE in percentuale (no pixel hardcoded, eccetto icone e knob size)
+- Colori SEMPRE dal Theme struct (no hex hardcoded nel paint)
+- Paint layer order deve corrispondere allo stacking visivo del mockup
+- Elementi animati usano Timer a 60Hz, MAI allocazioni nel paint()
+- Bridge DSP→UI SOLO via std::atomic (per elementi animati, consultare `juce-visual-reverse-engineering`)
+
+**Integrazione con altre skill:**
+
+| Quando | Skill da Invocare |
+|--------|------------------|
+| Elementi animati (particelle, scie, breath line) | `juce-visual-reverse-engineering` per architettura timer + envelope follower |
+| Validazione real-time safety del paint() | `juce-realtime-debugger` per RTSan check |
+| Review del codice generato | `aieq-plugin-auditor` per audit strutturale |
+
 ## Design Tier System
 
 Le proposte di redesign sono classificate in tier crescenti di raffinatezza:
@@ -170,7 +205,7 @@ Innovazioni emerse durante i test e validate dall'utente:
 |---|------|-------------|---------|-------|
 | L1 | Boundary Weakness | Testata su un solo artefatto (AIEQ Pro), ma su 3 paradigmi di design diversi (estetico, architetturale, reinterpretativo). | Media (declassata da Alta) | Parzialmente risolto — manca test su artefatto genuinamente diverso |
 | L3 | Proof Weakness | Density Audit basato su stima visiva, non misurazioni pixel-precise. | Media | Non risolto |
-| L4 | Validation Weakness | Nessun feedback loop con implementazione JUCE reale. | Media (declassata) | Fuori dominio per design — la skill produce mockup, non codice |
+| L4 | Validation Weakness | Nessun feedback loop con implementazione JUCE reale. | Chiuso | **Risolto in v1.3** — Fase 5 (Design-to-Code) aggiunta con pattern JUCE e token C++ |
 | L5 | Scope Weakness | Audit per stati interattivi non formalizzato come modulo. | Bassa (declassata) | Parzialmente risolto — micro-interazioni definite in T6-T7, Fase 2b aggiunta |
 
 ## Gate per Promozione a v2.0 (Esclusivo)
@@ -181,7 +216,7 @@ I gate sono stati ridefiniti in v1.2 sulla base dell'evidenza accumulata:
 |------|-------------|-------|------|
 | M1 (ridefinito) | Test completo (Fasi 1-4) su un artefatto genuinamente diverso (compressore, synth, o interfaccia non-audio) | Pending | Unico gate bloccante rimasto |
 | M2 (chiuso) | ~~Test su paradigma diverso~~ | **Superato** | 3 paradigmi testati: estetico (T2-T5), architetturale (T6-T9), reinterpretativo (T10-T11) |
-| M3 (ridefinito) | ~~Feedback JUCE~~ → Documentazione dei token in formato implementabile | Pending (non bloccante) | Declassato a non-bloccante: la skill produce design, non codice |
+| M3 (chiuso) | ~~Feedback JUCE~~ → Documentazione dei token in formato implementabile | **Superato** | Fase 5 aggiunta con 3 reference files: token C++ template, component patterns, visual decomposition |
 | M4 (chiuso) | ~~Audit per stati interattivi~~ | **Superato** | Fase 2b (Micro-Interazioni) aggiunta, testata in T6-T7 |
 | M5 | Promozione a v2.0 Esclusivo | Blocked (requires M1) | Solo M1 rimasto come bloccante |
 
@@ -190,6 +225,9 @@ I gate sono stati ridefiniti in v1.2 sulla base dell'evidenza accumulata:
 - `references/design_audit_framework.md`: Framework completo per l'analisi forense di un'interfaccia.
 - `references/premium_color_systems.md`: Palette predefinite e regole per sistemi cromatici premium.
 - `references/image_prompt_protocol.md`: Protocollo per la generazione di prompt immagine strutturati e ad alta fedeltà.
+- `references/visual_decomposition_template.md`: Template per la scomposizione visiva mockup → elementi JUCE (Fase 5, Step 1).
+- `references/design_token_cpp_template.md`: Template C++ per convertire Design Token Sheet in namespace con Theme, Sizing, Animation (Fase 5, Step 2).
+- `references/juce_component_patterns.md`: Pattern standard per Component JUCE: paint layers, glow, gradient spectrum, collapsible panel, filament knob (Fase 5, Step 4).
 
 ## Promotion Criteria
 
