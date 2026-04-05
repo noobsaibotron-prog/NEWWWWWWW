@@ -332,6 +332,11 @@ public:
     void triggerLinearPhaseIRUpdate();  // Mark LP IR dirty + signal background builder
     void updateLinearPhaseIRIfNeeded(); // Swap in pre-built IR if ready
     void requestIRBuild();              // Signal background IR builder
+
+    /** Test-only hook: inject a flat (Dirac delta) IR directly into the LP
+        convolver and set linearIRLoaded = true, bypassing the builder thread.
+        Enables deterministic testing of the LP first-load crossfade path. */
+    void forceLinearIRReady();
     
     //==============================================================================
     // Source Profile

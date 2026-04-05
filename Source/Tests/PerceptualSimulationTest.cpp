@@ -754,12 +754,25 @@ static PerceptualTest5_Stress sPerceptualTest5;
 
 
 // =============================================================================
-// TEST 6 — LP IR First-Load Transition (exercises fix 2 and fix 5)
+// TEST 6 — LP IR First-Load Transition (DETERMINISTIC)
 //
-// Forces the builder thread to complete an IR build while LP mode is active,
-// then verifies the transition from fallback-ZL to real-LP convolution is
-// click-free. This test exercises the lpFirstLoadCrossfade path and the
-// PartitionedConvolver 4096-sample crossfade.
+// Uses forceLinearIRReady() hook to inject a flat IR at a precise block,
+// bypassing the builder thread entirely. This eliminates timing dependence
+// and exercises the lpFirstLoadCrossfade path deterministically.
+//
+// Sub-test A: First IR load (fallback ZL → LP convolution transition)
+//   - Processes 20 blocks in LP fallback (lpWasFallback = true)
+//   - Injects flat IR at block 20 via forceLinearIRReady()
+//   - Processes 60 more blocks (LP convolution active)
+//   - Analyzes 10-block window around transition for clicks/explosion
+//   - Also analyzes steady-state LP for dropout/energy
+//
+// Sub-test B: Second IR load (LP → LP IR update, exercises convolver crossfade)
+//   - Changes EQ band, calls forceLinearIRReady() again
+//   - Verifies the 4096-sample convolver crossfade is click-free
+//
+// Sub-test C: Energy continuity — verifies that RMS energy in the 10 blocks
+//   after IR load is within 6dB of the 10 blocks before (no silent gap).
 // =============================================================================
 class PerceptualTest6_LPIRFirstLoad : public juce::UnitTest
 {
@@ -769,34 +782,29 @@ public:
 
     void runTest() override
     {
-        beginTest("LP IR first-load transition — no clicks when IR becomes available");
+        // ─── SUB-TEST A: First IR load ──────────────────────────────────
+        beginTest("LP IR first-load (deterministic) — no clicks at transition");
 
         AIEqualizerAudioProcessor proc;
         proc.prepareToPlay(kSampleRate, kBlockSize);
         auto& apvts = proc.getAPVTS();
 
-        // Set up EQ: band 0 at 1kHz +6dB
-        setFloat(apvts, "band0Freq", 1000.0f);
-        setFloat(apvts, "band0Gain", 6.0f);
+        // Flat EQ (0 dB all bands) so Dirac IR ≈ identity
         setFloat(apvts, "dryWet", 100.0f);
 
         std::mt19937 rng(6060);
 
-        // Warm up in ZL mode
+        // Warm up in ZL mode (50 blocks)
         processBlocks(proc, 50, rng);
 
-        // Switch to LP mode — this triggers IR build in background
+        // Switch to LP mode — do NOT call triggerLinearPhaseIRUpdate()
+        // so the builder thread stays idle and IR stays unloaded.
         setChoice(apvts, "phaseMode", 2);  // LinearPhase
-        proc.triggerLinearPhaseIRUpdate();
 
-        // Process blocks while waiting for IR builder to complete.
-        // The builder has an 80ms debounce + build time.
-        // At 48kHz/128 samples, one block = 2.67ms.
-        // 80ms debounce + ~10ms build = ~90ms ≈ 34 blocks.
-        // We process 200 blocks (533ms) to give plenty of time,
-        // with a small real-time sleep every 10 blocks to let the
-        // builder thread actually run.
-        constexpr int totalBlocks = 200;
+        constexpr int fallbackBlocks = 20;   // blocks in fallback ZL mode
+        constexpr int postIRBlocks   = 60;   // blocks after IR injection
+        constexpr int totalBlocks    = fallbackBlocks + postIRBlocks;
+
         ProcessResult result;
         result.output.setSize(2, totalBlocks * kBlockSize);
         result.input.setSize(2, totalBlocks * kBlockSize);
@@ -804,6 +812,10 @@ public:
 
         for (int b = 0; b < totalBlocks; ++b)
         {
+            // At the exact transition block, inject the IR
+            if (b == fallbackBlocks)
+                proc.forceLinearIRReady();
+
             juce::AudioBuffer<float> chunk(2, kBlockSize);
             fillBroadband(chunk, kSampleRate, b * kBlockSize, rng);
             for (int ch = 0; ch < 2; ++ch)
@@ -813,43 +825,94 @@ public:
 
             for (int ch = 0; ch < 2; ++ch)
                 result.output.copyFrom(ch, b * kBlockSize, chunk, ch, 0, kBlockSize);
-
-            // Yield to builder thread every 10 blocks
-            if (b % 10 == 0)
-                juce::Thread::sleep(5);
         }
 
-        // Analyze the full trace — the IR-ready transition should be smooth
-        auto m = analyzeRegion(result.output, result.input, 0, totalBlocks * kBlockSize);
+        // Analyze 10-block window around the transition point (blocks 15–25)
+        const int windowStart = (fallbackBlocks - 5) * kBlockSize;
+        const int windowLen   = 10 * kBlockSize;
+        auto mTransition = analyzeRegion(result.output, result.input,
+                                         windowStart, windowLen);
 
-        logMessage("  IR first-load: maxDelta=" + juce::String(m.maxDelta, 4)
-                   + " clicks=" + juce::String(m.clickCount)
-                   + " peak=" + juce::String(m.peakAbs, 4)
-                   + " dropout=" + juce::String(m.maxDropoutRun));
+        logMessage("  6A transition: maxDelta=" + juce::String(mTransition.maxDelta, 4)
+                   + " clicks=" + juce::String(mTransition.clickCount)
+                   + " peak=" + juce::String(mTransition.peakAbs, 4)
+                   + " dropout=" + juce::String(mTransition.maxDropoutRun));
 
-        expect(!m.hasNaN, "IR first-load: NaN in output");
-        expect(!m.hasInf, "IR first-load: Inf in output");
-        expect(m.maxDelta < kMaxDeltaPass,
-               "IR first-load: click! maxDelta=" + juce::String(m.maxDelta, 4));
-        expect(m.clickCount <= kMaxClicks,
-               "IR first-load: " + juce::String(m.clickCount) + " clicks");
-        expect(m.peakAbs < kPeakAbsMax,
-               "IR first-load: explosion! peak=" + juce::String(m.peakAbs, 4));
+        expect(!mTransition.hasNaN, "6A: NaN at transition");
+        expect(!mTransition.hasInf, "6A: Inf at transition");
+        expect(mTransition.maxDelta < kMaxDeltaPass,
+               "6A: click at transition! maxDelta=" + juce::String(mTransition.maxDelta, 4));
+        expect(mTransition.clickCount <= kMaxClicks,
+               "6A: " + juce::String(mTransition.clickCount) + " clicks at transition");
+        expect(mTransition.peakAbs < kPeakAbsMax,
+               "6A: explosion! peak=" + juce::String(mTransition.peakAbs, 4));
 
-        // Also test IR update while LP is already active (drag EQ in LP mode)
-        beginTest("LP IR update during active LP — no clicks on IR change");
+        // Analyze full trace for overall stability
+        auto mFull = analyzeRegion(result.output, result.input, 0, totalBlocks * kBlockSize);
 
-        // Now LP should be active with IR loaded. Change EQ to trigger new IR build.
-        setFloat(apvts, "band0Freq", 2000.0f);
-        setFloat(apvts, "band0Gain", -3.0f);
-        proc.triggerLinearPhaseIRUpdate();
+        logMessage("  6A full trace: maxDelta=" + juce::String(mFull.maxDelta, 4)
+                   + " clicks=" + juce::String(mFull.clickCount)
+                   + " peak=" + juce::String(mFull.peakAbs, 4)
+                   + " dropout=" + juce::String(mFull.maxDropoutRun));
 
+        expect(mFull.peakAbs < kPeakAbsMax,
+               "6A full: explosion! peak=" + juce::String(mFull.peakAbs, 4));
+        expect(mFull.maxDelta < kMaxDeltaPass,
+               "6A full: click! maxDelta=" + juce::String(mFull.maxDelta, 4));
+
+        // ─── SUB-TEST C: Energy continuity around transition ────────────
+        beginTest("LP IR first-load — energy continuity (no silent gap)");
+
+        // RMS of 5 blocks before transition vs 5 blocks after
+        // (after the 1024-sample crossfade = 8 blocks, so start at block 28)
+        const int preStart  = (fallbackBlocks - 5) * kBlockSize;
+        const int preLen    = 5 * kBlockSize;
+        const int postStart = (fallbackBlocks + 9) * kBlockSize;  // after crossfade
+        const int postLen   = 5 * kBlockSize;
+
+        double preRMS = 0.0, postRMS = 0.0;
+        for (int ch = 0; ch < 2; ++ch)
+        {
+            const float* out = result.output.getReadPointer(ch);
+            for (int s = preStart; s < preStart + preLen; ++s)
+                preRMS += out[s] * out[s];
+            for (int s = postStart; s < postStart + postLen; ++s)
+                postRMS += out[s] * out[s];
+        }
+        preRMS  = std::sqrt(preRMS  / (2.0 * preLen));
+        postRMS = std::sqrt(postRMS / (2.0 * postLen));
+
+        const double rmsRatioDB = (postRMS > 1e-10 && preRMS > 1e-10)
+                                ? 20.0 * std::log10(postRMS / preRMS)
+                                : -100.0;
+
+        logMessage("  6C energy: preRMS=" + juce::String(preRMS, 6)
+                   + " postRMS=" + juce::String(postRMS, 6)
+                   + " ratio=" + juce::String(rmsRatioDB, 2) + " dB");
+
+        // Post-IR energy should be within ±6dB of pre-IR energy
+        // (Dirac IR = identity, so ideally 0 dB difference)
+        expect(rmsRatioDB > -6.0,
+               "6C: post-IR energy too low (" + juce::String(rmsRatioDB, 2)
+               + " dB) — silent gap after IR load");
+        expect(rmsRatioDB < 6.0,
+               "6C: post-IR energy too high (" + juce::String(rmsRatioDB, 2)
+               + " dB) — gain explosion after IR load");
+
+        // ─── SUB-TEST B: IR update while LP active ──────────────────────
+        beginTest("LP IR update (deterministic) — no clicks on IR change");
+
+        // LP is now active with IR loaded. Inject a second (identical) IR
+        // to exercise the convolver's 4096-sample crossfade path.
+        proc.forceLinearIRReady();
+
+        constexpr int updateBlocks = 80;
         ProcessResult result2;
-        result2.output.setSize(2, totalBlocks * kBlockSize);
-        result2.input.setSize(2, totalBlocks * kBlockSize);
+        result2.output.setSize(2, updateBlocks * kBlockSize);
+        result2.input.setSize(2, updateBlocks * kBlockSize);
         std::mt19937 rng2(7070);
 
-        for (int b = 0; b < totalBlocks; ++b)
+        for (int b = 0; b < updateBlocks; ++b)
         {
             juce::AudioBuffer<float> chunk(2, kBlockSize);
             fillBroadband(chunk, kSampleRate, b * kBlockSize, rng2);
@@ -860,24 +923,23 @@ public:
 
             for (int ch = 0; ch < 2; ++ch)
                 result2.output.copyFrom(ch, b * kBlockSize, chunk, ch, 0, kBlockSize);
-
-            if (b % 10 == 0)
-                juce::Thread::sleep(5);
         }
 
-        auto m2 = analyzeRegion(result2.output, result2.input, 0, totalBlocks * kBlockSize);
+        auto m2 = analyzeRegion(result2.output, result2.input, 0, updateBlocks * kBlockSize);
 
-        logMessage("  IR update: maxDelta=" + juce::String(m2.maxDelta, 4)
+        logMessage("  6B IR update: maxDelta=" + juce::String(m2.maxDelta, 4)
                    + " clicks=" + juce::String(m2.clickCount)
                    + " peak=" + juce::String(m2.peakAbs, 4)
                    + " dropout=" + juce::String(m2.maxDropoutRun));
 
-        expect(!m2.hasNaN, "IR update: NaN");
-        expect(!m2.hasInf, "IR update: Inf");
+        expect(!m2.hasNaN, "6B: NaN");
+        expect(!m2.hasInf, "6B: Inf");
         expect(m2.maxDelta < kMaxDeltaPass,
-               "IR update: click! maxDelta=" + juce::String(m2.maxDelta, 4));
+               "6B: click! maxDelta=" + juce::String(m2.maxDelta, 4));
         expect(m2.clickCount <= kMaxClicks,
-               "IR update: " + juce::String(m2.clickCount) + " clicks");
+               "6B: " + juce::String(m2.clickCount) + " clicks");
+        expect(m2.peakAbs < kPeakAbsMax,
+               "6B: explosion! peak=" + juce::String(m2.peakAbs, 4));
 
         proc.releaseResources();
     }

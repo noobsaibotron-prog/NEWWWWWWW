@@ -2645,6 +2645,29 @@ void AIEqualizerAudioProcessor::updateLinearPhaseIRIfNeeded()
     activeIRIndex.store(0, std::memory_order_relaxed);
 }
 
+void AIEqualizerAudioProcessor::forceLinearIRReady()
+{
+    // Build a Dirac-delta IR (flat magnitude, zero phase = identity convolution).
+    // This injects the IR directly into the convolver, bypassing the builder thread,
+    // so tests can deterministically control when linearIRLoaded transitions to true.
+    std::vector<float> diracIR(PartitionedConvolver::irSize, 0.0f);
+    diracIR[0] = 1.0f;  // unit impulse → flat frequency response
+
+    // Pre-partition into frequency domain (same path as the builder thread)
+    std::vector<float> packed(PartitionedConvolver::numParts *
+                              PartitionedConvolver::fftPartSize * 2, 0.0f);
+    PartitionedConvolver::buildPackedPartitions(diracIR.data(), diracIR.size(), packed.data());
+
+    // Inject into the LP processor
+    auto* lp = linearPhaseProcessors[0].get();
+    if (lp != nullptr)
+        lp->storePrePartitionedIRDirect(packed.data());
+
+    // Mark IR as loaded — this is the flag processBlock() checks
+    linearIRLoaded[0].store(true, std::memory_order_release);
+    activeIRIndex.store(0, std::memory_order_relaxed);
+}
+
 void AIEqualizerAudioProcessor::requestIRBuild()
 {
     // Record timestamp; the IR builder thread checks if debounce has elapsed
