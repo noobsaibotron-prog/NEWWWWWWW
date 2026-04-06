@@ -25,23 +25,23 @@ public:
         // Title
         titleLabel.setText("ANALYZER SETTINGS", juce::dontSendNotification);
         titleLabel.setFont(juce::Font(juce::FontOptions().withHeight(11.0f).withStyle("Bold")));
-        titleLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textBright);
+        titleLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textBright());
         titleLabel.setJustificationType(juce::Justification::centred);
         addAndMakeVisible(titleLabel);
         
         // FFT Resolution
         fftLabel.setText("Resolution", juce::dontSendNotification);
         fftLabel.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
-        fftLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted);
+        fftLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted());
         addAndMakeVisible(fftLabel);
         
         fftCombo.addItem("Low (1024)", 1);
         fftCombo.addItem("Medium (2048)", 2);
         fftCombo.addItem("High (4096)", 3);
         fftCombo.addItem("Max (8192)", 4);
-        fftCombo.setColour(juce::ComboBox::backgroundColourId, ModernLookAndFeel::Colors::bgDark);
-        fftCombo.setColour(juce::ComboBox::textColourId, ModernLookAndFeel::Colors::textPrimary);
-        fftCombo.setColour(juce::ComboBox::outlineColourId, ModernLookAndFeel::Colors::bgLighter);
+        fftCombo.setColour(juce::ComboBox::backgroundColourId, ModernLookAndFeel::Colors::bgDark());
+        fftCombo.setColour(juce::ComboBox::textColourId, ModernLookAndFeel::Colors::textPrimary());
+        fftCombo.setColour(juce::ComboBox::outlineColourId, ModernLookAndFeel::Colors::bgLighter());
         addAndMakeVisible(fftCombo);
         fftAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
             parameters, "analyzerResolution", fftCombo);
@@ -49,23 +49,23 @@ public:
         // Speed
         speedLabel.setText("Speed", juce::dontSendNotification);
         speedLabel.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
-        speedLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted);
+        speedLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted());
         addAndMakeVisible(speedLabel);
         
         speedCombo.addItem("Fast", 1);
         speedCombo.addItem("Medium", 2);
         speedCombo.addItem("Slow", 3);
-        speedCombo.setColour(juce::ComboBox::backgroundColourId, ModernLookAndFeel::Colors::bgDark);
-        speedCombo.setColour(juce::ComboBox::textColourId, ModernLookAndFeel::Colors::textPrimary);
-        speedCombo.setColour(juce::ComboBox::outlineColourId, ModernLookAndFeel::Colors::bgLighter);
+        speedCombo.setColour(juce::ComboBox::backgroundColourId, ModernLookAndFeel::Colors::bgDark());
+        speedCombo.setColour(juce::ComboBox::textColourId, ModernLookAndFeel::Colors::textPrimary());
+        speedCombo.setColour(juce::ComboBox::outlineColourId, ModernLookAndFeel::Colors::bgLighter());
         addAndMakeVisible(speedCombo);
         speedAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
             parameters, "analyzerSpeed", speedCombo);
         
         // Tilt Compensation
         tiltToggle.setButtonText("Tilt (4.5 dB/oct)");
-        tiltToggle.setColour(juce::ToggleButton::textColourId, ModernLookAndFeel::Colors::textPrimary);
-        tiltToggle.setColour(juce::ToggleButton::tickColourId, ModernLookAndFeel::Colors::accentBlue);
+        tiltToggle.setColour(juce::ToggleButton::textColourId, ModernLookAndFeel::Colors::textPrimary());
+        tiltToggle.setColour(juce::ToggleButton::tickColourId, ModernLookAndFeel::Colors::accentBlue());
         tiltToggle.setTooltip("Apply pink noise slope compensation for more musical display");
         addAndMakeVisible(tiltToggle);
         tiltAtt = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
@@ -73,8 +73,8 @@ public:
         
         // Piano Roll
         pianoToggle.setButtonText("Piano Keys");
-        pianoToggle.setColour(juce::ToggleButton::textColourId, ModernLookAndFeel::Colors::textPrimary);
-        pianoToggle.setColour(juce::ToggleButton::tickColourId, ModernLookAndFeel::Colors::accentBlue);
+        pianoToggle.setColour(juce::ToggleButton::textColourId, ModernLookAndFeel::Colors::textPrimary());
+        pianoToggle.setColour(juce::ToggleButton::tickColourId, ModernLookAndFeel::Colors::accentBlue());
         pianoToggle.setTooltip("Show piano keyboard with note names under spectrum");
         addAndMakeVisible(pianoToggle);
         pianoAtt = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
@@ -83,7 +83,7 @@ public:
         // Channel selector
         channelLabel.setText("Channel", juce::dontSendNotification);
         channelLabel.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
-        channelLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted);
+        channelLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted());
         addAndMakeVisible(channelLabel);
         
         channelCombo.addItem("L+R (Stereo)", 1);
@@ -92,9 +92,9 @@ public:
         channelCombo.addItem("Mid", 4);
         channelCombo.addItem("Side", 5);
         channelCombo.setSelectedId(1, juce::dontSendNotification);
-        channelCombo.setColour(juce::ComboBox::backgroundColourId, ModernLookAndFeel::Colors::bgDark);
-        channelCombo.setColour(juce::ComboBox::textColourId, ModernLookAndFeel::Colors::textPrimary);
-        channelCombo.setColour(juce::ComboBox::outlineColourId, ModernLookAndFeel::Colors::bgLighter);
+        channelCombo.setColour(juce::ComboBox::backgroundColourId, ModernLookAndFeel::Colors::bgDark());
+        channelCombo.setColour(juce::ComboBox::textColourId, ModernLookAndFeel::Colors::textPrimary());
+        channelCombo.setColour(juce::ComboBox::outlineColourId, ModernLookAndFeel::Colors::bgLighter());
         channelCombo.onChange = [this]() {
             if (onChannelChanged)
                 onChannelChanged(channelCombo.getSelectedId() - 1);
@@ -104,16 +104,16 @@ public:
         // dB Range
         rangeLabel.setText("Range", juce::dontSendNotification);
         rangeLabel.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
-        rangeLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted);
+        rangeLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted());
         addAndMakeVisible(rangeLabel);
         
         rangeCombo.addItem("-90 to +12 dB", 1);
         rangeCombo.addItem("-60 to +12 dB", 2);
         rangeCombo.addItem("-48 to +12 dB", 3);
         rangeCombo.setSelectedId(1, juce::dontSendNotification);
-        rangeCombo.setColour(juce::ComboBox::backgroundColourId, ModernLookAndFeel::Colors::bgDark);
-        rangeCombo.setColour(juce::ComboBox::textColourId, ModernLookAndFeel::Colors::textPrimary);
-        rangeCombo.setColour(juce::ComboBox::outlineColourId, ModernLookAndFeel::Colors::bgLighter);
+        rangeCombo.setColour(juce::ComboBox::backgroundColourId, ModernLookAndFeel::Colors::bgDark());
+        rangeCombo.setColour(juce::ComboBox::textColourId, ModernLookAndFeel::Colors::textPrimary());
+        rangeCombo.setColour(juce::ComboBox::outlineColourId, ModernLookAndFeel::Colors::bgLighter());
         rangeCombo.onChange = [this]() {
             if (onRangeChanged)
             {
@@ -132,7 +132,7 @@ public:
         // Close button
         closeButton.setButtonText("×");
         closeButton.setColour(juce::TextButton::buttonColourId, juce::Colours::transparentBlack);
-        closeButton.setColour(juce::TextButton::textColourOffId, ModernLookAndFeel::Colors::textMuted);
+        closeButton.setColour(juce::TextButton::textColourOffId, ModernLookAndFeel::Colors::textMuted());
         closeButton.onClick = [this]() {
             setVisible(false);
             if (onClose) onClose();
@@ -145,15 +145,15 @@ public:
         auto bounds = getLocalBounds().toFloat();
         
         // Semi-transparent dark background
-        g.setColour(ModernLookAndFeel::Colors::bgPanel.withAlpha(0.97f));
+        g.setColour(ModernLookAndFeel::Colors::bgPanel().withAlpha(0.97f));
         g.fillRoundedRectangle(bounds, 8.0f);
         
         // Border
-        g.setColour(ModernLookAndFeel::Colors::bgLighter);
+        g.setColour(ModernLookAndFeel::Colors::bgLighter());
         g.drawRoundedRectangle(bounds.reduced(0.5f), 8.0f, 1.5f);
         
         // Accent line at top
-        g.setColour(ModernLookAndFeel::Colors::accentBlue);
+        g.setColour(ModernLookAndFeel::Colors::accentBlue());
         g.fillRoundedRectangle(bounds.removeFromTop(3.0f).reduced(20.0f, 0.0f), 1.5f);
     }
     
@@ -239,46 +239,46 @@ public:
         // Zoom X (horizontal - frequency)
         zoomXLabel.setText("X", juce::dontSendNotification);
         zoomXLabel.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
-        zoomXLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted);
+        zoomXLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted());
         zoomXLabel.setJustificationType(juce::Justification::centred);
         addAndMakeVisible(zoomXLabel);
         
         zoomXMinus.setButtonText("−");
-        zoomXMinus.setColour(juce::TextButton::buttonColourId, ModernLookAndFeel::Colors::bgLight);
-        zoomXMinus.setColour(juce::TextButton::textColourOffId, ModernLookAndFeel::Colors::textBright);
+        zoomXMinus.setColour(juce::TextButton::buttonColourId, ModernLookAndFeel::Colors::bgLight());
+        zoomXMinus.setColour(juce::TextButton::textColourOffId, ModernLookAndFeel::Colors::textBright());
         zoomXMinus.onClick = [this]() { adjustZoomX(-0.25f); };
         addAndMakeVisible(zoomXMinus);
         
         zoomXPlus.setButtonText("+");
-        zoomXPlus.setColour(juce::TextButton::buttonColourId, ModernLookAndFeel::Colors::bgLight);
-        zoomXPlus.setColour(juce::TextButton::textColourOffId, ModernLookAndFeel::Colors::textBright);
+        zoomXPlus.setColour(juce::TextButton::buttonColourId, ModernLookAndFeel::Colors::bgLight());
+        zoomXPlus.setColour(juce::TextButton::textColourOffId, ModernLookAndFeel::Colors::textBright());
         zoomXPlus.onClick = [this]() { adjustZoomX(0.25f); };
         addAndMakeVisible(zoomXPlus);
         
         // Zoom Y (vertical - dB)
         zoomYLabel.setText("Y", juce::dontSendNotification);
         zoomYLabel.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
-        zoomYLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted);
+        zoomYLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted());
         zoomYLabel.setJustificationType(juce::Justification::centred);
         addAndMakeVisible(zoomYLabel);
         
         zoomYMinus.setButtonText("−");
-        zoomYMinus.setColour(juce::TextButton::buttonColourId, ModernLookAndFeel::Colors::bgLight);
-        zoomYMinus.setColour(juce::TextButton::textColourOffId, ModernLookAndFeel::Colors::textBright);
+        zoomYMinus.setColour(juce::TextButton::buttonColourId, ModernLookAndFeel::Colors::bgLight());
+        zoomYMinus.setColour(juce::TextButton::textColourOffId, ModernLookAndFeel::Colors::textBright());
         zoomYMinus.onClick = [this]() { adjustZoomY(-0.25f); };
         addAndMakeVisible(zoomYMinus);
         
         zoomYPlus.setButtonText("+");
-        zoomYPlus.setColour(juce::TextButton::buttonColourId, ModernLookAndFeel::Colors::bgLight);
-        zoomYPlus.setColour(juce::TextButton::textColourOffId, ModernLookAndFeel::Colors::textBright);
+        zoomYPlus.setColour(juce::TextButton::buttonColourId, ModernLookAndFeel::Colors::bgLight());
+        zoomYPlus.setColour(juce::TextButton::textColourOffId, ModernLookAndFeel::Colors::textBright());
         zoomYPlus.onClick = [this]() { adjustZoomY(0.25f); };
         addAndMakeVisible(zoomYPlus);
         
         // Reset button
         resetButton.setButtonText("⟲");
         resetButton.setTooltip("Reset zoom to default");
-        resetButton.setColour(juce::TextButton::buttonColourId, ModernLookAndFeel::Colors::bgLight);
-        resetButton.setColour(juce::TextButton::textColourOffId, ModernLookAndFeel::Colors::accentBlue);
+        resetButton.setColour(juce::TextButton::buttonColourId, ModernLookAndFeel::Colors::bgLight());
+        resetButton.setColour(juce::TextButton::textColourOffId, ModernLookAndFeel::Colors::accentBlue());
         resetButton.onClick = [this]() { resetZoom(); };
         addAndMakeVisible(resetButton);
     }
@@ -286,7 +286,7 @@ public:
     void paint(juce::Graphics& g) override
     {
         auto bounds = getLocalBounds().toFloat();
-        g.setColour(ModernLookAndFeel::Colors::bgDark.withAlpha(0.8f));
+        g.setColour(ModernLookAndFeel::Colors::bgDark().withAlpha(0.8f));
         g.fillRoundedRectangle(bounds, 4.0f);
     }
     

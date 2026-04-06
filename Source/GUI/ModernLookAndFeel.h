@@ -28,30 +28,31 @@ public:
     {
         auto& thm = ThemeManager::getInstance().getTheme();
         
-        setColour(juce::ResizableWindow::backgroundColourId, thm.bgMid);
+        // FIX: use correct Theme field names (bgMid/bgLight/bgLighter/bgDark do not exist)
+        setColour(juce::ResizableWindow::backgroundColourId, thm.bgSecondary);
         setColour(juce::Label::textColourId, thm.textPrimary);
         
         // Buttons
-        setColour(juce::TextButton::buttonColourId, thm.bgLighter);
+        setColour(juce::TextButton::buttonColourId, thm.bgSurface);
         setColour(juce::TextButton::buttonOnColourId, thm.accent);
         setColour(juce::TextButton::textColourOffId, thm.textPrimary);
-        setColour(juce::TextButton::textColourOnId, thm.textBright);
+        setColour(juce::TextButton::textColourOnId, thm.accentBright);
         
         // ComboBox
-        setColour(juce::ComboBox::backgroundColourId, thm.bgLight);
+        setColour(juce::ComboBox::backgroundColourId, thm.bgTertiary);
         setColour(juce::ComboBox::textColourId, thm.textPrimary);
-        setColour(juce::ComboBox::outlineColourId, thm.bgLighter);
+        setColour(juce::ComboBox::outlineColourId, thm.bgSurface);
         
         // Popup
-        setColour(juce::PopupMenu::backgroundColourId, thm.bgLight);
+        setColour(juce::PopupMenu::backgroundColourId, thm.bgTertiary);
         setColour(juce::PopupMenu::textColourId, thm.textPrimary);
         setColour(juce::PopupMenu::highlightedBackgroundColourId, thm.accent);
         
         // Slider
         setColour(juce::Slider::thumbColourId, thm.accent);
-        setColour(juce::Slider::trackColourId, thm.bgLighter);
+        setColour(juce::Slider::trackColourId, thm.bgSurface);
         setColour(juce::Slider::rotarySliderFillColourId, thm.accent);
-        setColour(juce::Slider::rotarySliderOutlineColourId, thm.bgDark);
+        setColour(juce::Slider::rotarySliderOutlineColourId, thm.bgPrimary);
     }
 
     //==========================================================================
@@ -70,13 +71,14 @@ public:
         auto& thm = ThemeManager::getInstance().getTheme();
 
         // 1. OUTER METAL RING (Brushed Copper/Chrome)
+        // FIX: knobOuterLight/knobOuterDark do not exist — use knobRing/knobBody
         g.setGradientFill(juce::ColourGradient(
-            thm.knobOuterLight, cx - radius, cy - radius,
-            thm.knobOuterDark, cx + radius, cy + radius, false));
+            thm.knobRing, cx - radius, cy - radius,
+            thm.knobBody, cx + radius, cy + radius, false));
         g.fillEllipse(bounds);
         
         // Subtle outer rim highlight
-        g.setColour(thm.knobOuterLight.withAlpha(0.2f));
+        g.setColour(thm.knobRing.withAlpha(0.2f));
         g.drawEllipse(bounds.reduced(0.5f), 1.0f);
 
         // 2. GLASS COVER (Smoked Glass Effect)
@@ -94,11 +96,9 @@ public:
         g.drawEllipse(glassBounds.reduced(1.0f), 2.0f);
 
         // 3. INTERNAL FILAMENT (The "Glow" indicator)
-        // A thin curved line that looks like a glowing wire inside the glass
         float filamentR = glassRadius * 0.75f;
         juce::Path filament;
         
-        // Pointer line (filament)
         float px1 = cx + std::sin(angle) * (filamentR * 0.2f);
         float py1 = cy - std::cos(angle) * (filamentR * 0.2f);
         float px2 = cx + std::sin(angle) * filamentR;
@@ -108,14 +108,14 @@ public:
         g.setColour(thm.accent.withAlpha(0.4f));
         g.drawLine(px1, py1, px2, py2, 4.0f);
         
-        // Core filament (bright)
-        g.setColour(thm.textBright);
+        // Core filament (bright) — FIX: textBright does not exist, use accentBright
+        g.setColour(thm.accentBright);
         g.drawLine(px1, py1, px2, py2, 1.5f);
         
         // Filament tip "hot spot"
         g.setColour(thm.accent);
         g.fillEllipse(px2 - 2.5f, py2 - 2.5f, 5.0f, 5.0f);
-        g.setColour(thm.textBright);
+        g.setColour(thm.accentBright);
         g.fillEllipse(px2 - 1.0f, py2 - 1.0f, 2.0f, 2.0f);
 
         // 4. VALUE ARC (Internal to glass)
@@ -143,10 +143,42 @@ public:
         g.strokePath(reflections, juce::PathStrokeType(2.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
     }
 
-    // Helper for legacy code that still uses ModernLookAndFeel::Colors
+    //==========================================================================
+    // Bridge: Legacy Colors API → ThemeManager
+    // All getters are static functions (not variables) so they read the
+    // current theme at call time, supporting runtime theme switching.
+    //==========================================================================
     struct Colors
     {
+        // Band colors
         static juce::Colour getBandColor(int idx) { return ThemeManager::getInstance().getBandColor(idx); }
+
+        // Background hierarchy
+        static juce::Colour bgDark()    { return ThemeManager::getInstance().getTheme().bgPrimary; }
+        static juce::Colour bgPanel()   { return ThemeManager::getInstance().getTheme().bgSecondary; }
+        static juce::Colour bgLight()   { return ThemeManager::getInstance().getTheme().bgTertiary; }
+        static juce::Colour bgLighter() { return ThemeManager::getInstance().getTheme().bgSurface; }
+
+        // Text
+        static juce::Colour textPrimary()  { return ThemeManager::getInstance().getTheme().textPrimary; }
+        static juce::Colour textBright()   { return ThemeManager::getInstance().getTheme().accentBright; }
+        static juce::Colour textLabel()    { return ThemeManager::getInstance().getTheme().textSecondary; }
+        static juce::Colour textMuted()    { return ThemeManager::getInstance().getTheme().textMuted; }
+
+        // Accents
+        static juce::Colour accentBlue()   { return ThemeManager::getInstance().getTheme().accent; }
+        static juce::Colour accentGreen()  { return ThemeManager::getInstance().getTheme().success; }
+        static juce::Colour accentOrange() { return ThemeManager::getInstance().getTheme().warning; }
+        static juce::Colour accentYellow() { return ThemeManager::getInstance().getTheme().warning; }
+
+        // Severity helper (maps 0-1 severity to a color)
+        static juce::Colour getSeverity(float s)
+        {
+            auto& thm = ThemeManager::getInstance().getTheme();
+            if (s > 0.7f) return thm.critical;
+            if (s > 0.4f) return thm.warning;
+            return thm.success;
+        }
     };
 
 private:

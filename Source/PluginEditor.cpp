@@ -88,12 +88,12 @@ AIEqualizerAudioProcessorEditor::AIEqualizerAudioProcessorEditor(AIEqualizerAudi
     // Tab buttons for switching between AI Detect and Semantic panels — themed
     auto& theme = ThemeManager::getInstance().getTheme();
     aiTabBtn.setColour(juce::TextButton::buttonColourId, theme.accent);
-    aiTabBtn.setColour(juce::TextButton::textColourOffId, theme.textBright);
+    aiTabBtn.setColour(juce::TextButton::textColourOffId, theme.accentBright);
     aiTabBtn.setTooltip("AI Problem Detection - Automatic issue identification");
     aiTabBtn.onClick = [this]() { switchRightTab(0); };
     addAndMakeVisible(aiTabBtn);
     
-    semanticTabBtn.setColour(juce::TextButton::buttonColourId, theme.bgLighter);
+    semanticTabBtn.setColour(juce::TextButton::buttonColourId, theme.bgSurface);
     semanticTabBtn.setColour(juce::TextButton::textColourOffId, theme.textSecondary);
     semanticTabBtn.setTooltip("Semantic Control - Shape sound with words like 'Air', 'Warmth', 'Punch'");
     semanticTabBtn.onClick = [this]() { switchRightTab(1); };
@@ -103,8 +103,8 @@ AIEqualizerAudioProcessorEditor::AIEqualizerAudioProcessorEditor(AIEqualizerAudi
     ThemeManager::getInstance().addListener([this]() {
         auto& thm = ThemeManager::getInstance().getTheme();
         aiTabBtn.setColour(juce::TextButton::buttonColourId, thm.accent);
-        aiTabBtn.setColour(juce::TextButton::textColourOffId, thm.textBright);
-        semanticTabBtn.setColour(juce::TextButton::buttonColourId, thm.bgLighter);
+        aiTabBtn.setColour(juce::TextButton::textColourOffId, thm.accentBright);
+        semanticTabBtn.setColour(juce::TextButton::buttonColourId, thm.bgSurface);
         semanticTabBtn.setColour(juce::TextButton::textColourOffId, thm.textSecondary);
         repaint();
     });
@@ -288,7 +288,7 @@ void AIEqualizerAudioProcessorEditor::createHeader()
     phaseModeLabel.setText("Processing:", juce::dontSendNotification);
     phaseModeLabel.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
     phaseModeLabel.setJustificationType(juce::Justification::centredLeft);
-    phaseModeLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textPrimary);
+    phaseModeLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textPrimary());
     addAndMakeVisible(phaseModeLabel);
     phaseModeLabel.setVisible(false);
     
@@ -329,8 +329,8 @@ void AIEqualizerAudioProcessorEditor::createHeader()
     aiPanelToggle.setButtonText("AI");
     aiPanelToggle.setClickingTogglesState(true);
     aiPanelToggle.setTooltip("Toggle AI panel");
-    aiPanelToggle.setColour(juce::TextButton::buttonColourId, ModernLookAndFeel::Colors::bgLighter);
-    aiPanelToggle.setColour(juce::TextButton::buttonOnColourId, ModernLookAndFeel::Colors::accentBlue);
+    aiPanelToggle.setColour(juce::TextButton::buttonColourId, ModernLookAndFeel::Colors::bgLighter());
+    aiPanelToggle.setColour(juce::TextButton::buttonOnColourId, ModernLookAndFeel::Colors::accentBlue());
     aiPanelToggle.onClick = [this]() {
         aiPanelVisible = aiPanelToggle.getToggleState();
         resized();
@@ -343,13 +343,13 @@ void AIEqualizerAudioProcessorEditor::createControlPanel()
     // Logo (hidden in new layout)
     logoLabel.setText("AI EQ PRO", juce::dontSendNotification);
     logoLabel.setFont(juce::Font(juce::FontOptions().withHeight(20.0f).withStyle("Bold")));
-    logoLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textPrimary);
+    logoLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textPrimary());
     addAndMakeVisible(logoLabel);
     logoLabel.setVisible(false);
     
     subtitleLabel.setText("Intelligent Equalizer", juce::dontSendNotification);
     subtitleLabel.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
-    subtitleLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::accentBlue);
+    subtitleLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::accentBlue());
     addAndMakeVisible(subtitleLabel);
     subtitleLabel.setVisible(false);
     
@@ -392,7 +392,7 @@ void AIEqualizerAudioProcessorEditor::createControlPanel()
     sensitivityLabel.setText("SENSITIVITY", juce::dontSendNotification);
     sensitivityLabel.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
     sensitivityLabel.setJustificationType(juce::Justification::centred);
-    sensitivityLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted);
+    sensitivityLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted());
     addAndMakeVisible(sensitivityLabel);
     sensitivityLabel.setVisible(false);
     
@@ -406,7 +406,7 @@ void AIEqualizerAudioProcessorEditor::createControlPanel()
     strengthLabel.setText("STRENGTH", juce::dontSendNotification);
     strengthLabel.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
     strengthLabel.setJustificationType(juce::Justification::centred);
-    strengthLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted);
+    strengthLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted());
     addAndMakeVisible(strengthLabel);
     strengthLabel.setVisible(false);
     
@@ -426,18 +426,18 @@ void AIEqualizerAudioProcessorEditor::createControlPanel()
     qualityLabel.setText("QUALITY", juce::dontSendNotification);
     qualityLabel.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
     qualityLabel.setJustificationType(juce::Justification::centred);
-    qualityLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted);
+    qualityLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted());
     addAndMakeVisible(qualityLabel);
     qualityLabel.setVisible(false);
 
     qualityBtn.setTooltip("Quality Mode: HQ abilita 5ms di lookahead (piÃ¹ latenza), ZL = zero-latency");
     qualityBtn.setClickingTogglesState(true);
     qualityBtn.setComponentID("qualityToggle");
-    qualityBtn.setColour(juce::TextButton::buttonColourId, ModernLookAndFeel::Colors::bgLight);
-    qualityBtn.setColour(juce::TextButton::buttonOnColourId, ModernLookAndFeel::Colors::accentBlue);
-    qualityBtn.setColour(juce::TextButton::textColourOffId, ModernLookAndFeel::Colors::textPrimary);
+    qualityBtn.setColour(juce::TextButton::buttonColourId, ModernLookAndFeel::Colors::bgLight());
+    qualityBtn.setColour(juce::TextButton::buttonOnColourId, ModernLookAndFeel::Colors::accentBlue());
+    qualityBtn.setColour(juce::TextButton::textColourOffId, ModernLookAndFeel::Colors::textPrimary());
     qualityBtn.setVisible(false);
-    qualityBtn.setColour(juce::TextButton::textColourOnId, ModernLookAndFeel::Colors::textBright);
+    qualityBtn.setColour(juce::TextButton::textColourOnId, ModernLookAndFeel::Colors::textBright());
     qualityBtn.setConnectedEdges(juce::Button::ConnectedOnLeft | juce::Button::ConnectedOnRight);
     qualityBtn.onClick = [this]() {
         int mode = qualityBtn.getToggleState() ? 1 : 0; // 1 = High Quality, 0 = Zero Latency
@@ -450,7 +450,7 @@ void AIEqualizerAudioProcessorEditor::createControlPanel()
     oversamplingLabel.setText("OVERSAMP", juce::dontSendNotification);
     oversamplingLabel.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
     oversamplingLabel.setJustificationType(juce::Justification::centred);
-    oversamplingLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted);
+    oversamplingLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted());
     addAndMakeVisible(oversamplingLabel);
     oversamplingLabel.setVisible(false);
 
@@ -603,7 +603,7 @@ void AIEqualizerAudioProcessorEditor::createControlPanel()
     captureLenLabel.setText("CAP LEN", juce::dontSendNotification);
     captureLenLabel.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
     captureLenLabel.setJustificationType(juce::Justification::centred);
-    captureLenLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted);
+    captureLenLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted());
     addAndMakeVisible(captureLenLabel);
     captureLenLabel.setVisible(false);
 
@@ -622,7 +622,7 @@ void AIEqualizerAudioProcessorEditor::createControlPanel()
                                juce::dontSendNotification);
     captureStatusLabel.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
     captureStatusLabel.setJustificationType(juce::Justification::centredLeft);
-    captureStatusLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted);
+    captureStatusLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted());
     captureStatusLabel.setMinimumHorizontalScale(0.7f);
     addAndMakeVisible(captureStatusLabel);
     captureStatusLabel.setVisible(false);
@@ -635,7 +635,7 @@ void AIEqualizerAudioProcessorEditor::createControlPanel()
     numBandsLabel.setText("BANDS", juce::dontSendNotification);
     numBandsLabel.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
     numBandsLabel.setJustificationType(juce::Justification::centred);
-    numBandsLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted);
+    numBandsLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted());
     addAndMakeVisible(numBandsLabel);
     
     for (int i = 1; i <= 24; ++i)
@@ -650,7 +650,7 @@ void AIEqualizerAudioProcessorEditor::createControlPanel()
     outLabel.setText("OUT GAIN", juce::dontSendNotification);
     outLabel.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
     outLabel.setJustificationType(juce::Justification::centred);
-    outLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted);
+    outLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted());
     addAndMakeVisible(outLabel);
     
     outKnob.setTooltip("Output Gain - Adjust overall output level (-24dB to +24dB)");
@@ -662,7 +662,7 @@ void AIEqualizerAudioProcessorEditor::createControlPanel()
     mixLabel.setText("DRY/WET", juce::dontSendNotification);
     mixLabel.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
     mixLabel.setJustificationType(juce::Justification::centred);
-    mixLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted);
+    mixLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted());
     addAndMakeVisible(mixLabel);
     
     mixKnob.setTooltip("Blend between dry (0%) and fully processed (100%) signal");
@@ -674,7 +674,7 @@ void AIEqualizerAudioProcessorEditor::createControlPanel()
     slopeLabel.setText("SLOPE", juce::dontSendNotification);
     slopeLabel.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
     slopeLabel.setJustificationType(juce::Justification::centred);
-    slopeLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted);
+    slopeLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted());
     addAndMakeVisible(slopeLabel);
     slopeLabel.setVisible(false);
 
@@ -949,8 +949,8 @@ void AIEqualizerAudioProcessorEditor::paint(juce::Graphics& g)
     // Main background — subtle vertical gradient for depth
     {
         juce::ColourGradient bg(
-            ModernLookAndFeel::Colors::bgDark, 0.0f, 0.0f,
-            ModernLookAndFeel::Colors::bgDark.darker(0.15f), 0.0f, static_cast<float>(getHeight()),
+            ModernLookAndFeel::Colors::bgDark(), 0.0f, 0.0f,
+            ModernLookAndFeel::Colors::bgDark().darker(0.15f), 0.0f, static_cast<float>(getHeight()),
             false);
         g.setGradientFill(bg);
         g.fillRect(getLocalBounds());
@@ -962,18 +962,18 @@ void AIEqualizerAudioProcessorEditor::paint(juce::Graphics& g)
     {
         auto headerRect = juce::Rectangle<float>(0.0f, 0.0f, w, static_cast<float>(headerH));
         juce::ColourGradient headerGrad(
-            ModernLookAndFeel::Colors::bgLight.brighter(0.06f), 0.0f, 0.0f,
-            ModernLookAndFeel::Colors::bgLight.darker(0.04f), 0.0f, static_cast<float>(headerH),
+            ModernLookAndFeel::Colors::bgLight().brighter(0.06f), 0.0f, 0.0f,
+            ModernLookAndFeel::Colors::bgLight().darker(0.04f), 0.0f, static_cast<float>(headerH),
             false);
         g.setGradientFill(headerGrad);
         g.fillRect(headerRect);
 
         // Bottom edge highlight
-        g.setColour(ModernLookAndFeel::Colors::accentBlue.withAlpha(0.12f));
+        g.setColour(ModernLookAndFeel::Colors::accentBlue().withAlpha(0.12f));
         g.fillRect(0.0f, static_cast<float>(headerH - 1), w, 1.0f);
 
         // Separator line
-        g.setColour(ModernLookAndFeel::Colors::bgDark);
+        g.setColour(ModernLookAndFeel::Colors::bgDark());
         g.fillRect(0.0f, static_cast<float>(headerH), w, 1.0f);
 
     }
@@ -984,8 +984,8 @@ void AIEqualizerAudioProcessorEditor::paint(juce::Graphics& g)
         auto bottomRect = juce::Rectangle<float>(0.0f, cpY, w, static_cast<float>(controlH));
 
         juce::ColourGradient bottomGrad(
-            ModernLookAndFeel::Colors::bgPanel.brighter(0.03f), 0.0f, cpY,
-            ModernLookAndFeel::Colors::bgPanel.darker(0.05f), 0.0f, cpY + controlH,
+            ModernLookAndFeel::Colors::bgPanel().brighter(0.03f), 0.0f, cpY,
+            ModernLookAndFeel::Colors::bgPanel().darker(0.05f), 0.0f, cpY + controlH,
             false);
         g.setGradientFill(bottomGrad);
         g.fillRect(bottomRect);
@@ -993,17 +993,17 @@ void AIEqualizerAudioProcessorEditor::paint(juce::Graphics& g)
         // Top edge — prominent accent separator (FabFilter-style divider)
         g.setColour(juce::Colour(0xFF0A0A10));
         g.fillRect(0.0f, cpY - 1.0f, w, 2.0f);
-        g.setColour(ModernLookAndFeel::Colors::accentBlue.withAlpha(0.18f));
+        g.setColour(ModernLookAndFeel::Colors::accentBlue().withAlpha(0.18f));
         g.fillRect(0.0f, cpY + 1.0f, w, 1.0f);
 
         // Version text (bottom-right corner)
-        g.setColour(ModernLookAndFeel::Colors::textMuted.withAlpha(0.5f));
+        g.setColour(ModernLookAndFeel::Colors::textMuted().withAlpha(0.5f));
         g.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
         g.drawText("v2.1.1", getWidth() - 44, getHeight() - 14, 40, 12,
                    juce::Justification::centredRight);
 
         // Build marker — temporary, remove before release
-        g.setColour(ModernLookAndFeel::Colors::accentBlue.withAlpha(0.4f));
+        g.setColour(ModernLookAndFeel::Colors::accentBlue().withAlpha(0.4f));
         g.setFont(juce::Font(juce::FontOptions().withHeight(8.0f)));
         g.drawText("V1", 4, getHeight() - 12, 16, 10,
                    juce::Justification::centredLeft);
@@ -1273,13 +1273,13 @@ void AIEqualizerAudioProcessorEditor::timerCallback()
             qualityBtn.setToggleState(mode == 1, juce::dontSendNotification);
             qualityBtn.setButtonText(mode == 1 ? "HQ" : "ZL");
             qualityBtn.setColour(juce::TextButton::buttonColourId,
-                                 mode == 1 ? ModernLookAndFeel::Colors::accentBlue.withAlpha(0.18f)
-                                           : ModernLookAndFeel::Colors::bgLight);
-            qualityBtn.setColour(juce::TextButton::buttonOnColourId, ModernLookAndFeel::Colors::accentBlue);
+                                 mode == 1 ? ModernLookAndFeel::Colors::accentBlue().withAlpha(0.18f)
+                                           : ModernLookAndFeel::Colors::bgLight());
+            qualityBtn.setColour(juce::TextButton::buttonOnColourId, ModernLookAndFeel::Colors::accentBlue());
             qualityBtn.setColour(juce::TextButton::textColourOffId,
-                                 mode == 1 ? ModernLookAndFeel::Colors::textBright
-                                           : ModernLookAndFeel::Colors::textPrimary);
-            qualityBtn.setColour(juce::TextButton::textColourOnId, ModernLookAndFeel::Colors::textBright);
+                                 mode == 1 ? ModernLookAndFeel::Colors::textBright()
+                                           : ModernLookAndFeel::Colors::textPrimary());
+            qualityBtn.setColour(juce::TextButton::textColourOnId, ModernLookAndFeel::Colors::textBright());
         }
 
     }
@@ -1330,14 +1330,7 @@ void AIEqualizerAudioProcessorEditor::timerCallback()
     // Sync auto-capture toggle
     autoCaptureBtn.setToggleState(processor.isAutoCaptureEnabled(), juce::dontSendNotification);
     
-    // Sync high-contrast mode
-    bool hcMode = processor.getAPVTS().getRawParameterValue("highContrastMode")->load() > 0.5f;
-    if (lookAndFeel.isHighContrastMode() != hcMode)
-    {
-        lookAndFeel.setHighContrastMode(hcMode);
-        lookAndFeel.updateHighContrastColors();
-        repaint();
-    }
+    // High-contrast mode removed: contrast is now managed by ThemeManager (Deep Crimson / Emerald Night)
 }
 
 void AIEqualizerAudioProcessorEditor::updateBandPositions()
@@ -1411,9 +1404,9 @@ void AIEqualizerAudioProcessorEditor::selectBand(int bandIndex)
         if (!bandToggles[i])
             continue;
         if (static_cast<int>(i) == bandIndex)
-            bandToggles[i]->setColour(juce::ToggleButton::textColourId, ModernLookAndFeel::Colors::accentBlue);
+            bandToggles[i]->setColour(juce::ToggleButton::textColourId, ModernLookAndFeel::Colors::accentBlue());
         else
-            bandToggles[i]->setColour(juce::ToggleButton::textColourId, ModernLookAndFeel::Colors::textPrimary);
+            bandToggles[i]->setColour(juce::ToggleButton::textColourId, ModernLookAndFeel::Colors::textPrimary());
     }
     
     resized();

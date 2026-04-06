@@ -33,7 +33,7 @@ public:
             font.setBold(true);
             aiLabel.setFont(font);
         }
-        aiLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textLabel);
+        aiLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textLabel());
         addAndMakeVisible(aiLabel);
         
         // Toggle per abilitare/disabilitare l'AI (default: ON)
@@ -64,7 +64,7 @@ public:
             unmaskingLabel.setFont(font);
         }
         unmaskingLabel.setJustificationType(juce::Justification::centred);
-        unmaskingLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted);
+        unmaskingLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted());
         addAndMakeVisible(unmaskingLabel);
         
         // Toggle per abilitare/disabilitare Multi-Track Unmasking
@@ -77,13 +77,13 @@ public:
             {
                 unmaskingToggle.setButtonText("UNMASKING ON");
                 unmaskingToggle.setColour(juce::TextButton::buttonColourId, 
-                                         ModernLookAndFeel::Colors::accentGreen);
+                                         ModernLookAndFeel::Colors::accentGreen());
             }
             else
             {
                 unmaskingToggle.setButtonText("UNMASKING");
                 unmaskingToggle.setColour(juce::TextButton::buttonColourId, 
-                                         ModernLookAndFeel::Colors::bgLighter);
+                                         ModernLookAndFeel::Colors::bgLighter());
             }
         };
         addAndMakeVisible(unmaskingToggle);
@@ -93,7 +93,7 @@ public:
         sensitivityLabel.setText("SENSITIVITY", juce::dontSendNotification);
         sensitivityLabel.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
         sensitivityLabel.setJustificationType(juce::Justification::centred);
-        sensitivityLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted);
+        sensitivityLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted());
         addAndMakeVisible(sensitivityLabel);
         
         // Knob rotativo per regolare la sensibilità (0-100%, default: 50%)
@@ -113,7 +113,7 @@ public:
         strengthLabel.setText("STRENGTH", juce::dontSendNotification);
         strengthLabel.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
         strengthLabel.setJustificationType(juce::Justification::centred);
-        strengthLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted);
+        strengthLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted());
         addAndMakeVisible(strengthLabel);
         
         // Knob rotativo per regolare la forza delle correzioni (0-100%, default: 70%)
@@ -133,7 +133,7 @@ public:
         genreLabel.setText("DETECTED", juce::dontSendNotification);
         genreLabel.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
         genreLabel.setJustificationType(juce::Justification::centred);
-        genreLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted);
+        genreLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted());
         addAndMakeVisible(genreLabel);
         
         // Label che mostra il nome del genere rilevato (aggiornato dal timer)
@@ -144,7 +144,7 @@ public:
             genreValue.setFont(font);
         }
         genreValue.setJustificationType(juce::Justification::centred);
-        genreValue.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::accentBlue);
+        genreValue.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::accentBlue());
         addAndMakeVisible(genreValue);
         
         // === PROBLEMI: Sezione per visualizzare i problemi rilevati ===
@@ -155,7 +155,7 @@ public:
             font.setBold(true);
             problemsLabel.setFont(font);
         }
-        problemsLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textLabel);
+        problemsLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textLabel());
         addAndMakeVisible(problemsLabel);
         
         // Avvia timer a 10 Hz per aggiornare il genere e ridisegnare i problemi
@@ -176,15 +176,15 @@ public:
         auto bounds = getLocalBounds().toFloat();
         
         // Sfondo principale del pannello con angoli arrotondati
-        g.setColour(ModernLookAndFeel::Colors::bgPanel);
+        g.setColour(ModernLookAndFeel::Colors::bgPanel());
         g.fillRoundedRectangle(bounds, 6.0f);
         
         // Bordo sottile attorno al pannello
-        g.setColour(ModernLookAndFeel::Colors::bgLighter);
+        g.setColour(ModernLookAndFeel::Colors::bgLighter());
         g.drawRoundedRectangle(bounds.reduced(0.5f), 6.0f, 1.0f);
         
         // Divisori orizzontali tra le sezioni (knob section e problems section)
-        g.setColour(ModernLookAndFeel::Colors::bgLighter.withAlpha(0.5f));
+        g.setColour(ModernLookAndFeel::Colors::bgLighter().withAlpha(0.5f));
         g.drawHorizontalLine(knobSectionY - 5, 10, bounds.getWidth() - 10);
         g.drawHorizontalLine(problemsSectionY - 5, 10, bounds.getWidth() - 10);
         
@@ -271,13 +271,13 @@ public:
             {
                 unmaskingToggle.setButtonText("UNMASKING ON");
                 unmaskingToggle.setColour(juce::TextButton::buttonColourId, 
-                                         ModernLookAndFeel::Colors::accentGreen);
+                                         ModernLookAndFeel::Colors::accentGreen());
             }
             else
             {
                 unmaskingToggle.setButtonText("UNMASKING");
                 unmaskingToggle.setColour(juce::TextButton::buttonColourId, 
-                                         ModernLookAndFeel::Colors::bgLighter);
+                                         ModernLookAndFeel::Colors::bgLighter());
             }
         }
         
@@ -302,7 +302,7 @@ private:
         // Se non ci sono problemi, mostra un messaggio positivo
         if (corrections.empty())
         {
-            g.setColour(ModernLookAndFeel::Colors::accentGreen);
+            g.setColour(ModernLookAndFeel::Colors::accentGreen());
             g.setFont(juce::Font(juce::FontOptions().withHeight(11.0f)));
             g.drawText("No issues detected", bounds, juce::Justification::centredTop);
             return;
@@ -325,7 +325,7 @@ private:
             juce::Colour sev = ModernLookAndFeel::Colors::getSeverity(c.severity);
             
             // Sfondo dell'item con angoli arrotondati
-            g.setColour(ModernLookAndFeel::Colors::bgDark.withAlpha(0.5f));
+            g.setColour(ModernLookAndFeel::Colors::bgDark().withAlpha(0.5f));
             g.fillRoundedRectangle(itemBounds, 3.0f);
             
             // Pallino colorato che indica la severità (sinistra)
@@ -333,7 +333,7 @@ private:
             g.fillEllipse(itemBounds.getX() + 6, itemBounds.getCentreY() - 4, 8, 8);
             
             // Tipo di problema (es. "Resonance", "Muddy", etc.)
-            g.setColour(ModernLookAndFeel::Colors::textPrimary);
+            g.setColour(ModernLookAndFeel::Colors::textPrimary());
             g.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
             g.drawText(AIEngine::getProblemTypeName(c.type),
                       (int)itemBounds.getX() + 18, (int)itemBounds.getY(),
@@ -345,15 +345,15 @@ private:
             juce::String freqTxt = c.frequency >= 1000 
                 ? juce::String(c.frequency / 1000.0f, 1) + "k"
                 : juce::String((int)c.frequency);
-            g.setColour(ModernLookAndFeel::Colors::accentBlue);
+            g.setColour(ModernLookAndFeel::Colors::accentBlue());
             g.drawText(freqTxt, (int)itemBounds.getX() + 88, (int)itemBounds.getY(),
                       40, (int)itemBounds.getHeight(), juce::Justification::centred);
             
             // Guadagno suggerito (destra)
             // Arancione per tagli, verde per boost
             juce::Colour gainCol = c.suggestedGain < 0 
-                ? ModernLookAndFeel::Colors::accentOrange 
-                : ModernLookAndFeel::Colors::accentGreen;
+                ? ModernLookAndFeel::Colors::accentOrange() 
+                : ModernLookAndFeel::Colors::accentGreen();
             g.setColour(gainCol);
             juce::String gainTxt = (c.suggestedGain >= 0 ? "+" : "") + juce::String(c.suggestedGain, 1);
             g.drawText(gainTxt + " dB", (int)itemBounds.getRight() - 55, (int)itemBounds.getY(),
@@ -366,7 +366,7 @@ private:
         // Se ci sono più di 6 problemi, mostra un indicatore "+X more"
         if (corrections.size() > 6)
         {
-            g.setColour(ModernLookAndFeel::Colors::textMuted);
+            g.setColour(ModernLookAndFeel::Colors::textMuted());
             g.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
             g.drawText("+" + juce::String(corrections.size() - 6) + " more",
                       static_cast<int>(bounds.getX()), static_cast<int>(y),

@@ -1582,9 +1582,9 @@ private:
             if (state.solo && !isDraggingBand)
             {
                 juce::Rectangle<float> badge(x + radius, y - radius - 4, 16.0f, 12.0f);
-                g.setColour(ModernLookAndFeel::Colors::accentYellow.withAlpha(0.9f));
+                g.setColour(ModernLookAndFeel::Colors::accentYellow().withAlpha(0.9f));
                 g.fillRoundedRectangle(badge, 3.0f);
-                g.setColour(ModernLookAndFeel::Colors::bgDark);
+                g.setColour(ModernLookAndFeel::Colors::bgDark());
                 g.setFont(soloBadgeFont);
                 g.drawText("S", badge, juce::Justification::centred);
             }
@@ -1882,7 +1882,7 @@ public:
             for (const auto& peak : detectedPeaks)
             {
                 float x = freqToX(peak.frequency) - graphBounds.getX();
-                float intensity = juce::jlimit(0.0f, 1.0f, (peak.magnitude + 60.0f) / 60.0f);
+                float intensity = juce::jlimit(0.0f, 1.0f, (peak.magnitudeDb + 60.0f) / 60.0f);
                 
                 juce::ColourGradient grad(theme.lavaStripHot.withAlpha(intensity * 0.8f), x, 0,
                                           theme.lavaStripMid.withAlpha(0.0f), x + 40, 0, true);
@@ -1907,8 +1907,8 @@ public:
         if (corrections.empty()) return;
 
         // Rebuild path if AI corrections changed
-        uint64_t currentVer = processor.getAIEngine().getCorrectionVersion();
-        if (ghostCurveDirty || currentVer != lastGhostCurveVersion)
+        // NOTE: getCorrectionVersion() not in AIEngine API — rebuild on ghostCurveDirty flag only
+        if (ghostCurveDirty)
         {
             ghostCurvePath.clear();
             // Simple reconstruction of the "target" curve from corrections
@@ -1922,13 +1922,12 @@ public:
                 {
                     // Bell filter approximation for preview
                     float dist = std::abs(std::log2(f / c.frequency));
-                    if (dist < 1.0f) totalGain += c.gain * (1.0f - dist);
+                    if (dist < 1.0f) totalGain += c.suggestedGain * (1.0f - dist);
                 }
                 float y = gainToY(totalGain);
                 if (!started) { ghostCurvePath.startNewSubPath(x, y); started = true; }
                 else ghostCurvePath.lineTo(x, y);
             }
-            lastGhostCurveVersion = currentVer;
             ghostCurveDirty = false;
         }
 
@@ -1936,7 +1935,10 @@ public:
         {
             float dashLengths[] = { theme.ghostCurveDash, theme.ghostCurveDash };
             g.setColour(theme.ghostCurveColor.withAlpha(theme.ghostCurveAlpha));
-            g.strokePath(ghostCurvePath, juce::PathStrokeType(1.5f).withDashPattern(dashLengths, 2));
+            // JUCE has no withDashPattern() — use createDashedStroke instead
+            juce::Path dashedGhostPath;
+            juce::PathStrokeType(1.5f).createDashedStroke(dashedGhostPath, ghostCurvePath, dashLengths, 2);
+            g.fillPath(dashedGhostPath);
         }
     }
 

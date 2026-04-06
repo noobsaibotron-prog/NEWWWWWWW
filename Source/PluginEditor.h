@@ -46,19 +46,19 @@ public:
     {
         auto area = getLocalBounds().toFloat();
         
-        g.setColour(ModernLookAndFeel::Colors::bgLight.withAlpha(0.25f));
+        g.setColour(ModernLookAndFeel::Colors::bgLight().withAlpha(0.25f));
         g.fillRoundedRectangle(area, 4.0f);
         
-        g.setColour(ModernLookAndFeel::Colors::bgLighter);
+        g.setColour(ModernLookAndFeel::Colors::bgLighter());
         g.drawRoundedRectangle(area.reduced(0.5f), 4.0f, 1.0f);
         
         // Midline
-        g.setColour(ModernLookAndFeel::Colors::bgLighter.withAlpha(0.45f));
+        g.setColour(ModernLookAndFeel::Colors::bgLighter().withAlpha(0.45f));
         g.drawHorizontalLine((int)area.getCentreY(), area.getX() + 4.0f, area.getRight() - 4.0f);
         
         if (display.empty())
         {
-            g.setColour(ModernLookAndFeel::Colors::textMuted);
+            g.setColour(ModernLookAndFeel::Colors::textMuted());
             g.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
             g.drawText(isRecording ? "Recording..." : "Waiting for capture",
                        area.toNearestInt(), juce::Justification::centred);
@@ -79,7 +79,7 @@ public:
             p.lineTo(x, y);
         }
         
-        g.setColour(ModernLookAndFeel::Colors::accentBlue.withAlpha(0.9f));
+        g.setColour(ModernLookAndFeel::Colors::accentBlue().withAlpha(0.9f));
         g.strokePath(p, juce::PathStrokeType(1.5f));
     }
 private:

@@ -67,11 +67,11 @@ public:
         auto bounds = getLocalBounds().toFloat();
         
         // Background
-        g.setColour(ModernLookAndFeel::Colors::bgDark);
+        g.setColour(ModernLookAndFeel::Colors::bgDark());
         g.fillRoundedRectangle(bounds, 4.0f);
         
         // Border
-        g.setColour(ModernLookAndFeel::Colors::bgLighter);
+        g.setColour(ModernLookAndFeel::Colors::bgLighter());
         g.drawRoundedRectangle(bounds.reduced(0.5f), 4.0f, 1.0f);
         
         // Inner area
@@ -101,7 +101,7 @@ public:
             ? juce::String(currentMaxDB, 1) + " dB"
             : "-∞";
         
-        g.setColour(clipped ? juce::Colours::red : ModernLookAndFeel::Colors::textBright);
+        g.setColour(clipped ? juce::Colours::red : ModernLookAndFeel::Colors::textBright());
         g.drawText(dbText, inner.removeFromTop(14).toNearestInt(), juce::Justification::centred);
         
         // Clip indicator
@@ -140,7 +140,7 @@ private:
     void drawChannel(juce::Graphics& g, juce::Rectangle<float> rect, float levelDB, float peakDB)
     {
         // Background track
-        g.setColour(ModernLookAndFeel::Colors::bgLight);
+        g.setColour(ModernLookAndFeel::Colors::bgLight());
         g.fillRoundedRectangle(rect, 2.0f);
         
         // Calculate fill height
@@ -177,7 +177,7 @@ private:
         }
         
         // Scale markers (subtle lines at key dB levels)
-        g.setColour(ModernLookAndFeel::Colors::textMuted.withAlpha(0.3f));
+        g.setColour(ModernLookAndFeel::Colors::textMuted().withAlpha(0.3f));
         const float dbMarks[] = { 0.0f, -6.0f, -12.0f, -24.0f, -48.0f };
         for (float db : dbMarks)
         {

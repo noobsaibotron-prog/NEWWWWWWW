@@ -29,7 +29,7 @@ public:
         freqLabel.setText("FREQ", juce::dontSendNotification);
         freqLabel.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
         freqLabel.setJustificationType(juce::Justification::centred);
-        freqLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted);
+        freqLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted());
         addAndMakeVisible(freqLabel);
 
         freqKnob.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
@@ -43,7 +43,7 @@ public:
         gainLabel.setText("GAIN", juce::dontSendNotification);
         gainLabel.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
         gainLabel.setJustificationType(juce::Justification::centred);
-        gainLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted);
+        gainLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted());
         addAndMakeVisible(gainLabel);
 
         gainKnob.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
@@ -57,7 +57,7 @@ public:
         qLabel.setText("Q", juce::dontSendNotification);
         qLabel.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
         qLabel.setJustificationType(juce::Justification::centred);
-        qLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted);
+        qLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted());
         addAndMakeVisible(qLabel);
 
         qKnob.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
@@ -71,7 +71,7 @@ public:
         typeLabel.setText("TYPE", juce::dontSendNotification);
         typeLabel.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
         typeLabel.setJustificationType(juce::Justification::centred);
-        typeLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted);
+        typeLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted());
         addAndMakeVisible(typeLabel);
 
         typeCombo.addItem("Low Cut", 1);
@@ -81,9 +81,9 @@ public:
         typeCombo.addItem("High Cut", 5);
         typeCombo.addItem("Notch", 6);
         typeCombo.addItem("Band Pass", 7);
-        typeCombo.setColour(juce::ComboBox::backgroundColourId, ModernLookAndFeel::Colors::bgDark);
-        typeCombo.setColour(juce::ComboBox::textColourId, ModernLookAndFeel::Colors::textPrimary);
-        typeCombo.setColour(juce::ComboBox::outlineColourId, ModernLookAndFeel::Colors::bgLighter);
+        typeCombo.setColour(juce::ComboBox::backgroundColourId, ModernLookAndFeel::Colors::bgDark());
+        typeCombo.setColour(juce::ComboBox::textColourId, ModernLookAndFeel::Colors::textPrimary());
+        typeCombo.setColour(juce::ComboBox::outlineColourId, ModernLookAndFeel::Colors::bgLighter());
         addAndMakeVisible(typeCombo);
         typeAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
             parameters, prefix + "Type", typeCombo);
@@ -93,15 +93,15 @@ public:
         slopeLabel.setText("SLOPE", juce::dontSendNotification);
         slopeLabel.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
         slopeLabel.setJustificationType(juce::Justification::centred);
-        slopeLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted);
+        slopeLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted());
         addAndMakeVisible(slopeLabel);
 
         slopeCombo.addItem("12 dB/oct", 1);
         slopeCombo.addItem("24 dB/oct", 2);
         slopeCombo.addItem("48 dB/oct", 3);
-        slopeCombo.setColour(juce::ComboBox::backgroundColourId, ModernLookAndFeel::Colors::bgDark);
-        slopeCombo.setColour(juce::ComboBox::textColourId, ModernLookAndFeel::Colors::textPrimary);
-        slopeCombo.setColour(juce::ComboBox::outlineColourId, ModernLookAndFeel::Colors::bgLighter);
+        slopeCombo.setColour(juce::ComboBox::backgroundColourId, ModernLookAndFeel::Colors::bgDark());
+        slopeCombo.setColour(juce::ComboBox::textColourId, ModernLookAndFeel::Colors::textPrimary());
+        slopeCombo.setColour(juce::ComboBox::outlineColourId, ModernLookAndFeel::Colors::bgLighter());
         addAndMakeVisible(slopeCombo);
         slopeAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
             parameters, prefix + "Slope", slopeCombo);
@@ -176,7 +176,7 @@ public:
         auto bounds = getLocalBounds().toFloat();
         const bool compact = bounds.getHeight() < 80;
 
-        g.setColour(ModernLookAndFeel::Colors::bgPanel);
+        g.setColour(ModernLookAndFeel::Colors::bgPanel());
         g.fillRoundedRectangle(bounds, compact ? 3.0f : 4.0f);
 
         g.setColour(bandColor.withAlpha(0.6f));
@@ -185,7 +185,7 @@ public:
         else
             g.fillRoundedRectangle(bounds.removeFromTop(3.0f), 2.0f);
 
-        g.setColour(ModernLookAndFeel::Colors::bgLighter);
+        g.setColour(ModernLookAndFeel::Colors::bgLighter());
         g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(0.5f), compact ? 3.0f : 4.0f, 1.0f);
     }
 
