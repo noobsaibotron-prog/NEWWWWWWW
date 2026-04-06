@@ -564,15 +564,108 @@ std::vector<MLEngine::TrainingSample> MLEngine::generateSyntheticDataset(int sam
     std::vector<TrainingSample> dataset;
     if (samplesPerProblem <= 0)
         return dataset;
-    
-    dataset.reserve(static_cast<size_t>(samplesPerProblem * numProblemTypes));
-    
+
+    // Reserve: problem samples + clean normals + hard negatives
+    // Balance: total positives = samplesPerProblem * 8 = 8N
+    //          total negatives = cleanSamples + hardNegatives = 1.5N
+    // Ratio ~5:1 positive:negative — combined with FP weight 1.5x in loss,
+    // effective ratio is ~5:1.5 ≈ 3:1, which encourages specificity without
+    // overwhelming the positive signal.
+    const int cleanSamples = samplesPerProblem;       // 1x clean per problem class
+    const int hardNegatives = samplesPerProblem / 2;  // 0.5x hard negatives
+    dataset.reserve(static_cast<size_t>(samplesPerProblem * numProblemTypes + cleanSamples + hardNegatives));
+
+    // ── Problem-positive samples (one class active per sample) ──
     for (int p = 0; p < numProblemTypes; ++p)
     {
         for (int i = 0; i < samplesPerProblem; ++i)
             dataset.push_back(createSyntheticSample(static_cast<ProblemType>(p), sampleRate, fftSize));
     }
-    
+
+    // ── Clean/normal samples (all targets = 0) ──
+    // CRITICAL: Without these, the model never learns to say "no problem".
+    {
+        const int bins = juce::jmax(1, fftSize / 2);
+        std::mt19937 rng(12345);
+        std::normal_distribution<float> noise(0.0f, 0.02f);
+        std::uniform_real_distribution<float> baseDist(0.03f, 0.08f);
+
+        for (int i = 0; i < cleanSamples; ++i)
+        {
+            TrainingSample sample;
+            std::vector<float> spectrum(static_cast<size_t>(bins), 0.0f);
+
+            const float base = baseDist(rng);
+            for (int b = 0; b < bins; ++b)
+                spectrum[static_cast<size_t>(b)] = juce::jmax(0.0f, base + noise(rng));
+
+            // Add gentle spectral tilt (natural variation, not a problem)
+            if (i % 3 == 1)
+            {
+                // Slight low-end warmth
+                float binHz = static_cast<float>(sampleRate) / static_cast<float>(fftSize);
+                for (int b = 0; b < bins; ++b)
+                {
+                    float freq = static_cast<float>(b) * binHz;
+                    if (freq < 200.0f && freq > 20.0f)
+                        spectrum[static_cast<size_t>(b)] += 0.01f;
+                }
+            }
+            else if (i % 3 == 2)
+            {
+                // Slight brightness
+                float binHz = static_cast<float>(sampleRate) / static_cast<float>(fftSize);
+                for (int b = 0; b < bins; ++b)
+                {
+                    float freq = static_cast<float>(b) * binHz;
+                    if (freq > 8000.0f)
+                        spectrum[static_cast<size_t>(b)] += 0.01f;
+                }
+            }
+
+            sample.melSpectrum = extractMelBands(spectrum, sampleRate, melNumBands);
+            sample.problemTargets.fill(0.0f);     // ALL zeros = no problem
+            sample.frequencyTargets.fill(0.0f);
+            dataset.push_back(sample);
+        }
+    }
+
+    // ── Hard negatives (look similar to problems but aren't) ──
+    // Gentle bumps that are below problem threshold — the model must learn to ignore them
+    {
+        const int bins = juce::jmax(1, fftSize / 2);
+        std::mt19937 rng(54321);
+        std::normal_distribution<float> noise(0.0f, 0.02f);
+        std::uniform_real_distribution<float> freqDist(100.0f, 10000.0f);
+        std::uniform_real_distribution<float> weakStrength(0.1f, 0.3f);  // below typical problem strength
+
+        for (int i = 0; i < hardNegatives; ++i)
+        {
+            TrainingSample sample;
+            std::vector<float> spectrum(static_cast<size_t>(bins), 0.0f);
+
+            float binHz = static_cast<float>(sampleRate) / static_cast<float>(fftSize);
+            for (int b = 0; b < bins; ++b)
+                spectrum[static_cast<size_t>(b)] = juce::jmax(0.0f, 0.05f + noise(rng));
+
+            // Add a gentle bump (too weak to be a real problem)
+            float targetFreq = freqDist(rng);
+            float strength = weakStrength(rng);
+            float sigmaHz = juce::jmax(30.0f, targetFreq * 0.08f);
+            for (int b = 0; b < bins; ++b)
+            {
+                float freq = static_cast<float>(b) * binHz;
+                float d = (freq - targetFreq) / sigmaHz;
+                spectrum[static_cast<size_t>(b)] += strength * std::exp(-0.5f * d * d);
+            }
+
+            sample.melSpectrum = extractMelBands(spectrum, sampleRate, melNumBands);
+            sample.problemTargets.fill(0.0f);     // ALL zeros = not a problem
+            sample.frequencyTargets.fill(0.0f);
+            dataset.push_back(sample);
+        }
+    }
+
     return dataset;
 }
 
@@ -598,13 +691,21 @@ void MLEngine::trainStep(const TrainingSample& sample, float learningRate)
     auto fz2 = matMul(*freqNet_fc2, fh1);
     auto freqPred = applySigmoid(fz2);
     
-    // Output deltas (MSE loss)
+    // Output deltas — Binary Cross-Entropy (BCE) gradient through sigmoid.
+    //
+    // Key insight: the BCE loss gradient w.r.t. pre-sigmoid logit z is:
+    //   dL/dz = sigmoid(z) - target = pred - target
+    //
+    // This does NOT multiply by sigmoidDerivative(), avoiding the classic
+    // vanishing gradient problem where MSE * sigmoidDeriv → 0 when
+    // outputs are near 0 or 1. BCE gradient is always proportional to
+    // the error magnitude, enabling learning from any starting point.
     std::vector<float> delta3(numProblemTypes, 0.0f);
-    const float probScale = 2.0f / static_cast<float>(numProblemTypes);
+    const float probScale = 1.0f / static_cast<float>(numProblemTypes);
     for (int i = 0; i < numProblemTypes; ++i)
     {
-        float diff = probs[static_cast<size_t>(i)] - sample.problemTargets[static_cast<size_t>(i)];
-        delta3[static_cast<size_t>(i)] = probScale * diff * sigmoidDerivative(probs[static_cast<size_t>(i)]);
+        delta3[static_cast<size_t>(i)] = probScale *
+            (probs[static_cast<size_t>(i)] - sample.problemTargets[static_cast<size_t>(i)]);
     }
     
     std::vector<float> deltaF2(numProblemTypes, 0.0f);

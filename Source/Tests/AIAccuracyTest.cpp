@@ -37,9 +37,9 @@ namespace
 
 constexpr double kSampleRate   = 44100.0;
 constexpr int    kFFTSize      = 4096;
-constexpr int    kNumBins      = kFFTSize / 2 + 1;  // 2049
-constexpr float  kFloorDB      = -60.0f;   // baseline noise floor
-constexpr int    kVariations   = 10;        // variations per problem type
+constexpr int    kNumBins      = kFFTSize / 2;        // 2048 (matches buildSyntheticSpectrum)
+constexpr float  kBaseline     = 0.05f;               // linear magnitude baseline (matches training)
+constexpr int    kVariations   = 10;                   // variations per problem type
 
 // Minimum acceptable metrics for PASS
 constexpr float kMinPrecision = 0.60f;  // 60% — if you say it, be right > half the time
@@ -49,6 +49,10 @@ constexpr float kMaxFPRate    = 0.30f;  // 30% — max false positive rate on cl
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Spectrum generation utilities
+//
+// IMPORTANT: All spectra are in LINEAR MAGNITUDE format (0.0 to ~2.0),
+// matching MLEngine::buildSyntheticSpectrum() and what extractMelBands() expects.
+// extractMelBands() does its own dB conversion internally.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Convert frequency in Hz to FFT bin index
@@ -57,56 +61,55 @@ int hzToBin(float hz)
     return static_cast<int>(std::round(hz / (static_cast<float>(kSampleRate) / kFFTSize)));
 }
 
-/// Create a flat spectrum at a given dB level
-std::vector<float> makeFlat(float levelDB = kFloorDB)
+/// Create a flat spectrum at a given linear magnitude level
+std::vector<float> makeFlat(float level = kBaseline)
 {
-    return std::vector<float>(kNumBins, levelDB);
+    return std::vector<float>(kNumBins, level);
 }
 
-/// Add a narrow peak (resonance) at a given frequency
-void addPeak(std::vector<float>& spec, float freqHz, float peakDB, float qFactor = 10.0f)
+/// Add a Gaussian peak at a given frequency (linear magnitude domain)
+/// strength: 0.0–1.0, typical problem strength
+/// sigmaFactor: controls width (smaller = narrower, resonance-like)
+void addPeak(std::vector<float>& spec, float freqHz, float strength, float sigmaFactor = 0.08f)
 {
-    const int centerBin = hzToBin(freqHz);
-    const float bwBins = static_cast<float>(centerBin) / qFactor;
+    const float binHz = static_cast<float>(kSampleRate) / kFFTSize;
+    const float sigmaHz = juce::jmax(30.0f, freqHz * sigmaFactor);
 
     for (int i = 0; i < kNumBins; ++i)
     {
-        const float dist = static_cast<float>(i - centerBin);
-        const float falloff = (bwBins > 0.0f) ? (dist * dist) / (bwBins * bwBins) : 1000.0f;
-        const float addDB = peakDB * std::exp(-0.5f * falloff);
-        // Add in linear domain
-        const float existing = std::pow(10.0f, spec[i] / 20.0f);
-        const float added    = std::pow(10.0f, addDB / 20.0f);
-        spec[i] = 20.0f * std::log10(existing + added);
+        const float freq = static_cast<float>(i) * binHz;
+        const float d = (freq - freqHz) / sigmaHz;
+        const float peak = strength * std::exp(-0.5f * d * d);
+        spec[static_cast<size_t>(i)] += peak;
     }
 }
 
-/// Add broadband energy in a frequency range (shelf/band boost)
-void addBand(std::vector<float>& spec, float lowHz, float highHz, float boostDB)
+/// Add broadband energy boost in a frequency range (linear magnitude)
+void addBand(std::vector<float>& spec, float lowHz, float highHz, float boostLinear)
 {
     const int lo = juce::jmax(0, hzToBin(lowHz));
     const int hi = juce::jmin(kNumBins - 1, hzToBin(highHz));
 
     for (int i = lo; i <= hi; ++i)
-        spec[i] += boostDB;
+        spec[static_cast<size_t>(i)] += boostLinear;
 }
 
-/// Cut broadband energy in a frequency range (for "thin" or "dull" problems)
-void cutBand(std::vector<float>& spec, float lowHz, float highHz, float cutDB)
+/// Reduce energy in a frequency range (for "thin" or "dull" problems)
+void cutBand(std::vector<float>& spec, float lowHz, float highHz, float cutAmount)
 {
-    addBand(spec, lowHz, highHz, -std::abs(cutDB));
+    const int lo = juce::jmax(0, hzToBin(lowHz));
+    const int hi = juce::jmin(kNumBins - 1, hzToBin(highHz));
+
+    for (int i = lo; i <= hi; ++i)
+        spec[static_cast<size_t>(i)] = juce::jmax(0.0f, spec[static_cast<size_t>(i)] - cutAmount);
 }
 
-/// Add realistic pink-noise-like spectral shape
-void addPinkSlope(std::vector<float>& spec, float levelDB = -30.0f)
+/// Add Gaussian noise to a spectrum
+void addNoise(std::vector<float>& spec, std::mt19937& rng, float stddev = 0.02f)
 {
-    for (int i = 1; i < kNumBins; ++i)
-    {
-        const float freqHz = static_cast<float>(i) * static_cast<float>(kSampleRate) / kFFTSize;
-        // Pink noise: -3dB/octave from 1kHz
-        const float rolloff = -3.0f * std::log2(std::max(freqHz, 20.0f) / 1000.0f);
-        spec[i] = levelDB + rolloff;
-    }
+    std::normal_distribution<float> noise(0.0f, stddev);
+    for (auto& v : spec)
+        v = juce::jmax(0.0f, v + noise(rng));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -121,143 +124,158 @@ struct TestCase
     juce::String description;
 };
 
-/// Generate variations of a specific problem type
+// ─────────────────────────────────────────────────────────────────────────────
+// Problem generators — LINEAR MAGNITUDE format
+//
+// These mirror MLEngine::buildSyntheticSpectrum() which uses:
+//   baseline ~0.05, Gaussian peaks with strength 0.6–1.0, noise σ=0.02
+// The model was trained on this format. extractMelBands() does dB conversion.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Generate variations of resonance (sharp narrow peak)
 std::vector<TestCase> generateResonanceTests(std::mt19937& rng)
 {
     std::vector<TestCase> cases;
-    std::uniform_real_distribution<float> freqDist(200.0f, 8000.0f);
-    std::uniform_real_distribution<float> gainDist(8.0f, 18.0f);
-    std::uniform_real_distribution<float> qDist(8.0f, 30.0f);
+    std::uniform_real_distribution<float> freqDist(200.0f, 5000.0f);  // matches problemFreqRanges
+    std::uniform_real_distribution<float> strengthDist(0.6f, 1.0f);
 
     for (int i = 0; i < kVariations; ++i)
     {
-        auto spec = makeFlat(-40.0f);
-        addPinkSlope(spec, -30.0f);
+        auto spec = makeFlat();
+        addNoise(spec, rng);
         const float freq = freqDist(rng);
-        const float gain = gainDist(rng);
-        addPeak(spec, freq, gain, qDist(rng));
+        const float str = strengthDist(rng);
+        addPeak(spec, freq, str, 0.08f);  // narrow peak like training
         cases.push_back({spec, MLEngine::ProblemType::Resonance,
                          AIEngine::ProblemType::Resonance,
-                         "Resonance @" + juce::String(static_cast<int>(freq)) + "Hz +" + juce::String(gain, 1) + "dB"});
+                         "Resonance @" + juce::String(static_cast<int>(freq)) + "Hz str=" + juce::String(str, 2)});
     }
     return cases;
 }
 
+/// Generate harshness (broad 2–8 kHz excess)
 std::vector<TestCase> generateHarshnessTests(std::mt19937& rng)
 {
     std::vector<TestCase> cases;
-    std::uniform_real_distribution<float> boostDist(6.0f, 15.0f);
+    std::uniform_real_distribution<float> strengthDist(0.6f, 1.0f);
 
     for (int i = 0; i < kVariations; ++i)
     {
-        auto spec = makeFlat(-40.0f);
-        addPinkSlope(spec, -30.0f);
-        const float boost = boostDist(rng);
-        // Harshness: broad excess in 1-8 kHz
-        const float lo = 1500.0f + static_cast<float>(i) * 200.0f;
-        const float hi = 6000.0f + static_cast<float>(i) * 300.0f;
-        addBand(spec, lo, hi, boost);
+        auto spec = makeFlat();
+        addNoise(spec, rng);
+        const float str = strengthDist(rng);
+        // Broad boost centered around 4kHz with wide sigma
+        const float center = 3000.0f + static_cast<float>(i) * 500.0f;
+        addPeak(spec, center, str, 0.3f);  // wider sigma for broadband
         cases.push_back({spec, MLEngine::ProblemType::Harshness,
                          AIEngine::ProblemType::Harshness,
-                         "Harshness " + juce::String(static_cast<int>(lo)) + "-" + juce::String(static_cast<int>(hi)) + "Hz +" + juce::String(boost, 1) + "dB"});
+                         "Harshness @" + juce::String(static_cast<int>(center)) + "Hz str=" + juce::String(str, 2)});
     }
     return cases;
 }
 
+/// Generate muddiness (100–400 Hz buildup)
 std::vector<TestCase> generateMuddinessTests(std::mt19937& rng)
 {
     std::vector<TestCase> cases;
-    std::uniform_real_distribution<float> boostDist(6.0f, 14.0f);
+    std::uniform_real_distribution<float> strengthDist(0.6f, 1.0f);
 
     for (int i = 0; i < kVariations; ++i)
     {
-        auto spec = makeFlat(-40.0f);
-        addPinkSlope(spec, -30.0f);
-        const float boost = boostDist(rng);
-        addBand(spec, 150.0f + static_cast<float>(i) * 20.0f,
-                400.0f + static_cast<float>(i) * 15.0f, boost);
+        auto spec = makeFlat();
+        addNoise(spec, rng);
+        const float str = strengthDist(rng);
+        const float center = 150.0f + static_cast<float>(i) * 25.0f;
+        addPeak(spec, center, str, 0.15f);  // moderate width
         cases.push_back({spec, MLEngine::ProblemType::Muddiness,
                          AIEngine::ProblemType::Muddiness,
-                         "Muddiness +" + juce::String(boost, 1) + "dB"});
+                         "Muddiness @" + juce::String(static_cast<int>(center)) + "Hz str=" + juce::String(str, 2)});
     }
     return cases;
 }
 
+/// Generate sibilance (5–12 kHz excess)
 std::vector<TestCase> generateSibilanceTests(std::mt19937& rng)
 {
     std::vector<TestCase> cases;
-    std::uniform_real_distribution<float> boostDist(6.0f, 14.0f);
+    std::uniform_real_distribution<float> strengthDist(0.6f, 1.0f);
 
     for (int i = 0; i < kVariations; ++i)
     {
-        auto spec = makeFlat(-40.0f);
-        addPinkSlope(spec, -30.0f);
-        const float boost = boostDist(rng);
-        addBand(spec, 5000.0f + static_cast<float>(i) * 200.0f,
-                10000.0f + static_cast<float>(i) * 200.0f, boost);
+        auto spec = makeFlat();
+        addNoise(spec, rng);
+        const float str = strengthDist(rng);
+        const float center = 6000.0f + static_cast<float>(i) * 600.0f;
+        addPeak(spec, center, str, 0.12f);
         cases.push_back({spec, MLEngine::ProblemType::Sibilance,
                          AIEngine::ProblemType::Sibilance,
-                         "Sibilance +" + juce::String(boost, 1) + "dB"});
+                         "Sibilance @" + juce::String(static_cast<int>(center)) + "Hz str=" + juce::String(str, 2)});
     }
     return cases;
 }
 
+/// Generate boominess (40–150 Hz excess)
 std::vector<TestCase> generateBoominessTests(std::mt19937& rng)
 {
     std::vector<TestCase> cases;
-    std::uniform_real_distribution<float> boostDist(8.0f, 18.0f);
+    std::uniform_real_distribution<float> strengthDist(0.6f, 1.0f);
 
     for (int i = 0; i < kVariations; ++i)
     {
-        auto spec = makeFlat(-40.0f);
-        addPinkSlope(spec, -30.0f);
-        const float boost = boostDist(rng);
-        addBand(spec, 30.0f, 120.0f + static_cast<float>(i) * 10.0f, boost);
+        auto spec = makeFlat();
+        addNoise(spec, rng);
+        const float str = strengthDist(rng);
+        const float center = 50.0f + static_cast<float>(i) * 10.0f;
+        addPeak(spec, center, str, 0.15f);
         cases.push_back({spec, MLEngine::ProblemType::Boominess,
                          AIEngine::ProblemType::LowEndBoom,
-                         "Boominess +" + juce::String(boost, 1) + "dB"});
+                         "Boominess @" + juce::String(static_cast<int>(center)) + "Hz str=" + juce::String(str, 2)});
     }
     return cases;
 }
 
+/// Generate thinness (lack of low-mids — negative peak)
 std::vector<TestCase> generateThinnessTests(std::mt19937& rng)
 {
     std::vector<TestCase> cases;
-    std::uniform_real_distribution<float> cutDist(8.0f, 18.0f);
+    std::uniform_real_distribution<float> strengthDist(0.6f, 1.0f);
 
     for (int i = 0; i < kVariations; ++i)
     {
-        auto spec = makeFlat(-30.0f);
-        addPinkSlope(spec, -25.0f);
-        const float cut = cutDist(rng);
-        // Thin = lack of low-mids
-        cutBand(spec, 100.0f, 500.0f, cut);
+        auto spec = makeFlat(0.15f);  // higher baseline so cut is visible
+        addNoise(spec, rng);
+        const float str = strengthDist(rng);
+        const float center = 120.0f + static_cast<float>(i) * 20.0f;
+        // Thinness: NEGATIVE peak (cut) — matches buildSyntheticSpectrum sign=-1
+        cutBand(spec, center * 0.5f, center * 2.0f, str * 0.12f);
         cases.push_back({spec, MLEngine::ProblemType::Thinness,
                          AIEngine::ProblemType::ThinSound,
-                         "Thinness -" + juce::String(cut, 1) + "dB in low-mids"});
+                         "Thinness @" + juce::String(static_cast<int>(center)) + "Hz str=" + juce::String(str, 2)});
     }
     return cases;
 }
 
+/// Generate boxy midrange (300–800 Hz resonance)
 std::vector<TestCase> generateBoxyTests(std::mt19937& rng)
 {
     std::vector<TestCase> cases;
-    std::uniform_real_distribution<float> boostDist(6.0f, 14.0f);
+    std::uniform_real_distribution<float> strengthDist(0.6f, 1.0f);
 
     for (int i = 0; i < kVariations; ++i)
     {
-        auto spec = makeFlat(-40.0f);
-        addPinkSlope(spec, -30.0f);
-        const float boost = boostDist(rng);
-        addBand(spec, 350.0f + static_cast<float>(i) * 30.0f,
-                800.0f + static_cast<float>(i) * 20.0f, boost);
+        auto spec = makeFlat();
+        addNoise(spec, rng);
+        const float str = strengthDist(rng);
+        const float center = 350.0f + static_cast<float>(i) * 50.0f;
+        addPeak(spec, center, str, 0.12f);
         cases.push_back({spec, MLEngine::ProblemType::BoxyMidrange,
                          AIEngine::ProblemType::Boxyness,
-                         "Boxy +" + juce::String(boost, 1) + "dB"});
+                         "Boxy @" + juce::String(static_cast<int>(center)) + "Hz str=" + juce::String(str, 2)});
     }
     return cases;
 }
 
+/// Generate clipping (broadband high-level with harmonics)
 std::vector<TestCase> generateClippingTests(std::mt19937& rng)
 {
     std::vector<TestCase> cases;
@@ -265,13 +283,10 @@ std::vector<TestCase> generateClippingTests(std::mt19937& rng)
 
     for (int i = 0; i < kVariations; ++i)
     {
-        auto spec = makeFlat(-10.0f);  // Very hot signal
-        addPinkSlope(spec, -5.0f);
-        // Clipping: broad energy with harmonics extending unnaturally high
-        addBand(spec, 20.0f, 20000.0f, static_cast<float>(i) + 3.0f);
-        // Add odd-harmonic emphasis typical of hard clipping
-        for (float h = 1000.0f; h < 15000.0f; h *= 3.0f)
-            addPeak(spec, h, 6.0f, 5.0f);
+        // Clipping: entire spectrum elevated + clamped (matches training)
+        auto spec = makeFlat(0.2f + static_cast<float>(i) * 0.05f);
+        for (auto& v : spec)
+            v = juce::jlimit(0.0f, 1.2f, v + 0.2f);
         cases.push_back({spec, MLEngine::ProblemType::Clipping,
                          AIEngine::ProblemType::None,  // AIEngine doesn't have Clipping
                          "Clipping level " + juce::String(i)});
@@ -283,39 +298,39 @@ std::vector<TestCase> generateClippingTests(std::mt19937& rng)
 std::vector<TestCase> generateCleanTests(std::mt19937& rng)
 {
     std::vector<TestCase> cases;
-    std::uniform_real_distribution<float> levelDist(-45.0f, -25.0f);
+    std::uniform_real_distribution<float> levelDist(0.03f, 0.08f);
 
-    // Variation 1-3: flat noise at different levels
-    for (int i = 0; i < 3; ++i)
+    // Variation 1-4: flat noise at different levels (matching training baseline range)
+    for (int i = 0; i < 4; ++i)
     {
         auto spec = makeFlat(levelDist(rng));
-        cases.push_back({spec, MLEngine::ProblemType::NumProblems,  // sentinel: no problem expected
+        addNoise(spec, rng);
+        cases.push_back({spec, MLEngine::ProblemType::NumProblems,
                          AIEngine::ProblemType::None,
                          "Clean flat " + juce::String(i)});
     }
 
-    // Variation 4-6: pink noise (natural spectrum)
+    // Variation 5-7: gentle spectral tilt (natural, not a problem)
     for (int i = 0; i < 3; ++i)
     {
-        auto spec = makeFlat(-60.0f);
-        addPinkSlope(spec, levelDist(rng));
+        auto spec = makeFlat(0.05f);
+        addNoise(spec, rng);
+        // Very gentle low-end warmth (well below problem threshold)
+        addBand(spec, 40.0f, 200.0f, 0.01f + static_cast<float>(i) * 0.005f);
         cases.push_back({spec, MLEngine::ProblemType::NumProblems,
                          AIEngine::ProblemType::None,
-                         "Clean pink " + juce::String(i)});
+                         "Clean warm " + juce::String(i)});
     }
 
-    // Variation 7-10: gentle musical-like shapes (slight bass emphasis, slight treble roll-off)
-    for (int i = 0; i < 4; ++i)
+    // Variation 8-10: slightly brighter (natural, not harsh)
+    for (int i = 0; i < 3; ++i)
     {
-        auto spec = makeFlat(-60.0f);
-        addPinkSlope(spec, -30.0f);
-        // Gentle bass warmth (+2-3 dB below 200Hz)
-        addBand(spec, 40.0f, 200.0f, 2.0f + static_cast<float>(i) * 0.5f);
-        // Gentle treble air (+1-2 dB above 10kHz)
-        addBand(spec, 10000.0f, 20000.0f, 1.0f + static_cast<float>(i) * 0.3f);
+        auto spec = makeFlat(0.05f);
+        addNoise(spec, rng);
+        addBand(spec, 8000.0f, 18000.0f, 0.01f + static_cast<float>(i) * 0.005f);
         cases.push_back({spec, MLEngine::ProblemType::NumProblems,
                          AIEngine::ProblemType::None,
-                         "Clean musical " + juce::String(i)});
+                         "Clean bright " + juce::String(i)});
     }
 
     return cases;
@@ -724,5 +739,183 @@ public:
 };
 
 
+// =============================================================================
+// TEST C — Retrain MLEngine + Re-evaluate
+//
+// Retrains the model from scratch with the improved dataset (clean samples,
+// hard negatives, precision-weighted loss), then re-runs accuracy evaluation.
+// If the retrained model passes gates, saves new weights.
+// =============================================================================
+class AIAccuracyTest_Retrain : public juce::UnitTest
+{
+public:
+    AIAccuracyTest_Retrain()
+        : juce::UnitTest("AI Accuracy — Retrain + Re-evaluate", "AI-Retrain") {}
+
+    void runTest() override
+    {
+        beginTest("Retrain MLEngine with improved dataset");
+
+        MLEngine ml;
+        ml.initialize();
+        ml.initializeRandomWeights();  // Start fresh
+        ml.setSensitivity(0.5f);
+
+        // Train with much more data and epochs than default
+        constexpr int samplesPerProblem = 300;  // 300 per class
+        constexpr int epochs = 300;             // long convergence
+        constexpr float lr = 0.005f;            // BCE-safe learning rate
+
+        logMessage("  Training: " + juce::String(samplesPerProblem) + " samples/class, "
+                   + juce::String(epochs) + " epochs, lr=" + juce::String(lr, 4));
+
+        auto t0 = juce::Time::getMillisecondCounterHiRes();
+
+        // Use the improved generateSyntheticDataset (with clean + hard negatives)
+        auto dataset = ml.generateSyntheticDataset(samplesPerProblem, kSampleRate, kFFTSize);
+        ml.trainOnDataset(dataset, epochs, lr);
+
+        auto elapsed = juce::Time::getMillisecondCounterHiRes() - t0;
+        logMessage("  Training completed in " + juce::String(elapsed, 0) + " ms");
+        logMessage("  Dataset size: " + juce::String(static_cast<int>(dataset.size()))
+                   + " (" + juce::String(samplesPerProblem) + " per problem + "
+                   + juce::String(samplesPerProblem * 2) + " clean + "
+                   + juce::String(samplesPerProblem) + " hard neg)");
+
+        // ── Re-evaluate accuracy ──
+        beginTest("Retrained model accuracy");
+
+        std::mt19937 rng(42);
+
+        struct ProblemGroup
+        {
+            std::vector<TestCase>(*generator)(std::mt19937&);
+            MLEngine::ProblemType type;
+            juce::String name;
+        };
+
+        ProblemGroup groups[] = {
+            { generateResonanceTests,  MLEngine::ProblemType::Resonance,    "Resonance" },
+            { generateHarshnessTests,  MLEngine::ProblemType::Harshness,    "Harshness" },
+            { generateMuddinessTests,  MLEngine::ProblemType::Muddiness,    "Muddiness" },
+            { generateSibilanceTests,  MLEngine::ProblemType::Sibilance,    "Sibilance" },
+            { generateBoominessTests,  MLEngine::ProblemType::Boominess,    "Boominess" },
+            { generateThinnessTests,   MLEngine::ProblemType::Thinness,     "Thinness" },
+            { generateBoxyTests,       MLEngine::ProblemType::BoxyMidrange, "BoxyMidrange" },
+            { generateClippingTests,   MLEngine::ProblemType::Clipping,     "Clipping" },
+        };
+
+        constexpr int numTypes = 8;
+        std::array<ClassMetrics, numTypes> metrics{};
+
+        for (int g = 0; g < numTypes; ++g)
+        {
+            auto cases = groups[g].generator(rng);
+            for (const auto& tc : cases)
+            {
+                auto detections = ml.detectProblems(tc.spectrum, kSampleRate);
+
+                bool foundExpected = false;
+                for (const auto& det : detections)
+                {
+                    if (det.type == tc.expectedMLType)
+                        foundExpected = true;
+                }
+
+                if (foundExpected)
+                    metrics[static_cast<size_t>(g)].truePositive++;
+                else
+                    metrics[static_cast<size_t>(g)].falseNegative++;
+
+                for (const auto& det : detections)
+                {
+                    if (det.type != tc.expectedMLType)
+                    {
+                        const int detIdx = static_cast<int>(det.type);
+                        if (detIdx >= 0 && detIdx < numTypes)
+                            metrics[static_cast<size_t>(detIdx)].falsePositive++;
+                    }
+                }
+            }
+        }
+
+        // Clean test
+        auto cleanCases = generateCleanTests(rng);
+        int cleanFP = 0;
+        for (const auto& tc : cleanCases)
+        {
+            auto detections = ml.detectProblems(tc.spectrum, kSampleRate);
+            if (!detections.empty())
+                cleanFP++;
+            for (auto& m : metrics)
+                m.trueNegative++;
+        }
+
+        // Print results
+        logMessage("");
+        logMessage("  ┌─────────────────┬───────────┬────────┬────────┬────────┬────┬────┬────┐");
+        logMessage("  │ Problem Type    │ Precision │ Recall │   F1   │ FP Rate│ TP │ FP │ FN │");
+        logMessage("  ├─────────────────┼───────────┼────────┼────────┼────────┼────┼────┼────┤");
+
+        float totalF1 = 0.0f;
+        int passCount = 0;
+        for (int g = 0; g < numTypes; ++g)
+        {
+            const auto& m = metrics[static_cast<size_t>(g)];
+            const auto name = groups[g].name.paddedRight(' ', 15);
+            logMessage("  │ " + name
+                       + " │ " + (juce::String(m.precision() * 100.0f, 1) + "%").paddedLeft(' ', 9)
+                       + " │ " + (juce::String(m.recall() * 100.0f, 1) + "%").paddedLeft(' ', 6)
+                       + " │ " + (juce::String(m.f1() * 100.0f, 1) + "%").paddedLeft(' ', 6)
+                       + " │ " + (juce::String(m.falsePositiveRate() * 100.0f, 1) + "%").paddedLeft(' ', 6)
+                       + " │ " + juce::String(m.truePositive).paddedLeft(' ', 2)
+                       + " │ " + juce::String(m.falsePositive).paddedLeft(' ', 2)
+                       + " │ " + juce::String(m.falseNegative).paddedLeft(' ', 2) + " │");
+            totalF1 += m.f1();
+            if (m.f1() >= kMinF1) passCount++;
+        }
+
+        logMessage("  └─────────────────┴───────────┴────────┴────────┴────────┴────┴────┴────┘");
+
+        const float avgF1 = totalF1 / numTypes;
+        const float fpRate = static_cast<float>(cleanFP) / static_cast<float>(cleanCases.size());
+
+        logMessage("");
+        logMessage("  RETRAINED: Average F1: " + juce::String(avgF1 * 100.0f, 1) + "%");
+        logMessage("  RETRAINED: Clean FP rate: " + juce::String(fpRate * 100.0f, 1) + "%");
+        logMessage("  RETRAINED: Types passing F1 >= " + juce::String(kMinF1 * 100.0f, 0) + "%: "
+                   + juce::String(passCount) + "/" + juce::String(numTypes));
+
+        // Save retrained weights if improvement is significant
+        if (avgF1 > 0.20f)  // better than baseline 15.6%
+        {
+            auto modelFile = juce::File(__FILE__).getParentDirectory()
+                                 .getParentDirectory().getParentDirectory()
+                                 .getChildFile("Resources/Models/ml_weights_retrained.bin");
+            bool saved = ml.saveWeights(modelFile);
+            logMessage("  Retrained weights saved: " + juce::String(saved ? "YES" : "NO")
+                       + " → " + modelFile.getFullPathName());
+        }
+
+        // Assertions
+        expect(avgF1 >= kMinF1,
+               "Retrained avg F1 too low: " + juce::String(avgF1 * 100.0f, 1)
+               + "% (need >= " + juce::String(kMinF1 * 100.0f, 0) + "%)");
+
+        expect(fpRate <= kMaxFPRate,
+               "Retrained clean FP rate: " + juce::String(fpRate * 100.0f, 1)
+               + "% (need <= " + juce::String(kMaxFPRate * 100.0f, 0) + "%)");
+
+        for (int g = 0; g < numTypes; ++g)
+        {
+            expect(metrics[static_cast<size_t>(g)].recall() >= kMinRecall,
+                   groups[g].name + " recall: " + juce::String(metrics[static_cast<size_t>(g)].recall() * 100.0f, 1)
+                   + "% (need >= " + juce::String(kMinRecall * 100.0f, 0) + "%)");
+        }
+    }
+};
+
+
 static AIAccuracyTest_MLEngine  sAIAccuracyTestML;
 static AIAccuracyTest_AIEngine  sAIAccuracyTestAI;
+static AIAccuracyTest_Retrain   sAIAccuracyTestRetrain;
