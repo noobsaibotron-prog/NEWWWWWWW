@@ -91,6 +91,11 @@ public:
     // Main inference methods
     std::vector<ProblemDetection> detectProblems(const std::vector<float>& spectrum,
                                                   double sampleRate);
+
+    /** Forward pass only — returns raw sigmoid probabilities for all 8 classes,
+        without any threshold filtering. Used for threshold calibration. */
+    std::array<float, numProblemTypes> forwardRawProbabilities(
+        const std::vector<float>& spectrum, double sampleRate);
     
     GenreDetection classifyGenre(const std::vector<float>& spectrum, double sampleRate = 44100.0);
     

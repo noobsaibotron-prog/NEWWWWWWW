@@ -1054,6 +1054,7 @@ if(HAVE_JUCE)
         Source/Tests/PerceptualSimulationTest.cpp
         Source/Tests/AIAccuracyTest.cpp
         Source/Tests/AIEngineIntegrationAuditTest.cpp
+        Source/Tests/AIThresholdCalibrationTest.cpp
         Source/Tests/TestMain.cpp
     )
     target_compile_features(AIEqualizerPro_IntegrationTests PRIVATE cxx_std_20)

@@ -286,6 +286,33 @@ std::vector<MLEngine::ProblemDetection> MLEngine::detectProblems(
     return detections;
 }
 
+std::array<float, MLEngine::numProblemTypes> MLEngine::forwardRawProbabilities(
+    const std::vector<float>& spectrum, double sampleRate)
+{
+    initialize();
+
+    std::array<float, numProblemTypes> result {};
+
+    if (spectrum.empty())
+        return result;
+
+    auto melSpectrum = extractMelBands(spectrum, sampleRate, melNumBands);
+    if (melSpectrum.size() != static_cast<size_t>(melNumBands))
+        return result;
+
+    auto h1 = problemNet_fc1->forward(melSpectrum);
+    h1 = applyRelu(h1);
+    auto h2 = problemNet_fc2->forward(h1);
+    h2 = applyRelu(h2);
+    auto probs = problemNet_fc3->forward(h2);
+    probs = applySigmoid(probs);
+
+    for (int i = 0; i < numProblemTypes; ++i)
+        result[static_cast<size_t>(i)] = probs[static_cast<size_t>(i)];
+
+    return result;
+}
+
 MLEngine::GenreDetection MLEngine::classifyGenre(const std::vector<float>& spectrum, double sampleRate)
 {
     initialize();
