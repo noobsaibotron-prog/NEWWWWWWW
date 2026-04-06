@@ -1,0 +1,53 @@
+skill_test_record:
+  skill_name: "ai-integration-audit"
+  skill_version: "1.0"
+  skill_category: "capacity-uplift"
+  date: "2026-04-04"
+  domain: "audio plugin ai integration"
+
+  artifact_under_review: "AI Equalizer Pro AI subsystem on review/codex-2026-04-01"
+  artifact_type: "code"
+  why_chosen: "Real production plugin with non-trivial AI/audio/GUI thread separation"
+
+  proof_map:
+    local_evidence:
+      - "AI subsystem contains synchronous inference and mutex-protected sections"
+      - "processBlock interacts with AI subsystem directly"
+    cross_artifact_evidence:
+      - "Call-chain interpretation required linking PluginProcessor, queue handoff, AI thread entry, and AI engine"
+    inferred_points:
+      - "Initial audit risked treating AI heaviness as direct audio-thread blocking"
+
+  boundary_flags:
+    - "Need to distinguish thread-boundary proof from subsystem-local heaviness"
+
+  findings:
+    correct:
+      - "The subsystem uses mutexes and synchronous AI operations"
+    missed:
+      - "The v1.0 skill did not separate audio-thread reachability from AI-thread-only heaviness strongly enough"
+    overstated:
+      - "Risk of direct audio-thread blocking was stated too strongly"
+    unverified:
+      - "Whether the heavy AI functions were directly reachable from processBlock"
+
+  weakness_classification:
+    - type: "boundary weakness"
+      description: "Thread-boundary reasoning was insufficiently explicit"
+      severity: "high"
+      recurring: true
+
+  lesson: "Mutex presence and synchronous inference are not enough to prove direct audio-thread contamination."
+  recommendation: "promote"
+
+  promotion_justification:
+    weakness_targeted: "boundary weakness in thread reachability reasoning"
+    times_observed: 1
+    proposed_module: "Call Chain / Thread Reachability Audit plus Shared-State Hazard Audit"
+    why_now: "The weakness is material and affects severity accuracy in AI subsystem review"
+
+  retest_requirement:
+    known_artifact_required: true
+    new_artifact_required: false
+
+  governance_state_after_test: "tested"
