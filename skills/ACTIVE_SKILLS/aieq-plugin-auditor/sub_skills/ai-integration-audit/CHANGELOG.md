@@ -27,7 +27,7 @@
 
 ## Version 1.1
 **Date:** 2026-04-04  
-**Status:** Promotion pending formal SKILL.md update
+**Status:** Promoted
 
 ### Promotion trigger
 - Weakness observed: **boundary weakness**
@@ -36,10 +36,10 @@
   - The v1.0 audit risked overclaiming by treating mutex presence and synchronous inference as if they automatically implied direct audio-thread blocking.
   - The real weakness was incomplete thread-boundary and call-chain verification.
 
-### What should change in v1.1
-- Add **Call Chain / Thread Reachability Audit**
-- Add **Shared-State Hazard Audit**
-- Explicitly separate:
+### What changed in v1.1
+- Added **Call Chain / Thread Reachability Audit**
+- Added **Shared-State Hazard Audit**
+- Explicitly separates:
   - blocking risk
   - mutex reachability
   - data race risk
@@ -49,10 +49,11 @@
 ### Evidence basis
 - Known artifact retest: AI Equalizer Pro on `review/codex-2026-04-01`
 - Tribunal reconciliation of AI/audio-thread claims
+- Formal `SKILL.md` update completed on `feature/aieq-plus-framework`
 
-### Why this is not yet fully promoted
-- `SKILL.md` is still on v1.0 in the branch state consulted during governance review
-- The promotion path is now documented, but the skill file still needs its v1.1 update to complete the promotion chain
+### Governance result
+- `ai-integration-audit` is now formally promoted to **v1.1**
+- Remaining work is now about generalization, not branch-local formalization
 
 ### What remains unproven
 - Generalization beyond the current plugin architecture

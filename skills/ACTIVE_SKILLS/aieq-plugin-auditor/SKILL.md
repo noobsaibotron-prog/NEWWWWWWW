@@ -11,6 +11,8 @@ metadata:
       - LEGAL
       - MARKETING
   version: "1.3"
+  formal_promoted_state: "1.1"
+  governance_state: "frozen-pending-composite-regression"
   orchestrator_for:
     - dsp-safety-audit
     - gui-performance-audit
@@ -24,10 +26,10 @@ metadata:
     - code-hygiene-audit
     - release-verdict-engine
   promotion_history:
-    - v1.0: Initial Composite Skill for AI Equalizer Pro
+    - v1.0: Initial composite skill for AI Equalizer Pro
     - v1.1: Promoted dsp-safety-audit and gui-performance-audit based on test_001 feedback
-    - v1.2: Added 7 new sub-skills for comprehensive full-codebase coverage
-    - v1.3: Added release-verdict-engine as the definitive Meta-Auditor for release decisions
+    - v1.2: Expanded orchestration surface to the full plugin audit stack (implementation state documented)
+    - v1.3: Added release-verdict-engine and explicit composite regression requirement; formal promotion remains capped at v1.1 pending rerun
   model_requirements:
     context_window: 128k
     tool_use: required
@@ -37,80 +39,54 @@ metadata:
 # AIEQ Plugin Auditor (Composite Orchestrator)
 
 ## Core Principle
-This is a **Composite Skill**. It performs no direct audits itself. Its sole responsibility is to route C++/JUCE artifacts to the correct sub-skills, aggregate their findings, and synthesize a hierarchical output with a vectorized governance state.
+This is a composite skill (coordinatore principale che mette insieme più sub-skill). It performs no direct domain audit itself. Its responsibility is to route artifacts to the correct sub-skills, aggregate their findings, and synthesize a hierarchical output with a vectorized governance state.
+
+## Governance Note
+The operational surface is documented at **v1.3**, but the last formally promoted composite state remains **v1.1** until the expanded orchestration surface is re-tested end-to-end on a full artifact bundle.
 
 ## Forbidden Actions
-- Do not perform DSP, GUI, or AI analysis directly in this prompt; you must delegate to the sub-skills.
+- Do not perform DSP, GUI, or AI analysis directly in this prompt; delegate to sub-skills.
 - Do not collapse the final governance state into a single word without providing the state vector.
-- Do not silently resolve conflicts between sub-skills (e.g., if GUI demands high refresh rate but DSP demands low lock contention).
+- Do not silently resolve conflicts between sub-skills.
+- Do not treat added routing surface as formally promoted unless the composite regression protocol has been rerun.
 
 ## Orchestration Workflow
-1. **Identify Artifacts:** Map the provided project files to their respective domains using `ORCHESTRATOR_CONFIG.yaml` routing rules.
-2. **Execute Sub-Skills:** Run the sub-skills sequentially or in parallel.
-3. **Aggregate Findings:** Collect the `Proven` and `Missed` findings from each sub-skill.
-4. **Execute Regression Matrix:** Read `REGRESSION_MATRIX.md` and verify each conflict pair using its Verification Protocol. Use the Conflict Severity Matrix to classify cross-domain severity.
-5. **Synthesize:** Identify any cross-domain conflicts and emit `[CONFLICT FLAG]` for each.
-6. **Output Hierarchical Report:** Generate the intermediate report using the Layered Proof Map format.
-7. **Execute Release Verdict Engine:** Pass all sub-skill CSV data, the Cross-Module Synthesis, and the Regression Matrix results to `release-verdict-engine`. It will produce the definitive, unequivocal Release Verdict with Commercial Rating and Maximum ROI Remediation Plan. Read `release-verdict-engine/SCORING_MODEL.md` for the mathematical model.
+1. **Identify Artifacts:** Map project files to their domains using `ORCHESTRATOR_CONFIG.yaml`.
+2. **Execute Sub-Skills:** Run the relevant sub-skills sequentially or in parallel.
+3. **Aggregate Findings:** Collect proven findings, misses, and overstated points from each sub-skill.
+4. **Execute Regression Matrix:** Read `REGRESSION_MATRIX.md` and verify conflict pairs using its protocol.
+5. **Synthesize:** Identify cross-domain conflicts and emit `[CONFLICT FLAG]` when warranted.
+6. **Output Hierarchical Report:** Generate the layered proof map.
+7. **Execute Release Verdict Engine:** Pass the aggregated domain outputs and conflict results to `release-verdict-engine` for the final release verdict.
 
-> **On sub-skill promotion:** Before finalizing any promotion, re-run all sub-skill evals on the same artifact bundle and execute the full regression protocol (see `REGRESSION_MATRIX.md` Section 3).
+> **On promotion:** Before promoting the composite beyond the current formal promoted state, rerun all relevant sub-skill evals on the same artifact bundle and execute the full composite regression protocol.
 
 ## Output Format (Layered Proof Map)
 
 ### Executive Summary
-[1–3 sentence summary of the overall readiness.]
+[1–3 sentence summary of overall readiness.]
 
 ### Vectorized Governance State
 - **State Vector:** `[DSP: <st>] | [GUI: <st>] | [AI: <st>] | [Test: <st>] | [State: <st>] | [Build: <st>] | [Param: <st>] | [Compliance: <st>] | [Math: <st>] | [Hygiene: <st>]`
 - **Overall State:** `[Lowest common denominator state]`
-- **Justification:** [Brief explanation of the lowest state]
+- **Justification:** [Brief explanation]
 
 ### Hierarchical Findings
+1. DSP Safety Analysis (`dsp-safety-audit`)
+2. GUI Performance Analysis (`gui-performance-audit`)
+3. AI Integration Analysis (`ai-integration-audit`)
+4. Test Quality Analysis (`test-quality-audit`)
+5. State Management Analysis (`state-management-audit`)
+6. Build System Analysis (`build-system-audit`)
+7. Parameter Architecture Analysis (`parameter-architecture-audit`)
+8. Plugin Compliance Analysis (`plugin-compliance-audit`)
+9. DSP Correctness Analysis (`dsp-correctness-audit`)
+10. Code Hygiene Analysis (`code-hygiene-audit`)
 
-#### 1. DSP Safety Analysis (`dsp-safety-audit`)
-- ✅ **Proven:** [list]
-- ❌ **Missed:** [list]
-
-#### 2. GUI Performance Analysis (`gui-performance-audit`)
-- ✅ **Proven:** [list]
-- ❌ **Missed:** [list]
-
-#### 3. AI Integration Analysis (`ai-integration-audit`)
-- ✅ **Proven:** [list]
-- ❌ **Missed:** [list]
-
-#### 4. Test Quality Analysis (`test-quality-audit`)
-- ✅ **Proven:** [list]
-- ❌ **Missed:** [list]
-
-#### 5. State Management Analysis (`state-management-audit`)
-- ✅ **Proven:** [list]
-- ❌ **Missed:** [list]
-
-#### 6. Build System Analysis (`build-system-audit`)
-- ✅ **Proven:** [list]
-- ❌ **Missed:** [list]
-
-#### 7. Parameter Architecture Analysis (`parameter-architecture-audit`)
-- ✅ **Proven:** [list]
-- ❌ **Missed:** [list]
-
-#### 8. Plugin Compliance Analysis (`plugin-compliance-audit`)
-- ✅ **Proven:** [list]
-- ❌ **Missed:** [list]
-
-#### 9. DSP Correctness Analysis (`dsp-correctness-audit`)
-- ✅ **Proven:** [list]
-- ❌ **Missed:** [list]
-
-#### 10. Code Hygiene Analysis (`code-hygiene-audit`)
-- ✅ **Proven:** [list]
-- ❌ **Missed:** [list]
-
-### Cross-Module Synthesis (from Regression Matrix)
-- ⚠️ **Inferred Risks:** [Cross-domain inferences from conflict pair verification]
-- 🚩 **Conflicts:** [List any `[CONFLICT FLAG]` with severity from Conflict Severity Matrix]
-- 🔄 **Regression Check:** [If this is a post-promotion audit: New / Resolved / Persistent / Shifted findings]
+### Cross-Module Synthesis
+- **Inferred Risks:** [Cross-domain inferences]
+- **Conflicts:** [Any `[CONFLICT FLAG]`]
+- **Regression Check:** [New / Resolved / Persistent / Shifted findings]
 
 ### Next Steps
 [Actionable remediation steps, grouped by domain.]
