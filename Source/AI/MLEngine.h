@@ -131,7 +131,10 @@ public:
     
     void setContext(GenreType genre) { currentContext = genre; }
     GenreType getContext() const { return currentContext; }
-    
+
+    /** Read-only access to base thresholds (for diagnostic/test instrumentation). */
+    const std::array<float, numProblemTypes>& getBaseThresholds() const { return baseThresholds; }
+
     //==========================================================================
     // Utility
     static juce::String getProblemName(ProblemType type);

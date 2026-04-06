@@ -102,7 +102,9 @@ void AIEngine::prepare(double sampleRate, int /*samplesPerBlock*/)
     }
     correctionCoeffsNeedUpdate.store(true);
 
-    // Load MLEQ v1 weights if available (auto-enables ML detection)
+    // Load MLEQ v1 weights if available (auto-enables ML detection).
+    // If a test has already force-loaded weights via setCustomMLWeightsPathForTests(),
+    // skip the runtime path search.
     if (!useMLDetection)
     {
         auto mlModelPath = juce::File::getSpecialLocation(juce::File::currentExecutableFile)
@@ -241,8 +243,9 @@ void AIEngine::analyzeSpectrum(const std::vector<float>& spectrum, bool force)
         currentSpectrum = normalized;
     }
     
-    // Perform detection (use ML if enabled, otherwise heuristics)
-    if (useMLDetection)
+    // Perform detection — routed via shouldUseMLDetection() which respects
+    // DetectionBackendMode, forceMLDetectionForTests, and useMLDetection.
+    if (shouldUseMLDetection())
     {
         detectProblemsWithML();
     }
@@ -2326,17 +2329,19 @@ void AIEngine::detectProblemsWithML()
     const auto snapshot = readSpectrumSnapshot();
     if (snapshot.version == 0)
         return;
-    
+
     scratchTemp.resize(snapshot.bins.size());
     std::copy(snapshot.bins.begin(), snapshot.bins.end(), scratchTemp.begin());
-    auto& spectrumCopy = scratchTemp;
-    
+
+    // ── FIX: AIEngine stores spectra in dB; MLEngine expects linear magnitude.
+    //    Convert before passing to the ML forward pass.
+    auto linearSpectrum = convertDbSpectrumToLinearMagnitude(scratchTemp);
+
     // Set ML context based on source profile
     MLEngine::GenreType mlContext = MLEngine::GenreType::Unknown;
-    
-    // FIX: Load atomic sourceProfile
+
     const auto profile = static_cast<SourceProfile>(sourceProfile.load(std::memory_order_relaxed));
-    
+
     switch (profile)
     {
         case SourceProfile::Vocals:  mlContext = MLEngine::GenreType::Vocals; break;
@@ -2348,14 +2353,26 @@ void AIEngine::detectProblemsWithML()
         default:                     mlContext = MLEngine::GenreType::Unknown; break;
     }
     mlEngine.setContext(mlContext);
-    mlEngine.setSensitivity(sensitivity.load(std::memory_order_relaxed));
+    const float sens = sensitivity.load(std::memory_order_relaxed);
+    mlEngine.setSensitivity(sens);
+
+    // ── Store audit snapshot of base thresholds (for test instrumentation) ──
+    {
+        const auto& base = mlEngine.getBaseThresholds();
+        float sensitivityScale = 1.0f - (sens - 0.5f) * 0.6f;
+        std::array<float, MLEngine::numProblemTypes> effectiveThresholds {};
+        for (int i = 0; i < MLEngine::numProblemTypes; ++i)
+            effectiveThresholds[static_cast<size_t>(i)] = base[static_cast<size_t>(i)] * sensitivityScale;
+        // Raw probs will be overwritten after detectProblems returns — store thresholds now
+        storeMLAuditSnapshot(lastMLRawProbabilities, effectiveThresholds);
+    }
 
     // Optional: run TFLite NN to modulate confidence if available
     std::array<float, MLEngine::numProblemTypes> nnConfidence{};
     nnConfidence.fill(1.0f);
     if (enableNeuralNetworks && neuralNetwork && neuralNetwork->isModelLoaded())
     {
-        const auto nnResult = neuralNetwork->runInference(spectrumCopy);
+        const auto nnResult = neuralNetwork->runInference(linearSpectrum);
         if (nnResult.success && !nnResult.output.empty())
         {
             const size_t count = std::min(nnResult.output.size(), static_cast<size_t>(MLEngine::numProblemTypes));
@@ -2367,18 +2384,18 @@ void AIEngine::detectProblemsWithML()
             AIEQ_LOG_WARNING("TFLite inference failed or empty output. Falling back to classical ML.");
         }
     }
-    
-    // Run ML detection
-    auto mlDetections = mlEngine.detectProblems(spectrumCopy, currentSampleRate);
-    
+
+    // Run ML detection on LINEAR MAGNITUDE spectrum
+    auto mlDetections = mlEngine.detectProblems(linearSpectrum, currentSampleRate);
+
     // Convert ML detections to AIEngine corrections
     std::lock_guard<std::mutex> lock(correctionsWriteMutex);
     pendingCorrections.clear();
-    
+
     for (const auto& mlDet : mlDetections)
     {
         Correction c;
-        
+
         // Map ML problem type to AIEngine problem type
         switch (mlDet.type)
         {
@@ -2410,10 +2427,10 @@ void AIEngine::detectProblemsWithML()
                 c.type = ProblemType::None;
                 break;
         }
-        
+
         if (c.type == ProblemType::None)
             continue;
-        
+
         c.frequency = mlDet.frequency;
         c.suggestedGain = mlDet.suggestedGain;
         c.suggestedQ = mlDet.suggestedQ;
@@ -2427,7 +2444,7 @@ void AIEngine::detectProblemsWithML()
         c.severity = mlDet.severity * nnConf;
         c.confidence = mlDet.confidence * nnConf;
         c.approved = false;
-        
+
         // Generate description
         juce::String bandName = getBandName(c.frequency);
         c.description = juce::String::formatted(
@@ -2439,14 +2456,17 @@ void AIEngine::detectProblemsWithML()
             c.suggestedGain,
             c.suggestedQ,
             c.confidence * 100.0f);
-        
+
         pendingCorrections.push_back(c);
     }
-    
-    // Also run heuristic detection to catch anything ML might miss
-    // and combine results
-    detectResonances(thresholds.resonanceThreshold * (1.0f - sensitivity * 0.5f));
-    
+
+    // Heuristic supplement: only in Hybrid mode (skip in MLOnly)
+    auto mode = static_cast<DetectionBackendMode>(detectionBackendMode.load(std::memory_order_relaxed));
+    if (mode == DetectionBackendMode::Hybrid)
+    {
+        detectResonances(thresholds.resonanceThreshold * (1.0f - sensitivity * 0.5f));
+    }
+
     // Sort by type and frequency first, so std::unique can find all duplicates
     // (std::unique only removes consecutive duplicates)
     std::sort(pendingCorrections.begin(), pendingCorrections.end(),
@@ -2455,7 +2475,7 @@ void AIEngine::detectProblemsWithML()
                       return static_cast<int>(a.type) < static_cast<int>(b.type);
                   return a.frequency < b.frequency;
               });
-    
+
     // Remove duplicates (same type within 10% frequency range)
     auto it = std::unique(pendingCorrections.begin(), pendingCorrections.end(),
         [](const Correction& a, const Correction& b) {
@@ -2465,7 +2485,7 @@ void AIEngine::detectProblemsWithML()
             return ratio > 0.9f && ratio < 1.1f;
         });
     pendingCorrections.erase(it, pendingCorrections.end());
-    
+
     // Sort by priority (severity * confidence, highest first)
     std::sort(pendingCorrections.begin(), pendingCorrections.end(),
               [](const Correction& a, const Correction& b) {
@@ -2475,7 +2495,7 @@ void AIEngine::detectProblemsWithML()
                       return a.severity > b.severity;  // Tie-break by severity
                   return priorityA > priorityB;
               });
-    
+
     // No hard limit - let filtering/merging handle it
 }//==============================================================================
 // Intelligent Band Assignment - Filtering and Merging

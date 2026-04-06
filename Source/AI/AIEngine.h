@@ -57,6 +57,17 @@ public:
         Gradual,
         Automatic
     };
+
+    /** Detection backend routing mode.
+        Hybrid   — ML first, then heuristic supplement (shipping default).
+        MLOnly   — pure ML, no heuristic fallback (for accuracy tests).
+        HeuristicOnly — classical DSP only, ML path never runs. */
+    enum class DetectionBackendMode
+    {
+        Hybrid,
+        MLOnly,
+        HeuristicOnly
+    };
     
     enum class DetectedGenre
     {
@@ -284,9 +295,51 @@ public:
     NeuralNetworkWrapper::InferenceResult runNeuralInference(const std::vector<float>& input);
     
     // Online learning
-    void addLearningSample(const std::vector<float>& input, const std::vector<float>& target, 
+    void addLearningSample(const std::vector<float>& input, const std::vector<float>& target,
                           const juce::String& source = "auto");
     void performOnlineLearningUpdate();
+
+    //==============================================================================
+    // Detection backend mode
+    void setDetectionBackendMode(DetectionBackendMode m) { detectionBackendMode.store(static_cast<int>(m), std::memory_order_relaxed); }
+    DetectionBackendMode getDetectionBackendMode() const { return static_cast<DetectionBackendMode>(detectionBackendMode.load(std::memory_order_relaxed)); }
+
+    //==============================================================================
+    // Test-only hooks — deterministic ML testing & diagnostic instrumentation
+
+    /** Force ML detection path on/off regardless of whether weights were auto-loaded. */
+    void forceMLDetectionEnabledForTests(bool on) { forceMLDetectionForTests.store(on ? 1 : 0, std::memory_order_relaxed); }
+
+    /** Load ML weights from an explicit file (bypasses runtime path search). */
+    bool setCustomMLWeightsPathForTests(const juce::File& weightFile)
+    {
+        if (mlEngine.loadWeights(weightFile))
+        {
+            useMLDetection = true;
+            return true;
+        }
+        return false;
+    }
+
+    /** Whether the ML path is currently active (accounts for force flag). */
+    bool isUsingMLDetection() const { return shouldUseMLDetection(); }
+
+    /** Read-only access to ML engine (for direct-vs-pipeline comparison in tests). */
+    MLEngine& getMLEngineForTest() { return mlEngine; }
+
+    /** Last raw sigmoid outputs from the ML forward pass (8 floats, 0 if ML didn't run). */
+    std::array<float, MLEngine::numProblemTypes> getLastMLRawProbabilitiesForTests() const
+    {
+        std::lock_guard<std::mutex> lock(mlAuditMutex);
+        return lastMLRawProbabilities;
+    }
+
+    /** Last effective thresholds used by MLEngine (baseThreshold × sensitivityScale × context). */
+    std::array<float, MLEngine::numProblemTypes> getLastMLThresholdsForTests() const
+    {
+        std::lock_guard<std::mutex> lock(mlAuditMutex);
+        return lastMLThresholds;
+    }
 
 private:
     void detectProblems();
@@ -606,7 +659,59 @@ private:
     // ML detection auto-enabled when ml_weights.bin is found in prepare().
     // Falls back to heuristic detectProblems() if weights are missing or corrupt.
     std::atomic<bool> useMLDetection { false };
-    
+
+    // Detection backend mode (default Hybrid for shipping)
+    std::atomic<int> detectionBackendMode { static_cast<int>(DetectionBackendMode::Hybrid) };
+
+    // Test hooks state
+    std::atomic<int> forceMLDetectionForTests { -1 }; // -1 = not set, 0 = force off, 1 = force on
+
+    // ML audit/diagnostic state (written by detectProblemsWithML, read by tests)
+    mutable std::mutex mlAuditMutex;
+    std::array<float, MLEngine::numProblemTypes> lastMLRawProbabilities {};
+    std::array<float, MLEngine::numProblemTypes> lastMLThresholds {};
+
+    /** Unified decision: should this analysis frame use the ML path?
+        Accounts for: backend mode, useMLDetection, forceMLDetectionForTests. */
+    bool shouldUseMLDetection() const noexcept
+    {
+        auto mode = static_cast<DetectionBackendMode>(detectionBackendMode.load(std::memory_order_relaxed));
+        if (mode == DetectionBackendMode::HeuristicOnly)
+            return false;
+
+        int forced = forceMLDetectionForTests.load(std::memory_order_relaxed);
+        if (forced >= 0)
+            return forced != 0;
+
+        return useMLDetection.load(std::memory_order_relaxed);
+    }
+
+    /** Convert a dB-domain spectrum (as stored internally by AIEngine) to
+        linear magnitude, which is what MLEngine::extractMelBands() expects.
+        Values below -100 dB are clamped to a small positive floor. */
+    static std::vector<float> convertDbSpectrumToLinearMagnitude(const std::vector<float>& dbSpectrum)
+    {
+        std::vector<float> linear(dbSpectrum.size());
+        for (size_t i = 0; i < dbSpectrum.size(); ++i)
+        {
+            float db = dbSpectrum[i];
+            if (db <= -100.0f)
+                linear[i] = 1e-10f;
+            else
+                linear[i] = std::pow(10.0f, db / 20.0f);
+        }
+        return linear;
+    }
+
+    /** Store raw probabilities + effective thresholds for test inspection. */
+    void storeMLAuditSnapshot(const std::array<float, MLEngine::numProblemTypes>& probs,
+                              const std::array<float, MLEngine::numProblemTypes>& effectiveThresh)
+    {
+        std::lock_guard<std::mutex> lock(mlAuditMutex);
+        lastMLRawProbabilities = probs;
+        lastMLThresholds = effectiveThresh;
+    }
+
     void detectProblemsWithML();  // ML-enhanced detection
     
     //==========================================================================
