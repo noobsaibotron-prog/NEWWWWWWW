@@ -6,6 +6,9 @@
 AIEqualizerAudioProcessorEditor::AIEqualizerAudioProcessorEditor(AIEqualizerAudioProcessor& p)
     : AudioProcessorEditor(&p), processor(p)
 {
+    // Force Deep Crimson theme on startup — ThemeManager default is already DeepCrimson
+    // but we call setTheme explicitly to ensure all listeners fire and colors are applied.
+    ThemeManager::getInstance().setTheme(ThemeID::DeepCrimson);
     setLookAndFeel(&lookAndFeel);
 
     // Attach OpenGL context to this top-level component.
