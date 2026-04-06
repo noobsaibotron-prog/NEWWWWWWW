@@ -1,0 +1,57 @@
+skill_test_record:
+  skill_name: "ai-integration-audit"
+  skill_version: "1.1"
+  skill_category: "capacity-uplift"
+  date: "2026-04-04"
+  domain: "audio plugin ai integration"
+
+  artifact_under_review: "AI Equalizer Pro AI subsystem on review/codex-2026-04-01"
+  artifact_type: "code"
+  why_chosen: "Retest on the same real artifact after skill-promotion planning"
+
+  proof_map:
+    local_evidence:
+      - "processBlock calls lightweight AI setters and enqueues spectrum frames"
+      - "AI analysis runs on dedicated aiAnalysisThread"
+      - "SPSC queue mediates audio -> AI handoff"
+      - "plain shared fields remain in AIEngine (`enabled`, `thresholds` family)"
+    cross_artifact_evidence:
+      - "Verified call-chain from processBlock to enqueueAISpectrum to AI worker thread"
+      - "Verified distinction between blocking risk and shared-state hazard"
+    inferred_points:
+      - "Severity is better modeled as shared-state correctness risk rather than direct audio-thread blocking"
+
+  boundary_flags:
+    - ""
+
+  findings:
+    correct:
+      - "The promoted audit model should distinguish SPSC queue handoff from direct inference reachability"
+      - "The promoted audit model should identify shared-state hazards without overclaiming direct RT blocking"
+    missed:
+      - ""
+    overstated:
+      - ""
+    unverified:
+      - "Cross-codebase generalization remains unproven"
+
+  weakness_classification:
+    - type: "boundary weakness"
+      description: "Previously observed weakness corrected at the model level"
+      severity: "resolved"
+      recurring: false
+
+  lesson: "A stronger AI integration audit must separate blocking, reachability, and shared-state correctness."
+  recommendation: "consolidate"
+
+  promotion_justification:
+    weakness_targeted: "already addressed in planned v1.1"
+    times_observed: 1
+    proposed_module: "none"
+    why_now: "Retest record confirms the intended promotion direction"
+
+  retest_requirement:
+    known_artifact_required: true
+    new_artifact_required: false
+
+  governance_state_after_test: "validated"
