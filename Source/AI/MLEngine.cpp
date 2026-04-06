@@ -87,14 +87,14 @@ MLEngine::MLEngine()
 {
     // Initialize base thresholds for each problem type
     baseThresholds = {{
-        0.3f,   // Resonance
-        0.35f,  // Harshness
-        0.4f,   // Muddiness
-        0.35f,  // Sibilance
-        0.4f,   // Boominess
-        0.35f,  // Thinness
-        0.4f,   // BoxyMidrange
-        0.2f    // Clipping
+        0.20f,  // Resonance     — conservative (weak class, retrain planned)
+        0.50f,  // Harshness     — conservative (cross-fire absorber)
+        0.30f,  // Muddiness     — shipping
+        0.25f,  // Sibilance     — shipping
+        0.30f,  // Boominess     — shipping
+        0.50f,  // Thinness      — conservative (weak class, retrain planned)
+        0.30f,  // BoxyMidrange  — shipping
+        0.40f   // Clipping      — conservative
     }};
     
     // Problem frequency ranges
