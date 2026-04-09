@@ -89,18 +89,18 @@ public:
         addAndMakeVisible(applyButton);
         
         // Initialize quality sliders - Main qualities
-        setupQualitySlider(SemanticEQEngine::SemanticQuality::Air, "AIR", "Aria", 
-                          juce::Colour(0xFF4A9FD9), "High frequency sparkle and openness");
+        setupQualitySlider(SemanticEQEngine::SemanticQuality::Air, "AIR", "Aria",
+                          juce::Colour(0xFF60D4E8), "High frequency sparkle and openness");
         setupQualitySlider(SemanticEQEngine::SemanticQuality::Warmth, "WARMTH", "Calore",
-                          juce::Colour(0xFFE67E22), "Low-mid fullness, analog feel");
+                          juce::Colour(0xFFE8A030), "Low-mid fullness, analog feel");
         setupQualitySlider(SemanticEQEngine::SemanticQuality::Punch, "PUNCH", "Punch",
-                          juce::Colour(0xFFE74C3C), "Attack and percussive impact");
+                          juce::Colour(0xFFE86060), "Attack and percussive impact");
         setupQualitySlider(SemanticEQEngine::SemanticQuality::Clarity, "CLARITY", "Chiarezza",
-                          juce::Colour(0xFF2ECC71), "Definition, reduced muddiness");
+                          juce::Colour(0xFF5ED4A0), "Definition, reduced muddiness");
         setupQualitySlider(SemanticEQEngine::SemanticQuality::Body, "BODY", "Corpo",
-                          juce::Colour(0xFF9B59B6), "Weight and substance");
+                          juce::Colour(0xFF4AA8D4), "Weight and substance");
         setupQualitySlider(SemanticEQEngine::SemanticQuality::Brilliance, "BRILLIANCE", "Brillantezza",
-                          juce::Colour(0xFF00BCD4), "Crystal clear highs");
+                          juce::Colour(0xFF60D4E8), "Crystal clear highs");
         
         // Secondary qualities (collapsible)
         setupQualitySlider(SemanticEQEngine::SemanticQuality::Smoothness, "SMOOTH", "Morbido",
@@ -201,59 +201,114 @@ public:
             }
         }
 
-        // Draw active quality visualizer
-        drawQualityVisualizer(g);
+        // Draw active quality visualizer (only in full mode, not compact)
+        if (getHeight() >= 200)
+            drawQualityVisualizer(g);
     }
     
     void resized() override
     {
-        auto bounds = getLocalBounds().reduced(12);
-        
-        // Title area
-        titleLabel.setBounds(bounds.removeFromTop(20));
-        subtitleLabel.setBounds(bounds.removeFromTop(16));
-        bounds.removeFromTop(8);
-        
-        // Command input area
-        auto inputRow = bounds.removeFromTop(28);
-        applyButton.setBounds(inputRow.removeFromRight(60).reduced(2));
-        commandInput.setBounds(inputRow.reduced(0, 2));
-        bounds.removeFromTop(10);
-        
-        // Quality sliders
-        int sliderHeight = 40;
-        for (auto& slider : qualitySliders)
+        auto bounds = getLocalBounds();
+        const bool compact = bounds.getHeight() < 200;
+
+        if (compact)
         {
-            slider.bounds = bounds.removeFromTop(sliderHeight);
-            slider.slider->setBounds(slider.bounds.reduced(4));
-            
-            // Position label to the left
-            auto labelBounds = slider.bounds.removeFromLeft(70);
-            slider.label->setBounds(labelBounds);
+            // ── COMPACT MODE (bottom panel) ──
+            bounds.reduce(6, 4);
+
+            // Hide non-essential elements
+            titleLabel.setVisible(false);
+            subtitleLabel.setVisible(false);
+            intensitySlider.setVisible(false);
+            intensityLabel.setVisible(false);
+            resetButton.setVisible(false);
+            morphButton.setVisible(false);
+            statusLabel.setVisible(false);
+            for (auto& btn : presetButtons) btn->setVisible(false);
+
+            // Input row (compact)
+            auto inputRow = bounds.removeFromTop(22);
+            applyButton.setBounds(inputRow.removeFromRight(52).reduced(1));
+            commandInput.setBounds(inputRow.reduced(0, 1));
+            bounds.removeFromTop(3);
+
+            // Quality sliders — compact rows (16px each)
+            int sliderH = 16;
+            for (auto& qs : qualitySliders)
+            {
+                if (bounds.getHeight() < sliderH)
+                    break;
+
+                auto row = bounds.removeFromTop(sliderH);
+                qs.label->setBounds(row.removeFromLeft(58));
+                qs.label->setVisible(true);
+                qs.slider->setBounds(row);
+                qs.slider->setVisible(true);
+                qs.slider->setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
+                qs.bounds = row;
+                bounds.removeFromTop(1);
+            }
         }
-        
-        bounds.removeFromTop(8);
-        
-        // Intensity slider
-        auto intensityRow = bounds.removeFromTop(24);
-        intensityLabel.setBounds(intensityRow.removeFromLeft(60));
-        intensitySlider.setBounds(intensityRow);
-        bounds.removeFromTop(8);
-        
-        // Preset buttons
-        auto presetRow = bounds.removeFromTop(26);
-        int presetW = (presetRow.getWidth() - 8) / 4;
-        for (auto& btn : presetButtons)
+        else
         {
-            btn->setBounds(presetRow.removeFromLeft(presetW).reduced(2));
+            // ── FULL MODE (tall panel) ──
+            bounds.reduce(12, 0);
+            titleLabel.setVisible(true);
+            subtitleLabel.setVisible(true);
+            intensitySlider.setVisible(true);
+            intensityLabel.setVisible(true);
+            resetButton.setVisible(true);
+            morphButton.setVisible(true);
+            statusLabel.setVisible(true);
+            for (auto& btn : presetButtons) btn->setVisible(true);
+
+            // Title area
+            titleLabel.setBounds(bounds.removeFromTop(20));
+            subtitleLabel.setBounds(bounds.removeFromTop(16));
+            bounds.removeFromTop(8);
+
+            // Command input area
+            auto inputRow = bounds.removeFromTop(28);
+            applyButton.setBounds(inputRow.removeFromRight(60).reduced(2));
+            commandInput.setBounds(inputRow.reduced(0, 2));
+            bounds.removeFromTop(10);
+
+            // Quality sliders
+            int sliderHeight = 40;
+            for (auto& slider : qualitySliders)
+            {
+                slider.bounds = bounds.removeFromTop(sliderHeight);
+                slider.slider->setBounds(slider.bounds.reduced(4));
+                slider.slider->setTextBoxStyle(juce::Slider::TextBoxRight, false, 45, 18);
+                slider.slider->setVisible(true);
+                auto labelBounds = slider.bounds.removeFromLeft(70);
+                slider.label->setBounds(labelBounds);
+                slider.label->setVisible(true);
+            }
+
+            bounds.removeFromTop(8);
+
+            // Intensity slider
+            auto intensityRow = bounds.removeFromTop(24);
+            intensityLabel.setBounds(intensityRow.removeFromLeft(60));
+            intensitySlider.setBounds(intensityRow);
+            bounds.removeFromTop(8);
+
+            // Preset buttons
+            auto presetRow = bounds.removeFromTop(26);
+            int presetW = (presetRow.getWidth() - 8) / 4;
+            for (auto& btn : presetButtons)
+            {
+                btn->setBounds(presetRow.removeFromLeft(presetW).reduced(2));
+            }
+            bounds.removeFromTop(8);
+
+            // Bottom buttons
+            auto bottomRow = bounds.removeFromTop(28);
+            resetButton.setBounds(bottomRow.removeFromLeft(60).reduced(2));
+            morphButton.setBounds(bottomRow.removeFromLeft(60).reduced(2));
+            statusLabel.setBounds(bottomRow);
         }
-        bounds.removeFromTop(8);
-        
-        // Bottom buttons
-        auto bottomRow = bounds.removeFromTop(28);
-        resetButton.setBounds(bottomRow.removeFromLeft(60).reduced(2));
-        morphButton.setBounds(bottomRow.removeFromLeft(60).reduced(2));
-        statusLabel.setBounds(bottomRow);
     }
     
     void timerCallback() override
@@ -378,8 +433,8 @@ private:
         data.slider->setValue(0.0);
         data.slider->setTextBoxStyle(juce::Slider::TextBoxRight, false, 38, 16);
         data.slider->setColour(juce::Slider::thumbColourId, color);
-        data.slider->setColour(juce::Slider::trackColourId, ModernLookAndFeel::Colors::bgLight);
-        data.slider->setColour(juce::Slider::backgroundColourId, ModernLookAndFeel::Colors::bgDark);
+        data.slider->setColour(juce::Slider::trackColourId, color);  // colored track per quality
+        data.slider->setColour(juce::Slider::backgroundColourId, color.withAlpha(0.15f));
         data.slider->setColour(juce::Slider::textBoxTextColourId, ModernLookAndFeel::Colors::textLabel);
         data.slider->setColour(juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
         data.slider->setTooltip(tooltip);

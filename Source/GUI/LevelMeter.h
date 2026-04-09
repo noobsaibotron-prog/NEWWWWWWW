@@ -97,9 +97,9 @@ public:
         // dB readout at top
         g.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
         float currentMaxDB = std::max(currentLeftDB, currentRightDB);
-        juce::String dbText = currentMaxDB > -60.0f 
+        juce::String dbText = currentMaxDB > -60.0f
             ? juce::String(currentMaxDB, 1) + " dB"
-            : "-∞";
+            : "-- dB";
         
         g.setColour(clipped ? juce::Colours::red : ModernLookAndFeel::Colors::textBright);
         g.drawText(dbText, inner.removeFromTop(14).toNearestInt(), juce::Justification::centred);

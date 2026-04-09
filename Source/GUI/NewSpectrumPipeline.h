@@ -38,7 +38,7 @@ public:
         : preEqFIFO (preEqFifo),
           postEqFIFO (postEqFifo),
           fftSize (1u << fftOrder),
-          hopSize (fftSize / 2),
+          hopSize (fftSize / 4),  // 75% overlap: ~47 hops/sec at 48kHz/4096 (was 50% / ~23 hops/sec)
           sr (sampleRate),
           preCore  (std::make_unique<SpectrumAnalyzerCore> (fftOrder, sampleRate)),
           postCore (std::make_unique<SpectrumAnalyzerCore> (fftOrder, sampleRate)),

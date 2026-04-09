@@ -19,52 +19,56 @@ public:
     
     struct Colors
     {
-        // === BACKGROUNDS ===
-        inline static const juce::Colour bgDark        { 0xFF16161E };
-        inline static const juce::Colour bgMid         { 0xFF1E1E28 };
-        inline static const juce::Colour bgLight       { 0xFF282834 };
-        inline static const juce::Colour bgLighter     { 0xFF32323E };
-        inline static const juce::Colour bgPanel       { 0xFF24242E };
-        
-        // === ACCENTS ===
-        inline static const juce::Colour accentBlue    { 0xFF4A90D9 };
-        inline static const juce::Colour accentCyan    { 0xFF5BA8E0 };
-        inline static const juce::Colour accentYellow  { 0xFFD4A843 };
-        inline static const juce::Colour accentGreen   { 0xFF4CAF50 };
-        inline static const juce::Colour accentOrange  { 0xFFFF9800 };
-        inline static const juce::Colour accentRed     { 0xFFE53935 };
-        
-        // === TEXT ===
-        inline static const juce::Colour textBright    { 0xFFFFFFFF };
-        inline static const juce::Colour textPrimary   { 0xFFD0D0D8 };
-        inline static const juce::Colour textSecondary { 0xFF808090 };
-        inline static const juce::Colour textMuted     { 0xFF505060 };
-        inline static const juce::Colour textLabel     { 0xFF909098 };
-        
-        // === SPECTRUM ===
-        inline static const juce::Colour spectrumFill  { 0xFF4A7DB8 };
-        inline static const juce::Colour spectrumLine  { 0xFF6AAAE8 };
-        inline static const juce::Colour eqCurve       { 0xFFD0D0D8 };
-        inline static const juce::Colour grid          { 0xFF252530 };
-        inline static const juce::Colour gridMajor     { 0xFF2A2A38 };
-        
-        // === KNOBS ===
-        inline static const juce::Colour knobOuter     { 0xFF585868 };
-        inline static const juce::Colour knobOuterLight{ 0xFF6A6A7A };
-        inline static const juce::Colour knobOuterDark { 0xFF404050 };
-        inline static const juce::Colour knobInner     { 0xFF2A2A34 };
-        inline static const juce::Colour knobPointer   { 0xFFE0E0E8 };
-        inline static const juce::Colour knobGrip      { 0xFF404048 };
-        
-        // === BAND COLORS ===
-        inline static const juce::Colour band1         { 0xFFD4A843 };
-        inline static const juce::Colour band2         { 0xFF4A90D9 };
-        inline static const juce::Colour band3         { 0xFF5BA8E0 };
-        inline static const juce::Colour band4         { 0xFF4CAF50 };
-        inline static const juce::Colour band5         { 0xFF9C27B0 };
-        inline static const juce::Colour band6         { 0xFFE91E63 };
-        inline static const juce::Colour band7         { 0xFFFF5722 };
-        inline static const juce::Colour band8         { 0xFFD4A843 };
+        // === BACKGROUNDS (Liquid Intelligence: warm-tinted deep darks) ===
+        inline static const juce::Colour bgDark        { 0xFF0E0F14 };
+        inline static const juce::Colour bgMid         { 0xFF181A22 };
+        inline static const juce::Colour bgLight       { 0xFF22242E };
+        inline static const juce::Colour bgLighter     { 0xFF2A2C38 };
+        inline static const juce::Colour bgPanel       { 0xFF1C1E28 };
+
+        // === ACCENTS (Amber signature + functional states) ===
+        inline static const juce::Colour accentBlue    { 0xFF60A5FA }; // info/selection
+        inline static const juce::Colour accentCyan    { 0xFF5BA8E0 }; // spectrum line
+        inline static const juce::Colour accentYellow  { 0xFFE8A030 }; // AI amber signature
+        inline static const juce::Colour accentGreen   { 0xFF4ADE80 }; // active/ok
+        inline static const juce::Colour accentOrange  { 0xFFF4B84A }; // amber bright (hover)
+        inline static const juce::Colour accentRed     { 0xFFEF4444 }; // alert/clip
+        // AI amber convenience aliases
+        inline static const juce::Colour amber         { 0xFFE8A030 };
+        inline static const juce::Colour amberBright   { 0xFFF4B84A };
+        inline static const juce::Colour amberDim      { 0xFF8B6420 };
+
+        // === TEXT (warm tint, not pure white) ===
+        inline static const juce::Colour textBright    { 0xFFF0EDE8 };
+        inline static const juce::Colour textPrimary   { 0xFFE8E6E2 };
+        inline static const juce::Colour textSecondary { 0xFF8A8880 };
+        inline static const juce::Colour textMuted     { 0xFF56544E };
+        inline static const juce::Colour textLabel     { 0xFF8A8880 };
+
+        // === SPECTRUM (cool blue — contrast with warm amber UI) ===
+        inline static const juce::Colour spectrumFill  { 0xFF1A3A5A };
+        inline static const juce::Colour spectrumLine  { 0xFF3A8AC4 };
+        inline static const juce::Colour eqCurve       { 0xFFE0E0E8 };
+        inline static const juce::Colour grid          { 0xFF1A1C26 };
+        inline static const juce::Colour gridMajor     { 0xFF22242E };
+
+        // === KNOBS (flat minimal arc style) ===
+        inline static const juce::Colour knobOuter     { 0xFF2A2C38 }; // track arc
+        inline static const juce::Colour knobOuterLight{ 0xFF2A2C38 };
+        inline static const juce::Colour knobOuterDark { 0xFF22242E };
+        inline static const juce::Colour knobInner     { 0xFF181A22 }; // body fill
+        inline static const juce::Colour knobPointer   { 0xFFE8E6E2 }; // dot indicator
+        inline static const juce::Colour knobGrip      { 0xFF2A2C38 }; // unused in new style
+
+        // === BAND COLORS (distinct, no amber — amber is reserved for AI) ===
+        inline static const juce::Colour band1         { 0xFF4AA8D4 }; // azure
+        inline static const juce::Colour band2         { 0xFF5ED4A0 }; // mint
+        inline static const juce::Colour band3         { 0xFFD46A8A }; // rose
+        inline static const juce::Colour band4         { 0xFFA480E0 }; // lavender
+        inline static const juce::Colour band5         { 0xFFE8D44A }; // yellow
+        inline static const juce::Colour band6         { 0xFF4AD4D4 }; // teal
+        inline static const juce::Colour band7         { 0xFFD48A5A }; // terracotta
+        inline static const juce::Colour band8         { 0xFF80C0E0 }; // sky
         
         static juce::Colour getBandColor(int idx) {
             const juce::Colour cols[] = { band1, band2, band3, band4, band5, band6, band7, band8 };
@@ -144,11 +148,11 @@ private:
     bool highContrastMode = false;
 
     //==========================================================================
-    // METALLIC KNOB - TDR Nova Style
+    // FLAT ARC KNOB — Liquid Intelligence Style
     //==========================================================================
     void drawRotarySlider(juce::Graphics& g, int x, int y, int w, int h,
                           float sliderPos, float startAngle, float endAngle,
-                          juce::Slider&) override
+                          juce::Slider& slider) override
     {
         auto bounds = juce::Rectangle<int>(x, y, w, h).toFloat().reduced(2);
         auto radius = juce::jmin(bounds.getWidth(), bounds.getHeight()) / 2.0f;
@@ -156,82 +160,52 @@ private:
         auto cy = bounds.getCentreY();
         auto angle = startAngle + sliderPos * (endAngle - startAngle);
 
-        // === OUTER METALLIC RING ===
-        float outerR = radius;
-        float innerR = radius * 0.70f;
-        
-        // 3D metallic gradient (top-left light, bottom-right dark)
-        juce::ColourGradient metalGrad(
-            Colors::knobOuterLight, cx - outerR * 0.7f, cy - outerR * 0.7f,
-            Colors::knobOuterDark, cx + outerR * 0.7f, cy + outerR * 0.7f, false);
-        g.setGradientFill(metalGrad);
-        g.fillEllipse(cx - outerR, cy - outerR, outerR * 2, outerR * 2);
-        
-        // Outer highlight ring
-        g.setColour(Colors::knobOuterLight.withAlpha(0.4f));
-        g.drawEllipse(cx - outerR + 0.5f, cy - outerR + 0.5f, (outerR - 0.5f) * 2, (outerR - 0.5f) * 2, 1.0f);
-        
-        // Inner shadow
-        g.setColour(Colors::knobOuterDark.darker(0.3f));
-        g.drawEllipse(cx - innerR - 2, cy - innerR - 2, (innerR + 2) * 2, (innerR + 2) * 2, 2.0f);
+        // Determine accent color: use slider's trackColour if set, else amber
+        auto accentCol = slider.findColour(juce::Slider::thumbColourId);
+        if (accentCol == juce::Colours::transparentBlack || accentCol == Colors::accentBlue)
+            accentCol = Colors::amber;
 
-        // === GRIP LINES (radial texture) ===
-        g.setColour(Colors::knobGrip);
-        int numGrips = 32;
-        float gripR1 = radius * 0.76f;
-        float gripR2 = radius * 0.94f;
-        for (int i = 0; i < numGrips; ++i)
+        // === FLAT CIRCLE BODY ===
+        g.setColour(Colors::knobInner);
+        g.fillEllipse(cx - radius, cy - radius, radius * 2.0f, radius * 2.0f);
+
+        // Subtle border
+        g.setColour(juce::Colour(0x10FFFFFF));
+        g.drawEllipse(cx - radius, cy - radius, radius * 2.0f, radius * 2.0f, 1.0f);
+
+        // === TRACK ARC (270 deg, background) ===
+        float arcR = radius * 0.82f;
+        float arcThickness = juce::jmax(2.0f, radius * 0.1f);
         {
-            float a = juce::MathConstants<float>::twoPi * i / numGrips;
-            float x1 = cx + std::cos(a) * gripR1;
-            float y1 = cy + std::sin(a) * gripR1;
-            float x2 = cx + std::cos(a) * gripR2;
-            float y2 = cy + std::sin(a) * gripR2;
-            g.drawLine(x1, y1, x2, y2, 1.2f);
+            juce::Path arcBg;
+            arcBg.addCentredArc(cx, cy, arcR, arcR, 0, startAngle, endAngle, true);
+            g.setColour(Colors::knobOuter);
+            g.strokePath(arcBg, juce::PathStrokeType(arcThickness, juce::PathStrokeType::curved,
+                                                      juce::PathStrokeType::rounded));
         }
 
-        // === INNER DARK CENTER ===
-        juce::ColourGradient innerGrad(
-            Colors::knobInner.brighter(0.15f), cx, cy - innerR,
-            Colors::knobInner.darker(0.15f), cx, cy + innerR, false);
-        g.setGradientFill(innerGrad);
-        g.fillEllipse(cx - innerR, cy - innerR, innerR * 2, innerR * 2);
-        
-        // Inner ring highlight
-        g.setColour(Colors::bgDark.brighter(0.1f));
-        g.drawEllipse(cx - innerR, cy - innerR, innerR * 2, innerR * 2, 1.5f);
-
-        // === VALUE ARC ===
-        float arcR = radius * 0.52f;
-        juce::Path arcBg;
-        arcBg.addCentredArc(cx, cy, arcR, arcR, 0, startAngle, endAngle, true);
-        g.setColour(Colors::bgDark);
-        g.strokePath(arcBg, juce::PathStrokeType(3.5f, juce::PathStrokeType::curved,
-                                                  juce::PathStrokeType::rounded));
-        
-        // Value arc (filled portion)
+        // === VALUE ARC (filled portion with glow) ===
         if (sliderPos > 0.005f)
         {
             juce::Path arcVal;
             arcVal.addCentredArc(cx, cy, arcR, arcR, 0, startAngle, angle, true);
-            g.setColour(Colors::accentBlue);
-            g.strokePath(arcVal, juce::PathStrokeType(3.5f, juce::PathStrokeType::curved,
-                                                      juce::PathStrokeType::rounded));
+
+            // Glow layer (wider, semi-transparent)
+            g.setColour(accentCol.withAlpha(0.2f));
+            g.strokePath(arcVal, juce::PathStrokeType(arcThickness + 3.0f, juce::PathStrokeType::curved,
+                                                       juce::PathStrokeType::rounded));
+            // Main arc
+            g.setColour(accentCol);
+            g.strokePath(arcVal, juce::PathStrokeType(arcThickness, juce::PathStrokeType::curved,
+                                                       juce::PathStrokeType::rounded));
         }
 
-        // === POINTER LINE ===
-        float ptrInner = innerR * 0.25f;
-        float ptrOuter = innerR * 0.75f;
-        float px1 = cx + std::sin(angle) * ptrInner;
-        float py1 = cy - std::cos(angle) * ptrInner;
-        float px2 = cx + std::sin(angle) * ptrOuter;
-        float py2 = cy - std::cos(angle) * ptrOuter;
-        
+        // === DOT INDICATOR (white, on the arc position) ===
+        float dotR = juce::jmax(2.5f, radius * 0.1f);
+        float dotX = cx + std::sin(angle) * arcR;
+        float dotY = cy - std::cos(angle) * arcR;
         g.setColour(Colors::knobPointer);
-        g.drawLine(px1, py1, px2, py2, 2.5f);
-        
-        // Pointer end dot
-        g.fillEllipse(px2 - 3.0f, py2 - 3.0f, 6.0f, 6.0f);
+        g.fillEllipse(dotX - dotR, dotY - dotR, dotR * 2.0f, dotR * 2.0f);
     }
 
     //==========================================================================
@@ -239,33 +213,44 @@ private:
     //==========================================================================
     void drawLinearSlider(juce::Graphics& g, int x, int y, int w, int h,
                           float sliderPos, float, float,
-                          const juce::Slider::SliderStyle style, juce::Slider&) override
+                          const juce::Slider::SliderStyle style, juce::Slider& slider) override
     {
         if (style == juce::Slider::LinearHorizontal)
         {
+            // Use per-slider colors if set, otherwise fall back to defaults
+            auto trackColor = slider.findColour(juce::Slider::trackColourId);
+            auto bgColor    = slider.findColour(juce::Slider::backgroundColourId);
+            auto thumbColor = slider.findColour(juce::Slider::thumbColourId);
+
+            // If background wasn't explicitly set, use bgDark
+            if (bgColor == juce::Slider().findColour(juce::Slider::backgroundColourId))
+                bgColor = Colors::bgDark;
+            // If track wasn't explicitly set, use amber
+            if (trackColor == juce::Slider().findColour(juce::Slider::trackColourId))
+                trackColor = Colors::amber;
+            // If thumb wasn't explicitly set, use track color
+            if (thumbColor == juce::Slider().findColour(juce::Slider::thumbColourId))
+                thumbColor = trackColor;
+
             float trackH = 4.0f;
             float trackY = y + (h - trackH) / 2.0f;
 
-            g.setColour(Colors::bgDark);
+            g.setColour(bgColor);
             g.fillRoundedRectangle((float)x, trackY, (float)w, trackH, 2.0f);
 
             float fillW = sliderPos - x;
             if (fillW > 0)
             {
-                g.setColour(Colors::accentBlue);
+                g.setColour(trackColor);
                 g.fillRoundedRectangle((float)x, trackY, fillW, trackH, 2.0f);
             }
 
-            // Metallic thumb
-            float thumbR = 7.0f;
-            juce::ColourGradient thumbGrad(
-                Colors::knobOuterLight, sliderPos - thumbR, trackY,
-                Colors::knobOuterDark, sliderPos + thumbR, trackY + thumbR * 2, false);
-            g.setGradientFill(thumbGrad);
+            // Flat thumb with border
+            float thumbR = 6.0f;
+            g.setColour(Colors::bgMid);
             g.fillEllipse(sliderPos - thumbR, trackY + trackH/2 - thumbR, thumbR*2, thumbR*2);
-            
-            g.setColour(Colors::textBright);
-            g.fillEllipse(sliderPos - 2.0f, trackY + trackH/2 - 2.0f, 4.0f, 4.0f);
+            g.setColour(thumbColor);
+            g.drawEllipse(sliderPos - thumbR, trackY + trackH/2 - thumbR, thumbR*2, thumbR*2, 1.5f);
         }
     }
 
@@ -372,8 +357,8 @@ private:
         g.setColour(juce::Colour(0xF0202030));
         g.fillRoundedRectangle(bounds, 6.0f);
 
-        // Subtle border
-        g.setColour(Colors::accentBlue.withAlpha(0.35f));
+        // Subtle border (amber accent)
+        g.setColour(Colors::amber.withAlpha(0.25f));
         g.drawRoundedRectangle(bounds.reduced(0.5f), 6.0f, 1.0f);
 
         // Text

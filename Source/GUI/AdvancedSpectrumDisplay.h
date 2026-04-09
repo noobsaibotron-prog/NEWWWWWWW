@@ -1225,33 +1225,33 @@ private:
         }
         if (!cachedPreLine.isEmpty())
         {
-            ig.setColour(ModernLookAndFeel::Colors::textSecondary.withAlpha(0.55f));
-            ig.strokePath(cachedPreLine, juce::PathStrokeType(1.4f));
+            ig.setColour(ModernLookAndFeel::Colors::textSecondary.withAlpha(0.35f));
+            ig.strokePath(cachedPreLine, juce::PathStrokeType(0.8f));
         }
 
-        // Post line
+        // Post line — thin, clean
         if (!cachedPostLine.isEmpty())
         {
             juce::Colour front = ModernLookAndFeel::Colors::accentGreen.brighter(0.05f);
             juce::ColourGradient postGrad(
-                ModernLookAndFeel::Colors::accentYellow.withAlpha(0.85f), 0, graphBounds.getY(),
-                front.withAlpha(0.85f), 0, graphBounds.getBottom(), false);
+                ModernLookAndFeel::Colors::accentYellow.withAlpha(0.6f), 0, graphBounds.getY(),
+                front.withAlpha(0.6f), 0, graphBounds.getBottom(), false);
             ig.setGradientFill(postGrad);
-            ig.strokePath(cachedPostLine, juce::PathStrokeType(1.8f));
+            ig.strokePath(cachedPostLine, juce::PathStrokeType(1.0f));
         }
 
         // Delta line
         if (!cachedDeltaLine.isEmpty())
         {
-            ig.setColour(ModernLookAndFeel::Colors::accentCyan.withAlpha(0.8f));
-            ig.strokePath(cachedDeltaLine, juce::PathStrokeType(1.6f));
+            ig.setColour(ModernLookAndFeel::Colors::accentCyan.withAlpha(0.5f));
+            ig.strokePath(cachedDeltaLine, juce::PathStrokeType(1.0f));
         }
 
         // Peak-hold line
         if (!cachedPeakLine.isEmpty())
         {
-            ig.setColour(ModernLookAndFeel::Colors::accentOrange.withAlpha(0.9f));
-            ig.strokePath(cachedPeakLine, juce::PathStrokeType(1.2f));
+            ig.setColour(ModernLookAndFeel::Colors::accentOrange.withAlpha(0.6f));
+            ig.strokePath(cachedPeakLine, juce::PathStrokeType(0.8f));
         }
     }
 
@@ -1353,7 +1353,7 @@ private:
             }
 
             g.setColour(ModernLookAndFeel::Colors::accentYellow.withAlpha(0.6f));
-            g.strokePath(cachedCapturedDash, juce::PathStrokeType(1.5f));
+            g.strokePath(cachedCapturedDash, juce::PathStrokeType(0.8f));
         }
 
         //----------------------------------------------------------------------
@@ -1383,7 +1383,7 @@ private:
             g.fillPath(frozenFillPath);
 
             g.setColour(ModernLookAndFeel::Colors::accentBlue);
-            g.strokePath(frozenLinePath, juce::PathStrokeType(2.0f));
+            g.strokePath(frozenLinePath, juce::PathStrokeType(1.0f));
 
             g.setColour(ModernLookAndFeel::Colors::accentBlue);
             g.setFont(juce::Font(juce::FontOptions().withHeight(12.0f)));
@@ -1452,20 +1452,15 @@ private:
 
         if (!isDraggingBand)
         {
-            // === GLOW LAYER 1: Wide soft outer glow ===
-            g.setColour(ModernLookAndFeel::Colors::eqCurve.brighter(0.2f).withAlpha(0.08f));
-            g.strokePath(cachedEQCurve, juce::PathStrokeType(10.0f, juce::PathStrokeType::mitered,
-                                                               juce::PathStrokeType::rounded));
-
-            // === GLOW LAYER 2: Medium glow ===
-            g.setColour(ModernLookAndFeel::Colors::eqCurve.brighter(0.2f).withAlpha(0.16f));
-            g.strokePath(cachedEQCurve, juce::PathStrokeType(5.0f, juce::PathStrokeType::mitered,
+            // === SUBTLE GLOW: thin soft halo ===
+            g.setColour(ModernLookAndFeel::Colors::eqCurve.brighter(0.2f).withAlpha(0.06f));
+            g.strokePath(cachedEQCurve, juce::PathStrokeType(4.0f, juce::PathStrokeType::mitered,
                                                                juce::PathStrokeType::rounded));
         }
 
-        // === MAIN CURVE: Bright crisp line ===
-        g.setColour(ModernLookAndFeel::Colors::eqCurve.brighter(0.5f));
-        g.strokePath(cachedEQCurve, juce::PathStrokeType(2.5f, juce::PathStrokeType::mitered,
+        // === MAIN CURVE: Clean thin line (premium, understated) ===
+        g.setColour(ModernLookAndFeel::Colors::eqCurve.withAlpha(0.85f));
+        g.strokePath(cachedEQCurve, juce::PathStrokeType(1.4f, juce::PathStrokeType::mitered,
                                                            juce::PathStrokeType::rounded));
     }
 

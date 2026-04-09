@@ -15,6 +15,10 @@ AIEqualizerAudioProcessorEditor::AIEqualizerAudioProcessorEditor(AIEqualizerAudi
     openGLContext.setComponentPaintingEnabled(true);
     openGLContext.setContinuousRepainting(false);
     openGLContext.setRenderer(this);
+    // 4x MSAA for smooth spectrum lines and anti-aliased fills
+    juce::OpenGLPixelFormat fmt;
+    fmt.multisamplingLevel = 4;
+    openGLContext.setPixelFormat(fmt);
     openGLContext.attachTo(*this);
 
     // Metrological 5-layer spectrum pipeline
@@ -86,18 +90,20 @@ AIEqualizerAudioProcessorEditor::AIEqualizerAudioProcessorEditor(AIEqualizerAudi
     };
     
     // Tab buttons for switching between AI Detect and Semantic panels
-    aiTabBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xFF4A9FD9));
-    aiTabBtn.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
+    aiTabBtn.setColour(juce::TextButton::buttonColourId,
+        juce::Colour(0xFF232028).interpolatedWith(ModernLookAndFeel::Colors::amber, 0.08f));
+    aiTabBtn.setColour(juce::TextButton::textColourOffId, ModernLookAndFeel::Colors::amber);
     aiTabBtn.setTooltip("AI Problem Detection - Automatic issue identification");
     aiTabBtn.onClick = [this]() { switchRightTab(0); };
     addAndMakeVisible(aiTabBtn);
-    
-    semanticTabBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xFF333333));
-    semanticTabBtn.setColour(juce::TextButton::textColourOffId, juce::Colour(0xFFAAAAAA));
+
+    semanticTabBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xFF222228));
+    semanticTabBtn.setColour(juce::TextButton::textColourOffId, juce::Colour(0xFF56544E));
     semanticTabBtn.setTooltip("Semantic Control - Shape sound with words like 'Air', 'Warmth', 'Punch'");
     semanticTabBtn.onClick = [this]() { switchRightTab(1); };
     addAndMakeVisible(semanticTabBtn);
 
+    optionsBtn.setButtonText("\xe2\x9a\x99");  // ⚙ gear
     optionsBtn.setTooltip("Global options and analyzer settings");
     optionsBtn.onClick = [this]() { showOptionsMenu(); };
     addAndMakeVisible(optionsBtn);
@@ -335,24 +341,25 @@ void AIEqualizerAudioProcessorEditor::createHeader()
     // AI Panel toggle
     aiPanelToggle.setButtonText("AI");
     aiPanelToggle.setClickingTogglesState(true);
-    aiPanelToggle.setTooltip("Toggle AI panel");
+    aiPanelToggle.setToggleState(true, juce::dontSendNotification);
+    aiPanelToggle.setTooltip("AI Engine Active");
     aiPanelToggle.setColour(juce::TextButton::buttonColourId, ModernLookAndFeel::Colors::bgLighter);
-    aiPanelToggle.setColour(juce::TextButton::buttonOnColourId, ModernLookAndFeel::Colors::accentBlue);
+    aiPanelToggle.setColour(juce::TextButton::buttonOnColourId, ModernLookAndFeel::Colors::amber);
     aiPanelToggle.onClick = [this]() {
-        aiPanelVisible = aiPanelToggle.getToggleState();
-        resized();
+        // AI toggle now indicates AI engine state (panel is always visible)
+        repaint();
     };
     addAndMakeVisible(aiPanelToggle);
 }
 
 void AIEqualizerAudioProcessorEditor::createControlPanel()
 {
-    // Logo (hidden in new layout)
+    // Logo — amber branding (matches mockup)
     logoLabel.setText("AI EQ PRO", juce::dontSendNotification);
-    logoLabel.setFont(juce::Font(juce::FontOptions().withHeight(20.0f).withStyle("Bold")));
-    logoLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textPrimary);
+    logoLabel.setFont(juce::Font(juce::FontOptions().withHeight(12.0f).withStyle("Bold")));
+    logoLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::amber);
+    logoLabel.setJustificationType(juce::Justification::centredLeft);
     addAndMakeVisible(logoLabel);
-    logoLabel.setVisible(false);
     
     subtitleLabel.setText("Intelligent Equalizer", juce::dontSendNotification);
     subtitleLabel.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
@@ -949,19 +956,22 @@ void AIEqualizerAudioProcessorEditor::showOptionsMenu()
 
 void AIEqualizerAudioProcessorEditor::paint(juce::Graphics& g)
 {
-    // Main background — subtle vertical gradient for depth
+    // Main background — radial gradient (Liquid Intelligence: deep center, darker edges)
     {
+        const float cx = static_cast<float>(getWidth()) * 0.5f;
+        const float cy = static_cast<float>(getHeight()) * 0.4f;
+        const float gradR = static_cast<float>(getWidth()) * 0.8f;
         juce::ColourGradient bg(
-            ModernLookAndFeel::Colors::bgDark, 0.0f, 0.0f,
-            ModernLookAndFeel::Colors::bgDark.darker(0.15f), 0.0f, static_cast<float>(getHeight()),
-            false);
+            juce::Colour(0xFF14151E), cx, cy,
+            juce::Colour(0xFF0A0B10), cx, cy + gradR,
+            true); // radial
         g.setGradientFill(bg);
         g.fillRect(getLocalBounds());
     }
 
     const float w = static_cast<float>(getWidth());
 
-    // === HEADER BAR (gradient + subtle inner shadow) ===
+    // === HEADER BAR (gradient + subtle inner shadow + dividers) ===
     {
         auto headerRect = juce::Rectangle<float>(0.0f, 0.0f, w, static_cast<float>(headerH));
         juce::ColourGradient headerGrad(
@@ -972,18 +982,48 @@ void AIEqualizerAudioProcessorEditor::paint(juce::Graphics& g)
         g.fillRect(headerRect);
 
         // Bottom edge highlight
-        g.setColour(ModernLookAndFeel::Colors::accentBlue.withAlpha(0.12f));
+        g.setColour(ModernLookAndFeel::Colors::amber.withAlpha(0.12f));
         g.fillRect(0.0f, static_cast<float>(headerH - 1), w, 1.0f);
 
         // Separator line
         g.setColour(ModernLookAndFeel::Colors::bgDark);
         g.fillRect(0.0f, static_cast<float>(headerH), w, 1.0f);
 
+        // Thin vertical dividers between header groups (mockup: 1px, 18px tall, centered)
+        auto divCol = juce::Colour(0xFFFFFFFF).withAlpha(0.12f);
+        float divH = 18.0f;
+        float divY = (static_cast<float>(headerH) - divH) / 2.0f;
+        g.setColour(divCol);
+
+        // Divider 1: after logo, before preset
+        float d1x = static_cast<float>(logoLabel.getRight()) + 2.0f;
+        g.fillRect(d1x, divY, 1.0f, divH);
+
+        // Divider 2: after preset nav, before A/B slots
+        float d2x = static_cast<float>(nextBtn.getRight()) + 4.0f;
+        g.fillRect(d2x, divY, 1.0f, divH);
+
+        // Divider 3: between PRE/POST/DELTA and phase combo
+        float d3x = static_cast<float>(phaseModeCombo.getRight()) + 4.0f;
+        g.fillRect(d3x, divY, 1.0f, divH);
+
+        // Divider 4: between phase combo and AI dot
+        float d4x = static_cast<float>(aiPanelToggle.getX()) - 4.0f;
+        g.fillRect(d4x, divY, 1.0f, divH);
     }
 
-    // === BOTTOM CONTROL BAR (gradient + top edge) ===
+    // === FOOTER BAR ===
     {
-        float cpY = static_cast<float>(getHeight() - controlH);
+        float ftY = static_cast<float>(getHeight() - footerH);
+        g.setColour(ModernLookAndFeel::Colors::bgPanel.darker(0.08f));
+        g.fillRect(0.0f, ftY, w, static_cast<float>(footerH));
+        g.setColour(juce::Colour(0xFF0A0A10));
+        g.fillRect(0.0f, ftY - 1.0f, w, 1.0f);
+    }
+
+    // === BOTTOM PANEL (gradient + top edge + vertical divider) ===
+    {
+        float cpY = static_cast<float>(getHeight() - footerH - controlH);
         auto bottomRect = juce::Rectangle<float>(0.0f, cpY, w, static_cast<float>(controlH));
 
         juce::ColourGradient bottomGrad(
@@ -993,23 +1033,18 @@ void AIEqualizerAudioProcessorEditor::paint(juce::Graphics& g)
         g.setGradientFill(bottomGrad);
         g.fillRect(bottomRect);
 
-        // Top edge — prominent accent separator (FabFilter-style divider)
+        // Top edge — amber accent separator
         g.setColour(juce::Colour(0xFF0A0A10));
         g.fillRect(0.0f, cpY - 1.0f, w, 2.0f);
-        g.setColour(ModernLookAndFeel::Colors::accentBlue.withAlpha(0.18f));
+        g.setColour(ModernLookAndFeel::Colors::amber.withAlpha(0.18f));
         g.fillRect(0.0f, cpY + 1.0f, w, 1.0f);
 
-        // Version text (bottom-right corner)
-        g.setColour(ModernLookAndFeel::Colors::textMuted.withAlpha(0.5f));
-        g.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
-        g.drawText("v2.1.1", getWidth() - 44, getHeight() - 14, 40, 12,
-                   juce::Justification::centredRight);
-
-        // Build marker — temporary, remove before release
-        g.setColour(ModernLookAndFeel::Colors::accentBlue.withAlpha(0.4f));
-        g.setFont(juce::Font(juce::FontOptions().withHeight(8.0f)));
-        g.drawText("V4", 4, getHeight() - 12, 16, 10,
-                   juce::Justification::centredLeft);
+        // Vertical divider between band controls (380px) and context panel
+        float divX = static_cast<float>(juce::jmin(380, getWidth() / 2));
+        g.setColour(juce::Colour(0xFF0A0A10));
+        g.fillRect(divX, cpY + 6.0f, 1.0f, static_cast<float>(controlH - 12));
+        g.setColour(ModernLookAndFeel::Colors::amber.withAlpha(0.1f));
+        g.fillRect(divX + 1.0f, cpY + 6.0f, 1.0f, static_cast<float>(controlH - 12));
     }
 }
 
@@ -1017,128 +1052,160 @@ void AIEqualizerAudioProcessorEditor::resized()
 {
     auto bounds = getLocalBounds();
 
-    // === HEADER (32px) ===
-    auto header = bounds.removeFromTop(headerH).reduced(4, 2);
-    // Left group: nav + preset
-    prevBtn.setBounds(header.removeFromLeft(24).reduced(1));
-    nextBtn.setBounds(header.removeFromLeft(24).reduced(1));
-    header.removeFromLeft(4);
-    presetBox.setBounds(header.removeFromLeft(160).reduced(0, 2));
-    header.removeFromLeft(2);
-    savePresetBtn.setBounds(header.removeFromLeft(40).reduced(1));
-    header.removeFromLeft(6);
-    // Center group: A/B/C/D + copy + phase
-    btnA.setBounds(header.removeFromLeft(22).reduced(1));
-    btnB.setBounds(header.removeFromLeft(22).reduced(1));
-    btnC.setBounds(header.removeFromLeft(22).reduced(1));
-    btnD.setBounds(header.removeFromLeft(22).reduced(1));
-    header.removeFromLeft(3);
-    copyBtn.setBounds(header.removeFromLeft(38).reduced(1));
+    // === HEADER (mockup: logo | div | ‹ Preset › | div | A B | spacer | PRE POST DELTA | div | phase | div | AI dot | ⚙) ===
+    auto header = bounds.removeFromTop(headerH).reduced(12, 0);
+
+    // Logo — left anchor (mockup: 12px, weight 600, letter-spacing 0.5)
+    logoLabel.setVisible(true);
+    logoLabel.setBounds(header.removeFromLeft(72));
+    header.removeFromLeft(4);  // margin-right before divider
+
+    // Preset navigation (mockup: ‹ [Vocal Presence] ›)
+    header.removeFromLeft(8);  // gap after divider zone
+    prevBtn.setBounds(header.removeFromLeft(22).reduced(0, 5));
+    presetBox.setBounds(header.removeFromLeft(120).reduced(0, 5));
+    nextBtn.setBounds(header.removeFromLeft(22).reduced(0, 5));
     header.removeFromLeft(8);
-    phaseModeCombo.setBounds(header.removeFromLeft(120).reduced(0, 2));
-    header.removeFromLeft(8);
-    // Spectrum toggles
-    btnPre.setBounds(header.removeFromLeft(36).reduced(1));
-    btnPost.setBounds(header.removeFromLeft(40).reduced(1));
-    btnDelta.setBounds(header.removeFromLeft(48).reduced(1));
-    // Right group
-    bypassBtn.setBounds(header.removeFromRight(60).reduced(1));
+
+    // A/B slots only (mockup shows only A and B, C/D hidden)
+    btnA.setBounds(header.removeFromLeft(24).reduced(1, 5));
+    btnB.setBounds(header.removeFromLeft(24).reduced(1, 5));
+    btnC.setVisible(false);
+    btnD.setVisible(false);
+
+    // Right group (from right edge): ⚙ | AI dot (rightmost)
+    optionsBtn.setBounds(header.removeFromRight(22).reduced(0, 5));
     header.removeFromRight(4);
-    aiPanelToggle.setBounds(header.removeFromRight(32).reduced(1));
-    optionsBtn.setBounds(header.removeFromRight(60).reduced(1));
+    aiPanelToggle.setBounds(header.removeFromRight(28).reduced(0, 5));
+    header.removeFromRight(8);
 
-    // === RIGHT PANEL (collapsible) ===
-    int rightW = aiPanelVisible ? 300 : 0;
-    if (aiPanelVisible)
+    // Phase mode (mockup: "LINEAR PHASE" text)
+    phaseModeCombo.setBounds(header.removeFromRight(100).reduced(0, 5));
+    header.removeFromRight(8);
+
+    // Spectrum toggles: removeFromRight places rightmost first
+    // Visual left→right: PRE | POST | DELTA (mockup order)
+    btnDelta.setBounds(header.removeFromRight(42).reduced(1, 5));
+    btnPost.setBounds(header.removeFromRight(36).reduced(1, 5));
+    btnPre.setBounds(header.removeFromRight(32).reduced(1, 5));
+
+    // BYPASS moved to footer — hide from header
+    bypassBtn.setVisible(false);
+
+    // Hide non-essential items (accessible via Options menu)
+    savePresetBtn.setVisible(false);
+    copyBtn.setVisible(false);
+
+    // === FOOTER BAR (32px — mockup: OUT meter dB | div | 2x HQ | div | BYPASS | spacer | version) ===
+    auto footer = bounds.removeFromBottom(footerH).reduced(12, 0);
     {
-        auto rightSide = bounds.removeFromRight(rightW).reduced(4);
-        auto tabRow = rightSide.removeFromTop(26);
+        // OUT label + stereo meter (left side, ~40% width)
+        outputMeter.setBounds(footer.removeFromLeft(juce::jmax(200, footer.getWidth() * 2 / 5)).reduced(0, 6));
+
+        // Right side: version label
+        versionLabel.setVisible(true);
+        versionLabel.setBounds(footer.removeFromRight(30));
+
+        // BYPASS toggle (mockup: green when active, before version)
+        bypassBtn.setVisible(true);
+        bypassBtn.setBounds(footer.removeFromRight(52).reduced(0, 5));
+        footer.removeFromRight(8);
+
+        // HQ toggle (mockup style: small footer button)
+        qualityBtn.setVisible(true);
+        qualityBtn.setBounds(footer.removeFromRight(28).reduced(0, 6));
+        footer.removeFromRight(8);
+        // Oversampling combo hidden from footer (accessible via Options menu)
+        oversamplingCombo.setVisible(false);
+    }
+
+    // Hide elements not in mockup footer
+    mixLabel.setVisible(false);
+    mixKnob.setVisible(false);
+    outLabel.setVisible(false);
+    outKnob.setVisible(false);
+    autoBtn.setVisible(false);
+
+    // === BOTTOM PANEL — split: left=band controls (380px), right=context (flex) ===
+    auto bottom = bounds.removeFromBottom(controlH).reduced(0, 0);
+
+    // --- Left column: band controls (mockup: 380px fixed, border-right) ---
+    int bandColW = juce::jmin(380, bottom.getWidth() / 2);
+    auto bandCol = bottom.removeFromLeft(bandColW);
+    bottom.removeFromLeft(1);  // 1px border-right space
+
+    // --- Right column: context panel (remaining space) ---
+    auto contextCol = bottom;
+    {
+        // Tab row
+        auto tabRow = contextCol.removeFromTop(24);
         int tabW = tabRow.getWidth() / 2;
-        aiTabBtn.setBounds(tabRow.removeFromLeft(tabW).reduced(2));
-        semanticTabBtn.setBounds(tabRow.reduced(2));
-        rightSide.removeFromTop(4);
+        aiTabBtn.setBounds(tabRow.removeFromLeft(tabW).reduced(1));
+        semanticTabBtn.setBounds(tabRow.reduced(1));
+        contextCol.removeFromTop(2);
 
-        // AI Sensitivity / Correction knobs row
-        auto knobRow = rightSide.removeFromTop(52);
-        auto sensArea = knobRow.removeFromLeft(knobRow.getWidth() / 2);
-        auto strArea = knobRow;
-        sensitivityLabel.setBounds(sensArea.removeFromTop(12));
-        sensitivityKnob.setBounds(sensArea.reduced(sensArea.getWidth() / 4, 0));
-        strengthLabel.setBounds(strArea.removeFromTop(12));
-        strengthKnob.setBounds(strArea.reduced(strArea.getWidth() / 4, 0));
-        rightSide.removeFromTop(4);
+        // AI tab: sensitivity/correction knobs at top
+        if (activeRightTab == 0)
+        {
+            auto knobRow = contextCol.removeFromTop(42);
+            auto sensArea = knobRow.removeFromLeft(knobRow.getWidth() / 2);
+            auto strArea = knobRow;
+            sensitivityLabel.setBounds(sensArea.removeFromTop(10));
+            sensitivityKnob.setBounds(sensArea.reduced(sensArea.getWidth() / 4, 0));
+            strengthLabel.setBounds(strArea.removeFromTop(10));
+            strengthKnob.setBounds(strArea.reduced(strArea.getWidth() / 4, 0));
+            contextCol.removeFromTop(2);
+        }
 
-        int mainH = static_cast<int>(rightSide.getHeight() * 0.6f);
-        aiProblemPanel->setBounds(rightSide.removeFromTop(mainH));
-        semanticPanel->setBounds(aiProblemPanel->getBounds());
-        rightSide.removeFromTop(4);
-        dynamicEQPanel->setBounds(rightSide);
+        aiProblemPanel->setBounds(contextCol);
+        semanticPanel->setBounds(contextCol);
+        dynamicEQPanel->setBounds(contextCol);
     }
-    aiProblemPanel->setVisible(aiPanelVisible);
-    semanticPanel->setVisible(aiPanelVisible && activeRightTab == 1);
-    dynamicEQPanel->setVisible(aiPanelVisible);
-    aiTabBtn.setVisible(aiPanelVisible);
-    semanticTabBtn.setVisible(aiPanelVisible);
-    sensitivityLabel.setVisible(aiPanelVisible);
-    sensitivityKnob.setVisible(aiPanelVisible);
-    strengthLabel.setVisible(aiPanelVisible);
-    strengthKnob.setVisible(aiPanelVisible);
 
-    // === BOTTOM BAR (55px) ===
-    auto bottom = bounds.removeFromBottom(controlH).reduced(4, 4);
-
-    // === LEFT: band selector ===
-    auto leftCtrl = bottom.removeFromLeft(200);
+    // Context panel always visible
+    aiTabBtn.setVisible(true);
+    semanticTabBtn.setVisible(true);
+    sensitivityLabel.setVisible(activeRightTab == 0);
+    sensitivityKnob.setVisible(activeRightTab == 0);
+    strengthLabel.setVisible(activeRightTab == 0);
+    strengthKnob.setVisible(activeRightTab == 0);
+    if (activeRightTab != 0)
     {
-        auto row1 = leftCtrl.removeFromTop(leftCtrl.getHeight() / 2);
-        auto numArea = row1.removeFromLeft(90);
+        sensitivityKnob.setBounds(0, 0, 0, 0);
+        strengthKnob.setBounds(0, 0, 0, 0);
+    }
+    aiProblemPanel->setVisible(activeRightTab == 0);
+    semanticPanel->setVisible(activeRightTab == 1);
+    dynamicEQPanel->setVisible(false);
+
+    // --- Left column: band controls (mockup: 12px 16px padding) ---
+    bandCol.reduce(16, 12);
+
+    // Row 1: band selector
+    auto selectorRow = bandCol.removeFromTop(22);
+    {
+        auto numArea = selectorRow.removeFromLeft(90);
         numBandsLabel.setBounds(numArea.removeFromLeft(42));
-        numBandsCombo.setBounds(numArea.reduced(0, 4));
-        row1.removeFromLeft(6);
-        bandSelectCombo.setBounds(row1.reduced(0, 4));
+        numBandsCombo.setBounds(numArea.reduced(0, 1));
+        selectorRow.removeFromLeft(6);
+        bandSelectCombo.setBounds(selectorRow.removeFromLeft(110).reduced(0, 1));
     }
+    bandCol.removeFromTop(4);
 
-    // === RIGHT: output section (meter + knobs) ===
-    auto rightControls = bottom.removeFromRight(240);
-    {
-        // Level meter — tall, visible
-        outputMeter.setBounds(rightControls.removeFromRight(36).reduced(0, 2));
-        rightControls.removeFromRight(8);
-
-        // Version label below meter area
-        versionLabel.setBounds(rightControls.removeFromRight(0));  // hidden from bar, shown in paint
-        versionLabel.setVisible(false);
-
-        // Output knobs (bigger)
-        auto mixArea = rightControls.removeFromLeft(56);
-        mixLabel.setBounds(mixArea.removeFromTop(13));
-        mixKnob.setBounds(mixArea);
-        rightControls.removeFromLeft(6);
-
-        auto outArea = rightControls.removeFromLeft(56);
-        outLabel.setBounds(outArea.removeFromTop(13));
-        outKnob.setBounds(outArea);
-        rightControls.removeFromLeft(6);
-
-        autoBtn.setBounds(rightControls.removeFromLeft(44).reduced(0, 12));
-    }
-
-    // === CENTER: band detail panel ===
-    bottom.removeFromLeft(8);
-    bottom.removeFromRight(8);
+    // Row 2: band detail panel (all remaining left column space)
     if (selectedBandPanel)
     {
-        selectedBandPanel->setBounds(bottom);
+        selectedBandPanel->setBounds(bandCol);
         selectedBandPanel->setVisible(true);
     }
 
-    // Hide moved items
+    // Hide unused items
     bandViewport->setVisible(false);
     dynamicEQMasterPanel->setVisible(false);
     for (auto& t : bandToggles) if (t) t->setVisible(false);
     captureWaveform->setVisible(false);
 
-    // === SPECTRUM (everything remaining) ===
+    // === SPECTRUM (everything remaining — FULL WIDTH) ===
     bounds.reduce(4, 4);
     spectrumBounds = bounds;
     spectrum->setBounds(spectrumBounds);
@@ -1469,28 +1536,24 @@ float AIEqualizerAudioProcessorEditor::yToGain(float y)
 void AIEqualizerAudioProcessorEditor::switchRightTab(int tab)
 {
     activeRightTab = tab;
-    
-    // Update visibility (only show if panel is visible)
-    aiProblemPanel->setVisible(aiPanelVisible && tab == 0);
-    semanticPanel->setVisible(aiPanelVisible && tab == 1);
-    
-    // Update button styles
-    if (tab == 0)
-    {
-        aiTabBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xFF4A9FD9));
-        aiTabBtn.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
-        semanticTabBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xFF333333));
-        semanticTabBtn.setColour(juce::TextButton::textColourOffId, juce::Colour(0xFFAAAAAA));
-    }
-    else
-    {
-        semanticTabBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xFFE6A23C));
-        semanticTabBtn.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
-        aiTabBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xFF333333));
-        aiTabBtn.setColour(juce::TextButton::textColourOffId, juce::Colour(0xFFAAAAAA));
-    }
 
-    repaint();
+    // Context panel is always visible in bottom layout
+    aiProblemPanel->setVisible(tab == 0);
+    semanticPanel->setVisible(tab == 1);
+
+    // Update button styles — subtle amber glow when active (matches mockup context-tab.active)
+    auto activeCol  = juce::Colour(0xFF232028).interpolatedWith(ModernLookAndFeel::Colors::amber, 0.08f);
+    auto inactiveCol = juce::Colour(0xFF222228);
+    auto activeText = ModernLookAndFeel::Colors::amber;
+    auto inactiveText = juce::Colour(0xFF56544E);
+
+    aiTabBtn.setColour(juce::TextButton::buttonColourId, tab == 0 ? activeCol : inactiveCol);
+    aiTabBtn.setColour(juce::TextButton::textColourOffId, tab == 0 ? activeText : inactiveText);
+    semanticTabBtn.setColour(juce::TextButton::buttonColourId, tab == 1 ? activeCol : inactiveCol);
+    semanticTabBtn.setColour(juce::TextButton::textColourOffId, tab == 1 ? activeText : inactiveText);
+
+    // Re-layout: sensitivity knobs visibility depends on active tab
+    resized();
 }
 
 //==============================================================================

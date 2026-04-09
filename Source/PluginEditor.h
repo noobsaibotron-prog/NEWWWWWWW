@@ -140,11 +140,12 @@ private:
     ModernLookAndFeel lookAndFeel;
     
     // Layout
-    static constexpr int headerH = 34;
-    static constexpr int controlH = 72;
+    static constexpr int headerH = 36;
+    static constexpr int footerH = 32;    // footer bar (meter, version, bypass)
+    static constexpr int controlH = 195;  // bottom panel (band controls + context)
     static constexpr int bandPanelH = 140;
     static constexpr int pad = 6;
-    bool aiPanelVisible = false;
+    bool aiPanelVisible = true;   // always visible in bottom panel
     
     // Header
     juce::TextButton prevBtn{"<"}, nextBtn{">"};

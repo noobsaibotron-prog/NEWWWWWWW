@@ -53,7 +53,7 @@ public:
     }
 
     /** Map a smoothed dB spectrum (per-bin) to a per-pixel dB array.
-     *  Uses linear interpolation between adjacent bins. */
+     *  Uses Catmull-Rom cubic interpolation for smooth low-frequency rendering. */
     void mapToPixels (const std::vector<float>& smoothedDB,
                       std::vector<float>& outPixelDB) const
     {
@@ -64,15 +64,31 @@ public:
         if (outPixelDB.size() != width)
             outPixelDB.resize (width);
 
-        const size_t maxBin = smoothedDB.size() - 1;
+        const int maxBin = static_cast<int> (smoothedDB.size()) - 1;
 
         for (size_t x = 0; x < width; ++x)
         {
             const float exactBin = pixelToBinLUT[x];
-            const size_t binLow  = static_cast<size_t> (exactBin);
-            const size_t binHigh = std::min (binLow + 1, maxBin);
-            const float frac = exactBin - static_cast<float> (binLow);
-            outPixelDB[x] = smoothedDB[binLow] + frac * (smoothedDB[binHigh] - smoothedDB[binLow]);
+            const int b1 = static_cast<int> (exactBin);
+            const float t = exactBin - static_cast<float> (b1);
+
+            // Catmull-Rom needs 4 points: p0, p1, p2, p3
+            const int b0 = std::max (b1 - 1, 0);
+            const int b2 = std::min (b1 + 1, maxBin);
+            const int b3 = std::min (b1 + 2, maxBin);
+
+            const float p0 = smoothedDB[static_cast<size_t> (b0)];
+            const float p1 = smoothedDB[static_cast<size_t> (b1)];
+            const float p2 = smoothedDB[static_cast<size_t> (b2)];
+            const float p3 = smoothedDB[static_cast<size_t> (b3)];
+
+            // Catmull-Rom spline: 0.5 * ((2*p1) + (-p0+p2)*t + (2*p0-5*p1+4*p2-p3)*t^2 + (-p0+3*p1-3*p2+p3)*t^3)
+            const float t2 = t * t;
+            const float t3 = t2 * t;
+            outPixelDB[x] = 0.5f * ((2.0f * p1)
+                            + (-p0 + p2) * t
+                            + (2.0f * p0 - 5.0f * p1 + 4.0f * p2 - p3) * t2
+                            + (-p0 + 3.0f * p1 - 3.0f * p2 + p3) * t3);
         }
     }
 
