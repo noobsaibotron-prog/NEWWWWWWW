@@ -59,6 +59,10 @@ public:
         accumScratch.assign(fftPartSize * 2, 0.0f);
         fullIrTime.assign(fftSize * 2, 0.0f);
 
+        // Latest-wins pending IR buffer (pre-allocated, audio-thread safe)
+        pendingPartitions.assign(numParts * fftPartSize * 2, 0.0f);
+        hasPendingIR.store(false, std::memory_order_relaxed);
+
         crossfadeSamplesLeft.store(0, std::memory_order_relaxed);
     }
 
@@ -67,6 +71,7 @@ public:
         for (auto& ch : chState)
             ch.resetState();
         crossfadeSamplesLeft.store(0, std::memory_order_relaxed);
+        hasPendingIR.store(false, std::memory_order_relaxed);
     }
 
     // ── IR loading ─────────────────────────────────────────────────────
@@ -90,15 +95,22 @@ public:
         const int oldActive = activeSet.load(std::memory_order_relaxed);
         if (irSets[oldActive].valid)
         {
-            crossfadeFromSet = oldActive;
-            crossfadeSamplesLeft.store(crossfadeLength, std::memory_order_release);
-            // Snapshot each channel's FDL + overlap for the old-IR path
-            for (auto& ch : chState)
+            // Only start a NEW crossfade if none is running.  If one is already
+            // active, just swap the active IR set — the FDL stores FFT'd input
+            // blocks (IR-independent), so the live path immediately uses the new
+            // IR partitions while the old-IR fade-out continues uninterrupted.
+            // Restarting mid-fade would jump fadeNew from ~0.x back to 0.0 → pop.
+            if (crossfadeSamplesLeft.load(std::memory_order_relaxed) <= 0)
             {
-                ch.fdlOld.resize(numParts);
-                for (size_t i = 0; i < numParts; ++i)
-                    ch.fdlOld[i] = ch.fdl[i]; // copy
-                ch.overlapOld = ch.overlap;
+                crossfadeFromSet = oldActive;
+                crossfadeSamplesLeft.store(crossfadeLength, std::memory_order_release);
+                for (auto& ch : chState)
+                {
+                    ch.fdlOld.resize(numParts);
+                    for (size_t i = 0; i < numParts; ++i)
+                        ch.fdlOld[i] = ch.fdl[i]; // copy
+                    ch.overlapOld = ch.overlap;
+                }
             }
         }
 
@@ -112,6 +124,25 @@ public:
      *  pre-computed by the builder thread. Only copies + swap + crossfade arm. */
     void storePrePartitionedIR(const float* packedPartitions)
     {
+        const int oldActive = activeSet.load(std::memory_order_relaxed);
+        const bool midFade = crossfadeSamplesLeft.load(std::memory_order_relaxed) > 0;
+
+        if (midFade)
+        {
+            // ── Latest-wins: don't swap mid-crossfade ──
+            // Store the new IR in the pending buffer. When the current
+            // crossfade ends, process() will promote it with a fresh fade.
+            // This ensures every IR transition gets a full crossfade —
+            // swapping the active set mid-fade produced a subtle discontinuity
+            // when the "new" side of the blend changed instantaneously.
+            std::copy(packedPartitions,
+                      packedPartitions + numParts * fftPartSize * 2,
+                      pendingPartitions.begin());
+            hasPendingIR.store(true, std::memory_order_release);
+            return;
+        }
+
+        // No crossfade active — write to build slot and start fade normally
         auto& dest = irSets[buildSet];
         dest.partitions.resize(numParts);
         for (size_t p = 0; p < numParts; ++p)
@@ -124,8 +155,6 @@ public:
         }
         dest.valid = true;
 
-        // Start crossfade, swap (same as storeFreqIR)
-        const int oldActive = activeSet.load(std::memory_order_relaxed);
         if (irSets[oldActive].valid)
         {
             crossfadeFromSet = oldActive;
@@ -141,6 +170,7 @@ public:
 
         activeSet.store(buildSet, std::memory_order_release);
         buildSet = 1 - buildSet;
+        hasPendingIR.store(false, std::memory_order_relaxed);
     }
 
     /** Accept a time-domain IR (up to irSize samples) directly. */
@@ -157,14 +187,19 @@ public:
         const int oldActive = activeSet.load(std::memory_order_relaxed);
         if (irSets[oldActive].valid)
         {
-            crossfadeFromSet = oldActive;
-            crossfadeSamplesLeft.store(crossfadeLength, std::memory_order_release);
-            for (auto& ch : chState)
+            // Same mid-fade guard as storeFreqIR / storePrePartitionedIR.
+            // Restarting mid-fade would jump fadeNew from ~0.x back to 0.0 → pop.
+            if (crossfadeSamplesLeft.load(std::memory_order_relaxed) <= 0)
             {
-                ch.fdlOld.resize(numParts);
-                for (size_t i = 0; i < numParts; ++i)
-                    ch.fdlOld[i] = ch.fdl[i];
-                ch.overlapOld = ch.overlap;
+                crossfadeFromSet = oldActive;
+                crossfadeSamplesLeft.store(crossfadeLength, std::memory_order_release);
+                for (auto& ch : chState)
+                {
+                    ch.fdlOld.resize(numParts);
+                    for (size_t i = 0; i < numParts; ++i)
+                        ch.fdlOld[i] = ch.fdl[i];
+                    ch.overlapOld = ch.overlap;
+                }
             }
         }
 
@@ -295,7 +330,17 @@ public:
         if (cfLeftAtStart > 0)
         {
             const int consumed = std::min(cfLeftAtStart, static_cast<int>(numSamples));
-            crossfadeSamplesLeft.store(cfLeftAtStart - consumed, std::memory_order_release);
+            const int newLeft = cfLeftAtStart - consumed;
+            crossfadeSamplesLeft.store(newLeft, std::memory_order_release);
+
+            // ── Latest-wins promotion ──
+            // When the crossfade just completed and a pending IR was queued
+            // (because it arrived mid-crossfade), promote it now with a fresh
+            // crossfade. This ensures every IR transition gets a full fade.
+            if (newLeft <= 0 && hasPendingIR.load(std::memory_order_acquire))
+            {
+                promotePendingIR();
+            }
         }
     }
 
@@ -352,6 +397,44 @@ private:
     };
     std::vector<ChannelState> chState;
     size_t numCh = 0;
+
+    // ── Latest-wins pending IR ────────────────────────────────────────
+    // When a new IR arrives mid-crossfade, the packed partitions are
+    // stored here instead of being promoted immediately.  process()
+    // promotes the pending IR with a fresh crossfade once the current
+    // fade completes.  This guarantees every IR transition gets a full
+    // crossfade — no mid-fade active-set swaps.
+    std::vector<float> pendingPartitions;     // [numParts * fftPartSize * 2]
+    std::atomic<bool>  hasPendingIR { false };
+
+    void promotePendingIR()
+    {
+        auto& dest = irSets[buildSet];
+        dest.partitions.resize(numParts);
+        for (size_t p = 0; p < numParts; ++p)
+        {
+            auto& part = dest.partitions[p];
+            part.assign(fftPartSize * 2, 0.0f);
+            std::copy(pendingPartitions.begin() + p * fftPartSize * 2,
+                      pendingPartitions.begin() + (p + 1) * fftPartSize * 2,
+                      part.begin());
+        }
+        dest.valid = true;
+
+        const int oldActive = activeSet.load(std::memory_order_relaxed);
+        crossfadeFromSet = oldActive;
+        for (auto& ch : chState)
+        {
+            ch.fdlOld.resize(numParts);
+            for (size_t i = 0; i < numParts; ++i)
+                ch.fdlOld[i] = ch.fdl[i];
+            ch.overlapOld = ch.overlap;
+        }
+        crossfadeSamplesLeft.store(crossfadeLength, std::memory_order_release);
+        activeSet.store(buildSet, std::memory_order_release);
+        buildSet = 1 - buildSet;
+        hasPendingIR.store(false, std::memory_order_relaxed);
+    }
 
     // ── Scratch ────────────────────────────────────────────────────────
     std::vector<float> fftScratch;     // fftPartSize * 2

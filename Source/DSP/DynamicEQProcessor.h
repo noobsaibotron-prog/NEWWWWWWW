@@ -184,9 +184,21 @@ private:
                                              float knee,
                                              float range) const;
     [[nodiscard]] float computeSoftKnee(float inputDb, float threshold, float ratio, float knee) const;
-    
+
     [[nodiscard]] BiquadCoeffs makeEQCoefficients(
         int filterType, float freq, float gain, float q) const;
+
+    // Per-band output crossfade: eliminates biquad coefficient-jump clicks.
+    // Mirrors ParametricEQProcessor::beginBandCrossfade() approach.
+    struct BandCrossfade
+    {
+        BiquadCoeffs oldCoeffs;
+        std::array<BiquadState, 2> oldFiltersL;
+        std::array<BiquadState, 2> oldFiltersR;
+        int remaining = 0;
+        int total = 0;
+    };
+    std::array<BandCrossfade, maxBands> bandCrossfades {};
     
     //==============================================================================
     // LOCK-FREE ARCHITECTURE

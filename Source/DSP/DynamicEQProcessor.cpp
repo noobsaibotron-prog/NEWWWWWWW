@@ -250,15 +250,36 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
         const uint64_t currentVersion = params.version.load(std::memory_order_acquire);
         if (currentVersion != state.lastVersion)
         {
+            // ── Arm per-band output crossfade BEFORE updating coefficients ──
+            // Save old filter state so we can blend old→new, eliminating the
+            // biquad coefficient-jump discontinuity (pop/click).
+            // Guard: don't re-arm if a crossfade is already active — during fast
+            // drags, stability (letting the current fade finish) beats thrashing
+            // (restarting the crossfade every micro-movement).
+            auto& xfade = bandCrossfades[bandIdx];
+            if (xfade.remaining <= 0 && state.eqCoeffs.valid)
+            {
+                xfade.oldCoeffs = state.eqCoeffs;
+                xfade.oldFiltersL = state.eqFiltersL;
+                xfade.oldFiltersR = state.eqFiltersR;
+                // Adaptive fade: 128 base, 256 for high-Q bands
+                const float qVal = params.q.load(std::memory_order_relaxed);
+                const int fadeSamples = (qVal > 10.0f) ? 256 : 128;
+                xfade.remaining = fadeSamples;
+                xfade.total = fadeSamples;
+
+                // Reset live filters for clean start with new coefficients
+                for (auto& f : state.eqFiltersL) f.reset();
+                for (auto& f : state.eqFiltersR) f.reset();
+            }
+
             updateBandCoefficients(bandIdx);
             updateAttackReleaseCoeffs(bandIdx);
             state.lastVersion = currentVersion;
 
-            // FIX: When parameters change (threshold/ratio/range tweaked), immediately
-            // recalculate and store the GR that corresponds to the current envelope level.
-            // Without this, the meter freezes until the next audio block triggers the
-            // per-sample loop — which never updates if envelope is below threshold or
-            // if dynamic mode is off.
+            // Update meter GR immediately (for GUI responsiveness) but do NOT
+            // snap state.currentGain — the per-sample smoother handles the audio
+            // transition. Snapping caused an audible pop.
             const int dynMode = params.dynamicMode.load(std::memory_order_relaxed);
             if (dynMode != DynamicMode_Off)
             {
@@ -269,7 +290,7 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
                 const float range     = params.range.load(std::memory_order_relaxed);
                 const float freshGR   = calculateDynamicGain(currentEnv, dynMode, threshold, ratio, knee, range);
                 state.meterGainReduction.store(freshGR, std::memory_order_relaxed);
-                state.currentGain = freshGR; // snap audio-smoothed gain too
+                // NOTE: state.currentGain NOT snapped — per-sample smoother avoids pop
             }
         }
         
@@ -386,9 +407,27 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
                 state.meterInputLevel.store(smoothedEnv, std::memory_order_relaxed);
                 state.meterGainReduction.store(dynamicGainDb, std::memory_order_relaxed);
                 
-                // Apply EQ
-                float outL = state.eqFiltersL[0].processSample(inL, state.eqCoeffs);
-                float outR = channels > 1 ? state.eqFiltersR[0].processSample(inR, state.eqCoeffs) : outL;
+                // Apply EQ (with crossfade if coefficients just changed)
+                float outL, outR;
+                {
+                    auto& xfade = bandCrossfades[bandIdx];
+                    if (xfade.remaining > 0)
+                    {
+                        const float newL = state.eqFiltersL[0].processSample(inL, state.eqCoeffs);
+                        const float newR = channels > 1 ? state.eqFiltersR[0].processSample(inR, state.eqCoeffs) : newL;
+                        const float oldL = xfade.oldFiltersL[0].processSample(inL, xfade.oldCoeffs);
+                        const float oldR = channels > 1 ? xfade.oldFiltersR[0].processSample(inR, xfade.oldCoeffs) : oldL;
+                        const float fade = 1.0f - static_cast<float>(xfade.remaining) / static_cast<float>(xfade.total);
+                        outL = oldL + (newL - oldL) * fade;
+                        outR = oldR + (newR - oldR) * fade;
+                        --xfade.remaining;
+                    }
+                    else
+                    {
+                        outL = state.eqFiltersL[0].processSample(inL, state.eqCoeffs);
+                        outR = channels > 1 ? state.eqFiltersR[0].processSample(inR, state.eqCoeffs) : outL;
+                    }
+                }
                 
                 // Apply dynamic behavior
                 if (dynMode == DynamicMode_Compress)
@@ -434,18 +473,37 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
             float* outLPtr = buffer.getWritePointer(0);
             float* outRPtr = channels > 1 ? buffer.getWritePointer(1) : nullptr;
             
+            auto& xfade = bandCrossfades[bandIdx];
             for (int sample = 0; sample < numSamples; ++sample)
             {
-                float outL = state.eqFiltersL[0].processSample(outLPtr[sample], state.eqCoeffs);
-                outLPtr[sample] = outL;
-
-                if (channels > 1)
+                if (xfade.remaining > 0)
                 {
-                    float outR = state.eqFiltersR[0].processSample(outRPtr[sample], state.eqCoeffs);
-                    outRPtr[sample] = outR;
+                    const float fade = 1.0f - static_cast<float>(xfade.remaining) / static_cast<float>(xfade.total);
+                    float newL = state.eqFiltersL[0].processSample(outLPtr[sample], state.eqCoeffs);
+                    float oldL = xfade.oldFiltersL[0].processSample(outLPtr[sample], xfade.oldCoeffs);
+                    outLPtr[sample] = oldL + (newL - oldL) * fade;
+
+                    if (channels > 1)
+                    {
+                        float newR = state.eqFiltersR[0].processSample(outRPtr[sample], state.eqCoeffs);
+                        float oldR = xfade.oldFiltersR[0].processSample(outRPtr[sample], xfade.oldCoeffs);
+                        outRPtr[sample] = oldR + (newR - oldR) * fade;
+                    }
+                    --xfade.remaining;
+                }
+                else
+                {
+                    float outL = state.eqFiltersL[0].processSample(outLPtr[sample], state.eqCoeffs);
+                    outLPtr[sample] = outL;
+
+                    if (channels > 1)
+                    {
+                        float outR = state.eqFiltersR[0].processSample(outRPtr[sample], state.eqCoeffs);
+                        outRPtr[sample] = outR;
+                    }
                 }
             }
-            
+
             state.meterGainReduction.store(0.0f, std::memory_order_relaxed);
         }
     }

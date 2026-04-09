@@ -111,13 +111,38 @@ void ParametricEQProcessor::process(juce::AudioBuffer<float>& buffer)
         const uint64_t currentVersion = params.version.load(std::memory_order_acquire);
         if (currentVersion != state.lastVersion)
         {
+            // ── Arm per-band output crossfade BEFORE updating coefficients ──
+            // Save old filter state so we can blend old→new over 128 samples,
+            // eliminating the biquad coefficient-jump discontinuity (pop/click).
+            auto& xfade = bandCrossfades[i];
+            if (xfade.remaining <= 0 && state.coefficients[0].valid)
+            {
+                xfade.oldNumStages = state.numActiveStages;
+                for (int s = 0; s < BandProcessingState::maxFilterStages; ++s)
+                {
+                    xfade.oldCoeffs[s] = state.coefficients[s];
+                    xfade.oldFiltersL[s] = state.filtersL[s];
+                    xfade.oldFiltersR[s] = state.filtersR[s];
+                }
+                // Adaptive fade: 128 base, 256 for high-Q filters where
+                // narrow resonant peaks ring longer and need more settling time.
+                const float qVal = params.q.load(std::memory_order_relaxed);
+                const int fadeSamples = (qVal > 10.0f) ? 256 : 128;
+                xfade.remaining = fadeSamples;
+                xfade.total = fadeSamples;
+
+                // Reset live filters for clean start with new coefficients
+                for (auto& f : state.filtersL) f.reset();
+                for (auto& f : state.filtersR) f.reset();
+            }
+
             // Read parameters
             const float freq = params.frequency.load(std::memory_order_relaxed);
             const float gain = params.gain.load(std::memory_order_relaxed);
             const float q = params.q.load(std::memory_order_relaxed);
             const int type = params.type.load(std::memory_order_relaxed);
             const int slope = params.slope.load(std::memory_order_relaxed);
-            
+
             // Update coefficients (zero-allocation: BiquadCoeffs is POD on stack)
             auto coeff = makeCoefficients(static_cast<FilterType>(type), freq, gain, q, sr);
 
@@ -132,7 +157,7 @@ void ParametricEQProcessor::process(juce::AudioBuffer<float>& buffer)
             // Clear unused stages
             for (int s = numStages; s < BandProcessingState::maxFilterStages; ++s)
                 state.coefficients[s] = BiquadCoeffs{};
-            
+
             state.lastVersion = currentVersion;
         }
         

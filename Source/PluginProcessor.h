@@ -128,6 +128,7 @@ public:
     //==============================================================================
     enum class PhaseMode { ZeroLatency = 0, NaturalPhase, LinearPhase };
     enum class MSMode { Stereo = 0, Mid, Side, MSLinked };
+    enum class BypassPhase { Active, FadingToBypass, Bypassed, FadingToActive };
 
     //==============================================================================
     // Component Access (all [[nodiscard]] for API safety)
@@ -527,11 +528,15 @@ private:
     static constexpr int   soloCrossfadeSamples = 256;  // ~5ms @ 48kHz
     static constexpr float soloMakeupGainDB = 6.0f;
 
-    // Bypass crossfade state — avoids click on bypass toggle
-    std::atomic<bool> wasBypassed { false };
+    // Bypass state machine — avoids click on bypass toggle
+    std::atomic<BypassPhase> bypassPhase { BypassPhase::Active };
     std::atomic<int>  bypassCrossfadeRemaining { 0 };
     int   currentBypassCrossfadeSamples = 2400;
-    static constexpr int bypassCrossfadeSamples = 2400;        // ~50ms @ 48kHz (report recommends 20-200ms)
+    // Bypass crossfade must be longer than worstCaseLatencySamples (2176) so that
+    // the dry signal hasn't faded to silence by the time fresh wet signal appears
+    // through the wet padding delay.  Computed in prepareToPlay.
+    int bypassCrossfadeSamples = 4800;  // default ~100ms @ 48kHz, overridden in prepare
+    void resetDSPStateForBypassExit();  // resets all IIR/convolver/oversampler state
     static constexpr int aiCorrectionCrossfadeSamples = 1024;  // ~21ms @ 48kHz
     static constexpr int abSwitchCrossfadeSamples = 2048;      // ~43ms @ 48kHz, bulk state restore is more discontinuous
 
@@ -556,7 +561,11 @@ private:
     std::array<std::atomic<bool>, maxBands> abCrossfadePendingBands {};
     // IR build debounce: accumulate rapid drag events, rebuild only after silence
     std::atomic<int64_t> irBuildRequestedAt { 0 };    // ms timestamp of last request
-    static constexpr int64_t irBuildDebounceMs = 80;  // rebuild after 80ms of no changes
+    static constexpr int64_t irBuildDebounceMs = 20;  // rebuild after 20ms of no changes
+    // Was 80ms — needed before latest-wins crossfade system (Commit 4).
+    // Now that storePrePartitionedIR queues mid-fade IRs in pendingPartitions
+    // with full 4096-sample crossfade, rapid IR arrivals are safe.
+    // 20ms allows ~3-4 IR updates/sec during drag, keeping spectral jumps small.
     
     //==============================================================================
     // Oversampling

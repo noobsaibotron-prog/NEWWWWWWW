@@ -158,8 +158,10 @@ void AIEqualizerAudioProcessor::irBuilderThreadFunc()
             continue;
 
         // Debounce: wait until no new request has arrived for irBuildDebounceMs.
-        // This prevents rebuilding the IR on every mouse-drag event (which would
-        // produce rapid IR changes → audible glitches in Linear Phase mode).
+        // Short debounce (20ms) coalesces rapid parameter changes while still
+        // allowing several IR updates per second during band drag.  The
+        // latest-wins crossfade system in PartitionedConvolver ensures each
+        // transition gets a full 4096-sample fade — no mid-fade pops.
         {
             int64_t lastRequest = irBuildRequestedAt.load(std::memory_order_acquire);
             while (!stopIRBuilder.load())
@@ -798,7 +800,7 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     oversamplingTransitionFromEffective.store(-1, std::memory_order_relaxed);
     oversamplingTransitionSamplesRemaining.store(0, std::memory_order_relaxed);
     bypassStateInitialized.store(false, std::memory_order_relaxed);
-    wasBypassed.store(false, std::memory_order_relaxed);
+    bypassPhase.store(BypassPhase::Active, std::memory_order_relaxed);
     bypassCrossfadeRemaining.store(0, std::memory_order_relaxed);
     abCrossfadeSnapshotNeeded.store(false, std::memory_order_relaxed);
     for (int i = 0; i < maxBands; ++i)
@@ -1069,9 +1071,12 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     // Always report worst-case latency to DAW. Compensate internally with delay lines.
     // This prevents Ableton PDC recalculation glitches on mode switches.
     {
+        // LP latency = block buffering (partSize) + zero-phase IR group delay (irSize/2).
+        // The IR peak sits at tap irSize/2 = 2048, so the convolver output is delayed
+        // by partSize + irSize/2 samples relative to the raw input.
         const int lpLatency = static_cast<int>(LinearPhaseProcessor::usePartitioned
-                                               ? LinearPhaseProcessor::partSize
-                                               : LinearPhaseProcessor::hopSize);
+                                               ? (LinearPhaseProcessor::partSize + LinearPhaseProcessor::irSize / 2)
+                                               : (LinearPhaseProcessor::hopSize  + LinearPhaseProcessor::irSize / 2));
         int oversamplingLatency = naturalPhaseLatency;
         if (oversampler4x)
             oversamplingLatency = std::max(oversamplingLatency,
@@ -1084,6 +1089,15 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     }
     setLatencySamples(worstCaseLatencySamples);
     lastReportedLatency = worstCaseLatencySamples;
+
+    // Bypass crossfade must outlast worstCaseLatencySamples so that fresh wet data
+    // has fully propagated through the wet padding delay before the dry signal
+    // fades away.  With fade length = 2×latency + 512:
+    //   - At t = latency/total ≈ 0.33 the first fresh wet sample arrives while
+    //     dry still carries ~67% weight → no audible hole.
+    //   - The extra 512 samples (~10ms @ 48kHz) provide headroom for hosts that
+    //     deliver blocks slightly larger than expected.
+    bypassCrossfadeSamples = worstCaseLatencySamples * 2 + 512;
 
     // Signal that processor is ready for GUI access
     processorReady.store(true, std::memory_order_release);
@@ -1264,11 +1278,12 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     if (cachedBypass)
         bypassed = cachedBypass->load(std::memory_order_relaxed) > 0.5f;
 
-    // On the very first block after prepare, seed wasBypassed so we don't trigger
+    // On the very first block after prepare, seed bypassPhase so we don't trigger
     // a spurious crossfade before the host has had a chance to set bypass state.
     if (!bypassStateInitialized.load(std::memory_order_relaxed))
     {
-        wasBypassed.store(bypassed, std::memory_order_relaxed);
+        bypassPhase.store(bypassed ? BypassPhase::Bypassed : BypassPhase::Active,
+                          std::memory_order_relaxed);
         bypassStateInitialized.store(true, std::memory_order_relaxed);
     }
 
@@ -1276,7 +1291,12 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     const float dryWetPct = loadParam(cachedDryWet, 100.0f);
     const float wet = juce::jlimit(0.0f, 100.0f, dryWetPct) * 0.01f;
     const float dry = 1.0f - wet;
-    const bool needsDry = dry > 0.0001f || bypassed || bypassCrossfadeRemaining.load(std::memory_order_relaxed) > 0;
+    // Need dry buffer whenever: explicit dry mix, bypass active, crossfade in progress,
+    // OR bypass phase isn't Active (catches the first FadingToActive block where the
+    // state machine hasn't run yet but the crossfade is about to start).
+    const bool needsDry = dry > 0.0001f || bypassed
+        || bypassCrossfadeRemaining.load(std::memory_order_relaxed) > 0
+        || bypassPhase.load(std::memory_order_relaxed) != BypassPhase::Active;
 
     // ALWAYS feed the dry delay ring buffer so it has valid data when bypass is engaged.
     {
@@ -1344,13 +1364,66 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     // Process any pending AI commands from the lock-free queue
     processAICommands();
 
-    // Check bypass — with crossfade to avoid clicks on toggle
-    if (bypassed != wasBypassed.load(std::memory_order_relaxed))
+    // ── Bypass state machine ─────────────────────────────────────────────
+    // Four phases:
+    //   Active         – normal DSP
+    //   FadingToBypass – crossfading wet→dry, DSP still running
+    //   Bypassed       – steady-state, no DSP, wet padding fed with dry
+    //   FadingToActive – crossfading dry→wet, DSP running (filters reset)
     {
-        currentBypassCrossfadeSamples = bypassCrossfadeSamples;
-        bypassCrossfadeRemaining.store(currentBypassCrossfadeSamples, std::memory_order_relaxed);
+        const auto phase = bypassPhase.load(std::memory_order_relaxed);
+
+        if (bypassed && phase == BypassPhase::Active)
+        {
+            // User engaged bypass → start fading out wet
+            bypassPhase.store(BypassPhase::FadingToBypass, std::memory_order_relaxed);
+            currentBypassCrossfadeSamples = bypassCrossfadeSamples;
+            bypassCrossfadeRemaining.store(currentBypassCrossfadeSamples, std::memory_order_relaxed);
+        }
+        else if (!bypassed && phase == BypassPhase::Bypassed)
+        {
+            // User disengaged bypass after steady-state → THE KEY FIX:
+            // Reset all DSP filter state (IIR, convolver FDL, oversamplers)
+            // before re-exposing the wet path.  Stale internal energy from
+            // the last block processed before bypass would otherwise mix with
+            // new input and produce a transient: y[0] = b0·x[0] + v1_stale.
+            // After reset, filters start from zero — producing a smooth onset
+            // that the 2400-sample crossfade fully masks.
+            resetDSPStateForBypassExit();
+            bypassPhase.store(BypassPhase::FadingToActive, std::memory_order_relaxed);
+            currentBypassCrossfadeSamples = bypassCrossfadeSamples;
+            bypassCrossfadeRemaining.store(currentBypassCrossfadeSamples, std::memory_order_relaxed);
+        }
+        else if (!bypassed && phase == BypassPhase::FadingToBypass)
+        {
+            // Rapid toggle OFF while still fading to bypass — reverse direction.
+            // Filters are still warm (DSP ran during fade), no reset needed.
+            //
+            // The crossfade formulas use t = (total - remaining) / total:
+            //   FadingToBypass: out = wet*(1-t) + dry*t     → wet_fraction = 1-t
+            //   FadingToActive: out = dry*(1-t) + wet*t     → wet_fraction = t
+            //
+            // Continuity requires the wet_fraction to be identical at the
+            // transition point.  Swapping remaining ↔ progress while keeping
+            // total unchanged achieves this:
+            //   old wet_frac = 1 - (total-R)/total = R/total
+            //   new wet_frac = (total - R_new)/total = (total - (total-R))/total = R/total  ✓
+            const int remaining = bypassCrossfadeRemaining.load(std::memory_order_relaxed);
+            const int swapped   = juce::jmax(1, currentBypassCrossfadeSamples - remaining);
+            bypassPhase.store(BypassPhase::FadingToActive, std::memory_order_relaxed);
+            // currentBypassCrossfadeSamples unchanged — keeps fade rate constant
+            bypassCrossfadeRemaining.store(swapped, std::memory_order_relaxed);
+        }
+        else if (bypassed && phase == BypassPhase::FadingToActive)
+        {
+            // Rapid toggle ON while still fading to active — reverse (symmetric).
+            const int remaining = bypassCrossfadeRemaining.load(std::memory_order_relaxed);
+            const int swapped   = juce::jmax(1, currentBypassCrossfadeSamples - remaining);
+            bypassPhase.store(BypassPhase::FadingToBypass, std::memory_order_relaxed);
+            // currentBypassCrossfadeSamples unchanged
+            bypassCrossfadeRemaining.store(swapped, std::memory_order_relaxed);
+        }
     }
-    wasBypassed.store(bypassed, std::memory_order_relaxed);
 
     // AI correction: widen SmoothedValue ramp for gentler per-block coefficient steps.
     // AI correction: widen SmoothedValue ramp. Per-band crossfade for type changes
@@ -1376,7 +1449,7 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         correctionSmoothingActive.store(true, std::memory_order_relaxed);
     }
 
-    if (bypassed && bypassCrossfadeRemaining.load(std::memory_order_relaxed) <= 0)
+    if (bypassPhase.load(std::memory_order_relaxed) == BypassPhase::Bypassed)
     {
         // Steady-state bypass: output delayed dry (must match reported latency)
         if (needsDry)
@@ -1385,11 +1458,27 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
             for (int ch = 0; ch < chs; ++ch)
                 buffer.copyFrom(ch, 0, dryBuffer, ch, 0, blockSamples);
         }
+
+        // Keep wet padding ring buffer fed with dry signal during bypass.
+        // Without this, un-bypass reads STALE data from the buffer → pop.
+        if (wetPaddingBufferSize > 0)
+        {
+            const int chs = juce::jmin(buffer.getNumChannels(), wetPaddingDelayBuffer.getNumChannels());
+            for (int ch = 0; ch < chs; ++ch)
+            {
+                const float* dry = dryBuffer.getReadPointer(ch);
+                float* padBuf = wetPaddingDelayBuffer.getWritePointer(ch);
+                for (int s = 0; s < blockSamples; ++s)
+                    padBuf[(wetPaddingWritePos + s) % wetPaddingBufferSize] = dry[s];
+            }
+            wetPaddingWritePos = (wetPaddingWritePos + blockSamples) % wetPaddingBufferSize;
+        }
+
         clearDynamicMeterCache();
         return;
     }
-    // If bypassed but still crossfading: fall through, process this block
-    if (bypassed)
+    // If fading to bypass: fall through to DSP, clear meters (bypass is pending)
+    if (bypassPhase.load(std::memory_order_relaxed) == BypassPhase::FadingToBypass)
         clearDynamicMeterCache();
 
     // Handle quality/latency mode (adjust lookahead dynamically)
@@ -2407,13 +2496,76 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     const int numSamples = buffer.getNumSamples();
     smoothedOutputGain.applyGain(buffer, numSamples);
 
+    // ── Wet padding delay: align wet output with reported worst-case latency ──
+    // LP convolver provides full latency naturally (partSize + irSize/2).
+    // ZL and NaturalPhase modes need explicit padding so dry/wet are time-aligned
+    // for bypass crossfade and DAW PDC is correct.
+    {
+        int actualWetLatency = 0;
+        if (mode == PhaseMode::LinearPhase
+            && linearIRLoaded[0].load(std::memory_order_acquire))
+        {
+            actualWetLatency = static_cast<int>(
+                LinearPhaseProcessor::partSize + LinearPhaseProcessor::irSize / 2);
+        }
+        else if (mode == PhaseMode::NaturalPhase)
+        {
+            actualWetLatency = worstCaseOversamplingLatency;
+        }
+        // else ZL: actualWetLatency = 0
+
+        const int padSamples = juce::jmax(0,
+            juce::jmin(worstCaseLatencySamples - actualWetLatency,
+                       wetPaddingBufferSize - 1));
+
+        const int chs = juce::jmin(buffer.getNumChannels(),
+                                    wetPaddingDelayBuffer.getNumChannels());
+        if (padSamples > 0 && wetPaddingBufferSize > 0)
+        {
+            for (int ch = 0; ch < chs; ++ch)
+            {
+                float* data = buffer.getWritePointer(ch);
+                float* padBuf = wetPaddingDelayBuffer.getWritePointer(ch);
+                for (int s = 0; s < blockSamples; ++s)
+                {
+                    const int wp = (wetPaddingWritePos + s) % wetPaddingBufferSize;
+                    const float incoming = data[s];
+                    int rp = wp - padSamples;
+                    if (rp < 0) rp += wetPaddingBufferSize;
+                    data[s] = padBuf[rp];
+                    padBuf[wp] = incoming;
+                }
+            }
+        }
+        else if (wetPaddingBufferSize > 0)
+        {
+            // No padding needed (LP mode) — still feed ring buffer so it has
+            // valid data if mode switches to ZL/NP later.
+            for (int ch = 0; ch < chs; ++ch)
+            {
+                const float* data = buffer.getReadPointer(ch);
+                float* padBuf = wetPaddingDelayBuffer.getWritePointer(ch);
+                for (int s = 0; s < blockSamples; ++s)
+                {
+                    const int wp = (wetPaddingWritePos + s) % wetPaddingBufferSize;
+                    padBuf[wp] = data[s];
+                }
+            }
+        }
+        wetPaddingWritePos = (wetPaddingWritePos + blockSamples) % wetPaddingBufferSize;
+    }
+
     // Checkpoint 4 — OUTPUT (after gain, before bypass crossfade)
     checkClicks(4);
 
     // Bypass crossfade: blend processed+gained ↔ dry(ungained) to match steady-state behavior
     {
         int remaining = bypassCrossfadeRemaining.load(std::memory_order_relaxed);
-        if (remaining > 0)
+        const auto bpPhase = bypassPhase.load(std::memory_order_relaxed);
+        const bool fadingToDry = (bpPhase == BypassPhase::FadingToBypass);
+        const bool fadingToWet = (bpPhase == BypassPhase::FadingToActive);
+
+        if (remaining > 0 && (fadingToDry || fadingToWet))
         {
             const int fadeLen = juce::jmin(remaining, numSamples);
             const int fadeTotal = juce::jmax(1, currentBypassCrossfadeSamples);
@@ -2430,21 +2582,32 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
                     const float t = juce::jlimit(0.0f, 1.0f,
                                     static_cast<float>(fadeProgressStart + s)
                                   / static_cast<float>(fadeTotal));
-                    // t: 0→1.  bypassed: wet→dry.  !bypassed: dry→wet.
-                    if (bypassed)
+                    // t: 0→1.  FadingToBypass: wet→dry.  FadingToActive: dry→wet.
+                    if (fadingToDry)
                         out[s] = out[s] * (1.0f - t) + dry[s] * t;
                     else
                         out[s] = dry[s] * (1.0f - t) + out[s] * t;
                 }
 
                 // After crossfade ends mid-block: rest is target signal
-                if (bypassed)
+                if (fadingToDry)
                 {
                     for (int s = fadeLen; s < numSamples; ++s)
                         out[s] = dry[s];
                 }
             }
-            bypassCrossfadeRemaining.store(juce::jmax(0, remaining - numSamples), std::memory_order_relaxed);
+
+            const int newRemaining = juce::jmax(0, remaining - numSamples);
+            bypassCrossfadeRemaining.store(newRemaining, std::memory_order_relaxed);
+
+            // Crossfade complete → transition to next phase
+            if (newRemaining <= 0)
+            {
+                if (fadingToDry)
+                    bypassPhase.store(BypassPhase::Bypassed, std::memory_order_relaxed);
+                else
+                    bypassPhase.store(BypassPhase::Active, std::memory_order_relaxed);
+            }
         }
     }
 
@@ -2744,6 +2907,43 @@ DynamicEQProcessor::BandMeter AIEqualizerAudioProcessor::getDynamicBandMeter(int
 float AIEqualizerAudioProcessor::getDynamicTotalGainReduction() const noexcept
 {
     return dynamicTotalGR.load(std::memory_order_relaxed);
+}
+
+void AIEqualizerAudioProcessor::resetDSPStateForBypassExit()
+{
+    // Reset all IIR filter states to zero.  After extended bypass the
+    // biquad delay lines contain energy from old audio; feeding new input
+    // with stale v1/v2 produces a transient proportional to Δcoeff × stored_energy.
+    // A reset-to-zero filter has a smooth exponential onset that the
+    // bypass crossfade (2×latency + 512 samples) fully masks.
+    eqProcessor.reset();
+    eqProcessorHQ.reset();
+    eqProcessorMid.reset();
+    eqProcessorSide.reset();
+    dynamicEQProcessor.reset();
+    dynamicEQProcessorHQ.reset();
+    dynamicEQProcessorMid.reset();
+    dynamicEQProcessorSide.reset();
+
+    // Reset oversampler anti-aliasing filter state
+    if (oversampler2x) oversampler2x->reset();
+    if (oversampler4x) oversampler4x->reset();
+
+    // Reset LP convolver FDL — stale frequency-domain data from before
+    // bypass would produce ghost audio on the first blocks after resume.
+    for (auto& lp : linearPhaseProcessors)
+    {
+        if (lp) lp->reset();
+    }
+
+    // Clear wet padding ring buffer.  During bypass, this buffer is fed with
+    // dry signal to prevent stale data.  However, the ring read position is
+    // padSamples behind the write position, so on bypass exit the first
+    // padSamples of wet output would contain OLD bypass-fed dry data.  When
+    // fresh DSP output (near-zero from filter reset) arrives at the read
+    // position, the jump from ~0.5 amplitude to ~0 produces a click inside
+    // the crossfade window.  Zeroing ensures a smooth 0→0 transition.
+    wetPaddingDelayBuffer.clear();
 }
 
 void AIEqualizerAudioProcessor::clearDynamicMeterCache() noexcept
@@ -4632,7 +4832,7 @@ void AIEqualizerAudioProcessor::loadParameterSnapshot(AIEQCore::ProcessBlockPara
         band.gain = juce::jlimit(-48.0f, 48.0f, loadParam(cached.gain, 0.0f));
         band.q = juce::jlimit(0.05f, 36.0f, loadParam(cached.q, 1.0f));
         const int type = static_cast<int>(loadParam(cached.type, 2.0f));
-        band.filterType = juce::jlimit(0, 6, type);
+        band.filterType = juce::jlimit(0, 8, type);
         band.enabled = loadParam(cached.enabled, 1.0f) > 0.5f;
 
         // Dynamic EQ (clamped for safety)
