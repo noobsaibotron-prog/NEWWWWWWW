@@ -103,8 +103,13 @@ private:
     juce::String getTimestamp() const;
     
     mutable std::mutex logMutex;
+#if JUCE_DEBUG
     bool logToFile = true;
     bool logToConsole = true;
+#else
+    bool logToFile = false;     // No disk I/O in release — flush() per line + 10MB rotation
+    bool logToConsole = false;  // No juce::Logger output in release
+#endif
     std::atomic<Level> minLevel { Level::Info };
     juce::String logFilePath;
     std::ofstream logFile;

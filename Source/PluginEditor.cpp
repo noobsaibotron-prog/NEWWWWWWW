@@ -1008,7 +1008,7 @@ void AIEqualizerAudioProcessorEditor::paint(juce::Graphics& g)
         // Build marker — temporary, remove before release
         g.setColour(ModernLookAndFeel::Colors::accentBlue.withAlpha(0.4f));
         g.setFont(juce::Font(juce::FontOptions().withHeight(8.0f)));
-        g.drawText("V3", 4, getHeight() - 12, 16, 10,
+        g.drawText("V4", 4, getHeight() - 12, 16, 10,
                    juce::Justification::centredLeft);
     }
 }

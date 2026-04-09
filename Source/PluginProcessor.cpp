@@ -188,10 +188,17 @@ void AIEqualizerAudioProcessor::irBuilderThreadFunc()
         if (pendingFreqIR.buffers[0].empty() || pendingFreqIR.buffers[1].empty())
             continue;
 
-        // SAFETY: Check for null pointer before dereferencing
-        bool dynEnabled = false;
-        if (auto* dynParam = apvts.getRawParameterValue("dynEqEnabled"))
-            dynEnabled = dynParam->load() > 0.5f;
+        // Dynamic EQ magnitude is intentionally EXCLUDED from the IR.
+        // Reason: dynamicEQProcessor.process() runs AFTER the convolver in LP mode,
+        // applying biquad EQ + dynamic gain modulation per-sample.  If we also bake the
+        // dynamic EQ's static magnitude into the IR, the EQ shape is applied TWICE:
+        //   1. Through the convolver (slow: 20ms debounce + 93ms crossfade)
+        //   2. Through the biquad (fast: 128-sample crossfade)
+        // The timing mismatch between the two produces audible crackle when the user
+        // adjusts threshold/ratio — the biquad reacts instantly while the IR lags behind.
+        //
+        // Industry standard (FabFilter Pro-Q, etc.): dynamic bands are minimum-phase
+        // even in Linear Phase mode.  Only the parametric EQ gets the LP treatment.
 
         uint64_t versionStart = 0;
         uint64_t versionEnd = 0;
@@ -209,8 +216,8 @@ void AIEqualizerAudioProcessor::irBuilderThreadFunc()
 
             std::fill(magDB.begin(), magDB.end(), -120.0f);
 
-            // Use shadow processors (eqProcessorForIR/dynamicEQProcessorForIR) to avoid
-            // data race with audio thread. These are updated atomically when coefficients change.
+            // Use shadow processor (eqProcessorForIR) to avoid data race with audio thread.
+            // Dynamic EQ is NOT included — it runs as biquad post-convolver (see comment above).
 
             for (size_t bin = 0; bin < halfSize; ++bin)
             {
@@ -218,8 +225,6 @@ void AIEqualizerAudioProcessor::irBuilderThreadFunc()
                                    / static_cast<float>(LinearPhaseProcessor::fftSize);
 
                 float mag = eqProcessorForIR.getMagnitudeForFrequency(freq, sr);
-                if (dynEnabled)
-                    mag *= dynamicEQProcessorForIR.getMagnitudeForFrequency(freq, sr);
 
                 magDB[bin] = juce::Decibels::gainToDecibels(mag, -120.0f);
 
@@ -1566,9 +1571,12 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
                        std::memory_order_relaxed);
     }
 
-    // ── Click detector helper (RT-safe, no heap alloc) ──────────────────────
-    // Checks ch0 for inter-sample delta > threshold. Logs once per glitch event
-    // via the RT-safe SPSC logger queue. Updates clickEventCount + checkpoint ID.
+    // ── Click detector helper (debug/test builds only) ──────────────────────
+    // Disabled in release: kClickThreshold (0.25) fires on normal musical
+    // transients, generating hundreds of logFromRTThread calls/sec.  Each call
+    // does mach_absolute_time() + SPSC push — unnecessary RT overhead.
+    // The AntiPopRegressionTest uses its own click detection on controlled signals.
+#if JUCE_DEBUG || defined(AIEQ_TESTING)
     static constexpr float kClickThreshold = 0.25f; // ~-12 dBFS jump
     auto checkClicks = [&](uint8_t checkpoint) noexcept
     {
@@ -1586,7 +1594,6 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
             }
             prev = ch0[s];
         }
-        // Inter-block boundary check (only at first checkpoint)
         if (checkpoint == 0 && std::abs(ch0[0] - clickPrevSample) > kClickThreshold)
             fired = true;
         if (fired)
@@ -1598,25 +1605,27 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
                           static_cast<unsigned>(checkpoint), kClickThreshold);
             AIEQLogger::getInstance().logFromRTThread(AIEQLogger::Level::Warning, msg, "ClickDetector");
         }
-        // Update inter-block boundary sample
         if (checkpoint == 4)
             clickPrevSample = ch0[blockSamples - 1];
     };
-
-    // Checkpoint 0 — INPUT (before any processing)
     checkClicks(0);
+#else
+    auto checkClicks = [](uint8_t) noexcept {};  // no-op in release
+#endif
 
-    // RT heartbeat — proves logFromRTThread→SPSCQueue→flushRTLogs chain end-to-end
+    // RT heartbeat (debug/test only — no RT logging in release)
+#if JUCE_DEBUG || defined(AIEQ_TESTING)
     {
         rtHeartbeatCounter += blockSamples;
         const int sr = static_cast<int>(currentSampleRate.load(std::memory_order_relaxed));
-        if (sr > 0 && rtHeartbeatCounter >= sr * 5) // every ~5 seconds
+        if (sr > 0 && rtHeartbeatCounter >= sr * 5)
         {
             rtHeartbeatCounter = 0;
             AIEQLogger::getInstance().logFromRTThread(
                 AIEQLogger::Level::Info, "RT heartbeat", "AudioThread");
         }
     }
+#endif
 
     // Feed pre-EQ spectrum analyzer (lock-free, FFT deferred to GUI)
     spectrumAnalyzer.pushSamples(buffer);
@@ -2614,22 +2623,31 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     // Checkpoint 5 — post bypass-crossfade (final output)
     checkClicks(5);
 
-    // ── Safety output clamp ──────────────────────────────────────────────
-    // Prevent numerical explosions from reaching the DAW output.
-    // ±4.0 ≈ +12 dBFS — well above any musical signal but catches runaway
-    // filter states from rapid parameter changes or unstable coefficients.
-    // This is a last-resort guard; the EQ/convolver should not produce such levels.
+    // ── Safety soft limiter ────────────────────────────────────────────
+    // Prevents numerical explosions from reaching the DAW output WITHOUT
+    // introducing discontinuities.  Uses tanh soft-knee around ±ceiling:
+    //   |x| ≤ ceiling: output ≈ x  (linear region, transparent)
+    //   |x| > ceiling: output → ±ceiling asymptotically (no hard edge)
+    // NaN/Inf are flushed to zero.  ceiling = 32.0 (+30 dBFS) gives full
+    // headroom for the ±48 dB gain range while catching runaway states.
     {
-        constexpr float kSafetyCeiling = 4.0f;
+        constexpr float kCeiling = 32.0f;
+        constexpr float kInvCeiling = 1.0f / kCeiling;
         for (int ch = 0; ch < totalNumInputChannels; ++ch)
         {
             auto* data = buffer.getWritePointer(ch);
             for (int s = 0; s < numSamples; ++s)
             {
-                if (std::isnan(data[s]) || std::isinf(data[s]))
+                const float x = data[s];
+                if (std::isnan(x) || std::isinf(x))
+                {
                     data[s] = 0.0f;
+                }
                 else
-                    data[s] = juce::jlimit(-kSafetyCeiling, kSafetyCeiling, data[s]);
+                {
+                    // tanh soft limit: linear below ceiling, smooth saturation above
+                    data[s] = std::tanh(x * kInvCeiling) * kCeiling;
+                }
             }
         }
     }
@@ -2763,7 +2781,12 @@ void AIEqualizerAudioProcessor::parameterChanged(const juce::String& parameterID
     {
         triggerEQCurveUpdate();
 
-        if (currentPhaseMode.load(std::memory_order_relaxed) == PhaseMode::LinearPhase)
+        // Only rebuild IR for parametric EQ changes (freq/gain/Q/type/enabled/slope).
+        // Dynamic EQ params (threshold/ratio/attack/release/range/knee/mode/detection)
+        // do NOT affect the IR — dynamic EQ runs as biquad post-convolver.
+        // Rebuilding IR on dynamic-only changes caused unnecessary 93ms crossfades
+        // in the convolver, contributing to crackle during threshold adjustment.
+        if (affectsEQCurve && currentPhaseMode.load(std::memory_order_relaxed) == PhaseMode::LinearPhase)
             triggerLinearPhaseIRUpdate();
     }
 
