@@ -1,0 +1,26 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "AI Equalizer Pro (Standalone)",
+      "runtimeExecutable": "open",
+      "runtimeArgs": ["/Users/marco/Desktop/NEWWWWWWW/build-release/Release/bin/AI Equalizer Pro.app"]
+    },
+    {
+      "name": "Build Release",
+      "runtimeExecutable": "cmake",
+      "runtimeArgs": ["--build", "build-release", "--config", "Release"]
+    },
+    {
+      "name": "Run Tests",
+      "runtimeExecutable": "ctest",
+      "runtimeArgs": ["--test-dir", "build-release", "-C", "Release"]
+    },
+    {
+      "name": "Mockup Preview",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["/Users/marco/Desktop/NEWWWWWWW/.claude/worktrees/wizardly-elion/mockup/server.js"],
+      "port": 8090
+    }
+  ]
+}

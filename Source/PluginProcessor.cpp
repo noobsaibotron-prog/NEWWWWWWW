@@ -798,6 +798,9 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     oversamplingTransitionBuffer.clear();
     msModeTransitionBuffer.setSize(getTotalNumInputChannels(), preallocatedMaxSamples, false, true, false);
     msModeTransitionBuffer.clear();
+    // Pre-allocate LP first-load crossfade buffer — NEVER allocate on audio thread
+    lpFirstLoadFallbackBuf.setSize(getTotalNumInputChannels(), preallocatedMaxSamples, false, true, false);
+    lpFirstLoadFallbackBuf.clear();
     phaseTransitionFromMode.store(-1, std::memory_order_relaxed);
     phaseTransitionSamplesRemaining.store(0, std::memory_order_relaxed);
     msModeTransitionSamplesRemaining.store(0, std::memory_order_relaxed);
@@ -2104,7 +2107,7 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
             // through the EQ again, causing exponential gain accumulation.
             if (lpFirstLoadCrossfadeRemaining > 0)
             {
-                lpFirstLoadFallbackBuf.setSize(buffer.getNumChannels(), blockSamples, false, false, true);
+                // Buffer pre-allocated in prepareToPlay() — no heap allocation here
                 for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
                     lpFirstLoadFallbackBuf.copyFrom(ch, 0, buffer, ch, 0, blockSamples);
             }
