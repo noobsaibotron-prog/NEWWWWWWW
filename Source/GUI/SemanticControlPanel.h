@@ -53,7 +53,7 @@ public:
             font.setBold(true);
             titleLabel.setFont(font);
         }
-        titleLabel.setColour(juce::Label::textColourId, juce::Colour(0xFFE6A23C));
+        titleLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::accentYellow);
         titleLabel.setJustificationType(juce::Justification::centred);
         addAndMakeVisible(titleLabel);
         
@@ -64,20 +64,20 @@ public:
             font.setItalic(true);
             subtitleLabel.setFont(font);
         }
-        subtitleLabel.setColour(juce::Label::textColourId, juce::Colour(0xFF888888));
+        subtitleLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textSecondary);
         subtitleLabel.setJustificationType(juce::Justification::centred);
         addAndMakeVisible(subtitleLabel);
         
         // Natural language input
         commandInput.setMultiLine(false);
         commandInput.setReturnKeyStartsNewLine(false);
-        commandInput.setTextToShowWhenEmpty("Type: \"more air\", \"warmer\", \"add punch\"...", 
-                                            juce::Colour(0xFF555555));
+        commandInput.setTextToShowWhenEmpty("Type: \"more air\", \"warmer\", \"add punch\"...",
+                                            ModernLookAndFeel::Colors::textMuted);
         commandInput.setFont(juce::Font(juce::FontOptions().withHeight(12.0f)));
-        commandInput.setColour(juce::TextEditor::backgroundColourId, juce::Colour(0xFF1A1A1A));
-        commandInput.setColour(juce::TextEditor::textColourId, juce::Colours::white);
-        commandInput.setColour(juce::TextEditor::outlineColourId, juce::Colour(0xFF333333));
-        commandInput.setColour(juce::TextEditor::focusedOutlineColourId, juce::Colour(0xFFE6A23C));
+        commandInput.setColour(juce::TextEditor::backgroundColourId, ModernLookAndFeel::Colors::bgDark);
+        commandInput.setColour(juce::TextEditor::textColourId, ModernLookAndFeel::Colors::textBright);
+        commandInput.setColour(juce::TextEditor::outlineColourId, ModernLookAndFeel::Colors::bgLighter);
+        commandInput.setColour(juce::TextEditor::focusedOutlineColourId, ModernLookAndFeel::Colors::accentYellow);
         commandInput.addListener(this);
         addAndMakeVisible(commandInput);
         
@@ -113,8 +113,8 @@ public:
         intensitySlider.setRange(0.0, 2.0, 0.01);
         intensitySlider.setValue(1.0);
         intensitySlider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 45, 18);
-        intensitySlider.setColour(juce::Slider::thumbColourId, juce::Colour(0xFFE6A23C));
-        intensitySlider.setColour(juce::Slider::trackColourId, juce::Colour(0xFF333333));
+        intensitySlider.setColour(juce::Slider::thumbColourId, ModernLookAndFeel::Colors::accentYellow);
+        intensitySlider.setColour(juce::Slider::trackColourId, ModernLookAndFeel::Colors::bgLighter);
         intensitySlider.onValueChange = [this]() {
             semanticEngine.setIntensity(static_cast<float>(intensitySlider.getValue()));
             semanticDirty = true;
@@ -127,7 +127,7 @@ public:
             font.setBold(true);
             intensityLabel.setFont(font);
         }
-        intensityLabel.setColour(juce::Label::textColourId, juce::Colour(0xFF888888));
+        intensityLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textSecondary);
         addAndMakeVisible(intensityLabel);
         
         // Preset buttons
@@ -135,22 +135,22 @@ public:
         
         // Reset button
         resetButton.setButtonText("RESET");
-        resetButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xFF333333));
-        resetButton.setColour(juce::TextButton::textColourOffId, juce::Colour(0xFFAAAAAA));
+        resetButton.setColour(juce::TextButton::buttonColourId, ModernLookAndFeel::Colors::bgLighter);
+        resetButton.setColour(juce::TextButton::textColourOffId, ModernLookAndFeel::Colors::textLabel);
         resetButton.onClick = [this]() { resetAllSliders(); };
         addAndMakeVisible(resetButton);
         
         // Morph button
         morphButton.setButtonText("MORPH");
-        morphButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xFF2A2A2A));
-        morphButton.setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xFFE6A23C));
+        morphButton.setColour(juce::TextButton::buttonColourId, ModernLookAndFeel::Colors::bgLight);
+        morphButton.setColour(juce::TextButton::buttonOnColourId, ModernLookAndFeel::Colors::accentYellow);
         morphButton.setClickingTogglesState(true);
         morphButton.setTooltip("Enable smooth transitions between states");
         addAndMakeVisible(morphButton);
         
         // Status label
         statusLabel.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
-        statusLabel.setColour(juce::Label::textColourId, juce::Colour(0xFF666666));
+        statusLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted);
         statusLabel.setJustificationType(juce::Justification::centred);
         addAndMakeVisible(statusLabel);
         
@@ -165,20 +165,20 @@ public:
     void paint(juce::Graphics& g) override
     {
         // Background
-        g.setColour(juce::Colour(0xFF1E1E1E));
+        g.setColour(ModernLookAndFeel::Colors::bgMid);
         g.fillRoundedRectangle(getLocalBounds().toFloat(), 8.0f);
-        
+
         // Top accent
-        g.setColour(juce::Colour(0xFFE6A23C));
+        g.setColour(ModernLookAndFeel::Colors::accentYellow);
         g.fillRect(0.0f, 0.0f, static_cast<float>(getWidth()), 3.0f);
-        
+
         // Border
-        g.setColour(juce::Colour(0xFF333333));
+        g.setColour(ModernLookAndFeel::Colors::bgLighter);
         g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(0.5f), 8.0f, 1.0f);
-        
+
         // Section dividers
         int y = 85;  // After title and input
-        g.setColour(juce::Colour(0xFF2A2A2A));
+        g.setColour(ModernLookAndFeel::Colors::bgLight);
         g.drawHorizontalLine(y, 10.0f, static_cast<float>(getWidth() - 10));
         
         // Draw center notch marks on quality sliders
@@ -191,12 +191,12 @@ public:
                 float centerX = sb.getX() + sb.getWidth() * 0.5f;
                 float topY = sb.getY() + 4.0f;
                 float botY = sb.getBottom() - 4.0f;
-                g.setColour(juce::Colour(0xFF555555));
+                g.setColour(ModernLookAndFeel::Colors::textMuted);
                 g.drawLine(centerX, topY, centerX, botY, 1.0f);
                 // Small triangle marker at bottom
                 juce::Path tri;
                 tri.addTriangle(centerX - 3.0f, botY + 1.0f, centerX + 3.0f, botY + 1.0f, centerX, botY - 2.0f);
-                g.setColour(juce::Colour(0xFF666666));
+                g.setColour(ModernLookAndFeel::Colors::textMuted);
                 g.fillPath(tri);
             }
         }
@@ -378,9 +378,9 @@ private:
         data.slider->setValue(0.0);
         data.slider->setTextBoxStyle(juce::Slider::TextBoxRight, false, 38, 16);
         data.slider->setColour(juce::Slider::thumbColourId, color);
-        data.slider->setColour(juce::Slider::trackColourId, juce::Colour(0xFF2A2A2A));
-        data.slider->setColour(juce::Slider::backgroundColourId, juce::Colour(0xFF1A1A1A));
-        data.slider->setColour(juce::Slider::textBoxTextColourId, juce::Colour(0xFFAAAAAA));
+        data.slider->setColour(juce::Slider::trackColourId, ModernLookAndFeel::Colors::bgLight);
+        data.slider->setColour(juce::Slider::backgroundColourId, ModernLookAndFeel::Colors::bgDark);
+        data.slider->setColour(juce::Slider::textBoxTextColourId, ModernLookAndFeel::Colors::textLabel);
         data.slider->setColour(juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
         data.slider->setTooltip(tooltip);
         data.slider->addListener(this);
@@ -440,8 +440,8 @@ private:
         for (const auto& preset : presets)
         {
             auto btn = std::make_unique<juce::TextButton>(preset.name);
-            btn->setColour(juce::TextButton::buttonColourId, juce::Colour(0xFF2A2A2A));
-            btn->setColour(juce::TextButton::textColourOffId, juce::Colour(0xFFAAAAAA));
+            btn->setColour(juce::TextButton::buttonColourId, ModernLookAndFeel::Colors::bgLight);
+            btn->setColour(juce::TextButton::textColourOffId, ModernLookAndFeel::Colors::textLabel);
             
             auto settings = preset.settings;  // Copy for lambda
             btn->onClick = [this, settings]() {
@@ -560,12 +560,12 @@ private:
         int vizX = getWidth() - vizSize - 15;
         int vizY = 45;
         
-        g.setColour(juce::Colour(0xFF1A1A1A));
-        g.fillEllipse(static_cast<float>(vizX), static_cast<float>(vizY), 
+        g.setColour(ModernLookAndFeel::Colors::bgDark);
+        g.fillEllipse(static_cast<float>(vizX), static_cast<float>(vizY),
                      static_cast<float>(vizSize), static_cast<float>(vizSize));
-        
-        g.setColour(juce::Colour(0xFF333333));
-        g.drawEllipse(static_cast<float>(vizX), static_cast<float>(vizY), 
+
+        g.setColour(ModernLookAndFeel::Colors::bgLighter);
+        g.drawEllipse(static_cast<float>(vizX), static_cast<float>(vizY),
                      static_cast<float>(vizSize), static_cast<float>(vizSize), 1.0f);
         
         // Draw quality arcs
@@ -594,7 +594,7 @@ private:
         }
         
         // Center dot
-        g.setColour(juce::Colour(0xFFE6A23C));
+        g.setColour(ModernLookAndFeel::Colors::accentYellow);
         g.fillEllipse(centerX - 3, centerY - 3, 6, 6);
     }
     

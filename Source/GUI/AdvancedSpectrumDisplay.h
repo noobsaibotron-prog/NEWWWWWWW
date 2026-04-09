@@ -48,9 +48,9 @@ public:
         // Spectrum toolbar — semi-transparent buttons that blend with the display
         auto setupToolbarBtn = [](juce::TextButton& btn, const juce::String& text) {
             btn.setButtonText(text);
-            btn.setColour(juce::TextButton::buttonColourId, juce::Colour(0x40202030));
-            btn.setColour(juce::TextButton::buttonOnColourId, juce::Colour(0x804A90D9));
-            btn.setColour(juce::TextButton::textColourOffId, juce::Colour(0xBBD0D0D8));
+            btn.setColour(juce::TextButton::buttonColourId, ModernLookAndFeel::Colors::bgLight.withAlpha(0.25f));
+            btn.setColour(juce::TextButton::buttonOnColourId, ModernLookAndFeel::Colors::accentBlue.withAlpha(0.5f));
+            btn.setColour(juce::TextButton::textColourOffId, ModernLookAndFeel::Colors::textPrimary.withAlpha(0.73f));
             btn.setColour(juce::TextButton::textColourOnId, juce::Colours::white);
         };
 
@@ -83,12 +83,12 @@ public:
         addAndMakeVisible(captureButton);
 
         showCapturedButton.setButtonText("SHOW CAPT");
-        showCapturedButton.setColour(juce::ToggleButton::textColourId, juce::Colour(0xBBD0D0D8));
-        showCapturedButton.setColour(juce::ToggleButton::tickColourId, juce::Colour(0xFFE6A23C));
+        showCapturedButton.setColour(juce::ToggleButton::textColourId, ModernLookAndFeel::Colors::textPrimary.withAlpha(0.73f));
+        showCapturedButton.setColour(juce::ToggleButton::tickColourId, ModernLookAndFeel::Colors::accentYellow);
         addAndMakeVisible(showCapturedButton);
 
         setupToolbarBtn(clearButton, "CLEAR");
-        clearButton.setColour(juce::TextButton::textColourOffId, juce::Colour(0x88D0D0D8));
+        clearButton.setColour(juce::TextButton::textColourOffId, ModernLookAndFeel::Colors::textPrimary.withAlpha(0.53f));
         clearButton.onClick = [this]() {
             {
                 const juce::SpinLock::ScopedLockType lk(spectrumDataLock);
@@ -219,9 +219,9 @@ public:
         // === PREMIUM BACKGROUND — subtle vertical gradient ===
         {
             juce::ColourGradient bgGrad(
-                juce::Colour(0xFF101018), bounds.getX(), bounds.getY(),
-                juce::Colour(0xFF0A0A12), bounds.getX(), bounds.getBottom(), false);
-            bgGrad.addColour(0.5, juce::Colour(0xFF0E0E16));
+                ModernLookAndFeel::Colors::bgDark.darker(0.15f), bounds.getX(), bounds.getY(),
+                ModernLookAndFeel::Colors::bgDark.darker(0.4f), bounds.getX(), bounds.getBottom(), false);
+            bgGrad.addColour(0.5, ModernLookAndFeel::Colors::bgDark.darker(0.25f));
             g.setGradientFill(bgGrad);
             g.fillRoundedRectangle(bounds, 4.0f);
         }
@@ -289,7 +289,7 @@ public:
 #endif
 
         // Subtle border
-        g.setColour(juce::Colour(0xFF222230));
+        g.setColour(ModernLookAndFeel::Colors::grid);
         g.drawRoundedRectangle(bounds.reduced(0.5f), 4.0f, 1.0f);
 
 #if AIEQ_GUI_DEBUG
@@ -1269,9 +1269,9 @@ private:
             bool decade = (f == 20 || f == 200 || f == 2000 || f == 20000);
             
             if (major || decade)
-                g.setColour(juce::Colour(0xFF1E1E2A));  // Slightly visible
+                g.setColour(ModernLookAndFeel::Colors::grid.darker(0.15f));  // Slightly visible
             else
-                g.setColour(juce::Colour(0xFF151520));  // Nearly invisible
+                g.setColour(ModernLookAndFeel::Colors::bgDark);  // Nearly invisible
             
             g.drawVerticalLine((int)x, graphBounds.getY(), graphBounds.getBottom());
         }
@@ -1286,17 +1286,17 @@ private:
             if (isZero)
             {
                 // 0 dB line — slightly brighter, dashed feel
-                g.setColour(juce::Colour(0xFF2A2A3A));
+                g.setColour(ModernLookAndFeel::Colors::gridMajor);
                 g.drawHorizontalLine((int)y, graphBounds.getX(), graphBounds.getRight());
             }
             else if (isMajor)
             {
-                g.setColour(juce::Colour(0xFF1A1A28));
+                g.setColour(ModernLookAndFeel::Colors::bgMid.darker(0.1f));
                 g.drawHorizontalLine((int)y, graphBounds.getX(), graphBounds.getRight());
             }
             else
             {
-                g.setColour(juce::Colour(0xFF131320));
+                g.setColour(ModernLookAndFeel::Colors::bgDark.darker(0.1f));
                 g.drawHorizontalLine((int)y, graphBounds.getX(), graphBounds.getRight());
             }
         }
@@ -1352,7 +1352,7 @@ private:
                 capturedPathDirty = false;
             }
 
-            g.setColour(juce::Colour(0xFFE6A23C).withAlpha(0.6f));
+            g.setColour(ModernLookAndFeel::Colors::accentYellow.withAlpha(0.6f));
             g.strokePath(cachedCapturedDash, juce::PathStrokeType(1.5f));
         }
 
@@ -1434,8 +1434,8 @@ private:
         fillPath.closeSubPath();
 
         juce::ColourGradient fillGrad(
-            juce::Colour(0xFFB0C8E8).withAlpha(0.12f), 0, graphBounds.getY(),
-            juce::Colour(0xFFB0C8E8).withAlpha(0.02f), 0, zeroY, false);
+            ModernLookAndFeel::Colors::eqCurve.brighter(0.2f).withAlpha(0.12f), 0, graphBounds.getY(),
+            ModernLookAndFeel::Colors::eqCurve.brighter(0.2f).withAlpha(0.02f), 0, zeroY, false);
         g.setGradientFill(fillGrad);
         g.fillPath(fillPath);
     }
@@ -1453,18 +1453,18 @@ private:
         if (!isDraggingBand)
         {
             // === GLOW LAYER 1: Wide soft outer glow ===
-            g.setColour(juce::Colour(0xFFB0C8E8).withAlpha(0.08f));
+            g.setColour(ModernLookAndFeel::Colors::eqCurve.brighter(0.2f).withAlpha(0.08f));
             g.strokePath(cachedEQCurve, juce::PathStrokeType(10.0f, juce::PathStrokeType::mitered,
                                                                juce::PathStrokeType::rounded));
 
             // === GLOW LAYER 2: Medium glow ===
-            g.setColour(juce::Colour(0xFFB0C8E8).withAlpha(0.16f));
+            g.setColour(ModernLookAndFeel::Colors::eqCurve.brighter(0.2f).withAlpha(0.16f));
             g.strokePath(cachedEQCurve, juce::PathStrokeType(5.0f, juce::PathStrokeType::mitered,
                                                                juce::PathStrokeType::rounded));
         }
 
         // === MAIN CURVE: Bright crisp line ===
-        g.setColour(juce::Colour(0xFFE8F0FA));
+        g.setColour(ModernLookAndFeel::Colors::eqCurve.brighter(0.5f));
         g.strokePath(cachedEQCurve, juce::PathStrokeType(2.5f, juce::PathStrokeType::mitered,
                                                            juce::PathStrokeType::rounded));
     }
@@ -1634,7 +1634,7 @@ private:
                                    static_cast<float>(tw), static_cast<float>(th), 6.0f);
 
             // Background
-            g.setColour(juce::Colour(0xF0181822));
+            g.setColour(ModernLookAndFeel::Colors::bgDark.withAlpha(0.94f));
             g.fillRoundedRectangle(static_cast<float>(tx), static_cast<float>(ty),
                                    static_cast<float>(tw), static_cast<float>(th), 6.0f);
 
@@ -1682,7 +1682,8 @@ public:
         {
             float y = dbToY(db);
             bool isZero = std::abs(db) < 0.01f;
-            g.setColour(isZero ? juce::Colour(0xFF606078) : juce::Colour(0xFF3A3A4A));
+            g.setColour(isZero ? ModernLookAndFeel::Colors::textSecondary.brighter(0.1f)
+                               : ModernLookAndFeel::Colors::bgLighter.brighter(0.1f));
             juce::String txt = juce::String((int)db);
             g.drawText(txt, 4, (int)y - 6, 34, 12, juce::Justification::centredRight);
         }
@@ -1706,7 +1707,8 @@ public:
             if (x >= graphBounds.getX() && x <= graphBounds.getRight())
             {
                 bool isMajor = (f == 100 || f == 1000 || f == 10000);
-                g.setColour(isMajor ? juce::Colour(0xFF505068) : juce::Colour(0xFF3A3A4A));
+                g.setColour(isMajor ? ModernLookAndFeel::Colors::textMuted.brighter(0.1f)
+                                   : ModernLookAndFeel::Colors::bgLighter.brighter(0.1f));
                 g.drawText(lbl, (int)x - 15, (int)graphBounds.getBottom() + 3, 30, 12, 
                           juce::Justification::centred);
             }
@@ -2149,7 +2151,7 @@ private:
         fillArea.closeSubPath();
 
         // Warm amber fill, ~20% alpha
-        const juce::Colour overlayColour { 0xFFC89040u };
+        const juce::Colour overlayColour = ModernLookAndFeel::Colors::accentYellow.brighter(0.15f);
         g.setColour(overlayColour.withAlpha(0.20f));
         g.fillPath(fillArea);
 

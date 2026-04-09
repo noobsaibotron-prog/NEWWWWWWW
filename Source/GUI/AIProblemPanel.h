@@ -36,7 +36,7 @@ public:
             font.setBold(true);
             titleLabel.setFont(font);
         }
-        titleLabel.setColour(juce::Label::textColourId, juce::Colour(0xFF4A9FD9));
+        titleLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::accentBlue);
         titleLabel.setJustificationType(juce::Justification::centredLeft);
         titleLabel.setTitle(tr("AI analysis title", "AI analysis title"));
         titleLabel.setDescription(tr("Heading for AI analysis results", "Heading for AI analysis results"));
@@ -44,14 +44,14 @@ public:
         
         // Info labels
         genreLabel.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
-        genreLabel.setColour(juce::Label::textColourId, juce::Colour(0xFF888888));
+        genreLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textSecondary);
         genreLabel.setJustificationType(juce::Justification::centredLeft);
         genreLabel.setTitle(tr("Genre label", "Genre label"));
         genreLabel.setDescription(tr("Detected genre description", "Detected genre description"));
         addAndMakeVisible(genreLabel);
         
         profileLabel.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
-        profileLabel.setColour(juce::Label::textColourId, juce::Colour(0xFF666666));
+        profileLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted);
         profileLabel.setJustificationType(juce::Justification::centredLeft);
         profileLabel.setTitle(tr("Profile label", "Profile label"));
         profileLabel.setDescription(tr("Detected source profile", "Detected source profile"));
@@ -60,8 +60,8 @@ public:
         // Problem list with custom row height
         problemList.setModel(this);
         problemList.setRowHeight(140);  // Tall rows for detailed info
-        problemList.setColour(juce::ListBox::backgroundColourId, juce::Colour(0xFF1A1A1A));
-        problemList.setColour(juce::ListBox::outlineColourId, juce::Colour(0xFF333333));
+        problemList.setColour(juce::ListBox::backgroundColourId, ModernLookAndFeel::Colors::bgDark);
+        problemList.setColour(juce::ListBox::outlineColourId, ModernLookAndFeel::Colors::bgLighter);
         problemList.setOutlineThickness(1);
         problemList.setWantsKeyboardFocus(true);
         problemList.setFocusContainerType(juce::Component::FocusContainerType::keyboardFocusContainer);
@@ -88,8 +88,8 @@ public:
         addAndMakeVisible(autoFixBtn);
         
         clearBtn.setButtonText(tr("CLEAR", "CLEAR"));
-        clearBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xFF333333));
-        clearBtn.setColour(juce::TextButton::textColourOffId, juce::Colour(0xFFAAAAAA));
+        clearBtn.setColour(juce::TextButton::buttonColourId, ModernLookAndFeel::Colors::bgLighter);
+        clearBtn.setColour(juce::TextButton::textColourOffId, ModernLookAndFeel::Colors::textPrimary);
         clearBtn.setTooltip(tr("Remove all detected problems from the list", "Remove all detected problems from the list"));
         clearBtn.setTitle(tr("Clear list", "Clear list"));
         clearBtn.setDescription(tr("Dismiss every detected problem without applying fixes",
@@ -102,14 +102,14 @@ public:
         addAndMakeVisible(clearBtn);
         
         undoBtn.setButtonText(tr("UNDO", "UNDO"));
-        undoBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xFF2A2A2A));
+        undoBtn.setColour(juce::TextButton::buttonColourId, ModernLookAndFeel::Colors::bgLight);
         undoBtn.onClick = [this]() { processor.undo(); updateButtons(); };
         undoBtn.setTitle(tr("Undo last action", "Undo last action"));
         undoBtn.setExplicitFocusOrder(3);
         addAndMakeVisible(undoBtn);
         
         redoBtn.setButtonText(tr("REDO", "REDO"));
-        redoBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xFF2A2A2A));
+        redoBtn.setColour(juce::TextButton::buttonColourId, ModernLookAndFeel::Colors::bgLight);
         redoBtn.onClick = [this]() { processor.redo(); updateButtons(); };
         redoBtn.setTitle(tr("Redo undone action", "Redo undone action"));
         redoBtn.setExplicitFocusOrder(4);
@@ -117,7 +117,7 @@ public:
         
         // Status
         statusLabel.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
-        statusLabel.setColour(juce::Label::textColourId, juce::Colour(0xFF777777));
+        statusLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textSecondary);
         statusLabel.setJustificationType(juce::Justification::centred);
         statusLabel.setTitle(tr("Analysis status", "Analysis status"));
         statusLabel.setDescription(tr("Shows how many problems were detected",
@@ -126,8 +126,8 @@ public:
         
         // Multi-Track Unmasking toggle
         unmaskingBtn.setButtonText("UNMASKING");
-        unmaskingBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xFF2A2A2A));
-        unmaskingBtn.setColour(juce::TextButton::textColourOffId, juce::Colour(0xFF888888));
+        unmaskingBtn.setColour(juce::TextButton::buttonColourId, ModernLookAndFeel::Colors::bgLight);
+        unmaskingBtn.setColour(juce::TextButton::textColourOffId, ModernLookAndFeel::Colors::textSecondary);
         unmaskingBtn.setTooltip("Enable Multi-Track Unmasking: Analyze frequency masking between tracks");
         unmaskingBtn.onClick = [this]() {
             bool newState = !processor.getAIEngine().isMultiTrackUnmaskingEnabled();
@@ -150,15 +150,15 @@ public:
     void paint(juce::Graphics& g) override
     {
         // Background
-        g.setColour(juce::Colour(0xFF1E1E1E));
+        g.setColour(ModernLookAndFeel::Colors::bgMid);
         g.fillRoundedRectangle(getLocalBounds().toFloat(), 8.0f);
         
         // Top accent line
-        g.setColour(juce::Colour(0xFF4A9FD9));
+        g.setColour(ModernLookAndFeel::Colors::accentBlue);
         g.fillRect(0.0f, 0.0f, static_cast<float>(getWidth()), 3.0f);
         
         // Border
-        g.setColour(juce::Colour(0xFF333333));
+        g.setColour(ModernLookAndFeel::Colors::bgLighter);
         g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(0.5f), 8.0f, 1.0f);
     }
     
@@ -230,7 +230,24 @@ public:
             ai.clearNewAnalysisFlag();
             shouldUpdate = true;
         }
-        
+
+        // Detect Strength knob change → refresh gain previews in problem list
+        const float curStrength = ai.getStrength();
+        if (std::abs(curStrength - lastStrength) > 0.005f)
+        {
+            lastStrength = curStrength;
+            shouldUpdate = true;  // re-render rows with updated gain preview
+        }
+
+        // Detect Sensitivity knob change → show brief "Analyzing..." feedback
+        const float curSensitivity = ai.getSensitivity();
+        if (std::abs(curSensitivity - lastSensitivity) > 0.005f)
+        {
+            lastSensitivity = curSensitivity;
+            statusLabel.setText(tr("Updating analysis...", "Updating analysis..."), juce::dontSendNotification);
+            statusLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::accentYellow);
+        }
+
         if (shouldUpdate)
         {
             updateProblemList();
@@ -249,8 +266,8 @@ public:
         else
         {
             unmaskingBtn.setButtonText("UNMASKING");
-            unmaskingBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xFF2A2A2A));
-            unmaskingBtn.setColour(juce::TextButton::textColourOffId, juce::Colour(0xFF888888));
+            unmaskingBtn.setColour(juce::TextButton::buttonColourId, ModernLookAndFeel::Colors::bgLight);
+            unmaskingBtn.setColour(juce::TextButton::textColourOffId, ModernLookAndFeel::Colors::textSecondary);
         }
     }
     
@@ -442,35 +459,35 @@ private:
             {
                 auto f = juce::Font(juce::FontOptions().withHeight(13.0f));
                 f.setBold(true);
-                setupLabel(typeLabel, f, juce::Colour(0xFFFFFFFF));
+                setupLabel(typeLabel, f, ModernLookAndFeel::Colors::textBright);
             }
             {
                 auto f = juce::Font(juce::FontOptions().withHeight(14.0f));
                 f.setBold(true);
-                setupLabel(freqLabel, f, juce::Colour(0xFFFFFFFF));
+                setupLabel(freqLabel, f, ModernLookAndFeel::Colors::textBright);
             }
             {
                 auto f = juce::Font(juce::FontOptions().withHeight(9.0f));
                 f.setBold(true);
-                setupLabel(sevLabel, f, juce::Colour(0xFFFFFFFF), true);
+                setupLabel(sevLabel, f, ModernLookAndFeel::Colors::textBright, true);
             }
-            setupLabel(explanationLabel, juce::Font(juce::FontOptions().withHeight(11.0f)), juce::Colour(0xFFDDDDDD));
-            setupLabel(causeLabel, juce::Font(juce::FontOptions().withHeight(10.0f)), juce::Colour(0xFF999999));
+            setupLabel(explanationLabel, juce::Font(juce::FontOptions().withHeight(11.0f)), ModernLookAndFeel::Colors::textPrimary);
+            setupLabel(causeLabel, juce::Font(juce::FontOptions().withHeight(10.0f)), ModernLookAndFeel::Colors::textLabel);
             auto italic = juce::Font(juce::FontOptions().withHeight(10.0f));
             italic.setItalic(true);
-            setupLabel(impactLabel, italic, juce::Colour(0xFF888888));
+            setupLabel(impactLabel, italic, ModernLookAndFeel::Colors::textSecondary);
             {
                 auto f = juce::Font(juce::FontOptions().withHeight(11.0f));
                 f.setBold(true);
-                setupLabel(fixLabel, f, juce::Colour(0xFF66FF66));
+                setupLabel(fixLabel, f, ModernLookAndFeel::Colors::accentGreen);
             }
             {
                 auto f = juce::Font(juce::FontOptions().withHeight(9.0f));
                 f.setBold(true);
                 setupLabel(confidenceLabel, f, juce::Colours::white, true);
             }
-            setupLabel(bandLabel, juce::Font(juce::FontOptions().withHeight(9.0f)), juce::Colour(0xFF666666));
-            setupLabel(hintLabel, juce::Font(juce::FontOptions().withHeight(9.0f)), juce::Colour(0xFF4A9FD9));
+            setupLabel(bandLabel, juce::Font(juce::FontOptions().withHeight(9.0f)), ModernLookAndFeel::Colors::textMuted);
+            setupLabel(hintLabel, juce::Font(juce::FontOptions().withHeight(9.0f)), ModernLookAndFeel::Colors::accentBlue);
             hintLabel.setVisible(false);
 
             // Focus order within the row
@@ -544,10 +561,14 @@ private:
             impactLabel.setTitle(owner.tr("Sound impact", "Sound impact"));
             impactLabel.setDescription(impact);
 
-            juce::String action = p.suggestedGain < 0 ? owner.tr("CUT", "CUT") : owner.tr("BOOST", "BOOST");
-            juce::String gainStr = (p.suggestedGain > 0 ? "+" : "") + juce::String(p.suggestedGain, 1) + " dB";
+            // Scale gain by current Strength for live preview
+            const float strength = owner.processor.getAIEngine().getStrength();
+            const float scaledGain = p.suggestedGain * strength;
+            juce::String action = scaledGain < 0 ? owner.tr("CUT", "CUT") : owner.tr("BOOST", "BOOST");
+            juce::String gainStr = (scaledGain > 0 ? "+" : "") + juce::String(scaledGain, 1) + " dB";
             juce::String qStr = owner.tr("Q=", "Q=") + juce::String(p.suggestedQ, 1);
-            const auto fixText = owner.tr("FIX:", "FIX:") + " " + action + " " + gainStr + "  " + qStr;
+            juce::String filterStr = owner.getFilterTypeName(p.suggestedFilter);
+            const auto fixText = owner.tr("FIX:", "FIX:") + " " + action + " " + gainStr + "  " + qStr + "  " + filterStr;
             fixLabel.setText(fixText, juce::dontSendNotification);
             fixLabel.setTitle(owner.tr("Suggested fix", "Suggested fix"));
             fixLabel.setDescription(fixText);
@@ -593,7 +614,8 @@ private:
             const float barWidth = 6.0f;
             const float barX = rtl ? w - barWidth - 4.0f : 4.0f;
 
-            juce::Colour bgCol = selected ? juce::Colour(0xFF2A3040) : juce::Colour(0xFF222222);
+            juce::Colour bgCol = selected ? ModernLookAndFeel::Colors::bgPanel
+                                          : ModernLookAndFeel::Colors::bgMid;
             g.setColour(bgCol);
             g.fillRoundedRectangle(4.0f, 2.0f, w - 8.0f, h - 4.0f, corner);
 
@@ -614,15 +636,16 @@ private:
 
             const float confX = rtl ? x + 10.0f : w - 90.0f;
             const float confW = 65.0f;
-            g.setColour(juce::Colour(0xFF333333));
+            g.setColour(ModernLookAndFeel::Colors::bgLighter);
             g.fillRoundedRectangle(confX, fixBoxY + 6.0f, confW, 14.0f, 4.0f);
 
-            juce::Colour confCol = confidenceValue > 0.7f ? juce::Colour(0xFF44AA44)
-                                      : (confidenceValue > 0.4f ? juce::Colour(0xFFAAAA44) : juce::Colour(0xFFAA4444));
+            juce::Colour confCol = confidenceValue > 0.7f ? ModernLookAndFeel::Colors::accentGreen
+                                      : (confidenceValue > 0.4f ? ModernLookAndFeel::Colors::accentYellow
+                                                                 : ModernLookAndFeel::Colors::accentRed);
             g.setColour(confCol);
             g.fillRoundedRectangle(confX, fixBoxY + 6.0f, confW * confidenceValue, 14.0f, 4.0f);
 
-            g.setColour(juce::Colour(0xFF333333));
+            g.setColour(ModernLookAndFeel::Colors::bgLighter);
             g.drawHorizontalLine(static_cast<int>(h) - 2, 10.0f, w - 10.0f);
         }
 
@@ -702,9 +725,9 @@ private:
     
     juce::Colour getSeverityColor(float sev) const
     {
-        if (sev > 0.7f) return juce::Colour(0xFFFF4444);  // Red
-        if (sev > 0.4f) return juce::Colour(0xFFFFAA00);  // Orange
-        return juce::Colour(0xFF44BB44);  // Green
+        if (sev > 0.7f) return ModernLookAndFeel::Colors::accentRed;
+        if (sev > 0.4f) return ModernLookAndFeel::Colors::accentOrange;
+        return ModernLookAndFeel::Colors::accentGreen;
     }
 
     juce::String getSeverityLabel(float sev) const
@@ -809,6 +832,20 @@ private:
         }
     }
     
+    juce::String getFilterTypeName(AIEngine::Correction::FilterType ft) const
+    {
+        switch (ft)
+        {
+            case AIEngine::Correction::FilterType::Peak:      return "Peak";
+            case AIEngine::Correction::FilterType::LowShelf:  return "Lo Shelf";
+            case AIEngine::Correction::FilterType::HighShelf:  return "Hi Shelf";
+            case AIEngine::Correction::FilterType::Notch:     return "Notch";
+            case AIEngine::Correction::FilterType::LowCut:    return "Lo Cut";
+            case AIEngine::Correction::FilterType::HighCut:   return "Hi Cut";
+            default:                                          return "Peak";
+        }
+    }
+
     void showFullAnalysis(int row)
     {
         if (row < 0 || row >= static_cast<int>(problems.size())) return;
@@ -1089,6 +1126,8 @@ private:
     std::atomic<bool> needsUpdate { true };
     juce::int64 lastApplyTimeMs { 0 };      // throttle rapid apply clicks (300ms window)
     bool fixAllInProgress { false };         // guard for FIX ALL re-entry
+    float lastStrength { -1.0f };            // detect strength knob changes for live gain preview
+    float lastSensitivity { -1.0f };         // detect sensitivity changes for re-analyze feedback
 
     /** Returns true if enough time has passed since the last apply (300ms). */
     bool canApplyNow()

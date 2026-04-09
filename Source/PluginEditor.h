@@ -153,8 +153,8 @@ private:
     juce::TextButton optionsBtn{"Options"};
     juce::TextButton aiPanelToggle{"AI"};
     juce::ComboBox phaseModeCombo;
-    juce::ToggleButton btnA{"A"}, btnB{"B"};
-    juce::TextButton copyBtn{"A>B"};
+    juce::ToggleButton btnA{"A"}, btnB{"B"}, btnC{"C"}, btnD{"D"};
+    juce::TextButton copyBtn{"Copy"};
     juce::ToggleButton btnPre{"PRE"}, btnPost{"POST"}, btnDelta{"DELTA"};
     juce::ToggleButton bypassBtn{"BYPASS"};
     

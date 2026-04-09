@@ -81,6 +81,8 @@ public:
         typeCombo.addItem("High Cut", 5);
         typeCombo.addItem("Notch", 6);
         typeCombo.addItem("Band Pass", 7);
+        typeCombo.addItem("Vintage Low Shelf", 8);
+        typeCombo.addItem("Vintage High Shelf", 9);
         typeCombo.setColour(juce::ComboBox::backgroundColourId, ModernLookAndFeel::Colors::bgDark);
         typeCombo.setColour(juce::ComboBox::textColourId, ModernLookAndFeel::Colors::textPrimary);
         typeCombo.setColour(juce::ComboBox::outlineColourId, ModernLookAndFeel::Colors::bgLighter);

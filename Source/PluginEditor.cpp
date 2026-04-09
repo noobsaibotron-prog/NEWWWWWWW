@@ -249,28 +249,46 @@ void AIEqualizerAudioProcessorEditor::createHeader()
     savePresetBtn.onClick = [this]() { showSavePresetDialog(); };
     addAndMakeVisible(savePresetBtn);
     
-    // A/B with tooltips
+    // A/B/C/D slot switching
+    auto selectSlot = [this](AIEqualizerAudioProcessor::ABState state) {
+        processor.setABState(state);
+        btnA.setToggleState(state == AIEqualizerAudioProcessor::ABState::A, juce::dontSendNotification);
+        btnB.setToggleState(state == AIEqualizerAudioProcessor::ABState::B, juce::dontSendNotification);
+        btnC.setToggleState(state == AIEqualizerAudioProcessor::ABState::C, juce::dontSendNotification);
+        btnD.setToggleState(state == AIEqualizerAudioProcessor::ABState::D, juce::dontSendNotification);
+    };
+
     btnA.setRadioGroupId(1001);
     btnA.setToggleState(true, juce::dontSendNotification);
-    btnA.setTooltip("Switch to A slot - Compare different EQ settings");
-    btnA.onClick = [this]() {
-        processor.setABState(AIEqualizerAudioProcessor::ABState::A);
-        btnA.setToggleState(true, juce::dontSendNotification);
-        btnB.setToggleState(false, juce::dontSendNotification);
-    };
+    btnA.setTooltip("Slot A");
+    btnA.onClick = [this, selectSlot]() { selectSlot(AIEqualizerAudioProcessor::ABState::A); };
     addAndMakeVisible(btnA);
-    
+
     btnB.setRadioGroupId(1001);
-    btnB.setTooltip("Switch to B slot - Compare different EQ settings");
-    btnB.onClick = [this]() {
-        processor.setABState(AIEqualizerAudioProcessor::ABState::B);
-        btnA.setToggleState(false, juce::dontSendNotification);
-        btnB.setToggleState(true, juce::dontSendNotification);
-    };
+    btnB.setTooltip("Slot B");
+    btnB.onClick = [this, selectSlot]() { selectSlot(AIEqualizerAudioProcessor::ABState::B); };
     addAndMakeVisible(btnB);
-    
-    copyBtn.setTooltip("Copy current A settings to B slot");
-    copyBtn.onClick = [this]() { processor.copyAtoB(); };
+
+    btnC.setRadioGroupId(1001);
+    btnC.setTooltip("Slot C");
+    btnC.onClick = [this, selectSlot]() { selectSlot(AIEqualizerAudioProcessor::ABState::C); };
+    addAndMakeVisible(btnC);
+
+    btnD.setRadioGroupId(1001);
+    btnD.setTooltip("Slot D");
+    btnD.onClick = [this, selectSlot]() { selectSlot(AIEqualizerAudioProcessor::ABState::D); };
+    addAndMakeVisible(btnD);
+
+    copyBtn.setTooltip("Copy active slot to next slot");
+    copyBtn.onClick = [this]() {
+        auto state = processor.getCurrentABState();
+        switch (state) {
+            case AIEqualizerAudioProcessor::ABState::A: processor.copyAtoB(); break;
+            case AIEqualizerAudioProcessor::ABState::B: processor.copyBtoC(); break;
+            case AIEqualizerAudioProcessor::ABState::C: processor.copyCtoD(); break;
+            case AIEqualizerAudioProcessor::ABState::D: processor.copyAtoB(); break;
+        }
+    };
     addAndMakeVisible(copyBtn);
     
     // Phase mode
@@ -377,31 +395,27 @@ void AIEqualizerAudioProcessorEditor::createControlPanel()
     };
     addAndMakeVisible(bandSelectCombo);
     
-    // Sensitivity knob (connected to APVTS for save/restore, hidden in new layout)
+    // Sensitivity knob (connected to APVTS, visible in AI panel)
     sensitivityLabel.setText("SENSITIVITY", juce::dontSendNotification);
     sensitivityLabel.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
     sensitivityLabel.setJustificationType(juce::Justification::centred);
     sensitivityLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted);
     addAndMakeVisible(sensitivityLabel);
-    sensitivityLabel.setVisible(false);
-    
+
     sensitivityKnob.setTooltip("AI Sensitivity - Higher values detect more subtle problems\nLower values only flag obvious issues");
     addAndMakeVisible(sensitivityKnob);
-    sensitivityKnob.setVisible(false);
     sensitivityAtt = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         processor.getAPVTS(), "aiSensitivity", sensitivityKnob);
-    
-    // Strength knob (connected to APVTS for save/restore, hidden in new layout)
-    strengthLabel.setText("STRENGTH", juce::dontSendNotification);
+
+    // Strength knob (connected to APVTS, visible in AI panel)
+    strengthLabel.setText("CORRECTION", juce::dontSendNotification);
     strengthLabel.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
     strengthLabel.setJustificationType(juce::Justification::centred);
     strengthLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted);
     addAndMakeVisible(strengthLabel);
-    strengthLabel.setVisible(false);
-    
-    strengthKnob.setTooltip("AI Strength - Controls how aggressively corrections are applied\n100% = Full suggested correction, 50% = Half correction");
+
+    strengthKnob.setTooltip("AI Correction Amount - Controls how aggressively corrections are applied\n100% = Full suggested correction, 50% = Half correction");
     addAndMakeVisible(strengthKnob);
-    strengthKnob.setVisible(false);
     strengthAtt = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         processor.getAPVTS(), "aiStrength", strengthKnob);
     
@@ -994,7 +1008,7 @@ void AIEqualizerAudioProcessorEditor::paint(juce::Graphics& g)
         // Build marker — temporary, remove before release
         g.setColour(ModernLookAndFeel::Colors::accentBlue.withAlpha(0.4f));
         g.setFont(juce::Font(juce::FontOptions().withHeight(8.0f)));
-        g.drawText("V1", 4, getHeight() - 12, 16, 10,
+        g.drawText("V3", 4, getHeight() - 12, 16, 10,
                    juce::Justification::centredLeft);
     }
 }
@@ -1013,11 +1027,13 @@ void AIEqualizerAudioProcessorEditor::resized()
     header.removeFromLeft(2);
     savePresetBtn.setBounds(header.removeFromLeft(40).reduced(1));
     header.removeFromLeft(6);
-    // Center group: A/B + phase
-    btnA.setBounds(header.removeFromLeft(24).reduced(1));
-    btnB.setBounds(header.removeFromLeft(24).reduced(1));
-    header.removeFromLeft(4);
-    copyBtn.setBounds(header.removeFromLeft(36).reduced(1));
+    // Center group: A/B/C/D + copy + phase
+    btnA.setBounds(header.removeFromLeft(22).reduced(1));
+    btnB.setBounds(header.removeFromLeft(22).reduced(1));
+    btnC.setBounds(header.removeFromLeft(22).reduced(1));
+    btnD.setBounds(header.removeFromLeft(22).reduced(1));
+    header.removeFromLeft(3);
+    copyBtn.setBounds(header.removeFromLeft(38).reduced(1));
     header.removeFromLeft(8);
     phaseModeCombo.setBounds(header.removeFromLeft(120).reduced(0, 2));
     header.removeFromLeft(8);
@@ -1041,6 +1057,17 @@ void AIEqualizerAudioProcessorEditor::resized()
         aiTabBtn.setBounds(tabRow.removeFromLeft(tabW).reduced(2));
         semanticTabBtn.setBounds(tabRow.reduced(2));
         rightSide.removeFromTop(4);
+
+        // AI Sensitivity / Correction knobs row
+        auto knobRow = rightSide.removeFromTop(52);
+        auto sensArea = knobRow.removeFromLeft(knobRow.getWidth() / 2);
+        auto strArea = knobRow;
+        sensitivityLabel.setBounds(sensArea.removeFromTop(12));
+        sensitivityKnob.setBounds(sensArea.reduced(sensArea.getWidth() / 4, 0));
+        strengthLabel.setBounds(strArea.removeFromTop(12));
+        strengthKnob.setBounds(strArea.reduced(strArea.getWidth() / 4, 0));
+        rightSide.removeFromTop(4);
+
         int mainH = static_cast<int>(rightSide.getHeight() * 0.6f);
         aiProblemPanel->setBounds(rightSide.removeFromTop(mainH));
         semanticPanel->setBounds(aiProblemPanel->getBounds());
@@ -1052,6 +1079,10 @@ void AIEqualizerAudioProcessorEditor::resized()
     dynamicEQPanel->setVisible(aiPanelVisible);
     aiTabBtn.setVisible(aiPanelVisible);
     semanticTabBtn.setVisible(aiPanelVisible);
+    sensitivityLabel.setVisible(aiPanelVisible);
+    sensitivityKnob.setVisible(aiPanelVisible);
+    strengthLabel.setVisible(aiPanelVisible);
+    strengthKnob.setVisible(aiPanelVisible);
 
     // === BOTTOM BAR (55px) ===
     auto bottom = bounds.removeFromBottom(controlH).reduced(4, 4);
@@ -1192,20 +1223,10 @@ void AIEqualizerAudioProcessorEditor::timerCallback()
         juce::Logger::outputDebugString("AI Equalizer Pro - block clamp events: " + juce::String((int)clampEvents));
     }
 
-    // ── Click detector readout ────────────────────────────────────────────────
-    const uint32_t newClicks = processor.consumeClickEvents();
-    if (newClicks > 0)
-    {
-        totalClickEvents += newClicks;
-        const uint8_t cp = processor.getClickLastCheckpoint();
-        const char* cpName = (cp < 6) ? AIEqualizerAudioProcessor::kClickCheckpointNames[cp] : "?";
-        juce::Logger::outputDebugString(
-            juce::String("[CLICK] total=") + juce::String(totalClickEvents)
-            + " last_cp=" + juce::String(cpName)
-            + " (+=" + juce::String(newClicks) + " this tick)");
-        if (spectrum)
-            spectrum->setClickOverlay(totalClickEvents, cpName);
-    }
+    // Click detector GUI overlay removed — threshold (0.25) was too low for
+    // real audio, causing false positives on normal musical transients.
+    // The underlying checkClicks() infrastructure in processBlock is retained
+    // for automated tests (AntiPopRegressionTest) which use controlled signals.
 
     // Parameter-driven UI updates (bands, toggles, A/B, quality)
     // Throttled to every 2nd tick (~10Hz) - reduces message thread load in Ableton.
@@ -1250,9 +1271,13 @@ void AIEqualizerAudioProcessorEditor::timerCallback()
         }
         updateBandPositions();
 
-        bool isA = processor.getCurrentABState() == AIEqualizerAudioProcessor::ABState::A;
-        btnA.setToggleState(isA, juce::dontSendNotification);
-        btnB.setToggleState(!isA, juce::dontSendNotification);
+        {
+            auto abState = processor.getCurrentABState();
+            btnA.setToggleState(abState == AIEqualizerAudioProcessor::ABState::A, juce::dontSendNotification);
+            btnB.setToggleState(abState == AIEqualizerAudioProcessor::ABState::B, juce::dontSendNotification);
+            btnC.setToggleState(abState == AIEqualizerAudioProcessor::ABState::C, juce::dontSendNotification);
+            btnD.setToggleState(abState == AIEqualizerAudioProcessor::ABState::D, juce::dontSendNotification);
+        }
 
         // Sync quality toggle (0 = Zero Latency, 1 = High Quality)
         if (auto* param = processor.getAPVTS().getParameter("qualityMode"))

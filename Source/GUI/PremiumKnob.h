@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_gui_basics/juce_gui_basics.h>
+#include "ModernLookAndFeel.h"
 #include <cmath>
 
 /**
@@ -24,44 +25,66 @@ public:
         const float size = juce::jmin(bounds.getWidth(), bounds.getHeight());
         const float radius = size * 0.5f;
         const juce::Point<float> centre = bounds.getCentre();
+        const int w = getWidth();
+        const int h = getHeight();
 
-        g.fillAll(juce::Colours::transparentBlack);
-
-        // Shadow
-        g.setColour(juce::Colour(0x33000000));
-        g.fillEllipse(centre.x - radius * 0.52f, centre.y - radius * 0.48f, radius * 1.04f, radius * 1.04f);
-
-        // Outer ring (metallic)
-        juce::ColourGradient ringGrad(juce::Colour(0xFF5c6070), centre.x, centre.y - radius,
-                                      juce::Colour(0xFF282b34), centre.x, centre.y + radius, false);
-        ringGrad.addColour(0.5, juce::Colour(0xFF8a90a0));
-        g.setGradientFill(ringGrad);
-        g.fillEllipse(centre.x - radius * 0.95f, centre.y - radius * 0.95f, radius * 1.9f, radius * 1.9f);
-
-        // Inner body
-        juce::ColourGradient bodyGrad(juce::Colour(0xFF2a2a30), centre.x, centre.y - radius * 0.5f,
-                                      juce::Colour(0xFF17181f), centre.x, centre.y + radius * 0.6f, false);
-        bodyGrad.addColour(0.4, juce::Colour(0xFF3d424b));
-        g.setGradientFill(bodyGrad);
-        g.fillEllipse(centre.x - radius * 0.78f, centre.y - radius * 0.78f, radius * 1.56f, radius * 1.56f);
-
-        // Notches
-        g.setColour(juce::Colour(0x33ffffff));
-        for (int i = 0; i < 12; ++i)
+        // ── Static background cache ──────────────────────────────────────
+        // Shadow, metallic ring, inner body, 12 notches (sin/cos), specular
+        // highlight and center cap are all value-independent. Render once
+        // into an image; redraw only when the component resizes.
+        if (bgCache.isNull() || bgCache.getWidth() != w || bgCache.getHeight() != h)
         {
-            const float a = juce::degreesToRadians(30.0f * i - 90.0f);
-            auto p1 = centre + juce::Point<float>(std::cos(a), std::sin(a)) * radius * 0.80f;
-            auto p2 = centre + juce::Point<float>(std::cos(a), std::sin(a)) * radius * 0.88f;
-            g.drawLine({ p1, p2 }, 1.1f);
+            bgCache = juce::Image(juce::Image::ARGB, juce::jmax(1, w), juce::jmax(1, h), true);
+            juce::Graphics bg(bgCache);
+
+            using C = ModernLookAndFeel::Colors;
+
+            // Shadow
+            bg.setColour(juce::Colour(0x33000000));
+            bg.fillEllipse(centre.x - radius * 0.52f, centre.y - radius * 0.48f, radius * 1.04f, radius * 1.04f);
+
+            // Outer ring (metallic)
+            juce::ColourGradient ringGrad(C::knobOuterLight, centre.x, centre.y - radius,
+                                          C::knobOuterDark, centre.x, centre.y + radius, false);
+            ringGrad.addColour(0.5, C::knobOuter.brighter(0.3f));
+            bg.setGradientFill(ringGrad);
+            bg.fillEllipse(centre.x - radius * 0.95f, centre.y - radius * 0.95f, radius * 1.9f, radius * 1.9f);
+
+            // Inner body
+            juce::ColourGradient bodyGrad(C::knobInner, centre.x, centre.y - radius * 0.5f,
+                                          C::bgDark, centre.x, centre.y + radius * 0.6f, false);
+            bodyGrad.addColour(0.4, C::knobGrip);
+            bg.setGradientFill(bodyGrad);
+            bg.fillEllipse(centre.x - radius * 0.78f, centre.y - radius * 0.78f, radius * 1.56f, radius * 1.56f);
+
+            // Notches (12× sin/cos — computed once, not 60× per second)
+            bg.setColour(C::textBright.withAlpha(0.2f));
+            for (int i = 0; i < 12; ++i)
+            {
+                const float a = juce::degreesToRadians(30.0f * i - 90.0f);
+                auto p1 = centre + juce::Point<float>(std::cos(a), std::sin(a)) * radius * 0.80f;
+                auto p2 = centre + juce::Point<float>(std::cos(a), std::sin(a)) * radius * 0.88f;
+                bg.drawLine({ p1, p2 }, 1.1f);
+            }
+
+            // Specular highlight
+            juce::ColourGradient spec(juce::Colours::white.withAlpha(0.25f), centre.x, centre.y - radius * 0.6f,
+                                      juce::Colours::transparentWhite, centre.x, centre.y, true);
+            bg.setGradientFill(spec);
+            bg.fillEllipse(centre.x - radius * 0.78f, centre.y - radius * 0.78f, radius * 1.56f, radius * 0.8f);
+
+            // Center cap (static)
+            juce::ColourGradient capGrad(C::bgDark.brighter(0.05f), centre.x, centre.y - radius * 0.3f,
+                                         C::bgLight.darker(0.2f), centre.x, centre.y + radius * 0.3f, false);
+            capGrad.addColour(0.6, C::bgDark.darker(0.3f));
+            bg.setGradientFill(capGrad);
+            bg.fillEllipse(centre.x - radius * 0.25f, centre.y - radius * 0.25f, radius * 0.5f, radius * 0.5f);
         }
 
-        // Specular highlight
-        juce::ColourGradient spec(juce::Colours::white.withAlpha(0.25f), centre.x, centre.y - radius * 0.6f,
-                                  juce::Colours::transparentWhite, centre.x, centre.y, true);
-        g.setGradientFill(spec);
-        g.fillEllipse(centre.x - radius * 0.78f, centre.y - radius * 0.78f, radius * 1.56f, radius * 0.8f);
+        // Blit cached background
+        g.drawImageAt(bgCache, 0, 0);
 
-        // Angle mapping
+        // ── Dynamic parts (change with value / time) ─────────────────────
         const float startAngle = juce::MathConstants<float>::pi * 1.25f;
         const float endAngle   = juce::MathConstants<float>::pi * 2.75f;
         const float proportion = static_cast<float>(valueToProportionOfLength(getValue()));
@@ -75,7 +98,7 @@ public:
             // Background track
             juce::Path arcBg;
             arcBg.addCentredArc(centre.x, centre.y, arcR, arcR, 0.0f, startAngle, endAngle, true);
-            g.setColour(juce::Colour(0xFF1a1a24));
+            g.setColour(ModernLookAndFeel::Colors::bgDark);
             g.strokePath(arcBg, juce::PathStrokeType(arcThickness, juce::PathStrokeType::curved,
                                                       juce::PathStrokeType::rounded));
 
@@ -84,7 +107,7 @@ public:
             {
                 juce::Path arcVal;
                 arcVal.addCentredArc(centre.x, centre.y, arcR, arcR, 0.0f, startAngle, angle, true);
-                g.setColour(juce::Colour(0xFF4A90D9).withAlpha(0.85f));
+                g.setColour(ModernLookAndFeel::Colors::accentBlue.withAlpha(0.85f));
                 g.strokePath(arcVal, juce::PathStrokeType(arcThickness, juce::PathStrokeType::curved,
                                                            juce::PathStrokeType::rounded));
             }
@@ -112,16 +135,11 @@ public:
         g.fillEllipse(centre.x + std::cos(angle) * radius * 0.88f - 3.5f,
                       centre.y + std::sin(angle) * radius * 0.88f - 3.5f,
                       7.0f, 7.0f);
-
-        // Center cap
-        juce::ColourGradient capGrad(juce::Colour(0xFF1b1d22), centre.x, centre.y - radius * 0.3f,
-                                     juce::Colour(0xFF292d35), centre.x, centre.y + radius * 0.3f, false);
-        capGrad.addColour(0.6, juce::Colour(0xFF0f1015));
-        g.setGradientFill(capGrad);
-        g.fillEllipse(centre.x - radius * 0.25f, centre.y - radius * 0.25f, radius * 0.5f, radius * 0.5f);
     }
 
 private:
+    juce::Image bgCache;  // Cached static background (shadow, ring, body, notches, cap)
+
     void init()
     {
         setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);

@@ -3,6 +3,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "../DSP/DynamicEQProcessor.h"
+#include "ModernLookAndFeel.h"
 #include <atomic>
 #include <functional>
 
@@ -36,9 +37,9 @@ public:
         modeCombo.addItem("Expand", 3);
         modeCombo.addItem("Gate", 4);
         modeCombo.setSelectedId(1);
-        modeCombo.setColour(juce::ComboBox::backgroundColourId, juce::Colour(0xFF2D2D2D));
-        modeCombo.setColour(juce::ComboBox::textColourId, juce::Colours::white);
-        modeCombo.setColour(juce::ComboBox::outlineColourId, juce::Colour(0xFF4A90D9));
+        modeCombo.setColour(juce::ComboBox::backgroundColourId, ModernLookAndFeel::Colors::bgLighter);
+        modeCombo.setColour(juce::ComboBox::textColourId, ModernLookAndFeel::Colors::textBright);
+        modeCombo.setColour(juce::ComboBox::outlineColourId, ModernLookAndFeel::Colors::accentBlue);
         addAndMakeVisible(modeCombo);
         modeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
             apvts, prefix + "DynMode", modeCombo);
@@ -89,7 +90,7 @@ public:
         
         // Title label
         titleLabel.setText("DYNAMIC EQ - Band " + juce::String(bandIndex + 1), juce::dontSendNotification);
-        titleLabel.setColour(juce::Label::textColourId, juce::Colour(0xFF4A90D9));
+        titleLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::accentBlue);
         {
             auto font = juce::Font(juce::FontOptions().withHeight(13.0f));
             font.setBold(true);
@@ -141,11 +142,11 @@ public:
     void paint(juce::Graphics& g) override
     {
         // Background
-        g.setColour(juce::Colour(0xFF1E1E1E));
+        g.setColour(ModernLookAndFeel::Colors::bgMid);
         g.fillRoundedRectangle(getLocalBounds().toFloat(), 8.0f);
-        
+
         // Border
-        g.setColour(juce::Colour(0xFF3A3A3A));
+        g.setColour(ModernLookAndFeel::Colors::bgLighter);
         g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(0.5f), 8.0f, 1.0f);
         
         // Draw gain reduction meter
@@ -346,10 +347,10 @@ private:
         knob.setRange(min, max);
         knob.setValue(defaultVal);
         knob.setTextValueSuffix(suffix);
-        knob.setColour(juce::Slider::rotarySliderFillColourId, juce::Colour(0xFF4A90D9));
-        knob.setColour(juce::Slider::rotarySliderOutlineColourId, juce::Colour(0xFF3A3A3A));
-        knob.setColour(juce::Slider::thumbColourId, juce::Colours::white);
-        knob.setColour(juce::Slider::textBoxTextColourId, juce::Colours::white);
+        knob.setColour(juce::Slider::rotarySliderFillColourId, ModernLookAndFeel::Colors::accentBlue);
+        knob.setColour(juce::Slider::rotarySliderOutlineColourId, ModernLookAndFeel::Colors::bgLighter);
+        knob.setColour(juce::Slider::thumbColourId, ModernLookAndFeel::Colors::textBright);
+        knob.setColour(juce::Slider::textBoxTextColourId, ModernLookAndFeel::Colors::textBright);
         knob.setColour(juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
         addAndMakeVisible(knob);
     }
@@ -359,22 +360,22 @@ private:
         auto bounds = gainReductionBounds.toFloat().reduced(2);
         
         // Background
-        g.setColour(juce::Colour(0xFF2D2D2D));
+        g.setColour(ModernLookAndFeel::Colors::bgLighter);
         g.fillRoundedRectangle(bounds, 3.0f);
-        
+
         // GR meter (shows negative values as reduction) - always draw even for small GR
         float absGR = std::abs(currentGainReduction);
         float normalizedGR = juce::jlimit(0.0f, 1.0f, absGR / 24.0f);
         float meterWidth = bounds.getWidth() * normalizedGR;
-        
+
         // Color based on reduction amount
         juce::Colour grColor;
         if (normalizedGR < 0.3f)
-            grColor = juce::Colour(0xFF4A90D9); // Blue for light reduction
+            grColor = ModernLookAndFeel::Colors::accentBlue;   // Light reduction
         else if (normalizedGR < 0.6f)
-            grColor = juce::Colour(0xFFE6A23C); // Orange for medium
+            grColor = ModernLookAndFeel::Colors::accentYellow;  // Medium
         else
-            grColor = juce::Colour(0xFFF56C6C); // Red for heavy
+            grColor = ModernLookAndFeel::Colors::accentRed;     // Heavy
         
         g.setColour(grColor.withAlpha(normalizedGR > 0.0f ? 1.0f : 0.2f));
         g.fillRoundedRectangle(bounds.getX(), bounds.getY(), 
@@ -382,7 +383,7 @@ private:
         
         // Text
         juce::String grText = "GR: " + juce::String(currentGainReduction, 1) + " dB";
-        g.setColour(juce::Colours::white);
+        g.setColour(ModernLookAndFeel::Colors::textBright);
         g.setFont(juce::Font(juce::FontOptions().withHeight(11.0f)));
         g.drawText(grText, gainReductionBounds, juce::Justification::centred);
     }
@@ -436,8 +437,8 @@ public:
         
         // Enable toggle
         enableButton.setButtonText("DYN EQ");
-        enableButton.setColour(juce::ToggleButton::textColourId, juce::Colours::white);
-        enableButton.setColour(juce::ToggleButton::tickColourId, juce::Colour(0xFF4A90D9));
+        enableButton.setColour(juce::ToggleButton::textColourId, ModernLookAndFeel::Colors::textBright);
+        enableButton.setColour(juce::ToggleButton::tickColourId, ModernLookAndFeel::Colors::accentBlue);
         addAndMakeVisible(enableButton);
         enableAtt = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
             apvts, "dynEqEnabled", enableButton);
@@ -448,10 +449,10 @@ public:
         mixKnob.setRange(0.0, 100.0);
         mixKnob.setValue(100.0);
         mixKnob.setTextValueSuffix("%");
-        mixKnob.setColour(juce::Slider::rotarySliderFillColourId, juce::Colour(0xFF4A90D9));
-        mixKnob.setColour(juce::Slider::rotarySliderOutlineColourId, juce::Colour(0xFF3A3A3A));
-        mixKnob.setColour(juce::Slider::thumbColourId, juce::Colours::white);
-        mixKnob.setColour(juce::Slider::textBoxTextColourId, juce::Colours::white);
+        mixKnob.setColour(juce::Slider::rotarySliderFillColourId, ModernLookAndFeel::Colors::accentBlue);
+        mixKnob.setColour(juce::Slider::rotarySliderOutlineColourId, ModernLookAndFeel::Colors::bgLighter);
+        mixKnob.setColour(juce::Slider::thumbColourId, ModernLookAndFeel::Colors::textBright);
+        mixKnob.setColour(juce::Slider::textBoxTextColourId, ModernLookAndFeel::Colors::textBright);
         mixKnob.setColour(juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
         addAndMakeVisible(mixKnob);
         mixAtt = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
@@ -459,15 +460,15 @@ public:
         
         // Auto Makeup toggle
         autoMakeupButton.setButtonText("AUTO MU");
-        autoMakeupButton.setColour(juce::ToggleButton::textColourId, juce::Colours::white);
-        autoMakeupButton.setColour(juce::ToggleButton::tickColourId, juce::Colour(0xFF4A90D9));
+        autoMakeupButton.setColour(juce::ToggleButton::textColourId, ModernLookAndFeel::Colors::textBright);
+        autoMakeupButton.setColour(juce::ToggleButton::tickColourId, ModernLookAndFeel::Colors::accentBlue);
         addAndMakeVisible(autoMakeupButton);
         autoMakeupAtt = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
             apvts, "dynAutoMakeup", autoMakeupButton);
         
         // Labels
         mixLabel.setText("MIX", juce::dontSendNotification);
-        mixLabel.setColour(juce::Label::textColourId, juce::Colours::white.withAlpha(0.8f));
+        mixLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textPrimary);
         mixLabel.setFont(juce::Font(juce::FontOptions().withHeight(11.0f)));
         mixLabel.setJustificationType(juce::Justification::centred);
         addAndMakeVisible(mixLabel);
@@ -483,11 +484,11 @@ public:
     void paint(juce::Graphics& g) override
     {
         // Background
-        g.setColour(juce::Colour(0xFF252525));
+        g.setColour(ModernLookAndFeel::Colors::bgPanel);
         g.fillRoundedRectangle(getLocalBounds().toFloat(), 6.0f);
-        
+
         // Border
-        g.setColour(juce::Colour(0xFF4A90D9).withAlpha(0.5f));
+        g.setColour(ModernLookAndFeel::Colors::accentBlue.withAlpha(0.5f));
         g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(0.5f), 6.0f, 1.0f);
         
         // Total GR meter
@@ -538,22 +539,22 @@ private:
         auto bounds = totalGRBounds.toFloat().reduced(2);
         
         // Background
-        g.setColour(juce::Colour(0xFF1E1E1E));
+        g.setColour(ModernLookAndFeel::Colors::bgMid);
         g.fillRoundedRectangle(bounds, 3.0f);
-        
+
         // GR meter
         if (std::abs(totalGainReduction) > 0.1f)
         {
             float normalizedGR = juce::jlimit(0.0f, 1.0f, std::abs(totalGainReduction) / 24.0f);
             float meterWidth = bounds.getWidth() * normalizedGR;
-            
+
             juce::Colour grColor;
             if (normalizedGR < 0.3f)
-                grColor = juce::Colour(0xFF67C23A); // Green
+                grColor = ModernLookAndFeel::Colors::accentGreen;  // Light
             else if (normalizedGR < 0.6f)
-                grColor = juce::Colour(0xFFE6A23C); // Orange
+                grColor = ModernLookAndFeel::Colors::accentYellow;  // Medium
             else
-                grColor = juce::Colour(0xFFF56C6C); // Red
+                grColor = ModernLookAndFeel::Colors::accentRed;     // Heavy
             
             g.setColour(grColor);
             g.fillRoundedRectangle(bounds.getX(), bounds.getY(), 
@@ -562,7 +563,7 @@ private:
         
         // Text
         juce::String grText = "TOTAL GR: " + juce::String(totalGainReduction, 1) + " dB";
-        g.setColour(juce::Colours::white);
+        g.setColour(ModernLookAndFeel::Colors::textBright);
         g.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
         g.drawText(grText, totalGRBounds, juce::Justification::centred);
     }
