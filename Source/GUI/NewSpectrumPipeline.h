@@ -152,7 +152,7 @@ public:
         const juce::SpinLock::ScopedLockType lock (pipelineLock);
 
         fftSize = 1u << newOrder;
-        hopSize = fftSize / 2;
+        hopSize = fftSize / 4;  // 75% overlap (matches constructor line 41): ~47 hops/sec at 48kHz/4096
         sr = sampleRate;
 
         // FIX: use unique_ptr reset instead of placement new (no UB)

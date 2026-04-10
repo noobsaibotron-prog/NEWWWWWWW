@@ -4,6 +4,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "../DSP/DynamicEQProcessor.h"
 #include "ModernLookAndFeel.h"
+#include "PremiumKnob.h"
 #include <atomic>
 #include <functional>
 
@@ -141,6 +142,17 @@ public:
     
     void paint(juce::Graphics& g) override
     {
+        if (compactMode)
+        {
+            // Compact: flat background + 1px top separator + mode row.
+            // The actual button row is positioned in resized() — paint
+            // only provides the thin divider on top.
+            g.fillAll(juce::Colour(0xFF1A1A1F));
+            g.setColour(ModernLookAndFeel::Colors::textSecondary.withAlpha(0.15f));
+            g.drawHorizontalLine(0, 0.0f, (float) getWidth());
+            return;
+        }
+
         // Background
         g.setColour(ModernLookAndFeel::Colors::bgMid);
         g.fillRoundedRectangle(getLocalBounds().toFloat(), 8.0f);
@@ -148,64 +160,82 @@ public:
         // Border
         g.setColour(ModernLookAndFeel::Colors::bgLighter);
         g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(0.5f), 8.0f, 1.0f);
-        
+
         // Draw gain reduction meter
         drawGainReductionMeter(g);
     }
     
     void resized() override
     {
+        if (compactMode)
+        {
+            // Compact: only the mode combo occupies the visible row.
+            auto area = getLocalBounds().reduced(6, 4);
+            // Skip the 1px divider drawn in paint()
+            area.removeFromTop(2);
+            modeCombo.setBounds(area.removeFromTop(juce::jmin(22, area.getHeight())));
+            gainReductionBounds = {};
+            return;
+        }
+
         auto bounds = getLocalBounds().reduced(10);
-        
+
         // Title
         titleLabel.setBounds(bounds.removeFromTop(20));
         bounds.removeFromTop(5);
-        
+
         // Mode selector
         auto modeArea = bounds.removeFromTop(50);
         modeLabel.setBounds(modeArea.removeFromTop(15));
         modeCombo.setBounds(modeArea.reduced(5, 5));
-        
+
         bounds.removeFromTop(5);
-        
+
         // Gain reduction meter area
         auto meterArea = bounds.removeFromTop(20);
         gainReductionBounds = meterArea;
-        
+
         bounds.removeFromTop(10);
-        
-        // Knobs row 1: Threshold, Ratio, Range
+
+        // Knobs row 1: Threshold, Ratio, Range — 36px filmstrip knobs centred
         auto row1 = bounds.removeFromTop(70);
         int knobWidth = row1.getWidth() / 3;
-        
+
+        auto placeKnob = [] (juce::Rectangle<int> cell, juce::Component& knob)
+        {
+            // 36x36 PremiumKnob(SmallBlue) centred in the cell (after label row).
+            auto k = cell.withSizeKeepingCentre(36, 36);
+            knob.setBounds(k);
+        };
+
         auto threshArea = row1.removeFromLeft(knobWidth);
         thresholdLabel.setBounds(threshArea.removeFromTop(15));
-        thresholdKnob.setBounds(threshArea.reduced(5));
-        
+        placeKnob(threshArea.reduced(5), thresholdKnob);
+
         auto ratioArea = row1.removeFromLeft(knobWidth);
         ratioLabel.setBounds(ratioArea.removeFromTop(15));
-        ratioKnob.setBounds(ratioArea.reduced(5));
-        
+        placeKnob(ratioArea.reduced(5), ratioKnob);
+
         auto rangeArea = row1;
         rangeLabel.setBounds(rangeArea.removeFromTop(15));
-        rangeKnob.setBounds(rangeArea.reduced(5));
-        
+        placeKnob(rangeArea.reduced(5), rangeKnob);
+
         bounds.removeFromTop(5);
-        
+
         // Knobs row 2: Attack, Release, Knee
         auto row2 = bounds.removeFromTop(70);
-        
+
         auto attackArea = row2.removeFromLeft(knobWidth);
         attackLabel.setBounds(attackArea.removeFromTop(15));
-        attackKnob.setBounds(attackArea.reduced(5));
-        
+        placeKnob(attackArea.reduced(5), attackKnob);
+
         auto releaseArea = row2.removeFromLeft(knobWidth);
         releaseLabel.setBounds(releaseArea.removeFromTop(15));
-        releaseKnob.setBounds(releaseArea.reduced(5));
-        
+        placeKnob(releaseArea.reduced(5), releaseKnob);
+
         auto kneeArea = row2;
         kneeLabel.setBounds(kneeArea.removeFromTop(15));
-        kneeKnob.setBounds(kneeArea.reduced(5));
+        placeKnob(kneeArea.reduced(5), kneeKnob);
     }
     
     void timerCallback() override
@@ -297,6 +327,43 @@ public:
         repaint();
     }
 
+    /**
+     * Phase 5: compact mode — hide title/GR meter/knob labels, show only the
+     * mode selector as a slim row. The full panel is still used as the
+     * on-demand overlay opened by DynEQCompactBar.
+     */
+    void setCompactMode(bool compact)
+    {
+        if (compactMode == compact)
+            return;
+
+        compactMode = compact;
+
+        const bool showFull = ! compact;
+        titleLabel.setVisible(showFull);
+        thresholdLabel.setVisible(showFull);
+        ratioLabel.setVisible(showFull);
+        attackLabel.setVisible(showFull);
+        releaseLabel.setVisible(showFull);
+        rangeLabel.setVisible(showFull);
+        kneeLabel.setVisible(showFull);
+        modeLabel.setVisible(showFull);
+        thresholdKnob.setVisible(showFull);
+        ratioKnob.setVisible(showFull);
+        attackKnob.setVisible(showFull);
+        releaseKnob.setVisible(showFull);
+        rangeKnob.setVisible(showFull);
+        kneeKnob.setVisible(showFull);
+
+        // modeCombo remains visible in both modes
+        modeCombo.setVisible(true);
+
+        resized();
+        repaint();
+    }
+
+    bool isCompactMode() const noexcept { return compactMode; }
+
 private:
     // Mirror of DynamicEQProcessor::calculateDynamicGain — called on GUI thread
     // so the meter reflects current knob values instantly without waiting for audio thread.
@@ -342,16 +409,12 @@ private:
                    float min, float max, float defaultVal, const juce::String& suffix)
     {
         juce::ignoreUnused(name);
-        knob.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-        knob.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 50, 15);
+        // PremiumKnob sets its own rotary style + filmstrip rendering; we only
+        // configure range/default/suffix here. Popup display (from PremiumKnob
+        // ctor) shows the current value during drag.
         knob.setRange(min, max);
         knob.setValue(defaultVal);
         knob.setTextValueSuffix(suffix);
-        knob.setColour(juce::Slider::rotarySliderFillColourId, ModernLookAndFeel::Colors::accentBlue);
-        knob.setColour(juce::Slider::rotarySliderOutlineColourId, ModernLookAndFeel::Colors::bgLighter);
-        knob.setColour(juce::Slider::thumbColourId, ModernLookAndFeel::Colors::textBright);
-        knob.setColour(juce::Slider::textBoxTextColourId, ModernLookAndFeel::Colors::textBright);
-        knob.setColour(juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
         addAndMakeVisible(knob);
     }
     
@@ -396,9 +459,17 @@ private:
     
     // UI Components
     juce::ComboBox modeCombo;
-    juce::Slider thresholdKnob, ratioKnob, attackKnob, releaseKnob, rangeKnob, kneeKnob;
+    PremiumKnob thresholdKnob { "THR",  PremiumKnob::Style::SmallBlue };
+    PremiumKnob ratioKnob     { "RAT",  PremiumKnob::Style::SmallBlue };
+    PremiumKnob attackKnob    { "ATK",  PremiumKnob::Style::SmallBlue };
+    PremiumKnob releaseKnob   { "REL",  PremiumKnob::Style::SmallBlue };
+    PremiumKnob rangeKnob     { "RNG",  PremiumKnob::Style::SmallBlue };
+    PremiumKnob kneeKnob      { "KNEE", PremiumKnob::Style::SmallBlue };
     juce::Label titleLabel, modeLabel, thresholdLabel, ratioLabel;
     juce::Label attackLabel, releaseLabel, rangeLabel, kneeLabel;
+
+    // Phase 5: compact mode (hide title/meter/labels, show only mode buttons)
+    bool compactMode = false;
     
     // Attachments
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> modeAttachment;

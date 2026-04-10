@@ -37,6 +37,37 @@ AIEqualizerAudioProcessorEditor::AIEqualizerAudioProcessorEditor(AIEqualizerAudi
     spectrum = std::make_unique<AdvancedSpectrumDisplay>(processor);
     addAndMakeVisible(*spectrum);
 
+    // Band tab bar (Phase 10) — 8 band selector tabs below header
+    addAndMakeVisible(bandTabBar);
+    bandTabBar.setSelectedBand(selectedBand);
+    bandTabBar.onBandSelected = [this](int idx) { selectBand(idx); };
+
+    // Phase 5: compact dynamic EQ strip + full panel as on-demand overlay
+    addAndMakeVisible(dynEqCompactBar);
+    dynEqCompactBar.onModeChanged = [this](DynEQCompactBar::Mode) {
+        // TODO: wire to APVTS dynamic mode param for the selected band
+    };
+    dynEqCompactBar.onExpandRequested = [this] {
+        if (dynamicEQPanel)
+        {
+            const bool nowVisible = ! dynamicEQPanel->isVisible();
+            dynamicEQPanel->setVisible(nowVisible);
+            if (nowVisible)
+            {
+                dynamicEQPanel->toFront(true);
+                // Position as centered overlay
+                const int w = 400;
+                const int h = 300;
+                dynamicEQPanel->setBounds(getWidth() / 2 - w / 2,
+                                           getHeight() / 2 - h / 2,
+                                           w, h);
+            }
+        }
+    };
+
+    // Phase 7D: passive breathing amber dot (driven by timerCallback)
+    addAndMakeVisible(aiBreathingDot);
+
     // Sync display speed with saved analyzer speed parameter
     {
         auto* speedParam = processor.getAPVTS().getRawParameterValue("analyzerSpeed");
@@ -128,7 +159,9 @@ AIEqualizerAudioProcessorEditor::AIEqualizerAudioProcessorEditor(AIEqualizerAudi
             spectrum->repaint();
         repaint();
     });
-    addAndMakeVisible(*dynamicEQPanel);
+    // Phase 5: full DynamicEQPanel is now an on-demand overlay, hidden by
+    // default. Toggled visible via DynEQCompactBar::onExpandRequested.
+    addChildComponent(*dynamicEQPanel);
     
     // Dynamic EQ Master Panel (global controls)
     dynamicEQMasterPanel = std::make_unique<DynamicEQMasterPanel>(processor.getAPVTS());
@@ -956,18 +989,13 @@ void AIEqualizerAudioProcessorEditor::showOptionsMenu()
 
 void AIEqualizerAudioProcessorEditor::paint(juce::Graphics& g)
 {
-    // Main background — radial gradient (Liquid Intelligence: deep center, darker edges)
-    {
-        const float cx = static_cast<float>(getWidth()) * 0.5f;
-        const float cy = static_cast<float>(getHeight()) * 0.4f;
-        const float gradR = static_cast<float>(getWidth()) * 0.8f;
-        juce::ColourGradient bg(
-            juce::Colour(0xFF14151E), cx, cy,
-            juce::Colour(0xFF0A0B10), cx, cy + gradR,
-            true); // radial
-        g.setGradientFill(bg);
-        g.fillRect(getLocalBounds());
-    }
+    // Liquid Intelligence background: 135° gradient from dark (top-left) to slightly lighter (bottom-right)
+    juce::ColourGradient bgGrad(
+        juce::Colour(0xFF0A0A0E), 0.0f, 0.0f,
+        juce::Colour(0xFF141420), (float) getWidth(), (float) getHeight(),
+        false);
+    g.setGradientFill(bgGrad);
+    g.fillAll();
 
     const float w = static_cast<float>(getWidth());
 
@@ -1058,6 +1086,13 @@ void AIEqualizerAudioProcessorEditor::resized()
     // Logo — left anchor (mockup: 12px, weight 600, letter-spacing 0.5)
     logoLabel.setVisible(true);
     logoLabel.setBounds(header.removeFromLeft(72));
+
+    // Phase 7D: breathing amber dot next to the logo (Tribunale directive #3)
+    {
+        auto dotSlot = header.removeFromLeft(18);
+        aiBreathingDot.setBounds(dotSlot.withSizeKeepingCentre(14, 14));
+    }
+
     header.removeFromLeft(4);  // margin-right before divider
 
     // Preset navigation (mockup: ‹ [Vocal Presence] ›)
@@ -1073,9 +1108,12 @@ void AIEqualizerAudioProcessorEditor::resized()
     btnC.setVisible(false);
     btnD.setVisible(false);
 
-    // Right group (from right edge): ⚙ | AI dot (rightmost)
-    optionsBtn.setBounds(header.removeFromRight(22).reduced(0, 5));
-    header.removeFromRight(4);
+    // Right group (from right edge): AI dot (rightmost)
+    // Phase 10: optionsBtn is hidden (Options menu still accessible via other means).
+    // Tribunale AIEQ+ direttiva B: POST e DELTA sono RIABILITATI accanto a PRE
+    // (Delta Listen è funzione core per un EQ professionale).
+    optionsBtn.setVisible(false);
+
     aiPanelToggle.setBounds(header.removeFromRight(28).reduced(0, 5));
     header.removeFromRight(8);
 
@@ -1083,11 +1121,12 @@ void AIEqualizerAudioProcessorEditor::resized()
     phaseModeCombo.setBounds(header.removeFromRight(100).reduced(0, 5));
     header.removeFromRight(8);
 
-    // Spectrum toggles: removeFromRight places rightmost first
-    // Visual left→right: PRE | POST | DELTA (mockup order)
-    btnDelta.setBounds(header.removeFromRight(42).reduced(1, 5));
+    // PRE | POST | DELTA toggles raggruppati (right → left: DELTA, POST, PRE)
+    btnDelta.setVisible(true);
+    btnPost.setVisible(true);
+    btnDelta.setBounds(header.removeFromRight(40).reduced(1, 5));
     btnPost.setBounds(header.removeFromRight(36).reduced(1, 5));
-    btnPre.setBounds(header.removeFromRight(32).reduced(1, 5));
+    btnPre .setBounds(header.removeFromRight(32).reduced(1, 5));
 
     // BYPASS moved to footer — hide from header
     bypassBtn.setVisible(false);
@@ -1095,6 +1134,12 @@ void AIEqualizerAudioProcessorEditor::resized()
     // Hide non-essential items (accessible via Options menu)
     savePresetBtn.setVisible(false);
     copyBtn.setVisible(false);
+
+    // === BAND TAB BAR (28px — Phase 10: I..VIII selector below header) ===
+    {
+        auto tabBarArea = bounds.removeFromTop(bandTabH);
+        bandTabBar.setBounds(tabBarArea);
+    }
 
     // === FOOTER BAR (32px — mockup: OUT meter dB | div | 2x HQ | div | BYPASS | spacer | version) ===
     auto footer = bounds.removeFromBottom(footerH).reduced(12, 0);
@@ -1159,7 +1204,19 @@ void AIEqualizerAudioProcessorEditor::resized()
 
         aiProblemPanel->setBounds(contextCol);
         semanticPanel->setBounds(contextCol);
-        dynamicEQPanel->setBounds(contextCol);
+
+        // Phase 5: dynamicEQPanel is now an on-demand overlay. Only reposition
+        // when the user has toggled it visible via DynEQCompactBar; otherwise
+        // it stays hidden and its bounds are irrelevant.
+        if (dynamicEQPanel && dynamicEQPanel->isVisible())
+        {
+            const int w = 400;
+            const int h = 300;
+            dynamicEQPanel->setBounds(getWidth() / 2 - w / 2,
+                                       getHeight() / 2 - h / 2,
+                                       w, h);
+            dynamicEQPanel->toFront(true);
+        }
     }
 
     // Context panel always visible
@@ -1176,7 +1233,8 @@ void AIEqualizerAudioProcessorEditor::resized()
     }
     aiProblemPanel->setVisible(activeRightTab == 0);
     semanticPanel->setVisible(activeRightTab == 1);
-    dynamicEQPanel->setVisible(false);
+    // Phase 5: dynamicEQPanel visibility is now driven by DynEQCompactBar
+    // (default hidden at construction; toggled via onExpandRequested).
 
     // --- Left column: band controls (mockup: 12px 16px padding) ---
     bandCol.reduce(16, 12);
@@ -1191,6 +1249,13 @@ void AIEqualizerAudioProcessorEditor::resized()
         bandSelectCombo.setBounds(selectorRow.removeFromLeft(110).reduced(0, 1));
     }
     bandCol.removeFromTop(4);
+
+    // Phase 5: carve ~42px at the bottom of the left column for DynEQCompactBar.
+    // Remainder is the band detail panel (selectedBandPanel).
+    {
+        auto dynBarArea = bandCol.removeFromBottom(42);
+        dynEqCompactBar.setBounds(dynBarArea.reduced(4, 2));
+    }
 
     // Row 2: band detail panel (all remaining left column space)
     if (selectedBandPanel)
@@ -1222,6 +1287,19 @@ void AIEqualizerAudioProcessorEditor::timerCallback()
     // Bug K fix: guard against timer firing during processor teardown
     if (!processor.isProcessorReady())
         return;
+
+    // Phase 7D: single-heartbeat breathing phase for AIBreathingDot.
+    // Tribunale Amendment #2 (BINDING): NO scattered timers — phase driven here
+    // from the editor's existing 60 Hz timer. 4-second full sine cycle.
+    {
+        constexpr float kBreathingCycleSeconds = 4.0f;
+        constexpr float kTimerHz               = 60.0f; // matches startTimerHz(60) above
+        breathingPhase += juce::MathConstants<float>::twoPi
+                          / (kBreathingCycleSeconds * kTimerHz);
+        if (breathingPhase > juce::MathConstants<float>::twoPi)
+            breathingPhase -= juce::MathConstants<float>::twoPi;
+        aiBreathingDot.setPhase(breathingPhase);
+    }
 
     // Drain RT-safe logger queue on message thread (every tick, cheap)
     AIEQLogger::getInstance().flushRTLogs();

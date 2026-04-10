@@ -120,24 +120,22 @@ public:
         glEnable (GL_BLEND);
         glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-        // Pre-EQ spectrum (blue gradient fill + bright line)
+        // Pre-EQ spectrum — Liquid Intelligence: ethereal azure dust fill, no line contour
         if (showPre.load (std::memory_order_relaxed) && ! activeData.preDB.empty())
         {
             drawSpectrumFill (ctx, activeData.preDB, gb, minDb, maxDb, logicalW, logicalH,
-                              juce::Colour (0x5520A0FF),   // top: blue semi-transparent
-                              juce::Colour (0x0820A0FF));  // bottom: blue nearly transparent
-            drawSpectrumLine (ctx, activeData.preDB, gb, minDb, maxDb, logicalW, logicalH,
-                              juce::Colour (0xCC40C0FF));  // bright blue line
+                              juce::Colour (0x334A9FD9),   // top: azzurro polvere 20% alpha
+                              juce::Colour (0x004A9FD9));  // bottom: trasparente
+            // Liquid Intelligence: drawSpectrumLine REMOVED for Pre-EQ (no line contour)
         }
 
-        // Post-EQ spectrum (green gradient fill + bright line)
+        // Post-EQ spectrum — Liquid Intelligence: ethereal verde tenue fill, no line contour
         if (showPost.load (std::memory_order_relaxed) && ! activeData.postDB.empty())
         {
             drawSpectrumFill (ctx, activeData.postDB, gb, minDb, maxDb, logicalW, logicalH,
-                              juce::Colour (0x4440FF80),   // top: green semi-transparent
-                              juce::Colour (0x0840FF80));  // bottom: green nearly transparent
-            drawSpectrumLine (ctx, activeData.postDB, gb, minDb, maxDb, logicalW, logicalH,
-                              juce::Colour (0xCC60FFA0));  // bright green line
+                              juce::Colour (0x335ED4A0),   // top: verde 20% alpha
+                              juce::Colour (0x005ED4A0));  // bottom: trasparente
+            // Liquid Intelligence: drawSpectrumLine REMOVED for Post-EQ (no line contour)
         }
 
         glDisable (GL_BLEND);

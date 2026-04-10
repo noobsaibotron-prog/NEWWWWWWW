@@ -1,6 +1,7 @@
 #pragma once
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <juce_graphics/juce_graphics.h>
+#include "BinaryData.h"
 
 //==============================================================================
 /**
@@ -19,15 +20,16 @@ public:
     
     struct Colors
     {
-        // === BACKGROUNDS (Liquid Intelligence: warm-tinted deep darks) ===
-        inline static const juce::Colour bgDark        { 0xFF0E0F14 };
-        inline static const juce::Colour bgMid         { 0xFF181A22 };
+        // === BACKGROUNDS (Liquid Intelligence — Manus desaturated palette) ===
+        inline static const juce::Colour bgMain        { 0xFF16161A }; // background principale
+        inline static const juce::Colour bgDark        { 0xFF16161A }; // alias → bgMain (legacy)
+        inline static const juce::Colour bgMid         { 0xFF1E1E22 }; // pannelli/bottoni
         inline static const juce::Colour bgLight       { 0xFF22242E };
         inline static const juce::Colour bgLighter     { 0xFF2A2C38 };
-        inline static const juce::Colour bgPanel       { 0xFF1C1E28 };
+        inline static const juce::Colour bgPanel       { 0xFF1E1E22 }; // pannelli/bottoni (Manus)
 
         // === ACCENTS (Amber signature + functional states) ===
-        inline static const juce::Colour accentBlue    { 0xFF60A5FA }; // info/selection
+        inline static const juce::Colour accentBlue    { 0xFF4A9FD9 }; // tab Semantic, DynEQ (Manus)
         inline static const juce::Colour accentCyan    { 0xFF5BA8E0 }; // spectrum line
         inline static const juce::Colour accentYellow  { 0xFFE8A030 }; // AI amber signature
         inline static const juce::Colour accentGreen   { 0xFF4ADE80 }; // active/ok
@@ -38,17 +40,17 @@ public:
         inline static const juce::Colour amberBright   { 0xFFF4B84A };
         inline static const juce::Colour amberDim      { 0xFF8B6420 };
 
-        // === TEXT (warm tint, not pure white) ===
+        // === TEXT (Liquid Intelligence — Manus cool tint) ===
         inline static const juce::Colour textBright    { 0xFFF0EDE8 };
-        inline static const juce::Colour textPrimary   { 0xFFE8E6E2 };
-        inline static const juce::Colour textSecondary { 0xFF8A8880 };
+        inline static const juce::Colour textPrimary   { 0xFFE0E0E8 }; // testo primario (Manus)
+        inline static const juce::Colour textSecondary { 0xFF8888A0 }; // testo secondario (Manus)
         inline static const juce::Colour textMuted     { 0xFF56544E };
-        inline static const juce::Colour textLabel     { 0xFF8A8880 };
+        inline static const juce::Colour textLabel     { 0xFF8888A0 };
 
         // === SPECTRUM (cool blue — contrast with warm amber UI) ===
         inline static const juce::Colour spectrumFill  { 0xFF1A3A5A };
         inline static const juce::Colour spectrumLine  { 0xFF3A8AC4 };
-        inline static const juce::Colour eqCurve       { 0xFFE0E0E8 };
+        inline static const juce::Colour eqCurve       { 0xFFE0E0E8 }; // curva EQ bianca pura
         inline static const juce::Colour grid          { 0xFF1A1C26 };
         inline static const juce::Colour gridMajor     { 0xFF22242E };
 
@@ -56,19 +58,21 @@ public:
         inline static const juce::Colour knobOuter     { 0xFF2A2C38 }; // track arc
         inline static const juce::Colour knobOuterLight{ 0xFF2A2C38 };
         inline static const juce::Colour knobOuterDark { 0xFF22242E };
-        inline static const juce::Colour knobInner     { 0xFF181A22 }; // body fill
-        inline static const juce::Colour knobPointer   { 0xFFE8E6E2 }; // dot indicator
+        inline static const juce::Colour knobInner     { 0xFF1E1E22 }; // body fill (Manus bgPanel)
+        inline static const juce::Colour knobPointer   { 0xFFE0E0E8 }; // dot indicator (Manus textPrimary)
         inline static const juce::Colour knobGrip      { 0xFF2A2C38 }; // unused in new style
 
-        // === BAND COLORS (distinct, no amber — amber is reserved for AI) ===
-        inline static const juce::Colour band1         { 0xFF4AA8D4 }; // azure
-        inline static const juce::Colour band2         { 0xFF5ED4A0 }; // mint
-        inline static const juce::Colour band3         { 0xFFD46A8A }; // rose
-        inline static const juce::Colour band4         { 0xFFA480E0 }; // lavender
-        inline static const juce::Colour band5         { 0xFFE8D44A }; // yellow
-        inline static const juce::Colour band6         { 0xFF4AD4D4 }; // teal
-        inline static const juce::Colour band7         { 0xFFD48A5A }; // terracotta
-        inline static const juce::Colour band8         { 0xFF80C0E0 }; // sky
+        // === BAND COLORS (Liquid Intelligence — Manus desaturati, riassegnati) ===
+        inline static const juce::Colour band1         { 0xFFFF8C42 }; // arancio
+        inline static const juce::Colour band2         { 0xFF4A9FD9 }; // blu
+        inline static const juce::Colour band3         { 0xFF5ED4A0 }; // verde
+        inline static const juce::Colour band4         { 0xFFA07FE8 }; // viola
+        // Tribunale AIEQ+ direttiva #1: bande 5-8 desaturate -30% saturazione e -10% luminosità
+        // per renderle visibilmente subordinate alle prime 4 bande "prime" (Liquid Intelligence).
+        inline static const juce::Colour band5         { juce::Colour (0xFFE8D44A).withMultipliedSaturation (0.70f).withMultipliedBrightness (0.90f) }; // yellow subordinato
+        inline static const juce::Colour band6         { juce::Colour (0xFF4AD4D4).withMultipliedSaturation (0.70f).withMultipliedBrightness (0.90f) }; // teal subordinato
+        inline static const juce::Colour band7         { juce::Colour (0xFFD48A5A).withMultipliedSaturation (0.70f).withMultipliedBrightness (0.90f) }; // terracotta subordinato
+        inline static const juce::Colour band8         { juce::Colour (0xFF80C0E0).withMultipliedSaturation (0.70f).withMultipliedBrightness (0.90f) }; // sky subordinato
         
         static juce::Colour getBandColor(int idx) {
             const juce::Colour cols[] = { band1, band2, band3, band4, band5, band6, band7, band8 };
@@ -100,6 +104,14 @@ public:
 
     ModernLookAndFeel()
     {
+        // ── Embed Inter font family (4 weights) as default sans-serif ─────────
+        // Note: juce_add_binary_data strips dashes (Inter-Regular.ttf → InterRegular_ttf, no underscore)
+        interRegular  = juce::Typeface::createSystemTypefaceFor(BinaryData::InterRegular_ttf,  BinaryData::InterRegular_ttfSize);
+        interMedium   = juce::Typeface::createSystemTypefaceFor(BinaryData::InterMedium_ttf,   BinaryData::InterMedium_ttfSize);
+        interSemiBold = juce::Typeface::createSystemTypefaceFor(BinaryData::InterSemiBold_ttf, BinaryData::InterSemiBold_ttfSize);
+        interBold     = juce::Typeface::createSystemTypefaceFor(BinaryData::InterBold_ttf,     BinaryData::InterBold_ttfSize);
+        setDefaultSansSerifTypeface(interRegular);
+
         setColour(juce::ResizableWindow::backgroundColourId, Colors::bgMid);
         setColour(juce::Label::textColourId, Colors::textPrimary);
         setColour(juce::TextButton::buttonColourId, Colors::bgLighter);
@@ -114,6 +126,41 @@ public:
         setColour(juce::PopupMenu::highlightedBackgroundColourId, Colors::accentBlue);
         setColour(juce::Slider::thumbColourId, Colors::accentBlue);
         setColour(juce::Slider::trackColourId, Colors::bgLighter);
+    }
+
+    //==========================================================================
+    // FONT HELPERS — Liquid Intelligence Inter typography (Tribunal #3)
+    //==========================================================================
+
+    /** Label font (UI labels like "FREQ", "GAIN", "Q"). */
+    static juce::Font makeLabelFont(float height, bool uppercase = true)
+    {
+        juce::Font f(juce::FontOptions().withHeight(height));
+        if (uppercase)
+            f.setExtraKerningFactor(0.12f);  // Tribunal Amendment #3: premium uppercase tracking
+        return f;
+    }
+
+    /** Value font (numeric readouts). Medium weight. */
+    static juce::Font makeValueFont(float height)
+    {
+        return juce::Font(juce::FontOptions().withHeight(height).withStyle("Medium"));
+    }
+
+    /** Section title font. SemiBold + premium uppercase kerning. */
+    static juce::Font makeTitleFont(float height)
+    {
+        juce::Font f(juce::FontOptions().withHeight(height).withStyle("SemiBold"));
+        f.setExtraKerningFactor(0.12f);  // Tribunal Amendment #3
+        return f;
+    }
+
+    /** Heading font. Bold + premium uppercase kerning. */
+    static juce::Font makeHeadingFont(float height)
+    {
+        juce::Font f(juce::FontOptions().withHeight(height).withStyle("Bold"));
+        f.setExtraKerningFactor(0.12f);  // Tribunal Amendment #3
+        return f;
     }
     
     void updateHighContrastColors()
@@ -146,6 +193,9 @@ public:
 
 private:
     bool highContrastMode = false;
+
+    // ── Inter font family (embedded via BinaryData) ──────────────────────────
+    juce::Typeface::Ptr interRegular, interMedium, interSemiBold, interBold;
 
     //==========================================================================
     // FLAT ARC KNOB — Liquid Intelligence Style
@@ -232,21 +282,23 @@ private:
             if (thumbColor == juce::Slider().findColour(juce::Slider::thumbColourId))
                 thumbColor = trackColor;
 
-            float trackH = 4.0f;
+            // Client-property overrides (Liquid Intelligence: lighter, less toyish)
+            float trackH = (float) slider.getProperties().getWithDefault ("trackThickness", 4.0f);
+            float thumbR = (float) slider.getProperties().getWithDefault ("thumbRadius",    6.0f);
+
             float trackY = y + (h - trackH) / 2.0f;
 
             g.setColour(bgColor);
-            g.fillRoundedRectangle((float)x, trackY, (float)w, trackH, 2.0f);
+            g.fillRoundedRectangle((float)x, trackY, (float)w, trackH, trackH * 0.5f);
 
             float fillW = sliderPos - x;
             if (fillW > 0)
             {
                 g.setColour(trackColor);
-                g.fillRoundedRectangle((float)x, trackY, fillW, trackH, 2.0f);
+                g.fillRoundedRectangle((float)x, trackY, fillW, trackH, trackH * 0.5f);
             }
 
             // Flat thumb with border
-            float thumbR = 6.0f;
             g.setColour(Colors::bgMid);
             g.fillEllipse(sliderPos - thumbR, trackY + trackH/2 - thumbR, thumbR*2, thumbR*2);
             g.setColour(thumbColor);

@@ -428,6 +428,28 @@ bool PresetManager::loadPreset(const Preset& preset)
     try
     {
         apvts.replaceState(preset.state);
+
+        // FIX: Force parameter listeners to fire so the UI EQ curve updates.
+        // replaceState() only swaps the tree without calling updateParameterConnectionsToChildTrees,
+        // so parameterChanged() callbacks never trigger and the spectrum display stays stale.
+        for (auto* param : apvts.processor.getParameters())
+        {
+            if (auto* apvtsParam = dynamic_cast<juce::AudioProcessorParameterWithID*>(param))
+            {
+                const auto& id = apvtsParam->paramID;
+                const bool isCurveAffecting = id.startsWith("band")
+                    || id == "numActiveBands"
+                    || id == "phaseMode"
+                    || id == "msMode"
+                    || id == "oversamplingFactor";
+                if (isCurveAffecting)
+                {
+                    const float currentValue = apvtsParam->getValue();
+                    apvtsParam->sendValueChangedMessageToListeners(currentValue);
+                }
+            }
+        }
+
         AIEQ_LOG_INFO("Loaded preset: " + preset.name);
         return true;
     }

@@ -226,13 +226,11 @@ public:
             statusLabel.setVisible(false);
             for (auto& btn : presetButtons) btn->setVisible(false);
 
-            // Input row (compact)
-            auto inputRow = bounds.removeFromTop(22);
-            applyButton.setBounds(inputRow.removeFromRight(52).reduced(1));
-            commandInput.setBounds(inputRow.reduced(0, 1));
-            bounds.removeFromTop(3);
+            // Liquid Intelligence: input row moved to bottom (24px tall)
+            auto inputArea = bounds.removeFromBottom(24);
+            bounds.removeFromBottom(3);  // spacer above input row
 
-            // Quality sliders — compact rows (16px each)
+            // Quality sliders — compact rows (16px each), occupying remaining bounds
             int sliderH = 16;
             for (auto& qs : qualitySliders)
             {
@@ -248,6 +246,10 @@ public:
                 qs.bounds = row;
                 bounds.removeFromTop(1);
             }
+
+            // Position input row children inside the bottom area
+            applyButton.setBounds(inputArea.removeFromRight(52).reduced(1));
+            commandInput.setBounds(inputArea.reduced(0, 1));
         }
         else
         {
@@ -432,8 +434,12 @@ private:
         data.slider->setRange(-1.0, 1.0, 0.01);
         data.slider->setValue(0.0);
         data.slider->setTextBoxStyle(juce::Slider::TextBoxRight, false, 38, 16);
+        // Liquid Intelligence: lighter slider weight (3px track, 5px thumb) —
+        // read by ModernLookAndFeel::drawLinearSlider via client properties.
+        data.slider->getProperties().set("trackThickness", 3.0f);
+        data.slider->getProperties().set("thumbRadius",    5.0f);
         data.slider->setColour(juce::Slider::thumbColourId, color);
-        data.slider->setColour(juce::Slider::trackColourId, color);  // colored track per quality
+        data.slider->setColour(juce::Slider::trackColourId, color.withAlpha(0.6f));  // desaturated track per quality
         data.slider->setColour(juce::Slider::backgroundColourId, color.withAlpha(0.15f));
         data.slider->setColour(juce::Slider::textBoxTextColourId, ModernLookAndFeel::Colors::textLabel);
         data.slider->setColour(juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);

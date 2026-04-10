@@ -665,6 +665,27 @@ if(HAVE_JUCE)
         COPY_PLUGIN_AFTER_BUILD FALSE
         VST3_CATEGORIES "Fx"
     )
+
+    # ── Liquid Intelligence Assets (BinaryData) ────────────────────────────
+    # Embeds knob filmstrips (Manus CDN 128-frame Large Amber / Small Blue)
+    # and Inter font family (4 weights) into the plugin binary.
+    # Generated symbols: BinaryData::knob_large_amber_png, BinaryData::InterRegular_ttf, etc.
+    juce_add_binary_data(AIEQ_Assets
+        HEADER_NAME BinaryData.h
+        NAMESPACE BinaryData
+        SOURCES
+            Source/GUI/Assets/knob_large_amber.png
+            Source/GUI/Assets/knob_small_blue.png
+            Source/GUI/Assets/Inter-Regular.ttf
+            Source/GUI/Assets/Inter-Medium.ttf
+            Source/GUI/Assets/Inter-SemiBold.ttf
+            Source/GUI/Assets/Inter-Bold.ttf
+    )
+    set_target_properties(AIEQ_Assets PROPERTIES
+        POSITION_INDEPENDENT_CODE TRUE
+        FOLDER "Assets"
+    )
+
     # Add AU only on macOS
     if(APPLE)
         set_target_properties(AIEqualizerPro PROPERTIES JUCE_AU_ENABLED ON)
@@ -709,9 +730,10 @@ if(TARGET AIEqualizerPro)
                 JUCE_DISPLAY_SPLASH_SCREEN=0
         )
 
-        # Link JUCE modules
+        # Link JUCE modules + Liquid Intelligence BinaryData
         target_link_libraries(AIEqualizerPro
             PRIVATE
+                AIEQ_Assets
                 juce::juce_audio_basics
                 juce::juce_audio_devices
                 juce::juce_audio_formats

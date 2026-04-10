@@ -279,10 +279,17 @@ public:
         tEQ = lap() - t0; t0 = lap();
 #endif
 
-        drawEQBands(g);
+        // Phase 7A/7B: AI zones + dashed suggestion curve (behind bands so
+        // the draggable nodes stay on top).
         drawAIMarkers(g);
+        drawAISuggestedCurve(g);  // Phase 7B: AI suggestion overlay (dashed, amber 0.60)
+
+        drawEQBands(g);
 
         if (hoverX >= 0) drawHover(g);
+
+        // Phase 7C: contextual tooltip drawn LAST so it sits on top of everything.
+        drawTooltip(g);
 
 #if AIEQ_GUI_DEBUG
         tBands = lap() - t0;
@@ -424,36 +431,136 @@ public:
             repaint();
     }
 
-    void mouseMove(const juce::MouseEvent& e) override 
-    { 
-        hoverX = e.x; 
+    void mouseMove(const juce::MouseEvent& e) override
+    {
+        hoverX = e.x;
         hoverY = e.y;
-        
+
         // Check if hovering over a band
         hoveredBandIndex = getBandAtPosition(e.position);
         hoveredPeakIndex = getPeakAtPosition(e.position);
-        
+
         // Change cursor when over a band
         if (hoveredBandIndex >= 0 || hoveredPeakIndex >= 0)
             setMouseCursor(juce::MouseCursor::PointingHandCursor);
         else
             setMouseCursor(juce::MouseCursor::NormalCursor);
+
+        // Phase 7C: show tooltip when hovering an AI zone.
+        // Only considered when the cursor is inside the graph and not already
+        // grabbing a band.
+        if (processor.isProcessorReady() && !isDraggingBand && graphBounds.contains(e.position))
+        {
+            const auto corrections = processor.getAIEngine().getPendingCorrections();
+            int hitIdx = -1;
+
+            const float graphTop    = graphBounds.getY();
+            const float graphHeight = graphBounds.getHeight();
+            const double sr = (processor.getSampleRate() > 0.0) ? processor.getSampleRate() : 44100.0;
+            const float nyquist = static_cast<float>(sr * 0.5);
+
+            for (int i = 0; i < static_cast<int>(corrections.size()); ++i)
+            {
+                const auto& corr = corrections[(size_t) i];
+                const float freq = corr.frequency;
+                const float Q    = juce::jmax(0.01f, corr.suggestedQ);
+                if (freq <= 0.0f || freq >= nyquist)
+                    continue;
+
+                const float ratio = std::pow(2.0f, 1.0f / (2.0f * Q));
+                float xL = freqToX(freq / ratio);
+                float xH = freqToX(freq * ratio);
+                const float minWidth = 20.0f;
+                if (xH - xL < minWidth)
+                {
+                    const float xC = freqToX(freq);
+                    xL = xC - minWidth * 0.5f;
+                    xH = xC + minWidth * 0.5f;
+                }
+                xL = juce::jlimit(graphBounds.getX(), graphBounds.getRight(), xL);
+                xH = juce::jlimit(graphBounds.getX(), graphBounds.getRight(), xH);
+                if (xH - xL < 2.0f)
+                    continue;
+
+                juce::Rectangle<float> zone(xL, graphTop, xH - xL, graphHeight);
+                if (zone.contains(e.position))
+                {
+                    hitIdx = i;
+                    aiTooltip.anchor        = zone;
+                    aiTooltip.title         = juce::String("AI Suggestion");
+                    aiTooltip.description   = corr.description.isNotEmpty()
+                        ? corr.description
+                        : juce::String("Detected issue at ") + juce::String(freq, 0) + " Hz";
+                    aiTooltip.suggestion    = juce::String("FIX: ")
+                                            + juce::String(corr.suggestedGain, 1) + " dB @ Q "
+                                            + juce::String(Q, 2);
+                    aiTooltip.correctionIdx = i;
+                    if (!aiTooltip.visible)
+                    {
+                        aiTooltip.visible = true;
+                        setMouseCursor(juce::MouseCursor::PointingHandCursor);
+                        repaint();
+                    }
+                    else
+                    {
+                        repaint();
+                    }
+                    break;
+                }
+            }
+
+            if (hitIdx < 0 && aiTooltip.visible)
+            {
+                aiTooltip.visible = false;
+                aiTooltip.correctionIdx = -1;
+                repaint();
+            }
+        }
+        else if (aiTooltip.visible)
+        {
+            aiTooltip.visible = false;
+            aiTooltip.correctionIdx = -1;
+            repaint();
+        }
     }
     
-    void mouseExit(const juce::MouseEvent&) override 
-    { 
-        hoverX = -1; 
+    void mouseExit(const juce::MouseEvent&) override
+    {
+        hoverX = -1;
         hoveredBandIndex = -1;
         hoveredPeakIndex = -1;
         setMouseCursor(juce::MouseCursor::NormalCursor);
+
+        if (aiTooltip.visible)
+        {
+            aiTooltip.visible = false;
+            aiTooltip.correctionIdx = -1;
+            repaint();
+        }
     }
-    
-    void mouseDown(const juce::MouseEvent& e) override 
+
+    void mouseDown(const juce::MouseEvent& e) override
     {
         if (e.mods.isPopupMenu())
         {
             showContextMenu(e.getPosition());
             return;
+        }
+
+        // Phase 7C: click on the FIX button inside the tooltip → approve
+        // the correction. Check this BEFORE the band hit test so the click
+        // never falls through to drag-start.
+        if (aiTooltip.visible
+            && aiTooltip.correctionIdx >= 0
+            && aiTooltip.fixButtonBounds.contains(e.position))
+        {
+            if (processor.isProcessorReady())
+                processor.getAIEngine().approveCorrection(aiTooltip.correctionIdx);
+
+            aiTooltip.visible = false;
+            aiTooltip.correctionIdx = -1;
+            repaint();
+            return;  // don't propagate to band-node dragging
         }
 
         if (!graphBounds.contains(e.position))
@@ -1257,48 +1364,25 @@ private:
 
     void drawGrid(juce::Graphics& g)
     {
-        // === Ultra-subtle frequency grid lines ===
-        const float freqs[] = { 20, 30, 40, 50, 60, 80, 100, 200, 300, 400, 500, 600, 800,
-                                1000, 2000, 3000, 4000, 5000, 6000, 8000, 10000, 20000 };
-        for (float f : freqs)
+        // Liquid Intelligence: vertical frequency grid lines REMOVED entirely.
+        // Only horizontal dB lines remain, barely visible (reference mockup).
+
+        // === Horizontal dB lines — only at 0, ±6, ±12 dB, barely visible ===
+        const float dbMarks[] = { -12.0f, -6.0f, 0.0f, 6.0f, 12.0f };
+        for (float db : dbMarks)
         {
-            float x = freqToX(f);
-            if (x < graphBounds.getX() || x > graphBounds.getRight()) continue;
-            
-            bool major = (f == 100 || f == 1000 || f == 10000);
-            bool decade = (f == 20 || f == 200 || f == 2000 || f == 20000);
-            
-            if (major || decade)
-                g.setColour(ModernLookAndFeel::Colors::grid.darker(0.15f));  // Slightly visible
-            else
-                g.setColour(ModernLookAndFeel::Colors::bgDark);  // Nearly invisible
-            
-            g.drawVerticalLine((int)x, graphBounds.getY(), graphBounds.getBottom());
-        }
-        
-        // === Horizontal dB lines — finer grid ===
-        for (float db = spectrumMinDb; db <= spectrumMaxDb; db += 6.0f)
-        {
+            if (db < spectrumMinDb || db > spectrumMaxDb) continue;
             float y = dbToY(db);
             bool isZero = std::abs(db) < 0.01f;
-            bool isMajor = (std::fmod(std::abs(db), 12.0f) < 0.01f);
-            
+
+            // Liquid Intelligence: 0 dB line slightly more marked (0.5 alpha),
+            // ±6/±12 even more subdued (0.3 alpha), all in the same dark ink.
             if (isZero)
-            {
-                // 0 dB line — slightly brighter, dashed feel
-                g.setColour(ModernLookAndFeel::Colors::gridMajor);
-                g.drawHorizontalLine((int)y, graphBounds.getX(), graphBounds.getRight());
-            }
-            else if (isMajor)
-            {
-                g.setColour(ModernLookAndFeel::Colors::bgMid.darker(0.1f));
-                g.drawHorizontalLine((int)y, graphBounds.getX(), graphBounds.getRight());
-            }
+                g.setColour(juce::Colour(0xFF242836).withAlpha(0.5f));
             else
-            {
-                g.setColour(ModernLookAndFeel::Colors::bgDark.darker(0.1f));
-                g.drawHorizontalLine((int)y, graphBounds.getX(), graphBounds.getRight());
-            }
+                g.setColour(juce::Colour(0xFF242836).withAlpha(0.3f));
+
+            g.drawHorizontalLine((int)y, graphBounds.getX(), graphBounds.getRight());
         }
     }
 
@@ -1433,9 +1517,10 @@ private:
         fillPath.lineTo(graphBounds.getX(), zeroY);
         fillPath.closeSubPath();
 
+        // Liquid Intelligence: even more ethereal gradient (0.06 → 0.00)
         juce::ColourGradient fillGrad(
-            ModernLookAndFeel::Colors::eqCurve.brighter(0.2f).withAlpha(0.12f), 0, graphBounds.getY(),
-            ModernLookAndFeel::Colors::eqCurve.brighter(0.2f).withAlpha(0.02f), 0, zeroY, false);
+            ModernLookAndFeel::Colors::eqCurve.withAlpha(0.06f), 0, graphBounds.getY(),
+            ModernLookAndFeel::Colors::eqCurve.withAlpha(0.00f), 0, zeroY, false);
         g.setGradientFill(fillGrad);
         g.fillPath(fillPath);
     }
@@ -1452,53 +1537,278 @@ private:
 
         if (!isDraggingBand)
         {
-            // === SUBTLE GLOW: thin soft halo ===
-            g.setColour(ModernLookAndFeel::Colors::eqCurve.brighter(0.2f).withAlpha(0.06f));
-            g.strokePath(cachedEQCurve, juce::PathStrokeType(4.0f, juce::PathStrokeType::mitered,
+            // Liquid Intelligence: wider, more diffuse glow (6px @ 0.10 alpha, curved joins)
+            g.setColour(ModernLookAndFeel::Colors::eqCurve.withAlpha(0.10f));
+            g.strokePath(cachedEQCurve, juce::PathStrokeType(6.0f, juce::PathStrokeType::curved,
                                                                juce::PathStrokeType::rounded));
         }
 
-        // === MAIN CURVE: Clean thin line (premium, understated) ===
-        g.setColour(ModernLookAndFeel::Colors::eqCurve.withAlpha(0.85f));
-        g.strokePath(cachedEQCurve, juce::PathStrokeType(1.4f, juce::PathStrokeType::mitered,
+        // Liquid Intelligence: whiter main stroke (1.5px @ 0.90 alpha, curved joins)
+        g.setColour(ModernLookAndFeel::Colors::eqCurve.withAlpha(0.90f));
+        g.strokePath(cachedEQCurve, juce::PathStrokeType(1.5f, juce::PathStrokeType::curved,
                                                            juce::PathStrokeType::rounded));
     }
 
     void drawAIMarkers(juce::Graphics& g)
     {
-        // SAFETY: Skip if processor not ready
+        // Liquid Intelligence (Phase 7A): replaced circle markers with vertical
+        // amber zones that fade from top (15 % amber) to bottom (0 % transparent).
+        // Width is derived from the correction's Q using the musical octave
+        // formula (Tribunale directive):
+        //     half_width = freq * (2^(1/(2*Q)) - 1)
+        // clamped to a minimum of ~20 px so narrow-Q suggestions remain visible.
         if (!processor.isProcessorReady())
             return;
-            
+
         const auto corrections = processor.getAIEngine().getPendingCorrections();
-        
-        for (const auto& c : corrections)
+        if (corrections.empty())
+            return;
+
+        const float graphLeft   = graphBounds.getX();
+        const float graphRight  = graphBounds.getRight();
+        const float graphTop    = graphBounds.getY();
+        const float graphBottom = graphBounds.getBottom();
+        const float graphHeight = graphBounds.getHeight();
+        if (graphHeight <= 0.0f)
+            return;
+
+        const double sr = (processor.getSampleRate() > 0.0) ? processor.getSampleRate() : 44100.0;
+        const float nyquist = static_cast<float>(sr * 0.5);
+
+        for (const auto& corr : corrections)
         {
-            float x = freqToX(c.frequency);
-            if (x < graphBounds.getX() || x > graphBounds.getRight()) continue;
-            
-            juce::Colour col = c.approved ? ModernLookAndFeel::Colors::accentGreen 
-                                          : ModernLookAndFeel::Colors::accentOrange;
-            
-            // Vertical highlight line
-            g.setColour(col.withAlpha(0.15f));
-            g.fillRect(x - 2, graphBounds.getY(), 4.0f, graphBounds.getHeight());
-            
-            // Marker circle
-            float my = graphBounds.getY() + 12;
-            
-            // Outer ring
-            g.setColour(col.withAlpha(0.3f));
-            g.drawEllipse(x - 10, my - 10, 20, 20, 2.0f);
-            
-            // Inner filled circle
-            g.setColour(col);
-            g.fillEllipse(x - 6, my - 6, 12, 12);
-            
-            // White center
-            g.setColour(ModernLookAndFeel::Colors::textBright);
-            g.fillEllipse(x - 2, my - 2, 4, 4);
+            const float freq = corr.frequency;
+            const float Q    = juce::jmax(0.01f, corr.suggestedQ);
+            if (freq <= 0.0f || freq >= nyquist)
+                continue;
+
+            // Musical octave half-width per side (Tribunale directive)
+            const float ratio    = std::pow(2.0f, 1.0f / (2.0f * Q));
+            const float freqLow  = freq / ratio;
+            const float freqHigh = freq * ratio;
+
+            float xLow  = freqToX(freqLow);
+            float xHigh = freqToX(freqHigh);
+
+            // Minimum 20 px so narrow-Q suggestions remain visible
+            const float minWidth = 20.0f;
+            if (xHigh - xLow < minWidth)
+            {
+                const float xC = freqToX(freq);
+                xLow  = xC - minWidth * 0.5f;
+                xHigh = xC + minWidth * 0.5f;
+            }
+
+            // Clamp to graph bounds
+            const float xL = juce::jlimit(graphLeft, graphRight, xLow);
+            const float xH = juce::jlimit(graphLeft, graphRight, xHigh);
+            if (xH - xL < 2.0f)
+                continue;
+
+            auto zoneRect = juce::Rectangle<float>(xL, graphTop, xH - xL, graphHeight);
+
+            // Zone color: green if approved, amber if pending
+            const juce::Colour base = corr.approved
+                ? ModernLookAndFeel::Colors::accentGreen
+                : ModernLookAndFeel::Colors::amber;
+
+            const auto topColour    = base.withAlpha(0.15f);
+            const auto bottomColour = base.withAlpha(0.00f);
+
+            juce::ColourGradient grad(topColour,    zoneRect.getX(), graphTop,
+                                      bottomColour, zoneRect.getX(), graphBottom,
+                                      false);
+            g.setGradientFill(grad);
+            g.fillRect(zoneRect);
         }
+    }
+
+    //==========================================================================
+    // Phase 7B — AI suggested curve (dashed amber overlay).
+    // Draws the bell-shape of every pending correction using an analytic
+    // biquad magnitude response. Rebuilt every paint — cheap because the
+    // method short-circuits when there are no pending corrections (rare).
+    //==========================================================================
+    void drawAISuggestedCurve(juce::Graphics& g)
+    {
+        if (!processor.isProcessorReady() || graphBounds.isEmpty())
+            return;
+
+        const auto corrections = processor.getAIEngine().getPendingCorrections();
+        if (corrections.empty())
+            return;
+
+        ensureEQCurveFrequencies();
+        if (eqCurveFrequencies.empty())
+            return;
+
+        const double sr = (processor.getSampleRate() > 0.0) ? processor.getSampleRate() : 44100.0;
+        const float  nyquist = static_cast<float>(sr * 0.5);
+
+        const juce::Colour amberLine = ModernLookAndFeel::Colors::amber.withAlpha(0.60f);
+        const float dashes[] = { 4.0f, 4.0f };
+
+        // Draw one dashed curve per pending correction (individual bell shape).
+        for (const auto& corr : corrections)
+        {
+            if (corr.approved)
+                continue;  // approved corrections are already folded into the main EQ curve
+
+            const float freq = corr.frequency;
+            const float Q    = juce::jmax(0.01f, corr.suggestedQ);
+            const float gainDb = corr.suggestedGain;
+            if (freq <= 0.0f || freq >= nyquist)
+                continue;
+
+            // Precompute biquad-peak constants (RBJ cookbook, peaking EQ).
+            const double A     = std::pow(10.0, gainDb / 40.0);
+            const double w0    = 2.0 * juce::MathConstants<double>::pi * static_cast<double>(freq) / sr;
+            const double sinW0 = std::sin(w0);
+            const double cosW0 = std::cos(w0);
+            const double alpha = sinW0 / (2.0 * static_cast<double>(Q));
+
+            const double b0 = 1.0 + alpha * A;
+            const double b1 = -2.0 * cosW0;
+            const double b2 = 1.0 - alpha * A;
+            const double a0 = 1.0 + alpha / A;
+            const double a1 = -2.0 * cosW0;
+            const double a2 = 1.0 - alpha / A;
+
+            juce::Path suggestionPath;
+            bool started = false;
+
+            for (size_t i = 0; i < eqCurveFrequencies.size(); ++i)
+            {
+                const float f = eqCurveFrequencies[i];
+                if (f >= nyquist) break;
+
+                const double w  = 2.0 * juce::MathConstants<double>::pi * static_cast<double>(f) / sr;
+                const double cw = std::cos(w);
+                const double sw = std::sin(w);
+
+                // |H(e^jw)|^2 = (|num|^2) / (|den|^2)
+                // num = b0 + b1*e^-jw + b2*e^-2jw
+                const double numRe = b0 + b1 * cw + b2 * std::cos(2.0 * w);
+                const double numIm = -b1 * sw - b2 * std::sin(2.0 * w);
+                const double denRe = a0 + a1 * cw + a2 * std::cos(2.0 * w);
+                const double denIm = -a1 * sw - a2 * std::sin(2.0 * w);
+
+                const double num2 = numRe * numRe + numIm * numIm;
+                const double den2 = denRe * denRe + denIm * denIm;
+                const double mag2 = (den2 > 1.0e-20) ? (num2 / den2) : 1.0;
+
+                float db = static_cast<float>(10.0 * std::log10(juce::jmax(1.0e-20, mag2)));
+                db = juce::jlimit(-24.0f, 24.0f, db);
+
+                const float x = freqToX(f);
+                const float y = gainToY(db);
+
+                if (!started) { suggestionPath.startNewSubPath(x, y); started = true; }
+                else           { suggestionPath.lineTo(x, y); }
+            }
+
+            if (suggestionPath.isEmpty())
+                continue;
+
+            // Dashed amber stroke (Liquid Intelligence)
+            juce::Path dashed;
+            juce::PathStrokeType stroke(1.6f, juce::PathStrokeType::curved,
+                                         juce::PathStrokeType::rounded);
+            stroke.createDashedStroke(dashed, suggestionPath, dashes, 2);
+
+            g.setColour(amberLine);
+            g.strokePath(dashed, juce::PathStrokeType(1.6f,
+                                                        juce::PathStrokeType::curved,
+                                                        juce::PathStrokeType::rounded));
+        }
+    }
+
+    //==========================================================================
+    // Phase 7C — Contextual tooltip drawn on top of everything.
+    // Tribunale #1 (BINDING): OPAQUE 0xEE181A22 backdrop + amber border.
+    // NO StackBlur, NO createComponentSnapshot — flat fill only.
+    //==========================================================================
+    void drawTooltip(juce::Graphics& g)
+    {
+        if (!aiTooltip.visible)
+            return;
+
+        constexpr float tooltipW = 200.0f;
+        constexpr float tooltipH = 80.0f;
+
+        // Anchor above the zone by default; fall back to below if too close to top.
+        float tx = aiTooltip.anchor.getCentreX() - tooltipW * 0.5f;
+        float ty = aiTooltip.anchor.getY() - tooltipH - 10.0f;
+        if (ty < graphBounds.getY() + 4.0f)
+            ty = aiTooltip.anchor.getY() + 10.0f;
+
+        // Clamp horizontally inside the component bounds.
+        const float maxX = static_cast<float>(getWidth()) - tooltipW - 4.0f;
+        tx = juce::jlimit(4.0f, juce::jmax(4.0f, maxX), tx);
+
+        juce::Rectangle<float> tooltipRect(tx, ty, tooltipW, tooltipH);
+
+        // ── OPAQUE backdrop (Tribunale #1, BINDING) ──
+        // NO StackBlur, NO createComponentSnapshot — flat fill only.
+        g.setColour(juce::Colour(0xEE181A22));           // 93 % opacity
+        g.fillRoundedRectangle(tooltipRect, 6.0f);
+
+        g.setColour(ModernLookAndFeel::Colors::amber);
+        g.drawRoundedRectangle(tooltipRect, 6.0f, 1.0f);
+
+        // Text area reserves the bottom 22 px for the FIX button.
+        auto textArea = tooltipRect.reduced(8.0f, 6.0f);
+        textArea.removeFromBottom(22.0f);
+
+        const int lineH = 14;
+        auto titleRect = juce::Rectangle<int>(
+            (int) textArea.getX(), (int) textArea.getY(),
+            (int) textArea.getWidth(), lineH);
+
+        auto descRect = juce::Rectangle<int>(
+            (int) textArea.getX(), (int) textArea.getY() + lineH,
+            (int) textArea.getWidth(), lineH);
+
+        auto suggRect = juce::Rectangle<int>(
+            (int) textArea.getX(), (int) textArea.getY() + 2 * lineH,
+            (int) textArea.getWidth(), lineH);
+
+        // Title (bold amber)
+        g.setColour(ModernLookAndFeel::Colors::amber);
+        g.setFont(juce::Font(juce::FontOptions().withHeight(12.0f).withStyle("Bold")));
+        g.drawFittedText(aiTooltip.title, titleRect,
+                         juce::Justification::topLeft, 1, 0.9f);
+
+        // Description (regular, secondary text) — up to 2 lines, no hard truncation
+        g.setColour(ModernLookAndFeel::Colors::textSecondary);
+        g.setFont(juce::Font(juce::FontOptions().withHeight(11.0f)));
+        auto descWrapRect = juce::Rectangle<int>(
+            descRect.getX(), descRect.getY(),
+            descRect.getWidth(), lineH * 2);
+        g.drawFittedText(aiTooltip.description, descWrapRect,
+                         juce::Justification::topLeft, 2, 0.85f);
+
+        // Suggestion (italic, primary text)
+        g.setColour(ModernLookAndFeel::Colors::textPrimary);
+        g.setFont(juce::Font(juce::FontOptions().withHeight(11.0f).withStyle("Italic")));
+        g.drawFittedText(aiTooltip.suggestion, suggRect,
+                         juce::Justification::topLeft, 1, 0.9f);
+
+        // ── FIX button (amber) at bottom-right ──
+        const float btnW = 40.0f;
+        const float btnH = 18.0f;
+        juce::Rectangle<float> btnBounds(
+            tooltipRect.getRight() - btnW - 6.0f,
+            tooltipRect.getBottom() - btnH - 6.0f,
+            btnW, btnH);
+        aiTooltip.fixButtonBounds = btnBounds;
+
+        g.setColour(ModernLookAndFeel::Colors::amber);
+        g.fillRoundedRectangle(btnBounds, 3.0f);
+        g.setColour(juce::Colour(0xFF181A22));
+        g.setFont(juce::Font(juce::FontOptions().withHeight(10.0f).withStyle("Bold")));
+        g.drawFittedText("FIX", btnBounds.toNearestInt(),
+                         juce::Justification::centred, 1, 1.0f);
     }
     
     void drawEQBands(juce::Graphics& g)
@@ -1521,10 +1831,11 @@ private:
             const bool isHovered = (i == hoveredBandIndex);
             const bool isDragging = (isDraggingBand && i == draggedBandIndex);
 
-            // === FabFilter-style band node ===
-            float baseRadius = state.enabled ? 11.0f : 5.0f;
+            // === Ethereal Pro-Q 3 style band node (Liquid Intelligence) ===
+            // Inactive: 18px ring only. Active: 20px with amber glow + 12% fill + 2px border.
+            float baseRadius = state.enabled ? 10.0f : 9.0f;
             float radius = baseRadius;
-            if (isDragging) radius = baseRadius + 4.0f;
+            if (isDragging) radius = 11.0f + 4.0f;              // dragging feedback: 11 base + 4 grab bump
             else if (isSelected) radius = baseRadius + 2.0f;
             else if (isHovered) radius = baseRadius + 2.0f;
 
@@ -1536,17 +1847,19 @@ private:
                 g.drawLine(x, zeroY, x, y, 1.0f);
             }
 
-            // === GLOW (selected/hovered/dragging) — skip non-dragged glow during drag for perf ===
+            // === AMBER GLOW (selected/hovered/dragging) — signature AI colour ===
+            // Drawn BEFORE the node fill so the node paints on top (correct z-order).
+            // Skip non-dragged glow during drag for perf.
             if (isDragging)
             {
-                g.setColour(col.withAlpha(0.10f));
+                g.setColour(ModernLookAndFeel::Colors::amber.withAlpha(0.10f));
                 g.fillEllipse(x - radius - 10, y - radius - 10, (radius + 10) * 2, (radius + 10) * 2);
-                g.setColour(col.withAlpha(0.18f));
+                g.setColour(ModernLookAndFeel::Colors::amber.withAlpha(0.18f));
                 g.fillEllipse(x - radius - 5, y - radius - 5, (radius + 5) * 2, (radius + 5) * 2);
             }
             else if (!isDraggingBand && (isSelected || isHovered))
             {
-                g.setColour(col.withAlpha(0.12f));
+                g.setColour(ModernLookAndFeel::Colors::amber.withAlpha(0.12f));
                 g.fillEllipse(x - radius - 6, y - radius - 6, (radius + 6) * 2, (radius + 6) * 2);
             }
 
@@ -1563,33 +1876,32 @@ private:
 
             if (state.enabled)
             {
-                // === SEMI-TRANSPARENT FILL ===
-                g.setColour(col.withAlpha(isDragging ? 0.65f : (isSelected ? 0.55f : 0.40f)));
-                g.fillEllipse(x - radius, y - radius, radius * 2, radius * 2);
+                juce::Rectangle<float> nodeBounds (x - radius, y - radius, radius * 2, radius * 2);
 
-                // Luminous border ring
-                g.setColour(col.withAlpha(isDragging ? 1.0f : (isSelected ? 0.9f : 0.7f)));
-                g.drawEllipse(x - radius, y - radius, radius * 2, radius * 2,
-                             isDragging ? 2.5f : 1.8f);
+                // === Z-ORDER: glow → fill → border ===
+                // Ambient amber glow behind the node (signature AI colour). Drawn first so the
+                // fill and border paint on top. For selected/hovered/dragging we already laid
+                // down a wider amber glow above; this inner glow layers cleanly underneath
+                // the node for any active, idle band as well.
+                g.setColour(ModernLookAndFeel::Colors::amber.withAlpha(0.30f));
+                g.fillEllipse(nodeBounds.expanded(4.0f));
 
-                // Band number — skip during drag (setFont + drawText per band is expensive)
-                if (!isDraggingBand)
-                {
-                    g.setColour(juce::Colours::white.withAlpha(0.9f));
-                    g.setFont(bandNumberFont);
-                    g.drawText(juce::String(i + 1),
-                              static_cast<int>(x - radius), static_cast<int>(y - radius),
-                              static_cast<int>(radius * 2), static_cast<int>(radius * 2),
-                              juce::Justification::centred);
-                }
+                // Tenue inner fill — very low alpha, ethereal Pro-Q 3 look.
+                g.setColour(col.withAlpha(0.12f));
+                g.fillEllipse(nodeBounds);
+
+                // Luminous coloured border ring — conveys band identity.
+                g.setColour(col.withAlpha(isDragging ? 1.0f : (isSelected ? 0.95f : 0.85f)));
+                g.drawEllipse(nodeBounds, isDragging ? 2.5f : 2.0f);
+
+                // Liquid Intelligence: Roman numerals removed — band identity conveyed via colour ring + BandTabBar
             }
             else
             {
-                // Disabled: tiny ring only
-                g.setColour(col.withAlpha(0.20f));
-                g.fillEllipse(x - 4, y - 4, 8, 8);
-                g.setColour(col.withAlpha(0.40f));
-                g.drawEllipse(x - 4, y - 4, 8, 8, 1.0f);
+                // Inactive: 18px ethereal ring only, band colour, 1.5px stroke — no fill, no glow.
+                juce::Rectangle<float> nodeBounds (x - baseRadius, y - baseRadius, baseRadius * 2, baseRadius * 2);
+                g.setColour(col);
+                g.drawEllipse(nodeBounds, 1.5f);
             }
         };
 
@@ -2283,6 +2595,19 @@ private:
     std::array<juce::Colour, AIEqualizerAudioProcessor::maxBands> bandColors;
     std::vector<SpectrumPeak> detectedPeaks;
     int hoveredPeakIndex = -1;
+
+    // ── Phase 7C: AI contextual tooltip state ───────────────────────────────
+    struct AITooltipState
+    {
+        bool visible = false;
+        juce::Rectangle<float> anchor;           // where the tooltip is anchored (near the zone)
+        juce::String title;
+        juce::String description;
+        juce::String suggestion;
+        int correctionIdx = -1;
+        juce::Rectangle<float> fixButtonBounds;  // for hit testing the FIX button
+    };
+    AITooltipState aiTooltip;
 
     // FIX 4: Off-screen grid + labels cache (static between resizes)
     juce::Image gridCache;

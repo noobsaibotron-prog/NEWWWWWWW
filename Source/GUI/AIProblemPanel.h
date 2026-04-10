@@ -75,9 +75,10 @@ public:
         
         // Action buttons
         autoFixBtn.setButtonText(tr("FIX ALL", "FIX ALL"));
-        autoFixBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xFF2D5A27));
-        autoFixBtn.setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xFF3D7A37));
-        autoFixBtn.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
+        autoFixBtn.setColour(juce::TextButton::buttonColourId,   juce::Colour(0xFFE8A030)); // Amber (Liquid Intelligence signature)
+        autoFixBtn.setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xFFF4B84A)); // Amber bright (hover/pressed)
+        autoFixBtn.setColour(juce::TextButton::textColourOnId,   juce::Colour(0xFF181A22)); // Dark text on amber
+        autoFixBtn.setColour(juce::TextButton::textColourOffId,  juce::Colour(0xFF181A22));
         autoFixBtn.setTooltip(tr("Apply all suggested fixes (with confirmation)",
                                  "Apply all suggested fixes (with confirmation)"));
         autoFixBtn.setTitle(tr("Apply all fixes", "Apply all fixes"));
@@ -260,8 +261,8 @@ public:
         if (enabled)
         {
             unmaskingBtn.setButtonText("UNMASKING ON");
-            unmaskingBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xFF2D5A27));
-            unmaskingBtn.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
+            unmaskingBtn.setColour(juce::TextButton::buttonColourId,  juce::Colour(0xFFE8A030)); // Amber (Liquid Intelligence signature)
+            unmaskingBtn.setColour(juce::TextButton::textColourOffId, juce::Colour(0xFF181A22)); // Dark text on amber
         }
         else
         {

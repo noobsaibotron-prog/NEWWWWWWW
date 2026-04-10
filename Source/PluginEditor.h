@@ -11,8 +11,11 @@
 #include "GUI/AIProblemPanel.h"
 #include "GUI/BandControlPanel.h"
 #include "GUI/DynamicEQPanel.h"
+#include "GUI/DynEQCompactBar.h"
+#include "GUI/AIBreathingDot.h"
 #include "GUI/PremiumKnob.h"
 #include "GUI/BandViewport.h"
+#include "GUI/BandTabBar.h"
 #include "GUI/SemanticControlPanel.h"
 #include "GUI/LevelMeter.h"
 #include "GUI/NewSpectrumPipeline.h"
@@ -144,6 +147,7 @@ private:
     static constexpr int footerH = 32;    // footer bar (meter, version, bypass)
     static constexpr int controlH = 195;  // bottom panel (band controls + context)
     static constexpr int bandPanelH = 140;
+    static constexpr int bandTabH = 28;   // band tab bar (I..VIII) below header
     static constexpr int pad = 6;
     bool aiPanelVisible = true;   // always visible in bottom panel
     
@@ -193,6 +197,16 @@ private:
     // Metrological 5-layer spectrum pipeline (Parseval-correct, IIR ballistics, log LUT)
     std::unique_ptr<NewSpectrumPipeline> spectrumPipeline;
     std::unique_ptr<GLSpectrumHelper>    glSpectrumHelper;
+
+    // Band tab bar (I..VIII) — Phase 10, placed below header
+    BandTabBar bandTabBar;
+
+    // Phase 5: compact dynamic EQ strip under band knobs in left column
+    DynEQCompactBar dynEqCompactBar;
+
+    // Phase 7D: passive breathing amber dot next to logo, driven by timerCallback
+    AIBreathingDot  aiBreathingDot;
+    float           breathingPhase = 0.0f;
 
     // Main
     std::unique_ptr<AdvancedSpectrumDisplay> spectrum;

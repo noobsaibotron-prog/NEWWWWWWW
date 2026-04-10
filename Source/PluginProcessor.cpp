@@ -4550,6 +4550,27 @@ void AIEqualizerAudioProcessor::setStateInformation(const void* data, int sizeIn
             // Phase 1: Restore APVTS — synchronous, audio thread sees new values immediately.
             apvts.replaceState(juce::ValueTree::fromXml(*xmlState));
 
+            // FIX: Force parameter listeners to fire so the UI EQ curve updates.
+            // replaceState() only swaps the tree without calling updateParameterConnectionsToChildTrees,
+            // so parameterChanged() callbacks never trigger and the spectrum display stays stale.
+            for (auto* param : apvts.processor.getParameters())
+            {
+                if (auto* apvtsParam = dynamic_cast<juce::AudioProcessorParameterWithID*>(param))
+                {
+                    const auto& id = apvtsParam->paramID;
+                    const bool isCurveAffecting = id.startsWith("band")
+                        || id == "numActiveBands"
+                        || id == "phaseMode"
+                        || id == "msMode"
+                        || id == "oversamplingFactor";
+                    if (isCurveAffecting)
+                    {
+                        const float currentValue = apvtsParam->getValue();
+                        apvtsParam->sendValueChangedMessageToListeners(currentValue);
+                    }
+                }
+            }
+
             // Phase 2: Restore all 4 slot structs under the lock — synchronous, no async gap.
             // RB-2 FIX: slotMutex_ ensures no concurrent reader (getStateInformation, UI)
             // can observe a half-restored state. The entire restore is transactional.

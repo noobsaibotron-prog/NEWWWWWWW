@@ -1,119 +1,103 @@
 #pragma once
+/**
+ * PremiumKnob — Filmstrip-based rotary knob for "Liquid Intelligence" design.
+ *
+ * Rendering: a single juce::Image filmstrip (128 vertical frames) pre-rendered
+ * by Manus. The paint() method picks the frame index based on the knob value
+ * and does a single drawImage() call — no procedural arcs, no fillEllipse.
+ *
+ * Performance: eliminates sin/cos / Path overhead from the message thread,
+ * replacing it with an O(1) blit. Filmstrips are cached globally via
+ * juce::ImageCache::getFromMemory (shared across all knob instances).
+ *
+ * HiDPI: the Large Amber filmstrip is exported at 256×256 per frame (2x),
+ * the Small Blue at 128×128 per frame (1x or 2x depending on display size).
+ * juce::Image + drawImage handle Retina scaling automatically via the
+ * graphics context's transform.
+ */
 
 #include <juce_gui_basics/juce_gui_basics.h>
-#include "ModernLookAndFeel.h"
-#include <cmath>
+#include "BinaryData.h"
 
-/**
- * PremiumKnob
- * A compact rotary knob with a metallic 3D look, animated glow and smooth repaint.
- * - Self contained (no external LookAndFeel)
- * - 60 FPS repaint for glow pulse
- * - Designed for small footprints (32–48 px)
- */
-class PremiumKnob : public juce::Slider, private juce::Timer
+class PremiumKnob : public juce::Slider
 {
 public:
-    PremiumKnob() { init(); }
-    explicit PremiumKnob(const juce::String& /*labelText*/) { init(); }
+    enum class Style { LargeAmber, SmallBlue };
 
-    ~PremiumKnob() override = default;
+    explicit PremiumKnob(const juce::String& labelText = {}, Style s = Style::LargeAmber)
+        : juce::Slider(juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::NoTextBox),
+          label(labelText),
+          style(s)
+    {
+        setPopupDisplayEnabled(true, false, nullptr);
+        setRange(0.0, 1.0, 0.0);
+    }
 
-    /** Set the accent color for this knob's value arc. */
-    void setAccentColour(juce::Colour c) { accent = c; bgCache = {}; repaint(); }
+    void setStyle(Style s) noexcept
+    {
+        if (style != s)
+        {
+            style = s;
+            repaint();
+        }
+    }
+
+    Style getStyle() const noexcept { return style; }
 
     void paint(juce::Graphics& g) override
     {
-        using C = ModernLookAndFeel::Colors;
-        const auto bounds = getLocalBounds().toFloat();
-        const float size = juce::jmin(bounds.getWidth(), bounds.getHeight());
-        const float radius = size * 0.5f;
-        const juce::Point<float> centre = bounds.getCentre();
+        auto& film = getFilmstrip(style);
+        if (film.isNull())
+            return;
 
-        const float startAngle = juce::MathConstants<float>::pi * 1.25f;
-        const float endAngle   = juce::MathConstants<float>::pi * 2.75f;
-        const float proportion = static_cast<float>(valueToProportionOfLength(getValue()));
-        const float angle = startAngle + proportion * (endAngle - startAngle);
+        // Filmstrip is a vertical strip of 128 frames. Frame height = total height / 128.
+        const int numFrames = 128;
+        const int frameW = film.getWidth();
+        const int frameH = film.getHeight() / numFrames;
+        if (frameH <= 0)
+            return;
 
-        const juce::Colour col = accent.isTransparent() ? C::amber : accent;
+        // Map slider value [min..max] → frame index [0..127]
+        const double norm = getNormalisableRange().convertTo0to1(getValue());
+        const int frameIdx = juce::jlimit(0, numFrames - 1, (int) std::round(norm * (numFrames - 1)));
 
-        // ── Flat circle body ──
-        g.setColour(C::knobInner);
-        g.fillEllipse(centre.x - radius, centre.y - radius, radius * 2.0f, radius * 2.0f);
-        g.setColour(juce::Colour(0x10FFFFFF));
-        g.drawEllipse(centre.x - radius, centre.y - radius, radius * 2.0f, radius * 2.0f, 1.0f);
+        // Blit the selected frame to the full component bounds
+        g.drawImage(film,
+                    0, 0, getWidth(), getHeight(),            // dest rect
+                    0, frameIdx * frameH, frameW, frameH,     // source rect
+                    false);
 
-        // ── Track arc (270 deg) ──
-        float arcR = radius * 0.82f;
-        float arcThk = juce::jmax(2.0f, radius * 0.1f);
+        // Optional: draw the label below the knob if we have one and there's room
+        if (label.isNotEmpty() && getHeight() > 40)
         {
-            juce::Path arcBg;
-            arcBg.addCentredArc(centre.x, centre.y, arcR, arcR, 0.0f, startAngle, endAngle, true);
-            g.setColour(C::knobOuter);
-            g.strokePath(arcBg, juce::PathStrokeType(arcThk, juce::PathStrokeType::curved,
-                                                      juce::PathStrokeType::rounded));
-        }
-
-        // ── Value arc + glow ──
-        if (proportion > 0.005f)
-        {
-            juce::Path arcVal;
-            arcVal.addCentredArc(centre.x, centre.y, arcR, arcR, 0.0f, startAngle, angle, true);
-            // Glow (wider, transparent)
-            g.setColour(col.withAlpha(0.2f));
-            g.strokePath(arcVal, juce::PathStrokeType(arcThk + 3.0f, juce::PathStrokeType::curved,
-                                                       juce::PathStrokeType::rounded));
-            g.setColour(col);
-            g.strokePath(arcVal, juce::PathStrokeType(arcThk, juce::PathStrokeType::curved,
-                                                       juce::PathStrokeType::rounded));
-        }
-
-        // ── Dot indicator (white) ──
-        float dotR = juce::jmax(2.5f, radius * 0.1f);
-        float dotX = centre.x + std::sin(angle) * arcR;
-        float dotY = centre.y - std::cos(angle) * arcR;
-        g.setColour(C::knobPointer);
-        g.fillEllipse(dotX - dotR, dotY - dotR, dotR * 2.0f, dotR * 2.0f);
-
-        // ── Center value text (only if knob >= 48px) ──
-        if (size >= 48.0f)
-        {
-            auto val = getValue();
-            juce::String text;
-            if (val >= 1000.0) text = juce::String(val / 1000.0, 1) + "k";
-            else if (val >= 100.0) text = juce::String(static_cast<int>(val));
-            else text = juce::String(val, 1);
-
-            g.setColour(C::textPrimary);
-            g.setFont(juce::Font(juce::FontOptions().withHeight(juce::jmax(9.0f, size * 0.2f))).withStyle(juce::Font::bold));
-            g.drawText(text, bounds, juce::Justification::centred);
+            g.setColour(juce::Colour(0xFF8888A0));  // textSecondary
+            auto labelBounds = juce::Rectangle<int>(0, getHeight() - 14, getWidth(), 12);
+            g.drawFittedText(label, labelBounds, juce::Justification::centred, 1);
         }
     }
 
 private:
-    juce::Image bgCache;   // unused — kept for ABI compat
-    juce::Colour accent;   // per-knob accent color (default: amber)
+    juce::String label;
+    Style style;
 
-    void init()
+    /** Shared filmstrip cache. ImageCache refcounts and auto-frees on plugin unload. */
+    static juce::Image& getFilmstrip(Style s)
     {
-        setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
-        setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
-        setMouseDragSensitivity(300);
+        if (s == Style::LargeAmber)
+        {
+            static juce::Image img = juce::ImageCache::getFromMemory(
+                BinaryData::knob_large_amber_png,
+                BinaryData::knob_large_amber_pngSize);
+            return img;
+        }
+        else
+        {
+            static juce::Image img = juce::ImageCache::getFromMemory(
+                BinaryData::knob_small_blue_png,
+                BinaryData::knob_small_blue_pngSize);
+            return img;
+        }
     }
 
-    void timerCallback() override { repaint(); }
-
-    void mouseEnter(const juce::MouseEvent& e) override
-    {
-        juce::Slider::mouseEnter(e);
-        startTimerHz(60);
-    }
-
-    void mouseExit(const juce::MouseEvent& e) override
-    {
-        juce::Slider::mouseExit(e);
-        stopTimer();
-        repaint();
-    }
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PremiumKnob)
 };
-
