@@ -61,17 +61,48 @@ public:
         const double norm = getNormalisableRange().convertTo0to1(getValue());
         const int frameIdx = juce::jlimit(0, numFrames - 1, (int) std::round(norm * (numFrames - 1)));
 
-        // Blit the selected frame to the full component bounds
+        // Compute the "face" area (excluding any native text box). juce::Slider
+        // positions the text box as a child component; paint() here must not
+        // overlap it, otherwise the value string gets covered by the filmstrip.
+        int faceTop = 0;
+        int faceH   = getHeight();
+        const int tbH = getTextBoxHeight();
+        const auto tbPos = getTextBoxPosition();
+        if (tbPos == juce::Slider::TextBoxAbove)
+        {
+            faceTop = tbH;
+            faceH   = juce::jmax (0, getHeight() - tbH);
+        }
+        else if (tbPos == juce::Slider::TextBoxBelow)
+        {
+            faceH = juce::jmax (0, getHeight() - tbH);
+        }
+
+        // Reserve space for the optional custom label under the knob face.
+        const bool hasLabel = label.isNotEmpty() && faceH > 40;
+        const int labelH   = hasLabel ? 14 : 0;
+        const int availH   = juce::jmax (0, faceH - labelH);
+
+        // CRITICAL FIX: always draw the filmstrip frame in a SQUARE centered region.
+        // Without this, setBounds() with a non-square rect stretches the circular
+        // frame into an ellipse. The knob must remain visually round regardless
+        // of the parent component's aspect ratio.
+        const int knobSize = juce::jmin (getWidth(), availH);
+        if (knobSize <= 0)
+            return;
+
+        const int knobX = (getWidth() - knobSize) / 2;
+        const int knobY = faceTop + (availH - knobSize) / 2;
+
         g.drawImage(film,
-                    0, 0, getWidth(), getHeight(),            // dest rect
-                    0, frameIdx * frameH, frameW, frameH,     // source rect
+                    knobX, knobY, knobSize, knobSize,          // square dest rect
+                    0, frameIdx * frameH, frameW, frameH,      // source rect
                     false);
 
-        // Optional: draw the label below the knob if we have one and there's room
-        if (label.isNotEmpty() && getHeight() > 40)
+        if (hasLabel)
         {
             g.setColour(juce::Colour(0xFF8888A0));  // textSecondary
-            auto labelBounds = juce::Rectangle<int>(0, getHeight() - 14, getWidth(), 12);
+            auto labelBounds = juce::Rectangle<int>(0, faceTop + faceH - labelH, getWidth(), labelH - 2);
             g.drawFittedText(label, labelBounds, juce::Justification::centred, 1);
         }
     }

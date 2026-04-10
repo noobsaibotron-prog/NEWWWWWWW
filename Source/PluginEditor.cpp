@@ -1189,16 +1189,25 @@ void AIEqualizerAudioProcessorEditor::resized()
         semanticTabBtn.setBounds(tabRow.reduced(1));
         contextCol.removeFromTop(2);
 
-        // AI tab: sensitivity/correction knobs at top
+        // AI tab: sensitivity/correction knobs at top.
+        // Fix: give the knob row enough height (80px) and constrain knob bounds
+        // to a SQUARE centered region so the circular filmstrip doesn't stretch
+        // into an ellipse.
         if (activeRightTab == 0)
         {
-            auto knobRow = contextCol.removeFromTop(42);
+            auto knobRow = contextCol.removeFromTop(80);
             auto sensArea = knobRow.removeFromLeft(knobRow.getWidth() / 2);
-            auto strArea = knobRow;
-            sensitivityLabel.setBounds(sensArea.removeFromTop(10));
-            sensitivityKnob.setBounds(sensArea.reduced(sensArea.getWidth() / 4, 0));
-            strengthLabel.setBounds(strArea.removeFromTop(10));
-            strengthKnob.setBounds(strArea.reduced(strArea.getWidth() / 4, 0));
+            auto strArea  = knobRow;
+
+            sensitivityLabel.setBounds(sensArea.removeFromTop(12));
+            strengthLabel.setBounds(strArea.removeFromTop(12));
+
+            const int sensSize = juce::jmin(sensArea.getWidth(), sensArea.getHeight());
+            sensitivityKnob.setBounds(sensArea.withSizeKeepingCentre(sensSize, sensSize));
+
+            const int strSize = juce::jmin(strArea.getWidth(), strArea.getHeight());
+            strengthKnob.setBounds(strArea.withSizeKeepingCentre(strSize, strSize));
+
             contextCol.removeFromTop(2);
         }
 

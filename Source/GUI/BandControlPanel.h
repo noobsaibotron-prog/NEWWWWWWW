@@ -2,6 +2,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "ModernLookAndFeel.h"
+#include "PremiumKnob.h"
 
 //==============================================================================
 class BandControlPanel : public juce::Component,
@@ -32,9 +33,9 @@ public:
         freqLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted);
         addAndMakeVisible(freqLabel);
 
-        freqKnob.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
-        freqKnob.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 16);
-        freqKnob.setColour(juce::Slider::rotarySliderFillColourId, bandColor);
+        // PremiumKnob (LargeAmber) already uses rotary drag style from its constructor.
+        // Keep a compact native text box below for the value readout.
+        freqKnob.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 14);
         addAndMakeVisible(freqKnob);
         freqAtt = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
             parameters, prefix + "Freq", freqKnob);
@@ -46,9 +47,7 @@ public:
         gainLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted);
         addAndMakeVisible(gainLabel);
 
-        gainKnob.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
-        gainKnob.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 16);
-        gainKnob.setColour(juce::Slider::rotarySliderFillColourId, bandColor);
+        gainKnob.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 14);
         addAndMakeVisible(gainKnob);
         gainAtt = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
             parameters, prefix + "Gain", gainKnob);
@@ -60,9 +59,7 @@ public:
         qLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted);
         addAndMakeVisible(qLabel);
 
-        qKnob.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
-        qKnob.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 16);
-        qKnob.setColour(juce::Slider::rotarySliderFillColourId, bandColor);
+        qKnob.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 14);
         addAndMakeVisible(qKnob);
         qAtt = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
             parameters, prefix + "Q", qKnob);
@@ -156,9 +153,7 @@ public:
 
         bandLabel.setText("B" + juce::String(bandIndex + 1), juce::dontSendNotification);
         bandLabel.setColour(juce::Label::textColourId, bandColor);
-        freqKnob.setColour(juce::Slider::rotarySliderFillColourId, bandColor);
-        gainKnob.setColour(juce::Slider::rotarySliderFillColourId, bandColor);
-        qKnob.setColour(juce::Slider::rotarySliderFillColourId, bandColor);
+        // PremiumKnob filmstrip is pre-rendered amber; no per-band recolor needed.
         enableBtn.setColour(juce::TextButton::buttonOnColourId, bandColor);
 
         freqAtt  = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(parameters, prefix + "Freq",    freqKnob);
@@ -244,53 +239,56 @@ public:
         }
         else
         {
-            // === VERTICAL LAYOUT ===
-            bounds.removeFromTop(4);
-            bandLabel.setBounds(bounds.removeFromTop(18));
+            // === VERTICAL LAYOUT (Liquid Intelligence: 3 big LargeAmber knobs) ===
+            // Top: band label + type (+ optional slope) combo
+            // Middle: FREQ / GAIN / Q filmstrip knobs with native text box below
+            // Bottom: ENABLE / SOLO toggle row
+            bounds.removeFromTop(2);
+            bandLabel.setBounds(bounds.removeFromTop(16));
             bounds.removeFromTop(2);
 
-            typeLabel.setVisible(true);
-            typeLabel.setBounds(bounds.removeFromTop(12));
-            typeCombo.setBounds(bounds.removeFromTop(26).reduced(2, 0));
-            bounds.removeFromTop(4);
+            // Type combo (no separate label — the knob face + band label carries the context)
+            typeLabel.setVisible(false);
+            typeCombo.setBounds(bounds.removeFromTop(22).reduced(2, 0));
+            bounds.removeFromTop(2);
 
             // Slope row (only when LowCut/HighCut)
             if (showSlope)
             {
-                slopeLabel.setVisible(true);
-                slopeLabel.setBounds(bounds.removeFromTop(12));
-                slopeCombo.setBounds(bounds.removeFromTop(26).reduced(2, 0));
-                bounds.removeFromTop(4);
+                slopeLabel.setVisible(false);
+                slopeCombo.setBounds(bounds.removeFromTop(22).reduced(2, 0));
+                bounds.removeFromTop(2);
             }
             else
             {
                 slopeLabel.setVisible(false);
             }
 
-            auto btnRow = bounds.removeFromBottom(26);
-            enableBtn.setBounds(btnRow.removeFromLeft(btnRow.getWidth() / 2).reduced(4, 2));
-            soloBtn.setBounds(btnRow.reduced(4, 2));
+            // Enable/Solo row at the very bottom
+            auto btnRow = bounds.removeFromBottom(22);
+            enableBtn.setBounds(btnRow.removeFromLeft(btnRow.getWidth() / 2).reduced(3, 1));
+            soloBtn.setBounds(btnRow.reduced(3, 1));
             bounds.removeFromBottom(2);
 
-            int knobW = bounds.getWidth() / 3;
+            // Remaining vertical space → 3 knobs side-by-side.
+            // Each knob column carries a small header label + the PremiumKnob
+            // (which holds its own native text box for the value readout).
+            const int knobW = bounds.getWidth() / 3;
 
             auto freqArea = bounds.removeFromLeft(knobW);
             freqLabel.setVisible(true);
-            freqLabel.setBounds(freqArea.removeFromTop(12));
+            freqLabel.setBounds(freqArea.removeFromTop(11));
             freqKnob.setBounds(freqArea);
-            freqKnob.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 16);
 
             auto gainArea = bounds.removeFromLeft(knobW);
             gainLabel.setVisible(true);
-            gainLabel.setBounds(gainArea.removeFromTop(12));
+            gainLabel.setBounds(gainArea.removeFromTop(11));
             gainKnob.setBounds(gainArea);
-            gainKnob.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 16);
 
             auto qArea = bounds;
             qLabel.setVisible(true);
-            qLabel.setBounds(qArea.removeFromTop(12));
+            qLabel.setBounds(qArea.removeFromTop(11));
             qKnob.setBounds(qArea);
-            qKnob.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 16);
         }
     }
 
@@ -313,7 +311,11 @@ private:
 
     juce::Label bandLabel;
     juce::Label freqLabel, gainLabel, qLabel, typeLabel, slopeLabel;
-    juce::Slider freqKnob, gainKnob, qKnob;
+    // Phase 4 (completion): 3 filmstrip LargeAmber knobs for Freq / Gain / Q
+    // Empty custom label — we use the external juce::Label next to each knob.
+    PremiumKnob freqKnob { juce::String(), PremiumKnob::Style::LargeAmber };
+    PremiumKnob gainKnob { juce::String(), PremiumKnob::Style::LargeAmber };
+    PremiumKnob qKnob    { juce::String(), PremiumKnob::Style::LargeAmber };
     juce::ComboBox typeCombo, slopeCombo;
     juce::TextButton enableBtn, soloBtn;
 

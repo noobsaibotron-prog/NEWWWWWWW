@@ -145,7 +145,10 @@ private:
     // Layout
     static constexpr int headerH = 36;
     static constexpr int footerH = 32;    // footer bar (meter, version, bypass)
-    static constexpr int controlH = 195;  // bottom panel (band controls + context)
+    static constexpr int controlH = 240;  // bottom panel (band controls + context)
+                                          // 240 gives BandControlPanel enough room for
+                                          // the 3 LargeAmber filmstrip knobs (Freq/Gain/Q)
+                                          // plus type/slope/enable/solo above + DynEQCompactBar below.
     static constexpr int bandPanelH = 140;
     static constexpr int bandTabH = 28;   // band tab bar (I..VIII) below header
     static constexpr int pad = 6;
