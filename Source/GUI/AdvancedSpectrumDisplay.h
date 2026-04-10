@@ -1362,16 +1362,19 @@ private:
         // ethereal azure fill, no hard contour outline.
         // (previous cachedPreLine stroke dropped)
 
-        // Wave 4A: Post-EQ spectrum — verde tenue matching the GL shader
-        // (0x335ED4A0 → transparent). Previous orange/yellow gradient was
-        // the biggest source of the "why is the spectrum orange?" complaint.
+        // Wave 4B Fix 1 (Tribunale): Post-EQ curve is now a luminous cyan,
+        // clearly distinct from the dusty azure pre-EQ fill and the white
+        // main EQ curve. Previous tenue green (0x555ED4A0) blended into the
+        // background and failed the "ciano luminoso e distinto" directive.
+        // New gradient: bright cyan top (0x8800E5FF = 53% alpha on pure cyan)
+        // → transparent bottom. Stroke bumped 1.0 → 1.5 px for presence.
         if (!cachedPostLine.isEmpty())
         {
             juce::ColourGradient postGrad(
-                juce::Colour(0x555ED4A0), 0, graphBounds.getY(),
-                juce::Colour(0x005ED4A0), 0, graphBounds.getBottom(), false);
+                juce::Colour(0x8800E5FF), 0, graphBounds.getY(),
+                juce::Colour(0x0000E5FF), 0, graphBounds.getBottom(), false);
             ig.setGradientFill(postGrad);
-            ig.strokePath(cachedPostLine, juce::PathStrokeType(1.0f));
+            ig.strokePath(cachedPostLine, juce::PathStrokeType(1.5f));
         }
 
         // Delta line
@@ -1463,7 +1466,11 @@ private:
                 capturedPathDirty = false;
             }
 
-            g.setColour(ModernLookAndFeel::Colors::accentYellow.withAlpha(0.6f));
+            // Wave 4B Fix 1 (Tribunale): captured spectrum was too invasive at
+            // 0.6 alpha — the orange dashed line competed with the main EQ
+            // curve for visual attention. Reduced to 0.25 so it reads as a
+            // subtle historical reference, not a primary channel.
+            g.setColour(ModernLookAndFeel::Colors::accentYellow.withAlpha(0.25f));
             g.strokePath(cachedCapturedDash, juce::PathStrokeType(0.8f));
         }
 
@@ -1658,6 +1665,53 @@ private:
                                       false);
             g.setGradientFill(grad);
             g.fillRect(zoneRect);
+
+            // Wave 4B (Tribunale): AI zone labels — "RUMBLE 42Hz", "MUDDY
+            // 280Hz", "HARSH 4.2kHz" etc. Derived from corr.type via a
+            // compact mapping, with frequency formatted short (Hz for < 1 k,
+            // kHz with one decimal otherwise). Rendered at the top of the
+            // amber zone in small bold amber text, only when the zone is
+            // wide enough (>= 34 px) to avoid glyph clipping on narrow-Q
+            // suggestions.
+            if (zoneRect.getWidth() >= 34.0f)
+            {
+                auto problemLabel = [](AIEngine::ProblemType pt) -> const char*
+                {
+                    switch (pt)
+                    {
+                        case AIEngine::ProblemType::Resonance:  return "RESO";
+                        case AIEngine::ProblemType::Harshness:  return "HARSH";
+                        case AIEngine::ProblemType::Muddiness:  return "MUDDY";
+                        case AIEngine::ProblemType::Boxyness:   return "BOXY";
+                        case AIEngine::ProblemType::Sibilance:  return "SIBIL";
+                        case AIEngine::ProblemType::LowEndBoom: return "RUMBLE";
+                        case AIEngine::ProblemType::ThinSound:  return "THIN";
+                        case AIEngine::ProblemType::DullSound:  return "DULL";
+                        case AIEngine::ProblemType::None:
+                        default:                                return "AI";
+                    }
+                };
+
+                juce::String freqStr = (freq >= 1000.0f)
+                    ? juce::String(freq / 1000.0f, 1) + "kHz"
+                    : juce::String((int) std::round(freq)) + "Hz";
+
+                juce::String labelStr = juce::String(problemLabel(corr.type))
+                                        + " " + freqStr;
+
+                // Label rect sits just inside the zone's top edge so the text
+                // doesn't overlap the graph header.
+                auto labelRect = juce::Rectangle<int>(
+                    (int) zoneRect.getX(),
+                    (int) (graphTop + 4.0f),
+                    (int) zoneRect.getWidth(),
+                    12);
+
+                g.setColour(base.withAlpha(0.92f));
+                g.setFont(juce::Font(juce::FontOptions().withHeight(10.0f).withStyle("Bold")));
+                g.drawFittedText(labelStr, labelRect,
+                                 juce::Justification::centredTop, 1, 0.85f);
+            }
         }
     }
 
@@ -1812,35 +1866,48 @@ private:
         auto textArea = tooltipRect.reduced(8.0f, 6.0f);
         textArea.removeFromBottom(22.0f);
 
-        const int lineH = 14;
-        auto titleRect = juce::Rectangle<int>(
-            (int) textArea.getX(), (int) textArea.getY(),
-            (int) textArea.getWidth(), lineH);
+        // Wave 4B Fix 5 (Tribunale): running Y cursor to prevent rows from
+        // overlapping when the description wraps onto 2 lines. Previously
+        // titleRect/descRect/suggRect were fixed Y offsets at {0, lineH, 2*lineH}
+        // and a separate descWrapRect was built with height lineH*2 — which
+        // collided with suggRect at Y=28 whenever the description actually
+        // wrapped. The cursor-based layout advances past the full wrapped
+        // description height before placing the suggestion row.
+        const int titleH   = 14;
+        const int descLineH = 14;
+        const int descMaxLines = 2;
+        const int suggH    = 14;
+        const int rowGap   = 2;
 
-        auto descRect = juce::Rectangle<int>(
-            (int) textArea.getX(), (int) textArea.getY() + lineH,
-            (int) textArea.getWidth(), lineH);
-
-        auto suggRect = juce::Rectangle<int>(
-            (int) textArea.getX(), (int) textArea.getY() + 2 * lineH,
-            (int) textArea.getWidth(), lineH);
+        int cursorY = (int) textArea.getY();
 
         // Title (bold amber)
+        auto titleRect = juce::Rectangle<int>(
+            (int) textArea.getX(), cursorY,
+            (int) textArea.getWidth(), titleH);
         g.setColour(ModernLookAndFeel::Colors::amber);
         g.setFont(juce::Font(juce::FontOptions().withHeight(12.0f).withStyle("Bold")));
         g.drawFittedText(aiTooltip.title, titleRect,
                          juce::Justification::topLeft, 1, 0.9f);
+        cursorY += titleH + rowGap;
 
-        // Description (regular, secondary text) — up to 2 lines, no hard truncation
+        // Description (regular, secondary text) — up to 2 lines, guaranteed
+        // dedicated vertical space (descLineH * descMaxLines) so the following
+        // suggestion row can never overlap the second wrapped line.
+        auto descWrapRect = juce::Rectangle<int>(
+            (int) textArea.getX(), cursorY,
+            (int) textArea.getWidth(), descLineH * descMaxLines);
         g.setColour(ModernLookAndFeel::Colors::textSecondary);
         g.setFont(juce::Font(juce::FontOptions().withHeight(11.0f)));
-        auto descWrapRect = juce::Rectangle<int>(
-            descRect.getX(), descRect.getY(),
-            descRect.getWidth(), lineH * 2);
         g.drawFittedText(aiTooltip.description, descWrapRect,
-                         juce::Justification::topLeft, 2, 0.85f);
+                         juce::Justification::topLeft, descMaxLines, 0.85f);
+        cursorY += descLineH * descMaxLines + rowGap;
 
-        // Suggestion (italic, primary text)
+        // Suggestion (italic, primary text) — now placed AFTER the full
+        // description block, never on top of it.
+        auto suggRect = juce::Rectangle<int>(
+            (int) textArea.getX(), cursorY,
+            (int) textArea.getWidth(), suggH);
         g.setColour(ModernLookAndFeel::Colors::textPrimary);
         g.setFont(juce::Font(juce::FontOptions().withHeight(11.0f).withStyle("Italic")));
         g.drawFittedText(aiTooltip.suggestion, suggRect,
@@ -1941,9 +2008,20 @@ private:
                 g.setColour(ModernLookAndFeel::Colors::amber.withAlpha(0.14f));
                 g.fillEllipse(nodeBounds.expanded(11.0f));
 
-                // Tenue inner fill — very low alpha, ethereal Pro-Q 3 look.
-                g.setColour(col.withAlpha(0.14f));
+                // Wave 4B Fix 2 (Tribunale): band nodes are now solid glass
+                // discs, not hollow rings. Previously the inner fill was at
+                // 0.14 alpha which read as "empty ring" on top of the dark
+                // background. Bumped to 0.55 for a clearly visible coloured
+                // disc interior that matches the "disco di vetro solido"
+                // directive. A second inner highlight layer at 0.25 alpha
+                // expanded by -3 px creates a subtle specular that sells
+                // the "glass" metaphor without looking flat.
+                g.setColour(col.withAlpha(0.55f));
                 g.fillEllipse(nodeBounds);
+
+                // Inner highlight — slightly lighter centre to suggest depth
+                g.setColour(col.brighter(0.25f).withAlpha(0.25f));
+                g.fillEllipse(nodeBounds.reduced(3.0f));
 
                 // Luminous coloured border ring — conveys band identity.
                 // Wave 4A: 2.5 px idle / 3.0 px dragging for stronger presence.

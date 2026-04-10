@@ -130,14 +130,16 @@ public:
                               juce::Colour (0x004A9FD9));  // bottom: trasparente
         }
 
-        // Wave 4A: Post-EQ spectrum — denser verde tenue (33% top). The post
-        // layer is still lighter than pre so the mix reads as "pre through a
-        // coloured filter".
+        // Wave 4B Fix 1 (Tribunale): Post-EQ is now luminous cyan
+        // (0x8800E5FF → transparent) so it sits clearly above the dusty
+        // azure pre-EQ fill and is distinguishable from the white main
+        // curve. Both the GL path and the software renderer use the same
+        // colour so switching OpenGL on/off doesn't change the look.
         if (showPost.load (std::memory_order_relaxed) && ! activeData.postDB.empty())
         {
             drawSpectrumFill (ctx, activeData.postDB, gb, minDb, maxDb, logicalW, logicalH,
-                              juce::Colour (0x555ED4A0),   // top: verde tenue 33% alpha
-                              juce::Colour (0x005ED4A0));  // bottom: trasparente
+                              juce::Colour (0x8800E5FF),   // top: luminous cyan 53% alpha
+                              juce::Colour (0x0000E5FF));  // bottom: trasparente
         }
 
         glDisable (GL_BLEND);

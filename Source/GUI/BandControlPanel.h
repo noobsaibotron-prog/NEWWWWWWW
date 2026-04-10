@@ -26,40 +26,52 @@ public:
         bandLabel.setJustificationType(juce::Justification::centred);
         addAndMakeVisible(bandLabel);
 
+        // Wave 4B Fix 3 (Tribunale): knob labels bumped 9 → 11 px Bold with
+        // extra kerning so they read as proper hardware-style section headers
+        // instead of fine-print. Text box below the knob also bumped 14 → 18
+        // px for a larger value readout.
+        auto makeLabelFont = []() {
+            auto f = juce::Font(juce::FontOptions().withHeight(11.0f).withStyle("Bold"));
+            f.setExtraKerningFactor(0.12f);
+            return f;
+        };
+
         // Frequency knob
         freqLabel.setText("FREQ", juce::dontSendNotification);
-        freqLabel.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
+        freqLabel.setFont(makeLabelFont());
         freqLabel.setJustificationType(juce::Justification::centred);
-        freqLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted);
+        freqLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textSecondary);
         addAndMakeVisible(freqLabel);
 
         // PremiumKnob (LargeAmber) already uses rotary drag style from its constructor.
-        // Keep a compact native text box below for the value readout.
-        freqKnob.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 14);
+        // Wave 4B Fix 3: larger text box (18 px) + wider (66 px) so the value
+        // readout has breathing room and can display 4-char values without
+        // clipping ("1.23k", "+12dB", etc.).
+        freqKnob.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 66, 18);
         addAndMakeVisible(freqKnob);
         freqAtt = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
             parameters, prefix + "Freq", freqKnob);
 
         // Gain knob
         gainLabel.setText("GAIN", juce::dontSendNotification);
-        gainLabel.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
+        gainLabel.setFont(makeLabelFont());
         gainLabel.setJustificationType(juce::Justification::centred);
-        gainLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted);
+        gainLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textSecondary);
         addAndMakeVisible(gainLabel);
 
-        gainKnob.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 14);
+        gainKnob.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 66, 18);
         addAndMakeVisible(gainKnob);
         gainAtt = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
             parameters, prefix + "Gain", gainKnob);
 
         // Q knob
         qLabel.setText("Q", juce::dontSendNotification);
-        qLabel.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
+        qLabel.setFont(makeLabelFont());
         qLabel.setJustificationType(juce::Justification::centred);
-        qLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted);
+        qLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textSecondary);
         addAndMakeVisible(qLabel);
 
-        qKnob.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 14);
+        qKnob.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 66, 18);
         addAndMakeVisible(qKnob);
         qAtt = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
             parameters, prefix + "Q", qKnob);
@@ -182,6 +194,19 @@ public:
         else
             g.fillRoundedRectangle(bounds.removeFromTop(3.0f), 2.0f);
 
+        // Wave 4B Fix 3 (Tribunale): dedicated darker sub-panel behind the
+        // FREQ/GAIN/Q knob cluster so the three knobs pop visually against
+        // the rest of the band panel. Only drawn in non-compact vertical
+        // layout — the compact row doesn't have room for a separate backdrop.
+        if (!compact && !knobClusterBounds.isEmpty())
+        {
+            auto kb = knobClusterBounds.toFloat().expanded(2.0f, 2.0f);
+            g.setColour(ModernLookAndFeel::Colors::bgDark.withAlpha(0.55f));
+            g.fillRoundedRectangle(kb, 4.0f);
+            g.setColour(bandColor.withAlpha(0.18f));
+            g.drawRoundedRectangle(kb, 4.0f, 1.0f);
+        }
+
         g.setColour(ModernLookAndFeel::Colors::bgLighter);
         g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(0.5f), compact ? 3.0f : 4.0f, 1.0f);
     }
@@ -194,6 +219,10 @@ public:
 
         if (compact)
         {
+            // Wave 4B Fix 3: clear knobClusterBounds in compact mode so the
+            // darker sub-panel backdrop is only drawn in the vertical layout.
+            knobClusterBounds = {};
+
             // === HORIZONTAL COMPACT LAYOUT ===
             bandLabel.setBounds(bounds.removeFromLeft(28));
             bounds.removeFromLeft(2);
@@ -270,24 +299,34 @@ public:
             soloBtn.setBounds(btnRow.reduced(3, 1));
             bounds.removeFromBottom(2);
 
-            // Remaining vertical space → 3 knobs side-by-side.
-            // Each knob column carries a small header label + the PremiumKnob
-            // (which holds its own native text box for the value readout).
+            // Wave 4B Fix 3 (Tribunale): remaining vertical space hosts the
+            // 3-knob cluster. We record its rect in knobClusterBounds so
+            // paint() can draw a dedicated darker sub-panel behind it. Label
+            // header bumped 11 → 14 px to match the larger Bold label font
+            // (makeLabelFont uses 11 px character height — 14 px rect leaves
+            // a 1.5 px top/bottom padding).
+            bounds.removeFromTop(4);
+            knobClusterBounds = bounds;
+
             const int knobW = bounds.getWidth() / 3;
+            const int labelH = 14;
 
             auto freqArea = bounds.removeFromLeft(knobW);
             freqLabel.setVisible(true);
-            freqLabel.setBounds(freqArea.removeFromTop(11));
+            freqLabel.setBounds(freqArea.removeFromTop(labelH));
+            freqArea.removeFromTop(1);
             freqKnob.setBounds(freqArea);
 
             auto gainArea = bounds.removeFromLeft(knobW);
             gainLabel.setVisible(true);
-            gainLabel.setBounds(gainArea.removeFromTop(11));
+            gainLabel.setBounds(gainArea.removeFromTop(labelH));
+            gainArea.removeFromTop(1);
             gainKnob.setBounds(gainArea);
 
             auto qArea = bounds;
             qLabel.setVisible(true);
-            qLabel.setBounds(qArea.removeFromTop(11));
+            qLabel.setBounds(qArea.removeFromTop(labelH));
+            qArea.removeFromTop(1);
             qKnob.setBounds(qArea);
         }
     }
@@ -308,6 +347,11 @@ private:
     int bandIndex;
     juce::Colour bandColor;
     juce::AudioProcessorValueTreeState& parameters;
+
+    // Wave 4B Fix 3: rect used by paint() to draw the dedicated darker
+    // sub-panel behind the FREQ/GAIN/Q knob cluster. Written by resized()
+    // in the non-compact branch, read by paint().
+    juce::Rectangle<int> knobClusterBounds;
 
     juce::Label bandLabel;
     juce::Label freqLabel, gainLabel, qLabel, typeLabel, slopeLabel;
