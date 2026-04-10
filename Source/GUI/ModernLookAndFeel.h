@@ -115,16 +115,19 @@ public:
         setColour(juce::ResizableWindow::backgroundColourId, Colors::bgMid);
         setColour(juce::Label::textColourId, Colors::textPrimary);
         setColour(juce::TextButton::buttonColourId, Colors::bgLighter);
-        setColour(juce::TextButton::buttonOnColourId, Colors::accentBlue);
+        // Wave 4A: toggle-on default is AMBER, not blue.
+        // accentBlue stays reserved for the Semantic tab / DynEQ knobs only,
+        // per the Liquid Intelligence mockup (Tribunale direttiva 4A-3).
+        setColour(juce::TextButton::buttonOnColourId, Colors::amber);
         setColour(juce::TextButton::textColourOffId, Colors::textPrimary);
-        setColour(juce::TextButton::textColourOnId, Colors::textBright);
+        setColour(juce::TextButton::textColourOnId, juce::Colour(0xFF181A22));
         setColour(juce::ComboBox::backgroundColourId, Colors::bgLight);
         setColour(juce::ComboBox::textColourId, Colors::textPrimary);
         setColour(juce::ComboBox::outlineColourId, Colors::bgLighter);
         setColour(juce::PopupMenu::backgroundColourId, Colors::bgLight);
         setColour(juce::PopupMenu::textColourId, Colors::textPrimary);
-        setColour(juce::PopupMenu::highlightedBackgroundColourId, Colors::accentBlue);
-        setColour(juce::Slider::thumbColourId, Colors::accentBlue);
+        setColour(juce::PopupMenu::highlightedBackgroundColourId, Colors::amber);
+        setColour(juce::Slider::thumbColourId, Colors::amber);
         setColour(juce::Slider::trackColourId, Colors::bgLighter);
     }
 
@@ -182,12 +185,12 @@ public:
             setColour(juce::ResizableWindow::backgroundColourId, Colors::bgMid);
             setColour(juce::Label::textColourId, Colors::textPrimary);
             setColour(juce::TextButton::buttonColourId, Colors::bgLighter);
-            setColour(juce::TextButton::buttonOnColourId, Colors::accentBlue);
+            setColour(juce::TextButton::buttonOnColourId, Colors::amber);
             setColour(juce::TextButton::textColourOffId, Colors::textPrimary);
-            setColour(juce::TextButton::textColourOnId, Colors::textBright);
+            setColour(juce::TextButton::textColourOnId, juce::Colour(0xFF181A22));
             setColour(juce::ComboBox::backgroundColourId, Colors::bgLight);
             setColour(juce::ComboBox::textColourId, Colors::textPrimary);
-            setColour(juce::Slider::thumbColourId, Colors::accentBlue);
+            setColour(juce::Slider::thumbColourId, Colors::amber);
         }
     }
 
@@ -212,7 +215,7 @@ private:
 
         // Determine accent color: use slider's trackColour if set, else amber
         auto accentCol = slider.findColour(juce::Slider::thumbColourId);
-        if (accentCol == juce::Colours::transparentBlack || accentCol == Colors::accentBlue)
+        if (accentCol == juce::Colours::transparentBlack || accentCol == Colors::accentBlue) // Semantic default accent fallback
             accentCol = Colors::amber;
 
         // === FLAT CIRCLE BODY ===
@@ -307,16 +310,31 @@ private:
     }
 
     //==========================================================================
-    // BUTTON
+    // BUTTON — Wave 4A: Liquid Intelligence amber toggles
+    //
+    // Every toggle in the header (A/B, PRE/POST/DELTA, AI) now renders with an
+    // AMBER fill when active, not the old azure blue. A buttonColourId override
+    // on a specific button still takes precedence via the `overrideOn` lookup
+    // below (e.g. SOLO stays yellow, BYPASS stays amber-with-glow).
     //==========================================================================
     void drawButtonBackground(juce::Graphics& g, juce::Button& btn,
                               const juce::Colour&, bool hover, bool down) override
     {
         auto bounds = btn.getLocalBounds().toFloat().reduced(1);
         const bool isQualityToggle = (btn.getComponentID() == "qualityToggle");
-        const float corner = isQualityToggle ? 12.0f : 4.0f;
-        
-        juce::Colour base = btn.getToggleState() ? Colors::accentBlue : Colors::bgLighter;
+        // Liquid Intelligence pill-style for all header toggles:
+        // rounded corners match the mockup's capsule aesthetic.
+        const float corner = isQualityToggle ? 12.0f : 8.0f;
+
+        // Per-button override for the "on" state (set via
+        // setColour(TextButton::buttonOnColourId, ...) at construction time).
+        // Falls back to amber if nothing specific was set.
+        const auto overrideOn = btn.findColour(juce::TextButton::buttonOnColourId);
+        juce::Colour onCol = (overrideOn == juce::Colours::transparentBlack)
+                              ? Colors::amber
+                              : overrideOn;
+
+        juce::Colour base = btn.getToggleState() ? onCol : Colors::bgLighter;
         if (isQualityToggle && !btn.getToggleState())
             base = base.withAlpha(0.85f);
         if (down) base = base.darker(0.18f);
@@ -325,9 +343,17 @@ private:
         g.setColour(base);
         g.fillRoundedRectangle(bounds, corner);
 
-        // Hover glow effect — subtle luminous border
+        // Active state gets an amber glow halo (except when the override color
+        // itself is not amber-family — e.g. SOLO's yellow).
+        if (btn.getToggleState() && onCol == Colors::amber)
+        {
+            g.setColour(Colors::amber.withAlpha(hover ? 0.35f : 0.22f));
+            g.drawRoundedRectangle(bounds.expanded(1.5f), corner + 1.0f, 1.8f);
+        }
+
+        // Outline — amber when active, subtle when off
         auto outline = btn.getToggleState()
-            ? Colors::accentCyan.withAlpha(hover ? 0.7f : 0.45f)
+            ? onCol.brighter(0.15f).withAlpha(hover ? 0.9f : 0.75f)
             : Colors::bgLighter.brighter(hover ? 0.35f : 0.15f);
         g.setColour(outline);
         g.drawRoundedRectangle(bounds, corner, hover ? 1.5f : 1.2f);
@@ -337,11 +363,15 @@ private:
                           bool hover, bool down) override
     {
         drawButtonBackground(g, btn, {}, hover, down);
-        
+
         auto bounds = btn.getLocalBounds().toFloat();
-        g.setColour(btn.getToggleState() ? Colors::textBright : Colors::textSecondary);
-        auto font = juce::Font(juce::FontOptions().withHeight(11.0f));
+        // Wave 4A: dark text on amber (readable) when toggled on, muted grey when off.
+        g.setColour(btn.getToggleState()
+                      ? juce::Colour(0xFF181A22)
+                      : Colors::textSecondary);
+        auto font = juce::Font(juce::FontOptions().withHeight(12.0f));
         font.setBold(true);
+        font.setExtraKerningFactor(0.10f);  // small uppercase tracking for pills
         g.setFont(font);
         g.drawText(btn.getButtonText(), bounds, juce::Justification::centred);
     }
@@ -364,10 +394,10 @@ private:
     }
 
     juce::Font getComboBoxFont(juce::ComboBox&) override { return juce::Font(juce::FontOptions().withHeight(12.0f)); }
-    juce::Font getLabelFont(juce::Label&) override { return juce::Font(juce::FontOptions().withHeight(11.0f)); }
+    juce::Font getLabelFont(juce::Label&) override { return juce::Font(juce::FontOptions().withHeight(12.0f)); }
     juce::Font getTextButtonFont(juce::TextButton&, int) override
     {
-        auto font = juce::Font(juce::FontOptions().withHeight(11.0f));
+        auto font = juce::Font(juce::FontOptions().withHeight(12.0f));
         font.setBold(true);
         return font;
     }

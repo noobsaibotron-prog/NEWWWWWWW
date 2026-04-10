@@ -82,7 +82,7 @@ public:
             p.lineTo(x, y);
         }
         
-        g.setColour(ModernLookAndFeel::Colors::accentBlue.withAlpha(0.9f));
+        g.setColour(ModernLookAndFeel::Colors::accentBlue.withAlpha(0.9f)); // spectrum capture history line
         g.strokePath(p, juce::PathStrokeType(1.5f));
     }
 private:
@@ -143,7 +143,9 @@ private:
     ModernLookAndFeel lookAndFeel;
     
     // Layout
-    static constexpr int headerH = 36;
+    // Wave 4A: headerH bumped 36 → 44 to give the 20px Bold logo + 20px Bold
+    // PRE/POST/DELTA pill toggles enough vertical breathing room.
+    static constexpr int headerH = 44;
     static constexpr int footerH = 32;    // footer bar (meter, version, bypass)
     static constexpr int controlH = 240;  // bottom panel (band controls + context)
                                           // 240 gives BandControlPanel enough room for

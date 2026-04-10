@@ -45,13 +45,14 @@ public:
             bandColors[i] = ModernLookAndFeel::Colors::getBandColor(i % paletteSize);
         }
         
-        // Spectrum toolbar — semi-transparent buttons that blend with the display
+        // Spectrum toolbar — semi-transparent buttons that blend with the display.
+        // Wave 4A: active state is amber to match the Liquid Intelligence palette.
         auto setupToolbarBtn = [](juce::TextButton& btn, const juce::String& text) {
             btn.setButtonText(text);
             btn.setColour(juce::TextButton::buttonColourId, ModernLookAndFeel::Colors::bgLight.withAlpha(0.25f));
-            btn.setColour(juce::TextButton::buttonOnColourId, ModernLookAndFeel::Colors::accentBlue.withAlpha(0.5f));
+            btn.setColour(juce::TextButton::buttonOnColourId, ModernLookAndFeel::Colors::amber.withAlpha(0.55f));
             btn.setColour(juce::TextButton::textColourOffId, ModernLookAndFeel::Colors::textPrimary.withAlpha(0.73f));
-            btn.setColour(juce::TextButton::textColourOnId, juce::Colours::white);
+            btn.setColour(juce::TextButton::textColourOnId, juce::Colour(0xFF181A22));
         };
 
         setupToolbarBtn(freezeButton, "FREEZE");
@@ -509,18 +510,40 @@ public:
                 }
             }
 
-            if (hitIdx < 0 && aiTooltip.visible)
+            // Wave 4A: keep the tooltip visible if the cursor has moved INSIDE
+            // the tooltip itself (user reaching for the FIX button). Previously
+            // the tooltip disappeared the moment the mouse left the ambra zone,
+            // making the FIX button unclickable.
+            const bool mouseInsideTooltip = aiTooltip.visible
+                && aiTooltip.tooltipBounds.contains(e.position);
+
+            if (hitIdx < 0 && aiTooltip.visible && !mouseInsideTooltip)
+            {
+                aiTooltip.visible = false;
+                aiTooltip.correctionIdx = -1;
+                setMouseCursor(juce::MouseCursor::NormalCursor);
+                repaint();
+            }
+            else if (mouseInsideTooltip)
+            {
+                // Show pointer cursor while hovering the FIX button region.
+                if (aiTooltip.fixButtonBounds.contains(e.position))
+                    setMouseCursor(juce::MouseCursor::PointingHandCursor);
+                else
+                    setMouseCursor(juce::MouseCursor::NormalCursor);
+            }
+        }
+        else if (aiTooltip.visible)
+        {
+            // Graph left, or dragging started — clear the tooltip unless the
+            // cursor is still inside the tooltip rect (edge case: tooltip drawn
+            // partially outside graphBounds).
+            if (!aiTooltip.tooltipBounds.contains(e.position))
             {
                 aiTooltip.visible = false;
                 aiTooltip.correctionIdx = -1;
                 repaint();
             }
-        }
-        else if (aiTooltip.visible)
-        {
-            aiTooltip.visible = false;
-            aiTooltip.correctionIdx = -1;
-            repaint();
         }
     }
     
@@ -1321,28 +1344,32 @@ private:
         // Offset so paths (which use graphBounds coordinates) render at image origin
         ig.addTransform(juce::AffineTransform::translation(-graphBounds.getX(), -graphBounds.getY()));
 
-        // Pre fill + line
+        // Wave 4A: Pre fill — azzurro polvere (dense azure dust) from the
+        // Colors::accentCyan hue family, matching the Liquid Intelligence mockup.
+        // Previously the software fallback was using textSecondary grey (wrong)
+        // or accentYellow (even worse — looked orange). Now it matches the GL
+        // shader path in GLSpectrumComponent.h exactly: top 0x664A9FD9
+        // (40% alpha of Colors::accentCyan azure) → bottom transparent.
         if (!cachedPreFill.isEmpty())
         {
             juce::ColourGradient fillGrad(
-                ModernLookAndFeel::Colors::textSecondary.withAlpha(0.28f), 0, graphBounds.getY(),
-                ModernLookAndFeel::Colors::textSecondary.withAlpha(0.05f), 0, graphBounds.getBottom(), false);
+                juce::Colour(0x664A9FD9), 0, graphBounds.getY(),
+                juce::Colour(0x004A9FD9), 0, graphBounds.getBottom(), false);
             ig.setGradientFill(fillGrad);
             ig.fillPath(cachedPreFill);
         }
-        if (!cachedPreLine.isEmpty())
-        {
-            ig.setColour(ModernLookAndFeel::Colors::textSecondary.withAlpha(0.35f));
-            ig.strokePath(cachedPreLine, juce::PathStrokeType(0.8f));
-        }
+        // Wave 4A: pre-EQ spectrum line REMOVED — the mockup shows only the
+        // ethereal azure fill, no hard contour outline.
+        // (previous cachedPreLine stroke dropped)
 
-        // Post line — thin, clean
+        // Wave 4A: Post-EQ spectrum — verde tenue matching the GL shader
+        // (0x335ED4A0 → transparent). Previous orange/yellow gradient was
+        // the biggest source of the "why is the spectrum orange?" complaint.
         if (!cachedPostLine.isEmpty())
         {
-            juce::Colour front = ModernLookAndFeel::Colors::accentGreen.brighter(0.05f);
             juce::ColourGradient postGrad(
-                ModernLookAndFeel::Colors::accentYellow.withAlpha(0.6f), 0, graphBounds.getY(),
-                front.withAlpha(0.6f), 0, graphBounds.getBottom(), false);
+                juce::Colour(0x555ED4A0), 0, graphBounds.getY(),
+                juce::Colour(0x005ED4A0), 0, graphBounds.getBottom(), false);
             ig.setGradientFill(postGrad);
             ig.strokePath(cachedPostLine, juce::PathStrokeType(1.0f));
         }
@@ -1460,16 +1487,17 @@ private:
                                      graphBounds.getX(), graphBounds.getBottom(),
                                      frozenLinePath, &frozenFillPath, 3);
 
+            // spectrum frozen capture overlay — legitimate accentBlue use
             juce::ColourGradient frozenGrad(
-                ModernLookAndFeel::Colors::accentBlue.withAlpha(0.35f), 0, graphBounds.getY(),
-                ModernLookAndFeel::Colors::accentBlue.withAlpha(0.03f), 0, graphBounds.getBottom(), false);
+                ModernLookAndFeel::Colors::accentBlue.withAlpha(0.35f), 0, graphBounds.getY(), // spectrum frozen gradient top
+                ModernLookAndFeel::Colors::accentBlue.withAlpha(0.03f), 0, graphBounds.getBottom(), false); // spectrum frozen gradient bottom
             g.setGradientFill(frozenGrad);
             g.fillPath(frozenFillPath);
 
-            g.setColour(ModernLookAndFeel::Colors::accentBlue);
+            g.setColour(ModernLookAndFeel::Colors::accentBlue); // spectrum frozen line stroke
             g.strokePath(frozenLinePath, juce::PathStrokeType(1.0f));
 
-            g.setColour(ModernLookAndFeel::Colors::accentBlue);
+            g.setColour(ModernLookAndFeel::Colors::accentBlue); // spectrum frozen label text
             g.setFont(juce::Font(juce::FontOptions().withHeight(12.0f)));
             g.drawText("FROZEN",
                       static_cast<int>(graphBounds.getX() + 10.0f),
@@ -1517,9 +1545,10 @@ private:
         fillPath.lineTo(graphBounds.getX(), zeroY);
         fillPath.closeSubPath();
 
-        // Liquid Intelligence: even more ethereal gradient (0.06 → 0.00)
+        // Wave 4A: stronger curve fill gradient (0.09 → 0.00) to anchor the
+        // curve visually above the blue spectrum dust.
         juce::ColourGradient fillGrad(
-            ModernLookAndFeel::Colors::eqCurve.withAlpha(0.06f), 0, graphBounds.getY(),
+            ModernLookAndFeel::Colors::eqCurve.withAlpha(0.09f), 0, graphBounds.getY(),
             ModernLookAndFeel::Colors::eqCurve.withAlpha(0.00f), 0, zeroY, false);
         g.setGradientFill(fillGrad);
         g.fillPath(fillPath);
@@ -1537,15 +1566,24 @@ private:
 
         if (!isDraggingBand)
         {
-            // Liquid Intelligence: wider, more diffuse glow (6px @ 0.10 alpha, curved joins)
-            g.setColour(ModernLookAndFeel::Colors::eqCurve.withAlpha(0.10f));
-            g.strokePath(cachedEQCurve, juce::PathStrokeType(6.0f, juce::PathStrokeType::curved,
+            // Wave 4A: wider, more diffuse glow halo (10 px @ 0.15 alpha) — the
+            // Liquid Intelligence mockup shows a clearly visible white aura
+            // around the curve, not a thin ethereal outline. The diffuse glow
+            // layer uses eqCurve.withAlpha(0.15f) for a soft, luminous bloom
+            // that reads as "AI light" rather than a hard stroke.
+            g.setColour(ModernLookAndFeel::Colors::eqCurve.withAlpha(0.15f));
+            g.strokePath(cachedEQCurve, juce::PathStrokeType(10.0f, juce::PathStrokeType::curved,
+                                                               juce::PathStrokeType::rounded));
+            // Second, tighter diffuse glow layer for extra definition
+            g.setColour(ModernLookAndFeel::Colors::eqCurve.withAlpha(0.22f));
+            g.strokePath(cachedEQCurve, juce::PathStrokeType(5.0f, juce::PathStrokeType::curved,
                                                                juce::PathStrokeType::rounded));
         }
 
-        // Liquid Intelligence: whiter main stroke (1.5px @ 0.90 alpha, curved joins)
-        g.setColour(ModernLookAndFeel::Colors::eqCurve.withAlpha(0.90f));
-        g.strokePath(cachedEQCurve, juce::PathStrokeType(1.5f, juce::PathStrokeType::curved,
+        // Wave 4A: whiter main stroke bumped 1.5 → 2.5 px for presence on HiDPI.
+        // Main opaque white curve sits above the diffuse glow layers.
+        g.setColour(ModernLookAndFeel::Colors::eqCurve.withAlpha(0.95f));
+        g.strokePath(cachedEQCurve, juce::PathStrokeType(2.5f, juce::PathStrokeType::curved,
                                                            juce::PathStrokeType::rounded));
     }
 
@@ -1733,8 +1771,8 @@ private:
         if (!aiTooltip.visible)
             return;
 
-        constexpr float tooltipW = 200.0f;
-        constexpr float tooltipH = 80.0f;
+        constexpr float tooltipW = 220.0f;
+        constexpr float tooltipH = 110.0f;
 
         // Anchor above the zone by default; fall back to below if too close to top.
         float tx = aiTooltip.anchor.getCentreX() - tooltipW * 0.5f;
@@ -1747,6 +1785,20 @@ private:
         tx = juce::jlimit(4.0f, juce::jmax(4.0f, maxX), tx);
 
         juce::Rectangle<float> tooltipRect(tx, ty, tooltipW, tooltipH);
+
+        // Wave 4A: save bounds for mouseMove hit-testing (keep tooltip visible
+        // while the cursor is hovering over the tooltip itself).
+        aiTooltip.tooltipBounds = tooltipRect;
+
+        // ── CSS-like drop shadow (Tribunale Wave 4A) ──
+        // Opzione A: Emendamento #1 resta vincolante (no StackBlur / snapshot).
+        // Per simulare la profondità: due rounded rect neri sfalsati verso il
+        // basso con alpha decrescente, PRIMA del backdrop opaco. Costo: 2 fill
+        // ops aggiuntivi, ~0 overhead misurabile.
+        g.setColour(juce::Colour(0x4D000000));                              // 30% black
+        g.fillRoundedRectangle(tooltipRect.translated(0.0f, 2.0f), 7.0f);
+        g.setColour(juce::Colour(0x26000000));                              // 15% black
+        g.fillRoundedRectangle(tooltipRect.translated(0.0f, 4.0f), 8.0f);
 
         // ── OPAQUE backdrop (Tribunale #1, BINDING) ──
         // NO StackBlur, NO createComponentSnapshot — flat fill only.
@@ -1831,11 +1883,13 @@ private:
             const bool isHovered = (i == hoveredBandIndex);
             const bool isDragging = (isDraggingBand && i == draggedBandIndex);
 
-            // === Ethereal Pro-Q 3 style band node (Liquid Intelligence) ===
-            // Inactive: 18px ring only. Active: 20px with amber glow + 12% fill + 2px border.
-            float baseRadius = state.enabled ? 10.0f : 9.0f;
+            // === Wave 4A: Ethereal Pro-Q 3 style band node — bigger & bolder ===
+            // Inactive: 24 px ring only. Active: 28 px with amber glow + 12% fill + 2.5 px border.
+            // Mockup shows very generous, bold circles (~24–28 px diameter), not
+            // the tight 18/20 px we had in Wave 3.
+            float baseRadius = state.enabled ? 13.0f : 12.0f;
             float radius = baseRadius;
-            if (isDragging) radius = 11.0f + 4.0f;              // dragging feedback: 11 base + 4 grab bump
+            if (isDragging) radius = 14.0f + 4.0f;              // dragging feedback: 14 base + 4 grab bump
             else if (isSelected) radius = baseRadius + 2.0f;
             else if (isHovered) radius = baseRadius + 2.0f;
 
@@ -1878,30 +1932,32 @@ private:
             {
                 juce::Rectangle<float> nodeBounds (x - radius, y - radius, radius * 2, radius * 2);
 
-                // === Z-ORDER: glow → fill → border ===
-                // Ambient amber glow behind the node (signature AI colour). Drawn first so the
-                // fill and border paint on top. For selected/hovered/dragging we already laid
-                // down a wider amber glow above; this inner glow layers cleanly underneath
-                // the node for any active, idle band as well.
-                g.setColour(ModernLookAndFeel::Colors::amber.withAlpha(0.30f));
-                g.fillEllipse(nodeBounds.expanded(4.0f));
+                // === Z-ORDER: outer halo → amber glow → fill → border ===
+                // Wave 4A: slightly wider ambient halo (6 px) to match the
+                // bigger node radius — keeps the rim light visible at 28 px.
+                g.setColour(ModernLookAndFeel::Colors::amber.withAlpha(0.28f));
+                g.fillEllipse(nodeBounds.expanded(6.0f));
+
+                g.setColour(ModernLookAndFeel::Colors::amber.withAlpha(0.14f));
+                g.fillEllipse(nodeBounds.expanded(11.0f));
 
                 // Tenue inner fill — very low alpha, ethereal Pro-Q 3 look.
-                g.setColour(col.withAlpha(0.12f));
+                g.setColour(col.withAlpha(0.14f));
                 g.fillEllipse(nodeBounds);
 
                 // Luminous coloured border ring — conveys band identity.
+                // Wave 4A: 2.5 px idle / 3.0 px dragging for stronger presence.
                 g.setColour(col.withAlpha(isDragging ? 1.0f : (isSelected ? 0.95f : 0.85f)));
-                g.drawEllipse(nodeBounds, isDragging ? 2.5f : 2.0f);
+                g.drawEllipse(nodeBounds, isDragging ? 3.0f : 2.5f);
 
                 // Liquid Intelligence: Roman numerals removed — band identity conveyed via colour ring + BandTabBar
             }
             else
             {
-                // Inactive: 18px ethereal ring only, band colour, 1.5px stroke — no fill, no glow.
+                // Wave 4A: inactive nodes are 24 px rings, 2 px stroke, no fill, no glow.
                 juce::Rectangle<float> nodeBounds (x - baseRadius, y - baseRadius, baseRadius * 2, baseRadius * 2);
-                g.setColour(col);
-                g.drawEllipse(nodeBounds, 1.5f);
+                g.setColour(col.withAlpha(0.85f));
+                g.drawEllipse(nodeBounds, 2.0f);
             }
         };
 
@@ -2135,7 +2191,7 @@ public:
         
         g.setColour(ModernLookAndFeel::Colors::bgLight.withAlpha(0.95f));
         g.fillRoundedRectangle((float)tx, (float)ty, (float)tw, (float)th, 3.0f);
-        g.setColour(ModernLookAndFeel::Colors::accentBlue);
+        g.setColour(ModernLookAndFeel::Colors::accentBlue); // spectrum hover tooltip border
         g.drawRoundedRectangle((float)tx, (float)ty, (float)tw, (float)th, 3.0f, 1.0f);
         
         g.setColour(ModernLookAndFeel::Colors::textBright);
@@ -2606,6 +2662,9 @@ private:
         juce::String suggestion;
         int correctionIdx = -1;
         juce::Rectangle<float> fixButtonBounds;  // for hit testing the FIX button
+        juce::Rectangle<float> tooltipBounds;    // Wave 4A: for mouseMove hit-testing — keep
+                                                 // tooltip visible while cursor is INSIDE the
+                                                 // tooltip rect (even if it has left the ambra zone)
     };
     AITooltipState aiTooltip;
 

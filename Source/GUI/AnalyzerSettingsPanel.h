@@ -65,7 +65,7 @@ public:
         // Tilt Compensation
         tiltToggle.setButtonText("Tilt (4.5 dB/oct)");
         tiltToggle.setColour(juce::ToggleButton::textColourId, ModernLookAndFeel::Colors::textPrimary);
-        tiltToggle.setColour(juce::ToggleButton::tickColourId, ModernLookAndFeel::Colors::accentBlue);
+        tiltToggle.setColour(juce::ToggleButton::tickColourId, ModernLookAndFeel::Colors::accentBlue); // Semantic analyzer accent
         tiltToggle.setTooltip("Apply pink noise slope compensation for more musical display");
         addAndMakeVisible(tiltToggle);
         tiltAtt = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
@@ -74,7 +74,7 @@ public:
         // Piano Roll
         pianoToggle.setButtonText("Piano Keys");
         pianoToggle.setColour(juce::ToggleButton::textColourId, ModernLookAndFeel::Colors::textPrimary);
-        pianoToggle.setColour(juce::ToggleButton::tickColourId, ModernLookAndFeel::Colors::accentBlue);
+        pianoToggle.setColour(juce::ToggleButton::tickColourId, ModernLookAndFeel::Colors::accentBlue); // Semantic analyzer accent
         pianoToggle.setTooltip("Show piano keyboard with note names under spectrum");
         addAndMakeVisible(pianoToggle);
         pianoAtt = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
@@ -153,7 +153,7 @@ public:
         g.drawRoundedRectangle(bounds.reduced(0.5f), 8.0f, 1.5f);
         
         // Accent line at top
-        g.setColour(ModernLookAndFeel::Colors::accentBlue);
+        g.setColour(ModernLookAndFeel::Colors::accentBlue); // Semantic analyzer accent line
         g.fillRoundedRectangle(bounds.removeFromTop(3.0f).reduced(20.0f, 0.0f), 1.5f);
     }
     
@@ -278,7 +278,7 @@ public:
         resetButton.setButtonText("⟲");
         resetButton.setTooltip("Reset zoom to default");
         resetButton.setColour(juce::TextButton::buttonColourId, ModernLookAndFeel::Colors::bgLight);
-        resetButton.setColour(juce::TextButton::textColourOffId, ModernLookAndFeel::Colors::accentBlue);
+        resetButton.setColour(juce::TextButton::textColourOffId, ModernLookAndFeel::Colors::accentBlue); // Semantic analyzer accent
         resetButton.onClick = [this]() { resetZoom(); };
         addAndMakeVisible(resetButton);
     }

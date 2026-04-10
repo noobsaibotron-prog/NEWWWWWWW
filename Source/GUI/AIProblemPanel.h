@@ -36,7 +36,7 @@ public:
             font.setBold(true);
             titleLabel.setFont(font);
         }
-        titleLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::accentBlue);
+        titleLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::accentBlue); // Semantic panel title accent
         titleLabel.setJustificationType(juce::Justification::centredLeft);
         titleLabel.setTitle(tr("AI analysis title", "AI analysis title"));
         titleLabel.setDescription(tr("Heading for AI analysis results", "Heading for AI analysis results"));
@@ -155,7 +155,7 @@ public:
         g.fillRoundedRectangle(getLocalBounds().toFloat(), 8.0f);
         
         // Top accent line
-        g.setColour(ModernLookAndFeel::Colors::accentBlue);
+        g.setColour(ModernLookAndFeel::Colors::accentBlue); // Semantic panel accent strip
         g.fillRect(0.0f, 0.0f, static_cast<float>(getWidth()), 3.0f);
         
         // Border
@@ -488,7 +488,7 @@ private:
                 setupLabel(confidenceLabel, f, juce::Colours::white, true);
             }
             setupLabel(bandLabel, juce::Font(juce::FontOptions().withHeight(9.0f)), ModernLookAndFeel::Colors::textMuted);
-            setupLabel(hintLabel, juce::Font(juce::FontOptions().withHeight(9.0f)), ModernLookAndFeel::Colors::accentBlue);
+            setupLabel(hintLabel, juce::Font(juce::FontOptions().withHeight(10.0f)), ModernLookAndFeel::Colors::accentBlue); // Semantic hint accent
             hintLabel.setVisible(false);
 
             // Focus order within the row

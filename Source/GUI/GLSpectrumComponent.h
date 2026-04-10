@@ -120,22 +120,24 @@ public:
         glEnable (GL_BLEND);
         glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-        // Pre-EQ spectrum — Liquid Intelligence: ethereal azure dust fill, no line contour
+        // Wave 4A: Pre-EQ spectrum — DENSE azzurro polvere (40% alpha at the
+        // top) matching the Liquid Intelligence mockup. Previous 20% alpha
+        // was too diluted and the blue ocean effect was barely visible.
         if (showPre.load (std::memory_order_relaxed) && ! activeData.preDB.empty())
         {
             drawSpectrumFill (ctx, activeData.preDB, gb, minDb, maxDb, logicalW, logicalH,
-                              juce::Colour (0x334A9FD9),   // top: azzurro polvere 20% alpha
+                              juce::Colour (0x664A9FD9),   // top: azzurro polvere 40% alpha
                               juce::Colour (0x004A9FD9));  // bottom: trasparente
-            // Liquid Intelligence: drawSpectrumLine REMOVED for Pre-EQ (no line contour)
         }
 
-        // Post-EQ spectrum — Liquid Intelligence: ethereal verde tenue fill, no line contour
+        // Wave 4A: Post-EQ spectrum — denser verde tenue (33% top). The post
+        // layer is still lighter than pre so the mix reads as "pre through a
+        // coloured filter".
         if (showPost.load (std::memory_order_relaxed) && ! activeData.postDB.empty())
         {
             drawSpectrumFill (ctx, activeData.postDB, gb, minDb, maxDb, logicalW, logicalH,
-                              juce::Colour (0x335ED4A0),   // top: verde 20% alpha
+                              juce::Colour (0x555ED4A0),   // top: verde tenue 33% alpha
                               juce::Colour (0x005ED4A0));  // bottom: trasparente
-            // Liquid Intelligence: drawSpectrumLine REMOVED for Post-EQ (no line contour)
         }
 
         glDisable (GL_BLEND);

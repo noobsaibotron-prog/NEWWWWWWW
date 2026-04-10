@@ -179,7 +179,7 @@ AIEqualizerAudioProcessorEditor::AIEqualizerAudioProcessorEditor(AIEqualizerAudi
 
     // Version label (bottom-right branding)
     versionLabel.setText("v2.1.1", juce::dontSendNotification);
-    versionLabel.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
+    versionLabel.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
     versionLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted);
     versionLabel.setJustificationType(juce::Justification::centredRight);
     addAndMakeVisible(versionLabel);
@@ -387,16 +387,22 @@ void AIEqualizerAudioProcessorEditor::createHeader()
 
 void AIEqualizerAudioProcessorEditor::createControlPanel()
 {
-    // Logo — amber branding (matches mockup)
+    // Wave 4A: Logo "AI EQ PRO" — big Bold amber (20px) matching the Liquid
+    // Intelligence rendering. Also apply a slight positive kerning so the
+    // letters read as a premium signature, not a form label.
     logoLabel.setText("AI EQ PRO", juce::dontSendNotification);
-    logoLabel.setFont(juce::Font(juce::FontOptions().withHeight(12.0f).withStyle("Bold")));
+    {
+        auto logoFont = juce::Font(juce::FontOptions().withHeight(20.0f).withStyle("Bold"));
+        logoFont.setExtraKerningFactor(0.08f);
+        logoLabel.setFont(logoFont);
+    }
     logoLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::amber);
     logoLabel.setJustificationType(juce::Justification::centredLeft);
     addAndMakeVisible(logoLabel);
     
     subtitleLabel.setText("Intelligent Equalizer", juce::dontSendNotification);
     subtitleLabel.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
-    subtitleLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::accentBlue);
+    subtitleLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textSecondary);
     addAndMakeVisible(subtitleLabel);
     subtitleLabel.setVisible(false);
     
@@ -437,7 +443,7 @@ void AIEqualizerAudioProcessorEditor::createControlPanel()
     
     // Sensitivity knob (connected to APVTS, visible in AI panel)
     sensitivityLabel.setText("SENSITIVITY", juce::dontSendNotification);
-    sensitivityLabel.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
+    sensitivityLabel.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
     sensitivityLabel.setJustificationType(juce::Justification::centred);
     sensitivityLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted);
     addAndMakeVisible(sensitivityLabel);
@@ -449,7 +455,7 @@ void AIEqualizerAudioProcessorEditor::createControlPanel()
 
     // Strength knob (connected to APVTS, visible in AI panel)
     strengthLabel.setText("CORRECTION", juce::dontSendNotification);
-    strengthLabel.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
+    strengthLabel.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
     strengthLabel.setJustificationType(juce::Justification::centred);
     strengthLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted);
     addAndMakeVisible(strengthLabel);
@@ -467,7 +473,7 @@ void AIEqualizerAudioProcessorEditor::createControlPanel()
 
     // Quality mode toggle (Zero Latency / High Quality, hidden in new layout)
     qualityLabel.setText("QUALITY", juce::dontSendNotification);
-    qualityLabel.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
+    qualityLabel.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
     qualityLabel.setJustificationType(juce::Justification::centred);
     qualityLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted);
     addAndMakeVisible(qualityLabel);
@@ -477,10 +483,11 @@ void AIEqualizerAudioProcessorEditor::createControlPanel()
     qualityBtn.setClickingTogglesState(true);
     qualityBtn.setComponentID("qualityToggle");
     qualityBtn.setColour(juce::TextButton::buttonColourId, ModernLookAndFeel::Colors::bgLight);
-    qualityBtn.setColour(juce::TextButton::buttonOnColourId, ModernLookAndFeel::Colors::accentBlue);
+    // Wave 4A: amber toggle-on, dark text on amber for readability.
+    qualityBtn.setColour(juce::TextButton::buttonOnColourId, ModernLookAndFeel::Colors::amber);
     qualityBtn.setColour(juce::TextButton::textColourOffId, ModernLookAndFeel::Colors::textPrimary);
     qualityBtn.setVisible(false);
-    qualityBtn.setColour(juce::TextButton::textColourOnId, ModernLookAndFeel::Colors::textBright);
+    qualityBtn.setColour(juce::TextButton::textColourOnId, juce::Colour(0xFF181A22));
     qualityBtn.setConnectedEdges(juce::Button::ConnectedOnLeft | juce::Button::ConnectedOnRight);
     qualityBtn.onClick = [this]() {
         int mode = qualityBtn.getToggleState() ? 1 : 0; // 1 = High Quality, 0 = Zero Latency
@@ -491,7 +498,7 @@ void AIEqualizerAudioProcessorEditor::createControlPanel()
 
     // Oversampling selector (Off / 2x / 4x / Auto, hidden in new layout)
     oversamplingLabel.setText("OVERSAMP", juce::dontSendNotification);
-    oversamplingLabel.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
+    oversamplingLabel.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
     oversamplingLabel.setJustificationType(juce::Justification::centred);
     oversamplingLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted);
     addAndMakeVisible(oversamplingLabel);
@@ -644,7 +651,7 @@ void AIEqualizerAudioProcessorEditor::createControlPanel()
     
     // Capture length slider (1-20s)
     captureLenLabel.setText("CAP LEN", juce::dontSendNotification);
-    captureLenLabel.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
+    captureLenLabel.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
     captureLenLabel.setJustificationType(juce::Justification::centred);
     captureLenLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted);
     addAndMakeVisible(captureLenLabel);
@@ -663,7 +670,7 @@ void AIEqualizerAudioProcessorEditor::createControlPanel()
     
     captureStatusLabel.setText("Retro: CAPTURE LAST. Live: START/STOP. Auto: peaks.",
                                juce::dontSendNotification);
-    captureStatusLabel.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
+    captureStatusLabel.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
     captureStatusLabel.setJustificationType(juce::Justification::centredLeft);
     captureStatusLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted);
     captureStatusLabel.setMinimumHorizontalScale(0.7f);
@@ -676,7 +683,7 @@ void AIEqualizerAudioProcessorEditor::createControlPanel()
 
     // Number of active bands selector (1-24)
     numBandsLabel.setText("BANDS", juce::dontSendNotification);
-    numBandsLabel.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
+    numBandsLabel.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
     numBandsLabel.setJustificationType(juce::Justification::centred);
     numBandsLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted);
     addAndMakeVisible(numBandsLabel);
@@ -691,7 +698,7 @@ void AIEqualizerAudioProcessorEditor::createControlPanel()
     
     // Output knob with tooltip
     outLabel.setText("OUT GAIN", juce::dontSendNotification);
-    outLabel.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
+    outLabel.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
     outLabel.setJustificationType(juce::Justification::centred);
     outLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted);
     addAndMakeVisible(outLabel);
@@ -703,7 +710,7 @@ void AIEqualizerAudioProcessorEditor::createControlPanel()
     
     // Dry/Wet mix
     mixLabel.setText("DRY/WET", juce::dontSendNotification);
-    mixLabel.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
+    mixLabel.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
     mixLabel.setJustificationType(juce::Justification::centred);
     mixLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted);
     addAndMakeVisible(mixLabel);
@@ -715,7 +722,7 @@ void AIEqualizerAudioProcessorEditor::createControlPanel()
 
     // Analyzer slope (visual, hidden in new layout)
     slopeLabel.setText("SLOPE", juce::dontSendNotification);
-    slopeLabel.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
+    slopeLabel.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
     slopeLabel.setJustificationType(juce::Justification::centred);
     slopeLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted);
     addAndMakeVisible(slopeLabel);
@@ -730,6 +737,16 @@ void AIEqualizerAudioProcessorEditor::createControlPanel()
     slopeCombo.setVisible(false);
     slopeAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
         processor.getAPVTS(), "analyzerSlope", slopeCombo);
+
+    // Wave 4A: ensure the logo font is reapplied AFTER every other setFont in
+    // createControlPanel() so any future LookAndFeel restyle can't silently
+    // override the 20 px Bold Amber signature. This also pins the canonical
+    // logo font to the end of the constructor for deterministic behaviour.
+    {
+        auto logoFontFinal = juce::Font(juce::FontOptions().withHeight(20.0f).withStyle("Bold"));
+        logoFontFinal.setExtraKerningFactor(0.08f);
+        logoLabel.setFont(logoFontFinal);
+    }
 }
 
 void AIEqualizerAudioProcessorEditor::createBands()
@@ -989,15 +1006,21 @@ void AIEqualizerAudioProcessorEditor::showOptionsMenu()
 
 void AIEqualizerAudioProcessorEditor::paint(juce::Graphics& g)
 {
-    // Liquid Intelligence background: 135° gradient from dark (top-left) to slightly lighter (bottom-right)
+    // Wave 4A: Liquid Intelligence background — deep blue-black gradient (135°)
+    // matching the mockup. The top-left is nearly black, the bottom-right has a
+    // subtle navy tint so the spectrum's azure dust reads as if it floats above
+    // a very dark ocean. Previous values (0xFF0A0A0E → 0xFF141420) were too
+    // neutral grey and made the plugin look "grey plastic".
+    const float w = static_cast<float>(getWidth());
+    const float h = static_cast<float>(getHeight());
     juce::ColourGradient bgGrad(
-        juce::Colour(0xFF0A0A0E), 0.0f, 0.0f,
-        juce::Colour(0xFF141420), (float) getWidth(), (float) getHeight(),
+        juce::Colour(0xFF05070E), 0.0f, 0.0f,        // top-left: near black with faint blue
+        juce::Colour(0xFF0F1A2E), w, h,              // bottom-right: deep navy
         false);
+    // Intermediate stop to stretch the navy glow through the middle band
+    bgGrad.addColour(0.45, juce::Colour(0xFF0A1220));
     g.setGradientFill(bgGrad);
     g.fillAll();
-
-    const float w = static_cast<float>(getWidth());
 
     // === HEADER BAR (gradient + subtle inner shadow + dividers) ===
     {
@@ -1080,12 +1103,14 @@ void AIEqualizerAudioProcessorEditor::resized()
 {
     auto bounds = getLocalBounds();
 
-    // === HEADER (mockup: logo | div | ‹ Preset › | div | A B | spacer | PRE POST DELTA | div | phase | div | AI dot | ⚙) ===
-    auto header = bounds.removeFromTop(headerH).reduced(12, 0);
+    // === HEADER (44 px — mockup: logo | div | ‹ Preset › | div | A B | spacer | PRE POST DELTA | div | LINEAR PHASE | div | AI dot) ===
+    auto header = bounds.removeFromTop(headerH).reduced(14, 0);
 
-    // Logo — left anchor (mockup: 12px, weight 600, letter-spacing 0.5)
+    // Wave 4A: Logo "AI EQ PRO" — widened 72 → 130 to fit the 20px Bold amber
+    // signature. The label is centred vertically inside the 44px header row.
     logoLabel.setVisible(true);
-    logoLabel.setBounds(header.removeFromLeft(72));
+    logoLabel.setBounds(header.removeFromLeft(130));
+    header.removeFromLeft(4);
 
     // Phase 7D: breathing amber dot next to the logo (Tribunale directive #3)
     {
@@ -1093,40 +1118,40 @@ void AIEqualizerAudioProcessorEditor::resized()
         aiBreathingDot.setBounds(dotSlot.withSizeKeepingCentre(14, 14));
     }
 
-    header.removeFromLeft(4);  // margin-right before divider
+    header.removeFromLeft(10);  // divider gap after logo group
 
     // Preset navigation (mockup: ‹ [Vocal Presence] ›)
-    header.removeFromLeft(8);  // gap after divider zone
-    prevBtn.setBounds(header.removeFromLeft(22).reduced(0, 5));
-    presetBox.setBounds(header.removeFromLeft(120).reduced(0, 5));
-    nextBtn.setBounds(header.removeFromLeft(22).reduced(0, 5));
-    header.removeFromLeft(8);
+    prevBtn.setBounds(header.removeFromLeft(24).reduced(0, 8));
+    presetBox.setBounds(header.removeFromLeft(140).reduced(0, 8));
+    nextBtn.setBounds(header.removeFromLeft(24).reduced(0, 8));
+    header.removeFromLeft(12);  // divider gap before A/B
 
     // A/B slots only (mockup shows only A and B, C/D hidden)
-    btnA.setBounds(header.removeFromLeft(24).reduced(1, 5));
-    btnB.setBounds(header.removeFromLeft(24).reduced(1, 5));
+    btnA.setBounds(header.removeFromLeft(28).reduced(1, 8));
+    header.removeFromLeft(4);
+    btnB.setBounds(header.removeFromLeft(28).reduced(1, 8));
     btnC.setVisible(false);
     btnD.setVisible(false);
 
     // Right group (from right edge): AI dot (rightmost)
-    // Phase 10: optionsBtn is hidden (Options menu still accessible via other means).
-    // Tribunale AIEQ+ direttiva B: POST e DELTA sono RIABILITATI accanto a PRE
-    // (Delta Listen è funzione core per un EQ professionale).
     optionsBtn.setVisible(false);
 
-    aiPanelToggle.setBounds(header.removeFromRight(28).reduced(0, 5));
-    header.removeFromRight(8);
+    aiPanelToggle.setBounds(header.removeFromRight(32).reduced(0, 8));
+    header.removeFromRight(12);
 
-    // Phase mode (mockup: "LINEAR PHASE" text)
-    phaseModeCombo.setBounds(header.removeFromRight(100).reduced(0, 5));
-    header.removeFromRight(8);
+    // Phase mode (mockup: "LINEAR PHASE" capsule) — widened to 110 for breathing
+    phaseModeCombo.setBounds(header.removeFromRight(110).reduced(0, 8));
+    header.removeFromRight(14);  // divider gap before PRE/POST/DELTA group
 
-    // PRE | POST | DELTA toggles raggruppati (right → left: DELTA, POST, PRE)
+    // Wave 4A: PRE | POST | DELTA — each pill gets its own 6 px gap so the
+    // three toggles actually "breathe" instead of touching each other.
     btnDelta.setVisible(true);
     btnPost.setVisible(true);
-    btnDelta.setBounds(header.removeFromRight(40).reduced(1, 5));
-    btnPost.setBounds(header.removeFromRight(36).reduced(1, 5));
-    btnPre .setBounds(header.removeFromRight(32).reduced(1, 5));
+    btnDelta.setBounds(header.removeFromRight(50).reduced(1, 8));
+    header.removeFromRight(6);
+    btnPost .setBounds(header.removeFromRight(44).reduced(1, 8));
+    header.removeFromRight(6);
+    btnPre  .setBounds(header.removeFromRight(40).reduced(1, 8));
 
     // BYPASS moved to footer — hide from header
     bypassBtn.setVisible(false);
@@ -1440,14 +1465,15 @@ void AIEqualizerAudioProcessorEditor::timerCallback()
             int mode = static_cast<int>(param->convertFrom0to1(v) + 0.5f);
             qualityBtn.setToggleState(mode == 1, juce::dontSendNotification);
             qualityBtn.setButtonText(mode == 1 ? "HQ" : "ZL");
+            // Wave 4A: amber-family visuals when HQ active.
             qualityBtn.setColour(juce::TextButton::buttonColourId,
-                                 mode == 1 ? ModernLookAndFeel::Colors::accentBlue.withAlpha(0.18f)
+                                 mode == 1 ? ModernLookAndFeel::Colors::amber.withAlpha(0.18f)
                                            : ModernLookAndFeel::Colors::bgLight);
-            qualityBtn.setColour(juce::TextButton::buttonOnColourId, ModernLookAndFeel::Colors::accentBlue);
+            qualityBtn.setColour(juce::TextButton::buttonOnColourId, ModernLookAndFeel::Colors::amber);
             qualityBtn.setColour(juce::TextButton::textColourOffId,
                                  mode == 1 ? ModernLookAndFeel::Colors::textBright
                                            : ModernLookAndFeel::Colors::textPrimary);
-            qualityBtn.setColour(juce::TextButton::textColourOnId, ModernLookAndFeel::Colors::textBright);
+            qualityBtn.setColour(juce::TextButton::textColourOnId, juce::Colour(0xFF181A22));
         }
 
     }
@@ -1579,7 +1605,7 @@ void AIEqualizerAudioProcessorEditor::selectBand(int bandIndex)
         if (!bandToggles[i])
             continue;
         if (static_cast<int>(i) == bandIndex)
-            bandToggles[i]->setColour(juce::ToggleButton::textColourId, ModernLookAndFeel::Colors::accentBlue);
+            bandToggles[i]->setColour(juce::ToggleButton::textColourId, ModernLookAndFeel::Colors::amber);
         else
             bandToggles[i]->setColour(juce::ToggleButton::textColourId, ModernLookAndFeel::Colors::textPrimary);
     }

@@ -144,7 +144,7 @@ public:
             genreValue.setFont(font);
         }
         genreValue.setJustificationType(juce::Justification::centred);
-        genreValue.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::accentBlue);
+        genreValue.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::accentBlue); // Semantic genre accent
         addAndMakeVisible(genreValue);
         
         // === PROBLEMI: Sezione per visualizzare i problemi rilevati ===
@@ -345,7 +345,7 @@ private:
             juce::String freqTxt = c.frequency >= 1000 
                 ? juce::String(c.frequency / 1000.0f, 1) + "k"
                 : juce::String((int)c.frequency);
-            g.setColour(ModernLookAndFeel::Colors::accentBlue);
+            g.setColour(ModernLookAndFeel::Colors::accentBlue); // Semantic frequency accent
             g.drawText(freqTxt, (int)itemBounds.getX() + 88, (int)itemBounds.getY(),
                       40, (int)itemBounds.getHeight(), juce::Justification::centred);
             

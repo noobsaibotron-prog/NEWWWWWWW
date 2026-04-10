@@ -1,0 +1,13 @@
+AIEQ Liquid Intelligence Validator — Report
+Score: 93% (25/27)
+HIGH failures: 2
+Verdict: QUASI CONFORME — Fix minori richiesti prima del push
+
+[FAIL] PillComboBox o preset pill
+  Details: Componente non trovato nel codebase
+  Fix: Creare un componente PillComboBox per la navigazione preset (capsula arrotondata)
+
+[FAIL] DynEQ knobs (non solo testo)
+  Details: Componente non trovato nel codebase
+  Fix: DynEQCompactBar deve avere 4 PremiumKnob (THRESH/RATIO/ATTACK/RELEASE) non solo label
+

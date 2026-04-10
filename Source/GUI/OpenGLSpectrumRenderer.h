@@ -273,7 +273,7 @@ private:
         if (shader && !lineVerts.empty())
         {
             shader->use();
-            shader->setUniform("colour", 0.41f, 0.65f, 0.91f, 0.75f);  // accentBlue
+            shader->setUniform("colour", 0.41f, 0.65f, 0.91f, 0.75f);  // spectrum accentBlue uniform
 
             juce::gl::glBindBuffer(juce::gl::GL_ARRAY_BUFFER, vbo);
             juce::gl::glBufferData(juce::gl::GL_ARRAY_BUFFER,
