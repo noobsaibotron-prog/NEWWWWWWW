@@ -37,10 +37,8 @@ AIEqualizerAudioProcessorEditor::AIEqualizerAudioProcessorEditor(AIEqualizerAudi
     spectrum = std::make_unique<AdvancedSpectrumDisplay>(processor);
     addAndMakeVisible(*spectrum);
 
-    // Band tab bar (Phase 10) — 8 band selector tabs below header
-    addAndMakeVisible(bandTabBar);
-    bandTabBar.setSelectedBand(selectedBand);
-    bandTabBar.onBandSelected = [this](int idx) { selectBand(idx); };
+    // Wave 5 verdict: BandTabBar removed — band identity via coloured node
+    // rings on the curve + the three big filmstrip knobs in the left panel.
 
     // Phase 5: compact dynamic EQ strip + full panel as on-demand overlay
     addAndMakeVisible(dynEqCompactBar);
@@ -1166,11 +1164,9 @@ void AIEqualizerAudioProcessorEditor::resized()
     savePresetBtn.setVisible(false);
     copyBtn.setVisible(false);
 
-    // === BAND TAB BAR (28px — Phase 10: I..VIII selector below header) ===
-    {
-        auto tabBarArea = bounds.removeFromTop(bandTabH);
-        bandTabBar.setBounds(tabBarArea);
-    }
+    // Wave 5 verdict: BandTabBar (Roman numerals above spectrum) removed —
+    // spectrum now starts immediately below the header, giving the curve and
+    // node rings the full canvas for readability.
 
     // === FOOTER BAR (32px — mockup: OUT meter dB | div | 2x HQ | div | BYPASS | spacer | version) ===
     auto footer = bounds.removeFromBottom(footerH).reduced(12, 0);

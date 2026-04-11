@@ -30,11 +30,16 @@ public:
         // Offset = 10*log10(fs) — e.g. 46.8 dB at 48 kHz, 44.1 dB at 44.1 kHz.
         psdDisplayOffsetDB = static_cast<float> (10.0 * std::log10 (std::max (sampleRate, 1.0)));
 
-        // IIR coefficients from time constants and frame rate
-        // Attack: ~3ms (fast rise), Release: ~85ms (matches legacy Medium speed)
+        // IIR coefficients from time constants and frame rate.
+        // Wave 5 Premium Spectrum: defaults tuned for the "liquid flow" reference
+        // feel. Attack 15 ms keeps transients readable without twitching; release
+        // 500 ms gives the slow decaying tail typical of premium spectrum UIs
+        // (instead of the harsh 85 ms legacy default that caused the post-EQ
+        // curve to jitter and fight the luminous cyan fill). If a user prefers
+        // a faster analyzer they can still call setTimeConstants() at runtime.
         const auto fr = static_cast<float> (frameRateUI);
-        alphaAttack  = 1.0f - std::exp (-1.0f / (fr * 0.003f));
-        alphaRelease = 1.0f - std::exp (-1.0f / (fr * 0.085f));
+        alphaAttack  = 1.0f - std::exp (-1.0f / (fr * 0.015f));
+        alphaRelease = 1.0f - std::exp (-1.0f / (fr * 0.500f));
     }
 
     /** Push a raw PSD frame (from SpectrumAnalyzerCore). Thread-safe via SpinLock. */

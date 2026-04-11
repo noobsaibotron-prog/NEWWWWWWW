@@ -118,35 +118,84 @@ public:
         // Physical-pixel viewport positioned at the spectrum component's location
         glViewport (vpX, vpY, vpW, vpH);
         glEnable (GL_BLEND);
-        glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-        // Wave 4D (Marco from video): pre-EQ fill dropped 0x66 → 0x22 at
-        // the top (40 % → ~13 % alpha) because in practice the dense azzurro
-        // polvere was swallowing the luminous cyan post-EQ curve underneath,
-        // making Fix 1 invisible. Thinner dusty azure lets the cyan read
-        // through while still giving an input-signal visual reference.
+        // =============================================================
+        // RAII guard — ALWAYS restores JUCE's canonical blend state on
+        // scope exit, even if an exception propagates out of a draw*
+        // call (e.g. std::bad_alloc from a vector resize in fillVerts).
+        // Mandatory per the Tribunale's "blend-state leak is the #1 risk"
+        // warning: if we ever leave the state on an additive func, the
+        // next JUCE 2D draw through the same GL context corrupts.
+        // =============================================================
+        struct BlendStateGuard
+        {
+            ~BlendStateGuard()
+            {
+                glBlendFunc (GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+                glDisable (GL_BLEND);
+            }
+        } blendGuard;
+
+        // =============================================================
+        // Wave 5 Premium Spectrum: 3 passes per spectrum
+        // 1) alpha-blend gradient fill (soft base tint)
+        // 2) additive wide stroke  ("glow" halo, 6 px)
+        // 3) alpha-blend crisp stroke ("main" line, 1.5 px)
+        //
+        // Pre-EQ = azzurro polvere (reference signal, secondary)
+        // Post-EQ = luminous cyan  (hero curve, dominant)
+        // Additive blend makes the halo pile up brightness without
+        // ever going milky — the key trick behind premium analyzers.
+        // =============================================================
+
+        // ---------- Pre-EQ spectrum --------------------------------
         if (showPre.load (std::memory_order_relaxed) && ! activeData.preDB.empty())
         {
+            // Pass 1: soft dusty-azure fill (standard over)
+            glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
             drawSpectrumFill (ctx, activeData.preDB, gb, minDb, maxDb, logicalW, logicalH,
-                              juce::Colour (0x224A9FD9),   // top: azzurro polvere ~13 % alpha (Wave 4D)
+                              juce::Colour (0x444A9FD9),   // top ~27 % alpha azzurro polvere
                               juce::Colour (0x004A9FD9));  // bottom: trasparente
+
+            // Pass 2: wide additive halo (6 px) — the glow
+            glBlendFunc (GL_SRC_ALPHA, GL_ONE);
+            drawSpectrumLine (ctx, activeData.preDB, gb, minDb, maxDb, logicalW, logicalH,
+                              juce::Colour (0x404A9FD9),   // 25 % alpha → additive pile-up
+                              6.0f);
+
+            // Pass 3: crisp main stroke (1.5 px)
+            glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            drawSpectrumLine (ctx, activeData.preDB, gb, minDb, maxDb, logicalW, logicalH,
+                              juce::Colour (0xD04A9FD9),   // 82 % alpha → crisp azure contour
+                              1.5f);
         }
 
-        // Wave 4D (Tribunale video verdict): Post-EQ cyan alpha boosted
-        // from 0x88 (53 %) to 0xCC (80 %) because the Tribunale analysis
-        // showed the cyan was being swallowed by the pre-EQ dusty-azure
-        // fill. The pre-EQ fill alpha was also dropped to 0x22 (~13 %) in
-        // the block above, so the two layers now cooperate instead of
-        // cannibalizing each other. GL path and software renderer are kept
-        // in sync so toggling OpenGL on/off doesn't change the look.
+        // ---------- Post-EQ spectrum -------------------------------
         if (showPost.load (std::memory_order_relaxed) && ! activeData.postDB.empty())
         {
+            // Pass 1: thin luminous cyan fill (standard over)
+            // Alpha deliberately LOWER than pre-EQ fill so the two layers
+            // cooperate instead of stacking into a milky wall. The brightness
+            // of post-EQ comes from the additive glow in pass 2, not the fill.
+            glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
             drawSpectrumFill (ctx, activeData.postDB, gb, minDb, maxDb, logicalW, logicalH,
-                              juce::Colour (0xCC00E5FF),   // top: luminous cyan 80 % alpha (Wave 4D)
+                              juce::Colour (0x3300E5FF),   // top ~20 % alpha cyan fill
                               juce::Colour (0x0000E5FF));  // bottom: trasparente
+
+            // Pass 2: wide additive cyan halo (6 px) — the hero glow
+            glBlendFunc (GL_SRC_ALPHA, GL_ONE);
+            drawSpectrumLine (ctx, activeData.postDB, gb, minDb, maxDb, logicalW, logicalH,
+                              juce::Colour (0x5500E5FF),   // 33 % alpha → bright additive pile-up
+                              6.0f);
+
+            // Pass 3: crisp main cyan stroke (1.5 px)
+            glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            drawSpectrumLine (ctx, activeData.postDB, gb, minDb, maxDb, logicalW, logicalH,
+                              juce::Colour (0xE600E5FF),   // 90 % alpha → vivid cyan line
+                              1.5f);
         }
 
-        glDisable (GL_BLEND);
+        // blendGuard destructor runs here — no manual reset needed.
     }
 
 private:
@@ -341,7 +390,8 @@ private:
                            const juce::Rectangle<float>& gb,
                            float minDb, float maxDb,
                            int compW, int compH,
-                           juce::Colour lineCol)
+                           juce::Colour lineCol,
+                           float lineWidth = 2.0f)
     {
         const int dataW  = static_cast<int> (pixelDB.size());
         const int graphW = static_cast<int> (gb.getWidth());
@@ -376,7 +426,7 @@ private:
 
         ctx.extensions.glEnableVertexAttribArray (0);
         ctx.extensions.glVertexAttribPointer (0, 2, GL_FLOAT, GL_FALSE, 0, nullptr);
-        glLineWidth (2.0f);
+        glLineWidth (lineWidth);
         glDrawArrays (GL_LINE_STRIP, 0, count);
         ctx.extensions.glDisableVertexAttribArray (0);
         ctx.extensions.glBindBuffer (GL_ARRAY_BUFFER, 0);
