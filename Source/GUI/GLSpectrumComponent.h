@@ -120,25 +120,29 @@ public:
         glEnable (GL_BLEND);
         glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-        // Wave 4A: Pre-EQ spectrum — DENSE azzurro polvere (40% alpha at the
-        // top) matching the Liquid Intelligence mockup. Previous 20% alpha
-        // was too diluted and the blue ocean effect was barely visible.
+        // Wave 4D (Marco from video): pre-EQ fill dropped 0x66 → 0x22 at
+        // the top (40 % → ~13 % alpha) because in practice the dense azzurro
+        // polvere was swallowing the luminous cyan post-EQ curve underneath,
+        // making Fix 1 invisible. Thinner dusty azure lets the cyan read
+        // through while still giving an input-signal visual reference.
         if (showPre.load (std::memory_order_relaxed) && ! activeData.preDB.empty())
         {
             drawSpectrumFill (ctx, activeData.preDB, gb, minDb, maxDb, logicalW, logicalH,
-                              juce::Colour (0x664A9FD9),   // top: azzurro polvere 40% alpha
+                              juce::Colour (0x224A9FD9),   // top: azzurro polvere ~13 % alpha (Wave 4D)
                               juce::Colour (0x004A9FD9));  // bottom: trasparente
         }
 
-        // Wave 4B Fix 1 (Tribunale): Post-EQ is now luminous cyan
-        // (0x8800E5FF → transparent) so it sits clearly above the dusty
-        // azure pre-EQ fill and is distinguishable from the white main
-        // curve. Both the GL path and the software renderer use the same
-        // colour so switching OpenGL on/off doesn't change the look.
+        // Wave 4D (Tribunale video verdict): Post-EQ cyan alpha boosted
+        // from 0x88 (53 %) to 0xCC (80 %) because the Tribunale analysis
+        // showed the cyan was being swallowed by the pre-EQ dusty-azure
+        // fill. The pre-EQ fill alpha was also dropped to 0x22 (~13 %) in
+        // the block above, so the two layers now cooperate instead of
+        // cannibalizing each other. GL path and software renderer are kept
+        // in sync so toggling OpenGL on/off doesn't change the look.
         if (showPost.load (std::memory_order_relaxed) && ! activeData.postDB.empty())
         {
             drawSpectrumFill (ctx, activeData.postDB, gb, minDb, maxDb, logicalW, logicalH,
-                              juce::Colour (0x8800E5FF),   // top: luminous cyan 53% alpha
+                              juce::Colour (0xCC00E5FF),   // top: luminous cyan 80 % alpha (Wave 4D)
                               juce::Colour (0x0000E5FF));  // bottom: trasparente
         }
 

@@ -1366,12 +1366,15 @@ private:
         // clearly distinct from the dusty azure pre-EQ fill and the white
         // main EQ curve. Previous tenue green (0x555ED4A0) blended into the
         // background and failed the "ciano luminoso e distinto" directive.
-        // New gradient: bright cyan top (0x8800E5FF = 53% alpha on pure cyan)
-        // → transparent bottom. Stroke bumped 1.0 → 1.5 px for presence.
+        // Wave 4D: cyan alpha boosted 0x88 → 0xCC (53 % → 80 %) after the
+        // Tribunale video analysis showed the ciano was being swallowed by
+        // the dusty-azure pre-EQ fill. Combined with the pre-EQ alpha drop
+        // (0x66 → 0x22 in GLSpectrumComponent.h) the cyan post-EQ should
+        // now read as a distinct luminous layer above the spectrum.
         if (!cachedPostLine.isEmpty())
         {
             juce::ColourGradient postGrad(
-                juce::Colour(0x8800E5FF), 0, graphBounds.getY(),
+                juce::Colour(0xCC00E5FF), 0, graphBounds.getY(),
                 juce::Colour(0x0000E5FF), 0, graphBounds.getBottom(), false);
             ig.setGradientFill(postGrad);
             ig.strokePath(cachedPostLine, juce::PathStrokeType(1.5f));
@@ -1670,10 +1673,12 @@ private:
             // 280Hz", "HARSH 4.2kHz" etc. Derived from corr.type via a
             // compact mapping, with frequency formatted short (Hz for < 1 k,
             // kHz with one decimal otherwise). Rendered at the top of the
-            // amber zone in small bold amber text, only when the zone is
-            // wide enough (>= 34 px) to avoid glyph clipping on narrow-Q
-            // suggestions.
-            if (zoneRect.getWidth() >= 34.0f)
+            // amber zone in small bold amber text. Wave 4D (Tribunale):
+            // lowered the threshold 34 → 18 px because in-production
+            // narrow-Q zones were always under the original 34 px and no
+            // label ever rendered. 18 px still fits 3-4 char labels like
+            // RESO / HARSH / MUDDY without clipping.
+            if (zoneRect.getWidth() >= 18.0f)
             {
                 auto problemLabel = [](AIEngine::ProblemType pt) -> const char*
                 {
@@ -1737,8 +1742,14 @@ private:
         const double sr = (processor.getSampleRate() > 0.0) ? processor.getSampleRate() : 44100.0;
         const float  nyquist = static_cast<float>(sr * 0.5);
 
-        const juce::Colour amberLine = ModernLookAndFeel::Colors::amber.withAlpha(0.60f);
-        const float dashes[] = { 4.0f, 4.0f };
+        // Wave 4D (Marco from video): the dashed AI suggestion line was
+        // reading as "toy-like" — too thick, too solid, too warm. Three
+        // tweaks to make it feel technical/engineering-grade:
+        //   1. alpha 0.60 → 0.30 (subtler, less dominating)
+        //   2. dash {4,4} → {2,4} (short dash, long gap — telemetry look)
+        //   3. stroke 1.6 → 0.8 px (finer line, below)
+        const juce::Colour amberLine = ModernLookAndFeel::Colors::amber.withAlpha(0.30f);
+        const float dashes[] = { 2.0f, 4.0f };
 
         // Draw one dashed curve per pending correction (individual bell shape).
         for (const auto& corr : corrections)
@@ -1802,14 +1813,15 @@ private:
             if (suggestionPath.isEmpty())
                 continue;
 
-            // Dashed amber stroke (Liquid Intelligence)
+            // Dashed amber stroke (Liquid Intelligence) — Wave 4D: stroke
+            // width dropped 1.6 → 0.8 px for a finer, engineering look.
             juce::Path dashed;
-            juce::PathStrokeType stroke(1.6f, juce::PathStrokeType::curved,
+            juce::PathStrokeType stroke(0.8f, juce::PathStrokeType::curved,
                                          juce::PathStrokeType::rounded);
             stroke.createDashedStroke(dashed, suggestionPath, dashes, 2);
 
             g.setColour(amberLine);
-            g.strokePath(dashed, juce::PathStrokeType(1.6f,
+            g.strokePath(dashed, juce::PathStrokeType(0.8f,
                                                         juce::PathStrokeType::curved,
                                                         juce::PathStrokeType::rounded));
         }

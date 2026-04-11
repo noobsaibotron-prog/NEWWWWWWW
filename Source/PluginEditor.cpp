@@ -1077,24 +1077,30 @@ void AIEqualizerAudioProcessorEditor::paint(juce::Graphics& g)
         float cpY = static_cast<float>(getHeight() - footerH - controlH);
         auto bottomRect = juce::Rectangle<float>(0.0f, cpY, w, static_cast<float>(controlH));
 
-        juce::ColourGradient bottomGrad(
-            ModernLookAndFeel::Colors::bgPanel.brighter(0.03f), 0.0f, cpY,
-            ModernLookAndFeel::Colors::bgPanel.darker(0.05f), 0.0f, cpY + controlH,
-            false);
-        g.setGradientFill(bottomGrad);
+        // Wave 4D Fix 5 (Marco from video): bottom bar material refresh.
+        // Previous ColourGradient (bgPanel.brighter(0.03) → bgPanel.darker(0.05))
+        // read as a flat grey wash — no sense of material. New layout:
+        //   1. Solid deep-navy base (#14161E from the Liquid Intelligence mockup)
+        //   2. Three-line top edge stack — dark hairline, amber 22 %, white 3 %
+        //      — to give a sense of bevelled glass
+        //   3. Vertical divider now a 1 px dark line + 1 px amber 8 % hairline
+        //      (the old 18/10 % amber is lowered for subtlety)
+        g.setColour(juce::Colour(0xFF14161E));
         g.fillRect(bottomRect);
 
-        // Top edge — amber accent separator
+        // Top edge — three-line stack for material depth
         g.setColour(juce::Colour(0xFF0A0A10));
         g.fillRect(0.0f, cpY - 1.0f, w, 2.0f);
-        g.setColour(ModernLookAndFeel::Colors::amber.withAlpha(0.18f));
+        g.setColour(ModernLookAndFeel::Colors::amber.withAlpha(0.22f));
         g.fillRect(0.0f, cpY + 1.0f, w, 1.0f);
+        g.setColour(juce::Colours::white.withAlpha(0.03f));
+        g.fillRect(0.0f, cpY + 2.0f, w, 1.0f);
 
         // Vertical divider between band controls (380px) and context panel
         float divX = static_cast<float>(juce::jmin(380, getWidth() / 2));
         g.setColour(juce::Colour(0xFF0A0A10));
         g.fillRect(divX, cpY + 6.0f, 1.0f, static_cast<float>(controlH - 12));
-        g.setColour(ModernLookAndFeel::Colors::amber.withAlpha(0.1f));
+        g.setColour(ModernLookAndFeel::Colors::amber.withAlpha(0.08f));
         g.fillRect(divX + 1.0f, cpY + 6.0f, 1.0f, static_cast<float>(controlH - 12));
     }
 }
@@ -1308,8 +1314,15 @@ void AIEqualizerAudioProcessorEditor::resized()
     bounds.reduce(4, 4);
     spectrumBounds = bounds;
     spectrum->setBounds(spectrumBounds);
-    graphBounds = spectrumBounds.reduced(45, 25);
-    graphBounds.removeFromBottom(22);
+    // Wave 4D Fix 2 (Marco from video): symmetric vertical inset so 0 dB
+    // sits at the visual centre of the graph. Previous layout was
+    // reduced(45, 25) + removeFromBottom(22), giving 25 px top padding vs
+    // 47 px bottom padding — the 0 dB line floated ~11 px above centre,
+    // making the whole graph look pushed up. New layout: a clean
+    // reduced(45, 30) symmetric inset (total 60 px vertical padding, was
+    // 72 px asymmetric), which both centres the graph and gives 12 px
+    // more breathing room to the curves.
+    graphBounds = spectrumBounds.reduced(45, 30);
     graphBounds.removeFromLeft(5);
 
     updateBandPositions();
