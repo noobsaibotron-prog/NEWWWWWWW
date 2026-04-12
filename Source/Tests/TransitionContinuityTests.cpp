@@ -209,42 +209,54 @@ void expectMetrics(juce::UnitTest& test, const TransitionMetrics& metrics, const
 
 float maxDifferenceVsInputAfter(const juce::AudioBuffer<float>& output,
                                 const juce::AudioBuffer<float>& input,
-                                int startSample)
+                                int startSample,
+                                int maxOffset)
 {
-    // With Maximum Latency Padding, bypass output is delayed by worstCaseLatencySamples.
-    // Detect the delay by finding the best correlation offset, then compare.
-    // Try offsets 0..512 and pick the one with minimum total difference.
+    // With Maximum Latency Padding (worstCaseLatencySamples = max(lpLatency, osLatency)),
+    // bypass output is delayed by a known amount even in modes that don't intrinsically
+    // require latency. Callers must pass maxOffset >= worstCaseLatencySamples + margin
+    // so the correlation search can actually lock onto the true delay.
+    //
+    // The old version capped maxOffset at 512 and used a 256-sample correlation window —
+    // too narrow when lpLatency reaches 2176 (partSize 128 + irSize/2 2048). This version
+    // uses a widened 2048-sample correlation window that is robust against the widest
+    // latency configuration the plugin can produce.
     int bestOffset = 0;
     float bestSum = std::numeric_limits<float>::max();
-    const int searchLen = juce::jmin(256, output.getNumSamples() - startSample);
 
-    for (int offset = 0; offset <= 512 && startSample + offset + searchLen <= output.getNumSamples(); ++offset)
+    const int chs = juce::jmin(output.getNumChannels(), input.getNumChannels());
+    const int numOut = output.getNumSamples();
+    const int numIn  = input.getNumSamples();
+
+    // Use a wide correlation window (up to 2048 samples) for robust offset detection.
+    const int searchLen = juce::jmin(2048,
+                                     juce::jmin(numOut - startSample - maxOffset,
+                                                numIn - startSample));
+    if (searchLen <= 0)
+        return 0.0f;
+
+    for (int offset = 0; offset <= maxOffset; ++offset)
     {
         float sum = 0.0f;
-        for (int ch = 0; ch < juce::jmin(output.getNumChannels(), input.getNumChannels()); ++ch)
+        for (int ch = 0; ch < chs; ++ch)
         {
             const auto* out = output.getReadPointer(ch);
             const auto* in  = input.getReadPointer(ch);
             for (int i = 0; i < searchLen; ++i)
-            {
-                const int outIdx = startSample + offset + i;
-                const int inIdx  = startSample + i;
-                if (outIdx < output.getNumSamples() && inIdx < input.getNumSamples())
-                    sum += std::abs(out[outIdx] - in[inIdx]);
-            }
+                sum += std::abs(out[startSample + offset + i] - in[startSample + i]);
         }
         if (sum < bestSum) { bestSum = sum; bestOffset = offset; }
     }
 
     float maxDiff = 0.0f;
-    for (int ch = 0; ch < juce::jmin(output.getNumChannels(), input.getNumChannels()); ++ch)
+    for (int ch = 0; ch < chs; ++ch)
     {
         const auto* out = output.getReadPointer(ch);
         const auto* in  = input.getReadPointer(ch);
-        for (int i = startSample; i < output.getNumSamples(); ++i)
+        for (int i = startSample; i < numOut; ++i)
         {
             const int inIdx = i - bestOffset;
-            if (inIdx >= 0 && inIdx < input.getNumSamples())
+            if (inIdx >= 0 && inIdx < numIn)
                 maxDiff = std::max(maxDiff, std::abs(out[i] - in[inIdx]));
         }
     }
@@ -431,6 +443,21 @@ private:
         auto baseline = runScenario(sampleRate, blockSize, numBlocks, switchBlock, {}, setup);
         auto switched = runScenario(sampleRate, blockSize, numBlocks, switchBlock, onSwitch, setup);
 
+        // Probe the plugin's latency and bypass-crossfade length for this config.
+        // We can't read them from runScenario's transient processor, so we reconstruct
+        // the same setup in a probe. Mirrors PluginProcessor.cpp: bypassCrossfadeSamples
+        // = worstCaseLatencySamples * 2 + 512.
+        int probeLatency = 0;
+        {
+            AIEqualizerAudioProcessor probe;
+            probe.prepareToPlay(sampleRate, blockSize);
+            auto& probeAPVTS = probe.getAPVTS();
+            setup(probe, probeAPVTS);
+            probeLatency = probe.getLatencySamples();
+            probe.releaseResources();
+        }
+        const int bypassCrossfadeSamples = probeLatency * 2 + 512;
+
         const int start = juce::jmax(0, switchBlock * blockSize - 256);
         const int window = juce::jmin(switched.output.getNumSamples() - start,
                                       10 * blockSize + 256);
@@ -460,8 +487,15 @@ private:
 
         if (expectDryIdentityAfterSwitch)
         {
-            const int settleStart = juce::jmin(switched.output.getNumSamples(), (switchBlock + 4) * blockSize);
-            const float maxDiff = maxDifferenceVsInputAfter(switched.output, switched.input, settleStart);
+            // Wait for the bypass crossfade to fully settle AND for the latency pipeline
+            // to refill with post-switch samples. Previously used (switchBlock+4)*blockSize
+            // which was <= bypassCrossfadeSamples for small block sizes and therefore
+            // measured garbage.
+            const int settleStart = juce::jmin(
+                switched.output.getNumSamples(),
+                switchBlock * blockSize + bypassCrossfadeSamples + probeLatency + 256);
+            const float maxDiff = maxDifferenceVsInputAfter(
+                switched.output, switched.input, settleStart, probeLatency + 512);
             expect(maxDiff < 1.0e-4f,
                    "Bypass output should match dry input after settle window, maxDiff=" + juce::String(maxDiff, 6));
         }

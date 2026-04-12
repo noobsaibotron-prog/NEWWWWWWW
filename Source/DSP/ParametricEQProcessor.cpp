@@ -131,9 +131,25 @@ void ParametricEQProcessor::process(juce::AudioBuffer<float>& buffer)
                 xfade.remaining = fadeSamples;
                 xfade.total = fadeSamples;
 
-                // Reset live filters for clean start with new coefficients
-                for (auto& f : state.filtersL) f.reset();
-                for (auto& f : state.filtersR) f.reset();
+                // Cat 2 Fix: do NOT reset live filter state here.
+                // During parameter smoothing (20ms SmoothedValue), setBandParameters
+                // is called every block → version bumps → auto-arm triggers here.
+                // With fadeSamples==blockSize==128, the crossfade ends exactly at
+                // the block boundary, so the NEXT block re-arms and would reset
+                // the filter again. That cumulative reset produces a ~0.4 click
+                // (observed at AB switch@block60 in HostSessionClickTest).
+                //
+                // Keeping the live state intact gives both paths a common starting
+                // point (current state). The blend becomes:
+                //   out = oldCoefs(state) + (newCoefs(state) - oldCoefs(state)) * t
+                // For small smoothing deltas, oldCoefs(state) ≈ newCoefs(state) and
+                // the crossfade is near-identity — no audible artifact. For large
+                // discontinuous changes (type switch), the explicit external
+                // beginBandCrossfade() path still performs the reset via the
+                // dedicated API below.
+                //
+                // (External resets for type changes continue to be issued by
+                //  PluginProcessor::applySmoothedBandParams via beginBandCrossfade.)
             }
 
             // Read parameters

@@ -222,9 +222,7 @@ private:
         constexpr int blockSize = 256;
         constexpr int silenceBlocks = 20;   // ~100ms of silence to settle
         constexpr int transientBlocks = 40; // ~210ms of transient
-
-        // Lookahead in samples at 48kHz: 5ms * 48 = 240 samples
-        constexpr int lookaheadSamples = 240;
+        constexpr int measureSamples = 96;  // 2ms @ 48 kHz
 
         // Generate test signal: silence → 1kHz burst at 0.8 amplitude
         auto signal = makeStepSignal(sampleRate, blockSize, silenceBlocks,
@@ -232,47 +230,69 @@ private:
 
         const int transientStart = silenceBlocks * blockSize;
 
+        // IMPORTANT: Maximum Latency Padding (PluginProcessor::prepareToPlay) sets
+        // worstCaseLatencySamples = max(lpLatency, oversamplingLatency) ≈ 2176 samples
+        // even when phaseMode=0 and oversamplingFactor=0. The plugin shifts the output
+        // by that amount via an internal delay line, so the transient at input position
+        // P appears at output position P + getLatencySamples(). The old version of this
+        // test measured at transientStart (and transientStart + 240 for HQ), both of
+        // which fall inside the silence region of the OUTPUT buffer — effectively
+        // measuring zeros. We now align to transientStart + latency for each mode.
+
         // ── Process in Zero Latency mode ──
         float peakZL, rmsZL;
+        int latencyZL;
         {
             AIEqualizerAudioProcessor proc;
             proc.prepareToPlay(sampleRate, blockSize);
             auto& apvts = proc.getAPVTS();
             configureDynEQ(proc, apvts, 0); // ZL
+            latencyZL = proc.getLatencySamples();
 
-            // Prime: run a few silent blocks to stabilize smoothers
+            // Prime: enough silent blocks to fill the latency pipeline + stabilize smoothers
+            const int primeBlocks = juce::jmax(10, (latencyZL + blockSize - 1) / blockSize + 4);
             juce::AudioBuffer<float> prime(2, blockSize);
             juce::MidiBuffer midi;
-            for (int i = 0; i < 10; ++i) { prime.clear(); proc.processBlock(prime, midi); }
+            for (int i = 0; i < primeBlocks; ++i) { prime.clear(); proc.processBlock(prime, midi); }
 
             auto outputZL = processSignal(proc, signal, blockSize);
 
-            // Measure peak in first 2ms after transient start (96 samples @ 48kHz)
-            peakZL = peakInRange(outputZL, transientStart, 96);
-            rmsZL  = rmsInRange(outputZL, transientStart, 96);
+            const int measureStart = juce::jmin(outputZL.getNumSamples() - measureSamples,
+                                                 transientStart + latencyZL);
+            peakZL = peakInRange(outputZL, measureStart, measureSamples);
+            rmsZL  = rmsInRange(outputZL, measureStart, measureSamples);
         }
 
         // ── Process in High Quality mode ──
         float peakHQ, rmsHQ;
+        int latencyHQ;
         {
             AIEqualizerAudioProcessor proc;
             proc.prepareToPlay(sampleRate, blockSize);
             auto& apvts = proc.getAPVTS();
             configureDynEQ(proc, apvts, 1); // HQ
+            latencyHQ = proc.getLatencySamples();
 
-            // Prime
+            const int primeBlocks = juce::jmax(10, (latencyHQ + blockSize - 1) / blockSize + 4);
             juce::AudioBuffer<float> prime(2, blockSize);
             juce::MidiBuffer midi;
-            for (int i = 0; i < 10; ++i) { prime.clear(); proc.processBlock(prime, midi); }
+            for (int i = 0; i < primeBlocks; ++i) { prime.clear(); proc.processBlock(prime, midi); }
 
             auto outputHQ = processSignal(proc, signal, blockSize);
 
-            // HQ output is delayed by lookahead samples — measure at compensated position
-            peakHQ = peakInRange(outputHQ, transientStart + lookaheadSamples, 96);
-            rmsHQ  = rmsInRange(outputHQ, transientStart + lookaheadSamples, 96);
+            // Align to where the transient actually reaches the HQ output.
+            // proc.getLatencySamples() already accounts for any lookahead delay,
+            // so we do NOT add lookaheadSamples manually (the old test did and
+            // measured silence).
+            const int measureStart = juce::jmin(outputHQ.getNumSamples() - measureSamples,
+                                                 transientStart + latencyHQ);
+            peakHQ = peakInRange(outputHQ, measureStart, measureSamples);
+            rmsHQ  = rmsInRange(outputHQ, measureStart, measureSamples);
         }
 
         // ── Log results ──
+        logMessage("  latencyZL=" + juce::String(latencyZL) +
+                   " latencyHQ=" + juce::String(latencyHQ));
         {
             juce::String msg;
             msg << "ZL peak=" << juce::String(peakZL, 4)
@@ -306,64 +326,85 @@ private:
         }
     }
 
-    // ── Test 2: lookaheadSamples atomic actually changes ─────────────────
+    // ── Test 2: HQ and ZL impulse responses differ ───────────────────────
     void testLookaheadSamplesActuallyChange()
     {
-        beginTest("RB-4 Behavioral: lookaheadSamples value changes with qualityMode");
+        beginTest("RB-4 Behavioral: HQ and ZL impulse responses differ (lookahead delay)");
 
         constexpr double sampleRate = 48000.0;
         constexpr int blockSize = 256;
 
-        AIEqualizerAudioProcessor proc;
-        proc.prepareToPlay(sampleRate, blockSize);
-        auto& apvts = proc.getAPVTS();
+        // Maximum Latency Padding means the plugin reports ≥2176 samples of latency
+        // regardless of mode. A single 256-sample block cannot contain the impulse's
+        // tail — the impulse sitting at sample 0 would still be inside the delay line
+        // by the end of the first block. We therefore process multiple blocks, sized
+        // to fully span the latency pipeline, and capture the concatenated output
+        // for each mode using two FRESH processors (avoids state bleed between modes).
 
-        // Start ZL
-        setChoice(apvts, "qualityMode", 0);
-
-        // Process a block to trigger the qualityMode change path in processBlock
-        juce::AudioBuffer<float> buf(2, blockSize);
-        juce::MidiBuffer midi;
-        buf.clear();
-        proc.processBlock(buf, midi);
-
-        // Read lookahead from the dynamic EQ processor
-        // We access it indirectly: process two identical signals, compare latency
-        // Simpler: just verify that the output differs between ZL and HQ
-
-        // Switch to HQ
-        setChoice(apvts, "qualityMode", 1);
-        buf.clear();
-        proc.processBlock(buf, midi);
-
-        // Generate a short impulse signal
-        juce::AudioBuffer<float> impulse(2, blockSize);
-        impulse.clear();
-        impulse.setSample(0, 0, 1.0f);
-        impulse.setSample(1, 0, 1.0f);
-
-        // Process the impulse in HQ mode
-        juce::AudioBuffer<float> hqImpulse(2, blockSize);
-        hqImpulse.makeCopyOf(impulse);
-        proc.processBlock(hqImpulse, midi);
-
-        // Switch back to ZL
-        setChoice(apvts, "qualityMode", 0);
-        buf.clear();
-        proc.processBlock(buf, midi);
-
-        // Process same impulse in ZL mode
-        juce::AudioBuffer<float> zlImpulse(2, blockSize);
-        zlImpulse.makeCopyOf(impulse);
-        proc.processBlock(zlImpulse, midi);
-
-        // The outputs must differ (lookahead delays audio in HQ)
-        bool differ = false;
-        for (int s = 0; s < blockSize && !differ; ++s)
+        // Probe latency from a ZL processor to size the capture window
+        int latency = 0;
         {
-            if (std::abs(hqImpulse.getSample(0, s) - zlImpulse.getSample(0, s)) > 1e-6f)
-                differ = true;
+            AIEqualizerAudioProcessor probe;
+            probe.prepareToPlay(sampleRate, blockSize);
+            auto& apvts = probe.getAPVTS();
+            configureDynEQ(probe, apvts, 0);
+            latency = probe.getLatencySamples();
+            probe.releaseResources();
         }
+
+        const int totalBlocks = juce::jmax(
+            4, (latency + 2 * blockSize + blockSize - 1) / blockSize);
+        const int totalSamples = totalBlocks * blockSize;
+
+        auto processImpulse = [sampleRate, blockSize, totalBlocks]
+                              (int qualityMode)
+        {
+            AIEqualizerAudioProcessor proc;
+            proc.prepareToPlay(sampleRate, blockSize);
+            auto& apvts = proc.getAPVTS();
+            configureDynEQ(proc, apvts, qualityMode);
+
+            juce::MidiBuffer midi;
+            juce::AudioBuffer<float> prime(2, blockSize);
+            for (int i = 0; i < 10; ++i) { prime.clear(); proc.processBlock(prime, midi); }
+
+            juce::AudioBuffer<float> output(2, totalBlocks * blockSize);
+            output.clear();
+            juce::AudioBuffer<float> block(2, blockSize);
+
+            for (int b = 0; b < totalBlocks; ++b)
+            {
+                block.clear();
+                if (b == 0)
+                {
+                    block.setSample(0, 0, 1.0f);
+                    block.setSample(1, 0, 1.0f);
+                }
+                proc.processBlock(block, midi);
+                for (int ch = 0; ch < 2; ++ch)
+                    output.copyFrom(ch, b * blockSize, block, ch, 0, blockSize);
+            }
+            proc.releaseResources();
+            return output;
+        };
+
+        auto zlOutput = processImpulse(0);
+        auto hqOutput = processImpulse(1);
+
+        // Compare: HQ should differ from ZL somewhere in the response
+        bool differ = false;
+        float maxDiff = 0.0f;
+        for (int s = 0; s < totalSamples; ++s)
+        {
+            const float d = std::abs(hqOutput.getSample(0, s) - zlOutput.getSample(0, s));
+            maxDiff = std::max(maxDiff, d);
+            if (d > 1e-6f) differ = true;
+        }
+
+        logMessage("  latency=" + juce::String(latency) +
+                   " totalSamples=" + juce::String(totalSamples) +
+                   " maxDiff=" + juce::String(maxDiff, 6));
+
         expect(differ, "HQ and ZL impulse responses should differ (lookahead delay)");
     }
 
@@ -380,42 +421,63 @@ private:
         auto& apvts = proc.getAPVTS();
         configureDynEQ(proc, apvts, 0); // start ZL
 
+        const int latency = proc.getLatencySamples();
+        // Need to push enough tone samples through the latency pipeline before we can
+        // measure steady-state RMS. Previously primed 10 silent blocks (2560 samples)
+        // then processed ONE tone block and measured RMS on the output of that block —
+        // but the output still contained silence-pipeline residue because the latency
+        // pad is ≥2176 samples.
+        const int latencyBlocks = (latency + blockSize - 1) / blockSize + 2;
+
         juce::MidiBuffer midi;
-
-        // Prime with silence
         juce::AudioBuffer<float> silence(2, blockSize);
-        for (int i = 0; i < 10; ++i) { silence.clear(); proc.processBlock(silence, midi); }
 
-        // Process a 1kHz tone block in ZL mode
-        juce::AudioBuffer<float> toneZL(2, blockSize);
-        for (int s = 0; s < blockSize; ++s)
+        // Prime with silence (enough to clear any constructor transient)
+        for (int i = 0; i < latencyBlocks; ++i)
         {
-            float v = 0.8f * std::sin(static_cast<float>(
-                2.0 * juce::MathConstants<double>::pi * 1000.0 * s / sampleRate));
-            toneZL.setSample(0, s, v);
-            toneZL.setSample(1, s, v);
+            silence.clear();
+            proc.processBlock(silence, midi);
         }
-        proc.processBlock(toneZL, midi);
-        const float rmsBeforeSwitch = toneZL.getRMSLevel(0, 0, blockSize);
 
-        // Now switch to HQ at runtime
+        // Helper: fill block with continuous 1kHz sine at the given global sample offset
+        auto fillTone = [sampleRate, blockSize](juce::AudioBuffer<float>& block, int globalOffset)
+        {
+            for (int s = 0; s < blockSize; ++s)
+            {
+                const float v = 0.8f * std::sin(static_cast<float>(
+                    2.0 * juce::MathConstants<double>::pi * 1000.0 *
+                    (globalOffset + s) / sampleRate));
+                block.setSample(0, s, v);
+                block.setSample(1, s, v);
+            }
+        };
+
+        // Push tone through the ZL pipeline until the output reaches steady state.
+        juce::AudioBuffer<float> toneBlock(2, blockSize);
+        int globalSample = 0;
+        for (int b = 0; b < latencyBlocks + 2; ++b)
+        {
+            fillTone(toneBlock, globalSample);
+            globalSample += blockSize;
+            proc.processBlock(toneBlock, midi);
+        }
+        // toneBlock now holds the OUTPUT of the last processed ZL block (steady state).
+        const float rmsBeforeSwitch = toneBlock.getRMSLevel(0, 0, blockSize);
+
+        // Switch to HQ at runtime
         setChoice(apvts, "qualityMode", 1);
 
-        // Let the switch take effect through several blocks
-        for (int i = 0; i < 5; ++i) { silence.clear(); proc.processBlock(silence, midi); }
-
-        // Process another tone block in HQ mode
-        juce::AudioBuffer<float> toneHQ(2, blockSize);
-        for (int s = 0; s < blockSize; ++s)
+        // Let the switch propagate: push enough tone blocks for the HQ pipeline to fill.
+        for (int b = 0; b < latencyBlocks + 4; ++b)
         {
-            float v = 0.8f * std::sin(static_cast<float>(
-                2.0 * juce::MathConstants<double>::pi * 1000.0 * s / sampleRate));
-            toneHQ.setSample(0, s, v);
-            toneHQ.setSample(1, s, v);
+            fillTone(toneBlock, globalSample);
+            globalSample += blockSize;
+            proc.processBlock(toneBlock, midi);
         }
-        proc.processBlock(toneHQ, midi);
-        const float rmsAfterSwitch = toneHQ.getRMSLevel(0, 0, blockSize);
+        // toneBlock now holds the OUTPUT of the last processed HQ block (steady state).
+        const float rmsAfterSwitch = toneBlock.getRMSLevel(0, 0, blockSize);
 
+        logMessage("  latency=" + juce::String(latency));
         logMessage("  RMS before switch (ZL): " + juce::String(rmsBeforeSwitch, 6));
         logMessage("  RMS after switch (HQ):  " + juce::String(rmsAfterSwitch, 6));
 

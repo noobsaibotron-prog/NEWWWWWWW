@@ -1138,6 +1138,7 @@ if(HAVE_JUCE)
     )
     target_link_libraries(AIEqualizerPro_PerformanceTests PRIVATE
         AIEqualizerPro
+        AIEQ_Assets
         juce::juce_core
         juce::juce_audio_basics
         juce::juce_audio_processors

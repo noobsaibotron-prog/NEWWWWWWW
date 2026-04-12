@@ -37,33 +37,11 @@ AIEqualizerAudioProcessorEditor::AIEqualizerAudioProcessorEditor(AIEqualizerAudi
     spectrum = std::make_unique<AdvancedSpectrumDisplay>(processor);
     addAndMakeVisible(*spectrum);
 
-    // Band tab bar (Phase 10) — 8 band selector tabs below header
-    addAndMakeVisible(bandTabBar);
-    bandTabBar.setSelectedBand(selectedBand);
-    bandTabBar.onBandSelected = [this](int idx) { selectBand(idx); };
+    // Wave 5 verdict: BandTabBar removed — band identity via coloured node
+    // rings on the curve + the three big filmstrip knobs in the left panel.
 
-    // Phase 5: compact dynamic EQ strip + full panel as on-demand overlay
-    addAndMakeVisible(dynEqCompactBar);
-    dynEqCompactBar.onModeChanged = [this](DynEQCompactBar::Mode) {
-        // TODO: wire to APVTS dynamic mode param for the selected band
-    };
-    dynEqCompactBar.onExpandRequested = [this] {
-        if (dynamicEQPanel)
-        {
-            const bool nowVisible = ! dynamicEQPanel->isVisible();
-            dynamicEQPanel->setVisible(nowVisible);
-            if (nowVisible)
-            {
-                dynamicEQPanel->toFront(true);
-                // Position as centered overlay
-                const int w = 400;
-                const int h = 300;
-                dynamicEQPanel->setBounds(getWidth() / 2 - w / 2,
-                                           getHeight() / 2 - h / 2,
-                                           w, h);
-            }
-        }
-    };
+    // DynEQ integration removed — controls now integrated directly in BandControlPanel
+    // The "..." expand button in BandControlPanel opens the advanced overlay (Range/Knee)
 
     // Phase 7D: passive breathing amber dot (driven by timerCallback)
     addAndMakeVisible(aiBreathingDot);
@@ -174,6 +152,21 @@ AIEqualizerAudioProcessorEditor::AIEqualizerAudioProcessorEditor(AIEqualizerAudi
     selectedBandPanel = std::make_unique<BandControlPanel>(0, processor.getAPVTS());
     addAndMakeVisible(*selectedBandPanel);
 
+    // Connect BandControlPanel "..." button to DynEQ advanced overlay (Range/Knee)
+    selectedBandPanel->onExpandDynEQRequested = [this] {
+        if (dynamicEQPanel)
+        {
+            const bool nowVisible = !dynamicEQPanel->isVisible();
+            dynamicEQPanel->setVisible(nowVisible);
+            if (nowVisible)
+            {
+                dynamicEQPanel->toFront(true);
+                const int w = 400, h = 300;
+                dynamicEQPanel->setBounds(getWidth()/2 - w/2, getHeight()/2 - h/2, w, h);
+            }
+        }
+    };
+
     // Output level meter (stereo VU with peak hold)
     addAndMakeVisible(outputMeter);
 
@@ -184,9 +177,9 @@ AIEqualizerAudioProcessorEditor::AIEqualizerAudioProcessorEditor(AIEqualizerAudi
     versionLabel.setJustificationType(juce::Justification::centredRight);
     addAndMakeVisible(versionLabel);
 
-    setSize(1200, 750);
+    setSize(1200, 810);
     setResizable(true, true);
-    setResizeLimits(1100, 680, 1800, 1100);
+    setResizeLimits(1100, 740, 1800, 1200);
     
     // Ensure a band is selected so the detail panel shows controls (including filter type)
     selectBand(0);
@@ -1139,11 +1132,12 @@ void AIEqualizerAudioProcessorEditor::resized()
     btnC.setVisible(false);
     btnD.setVisible(false);
 
-    // Right group (from right edge): AI dot (rightmost)
-    optionsBtn.setVisible(false);
-
+    // Right group (from right edge): AI dot → gear → phase → PRE/POST/DELTA
     aiPanelToggle.setBounds(header.removeFromRight(32).reduced(0, 8));
-    header.removeFromRight(12);
+    header.removeFromRight(8);
+    optionsBtn.setVisible(true);
+    optionsBtn.setBounds(header.removeFromRight(32).reduced(0, 8));
+    header.removeFromRight(8);
 
     // Phase mode (mockup: "LINEAR PHASE" capsule) — widened to 110 for breathing
     phaseModeCombo.setBounds(header.removeFromRight(110).reduced(0, 8));
@@ -1166,11 +1160,9 @@ void AIEqualizerAudioProcessorEditor::resized()
     savePresetBtn.setVisible(false);
     copyBtn.setVisible(false);
 
-    // === BAND TAB BAR (28px — Phase 10: I..VIII selector below header) ===
-    {
-        auto tabBarArea = bounds.removeFromTop(bandTabH);
-        bandTabBar.setBounds(tabBarArea);
-    }
+    // Wave 5 verdict: BandTabBar (Roman numerals above spectrum) removed —
+    // spectrum now starts immediately below the header, giving the curve and
+    // node rings the full canvas for readability.
 
     // === FOOTER BAR (32px — mockup: OUT meter dB | div | 2x HQ | div | BYPASS | spacer | version) ===
     auto footer = bounds.removeFromBottom(footerH).reduced(12, 0);
@@ -1200,7 +1192,10 @@ void AIEqualizerAudioProcessorEditor::resized()
     mixKnob.setVisible(false);
     outLabel.setVisible(false);
     outKnob.setVisible(false);
-    autoBtn.setVisible(false);
+    // Auto Gain stays visible — placed in footer before BYPASS
+    autoBtn.setVisible(true);
+    autoBtn.setBounds(footer.removeFromRight(52).reduced(0, 5));
+    footer.removeFromRight(6);
 
     // === BOTTOM PANEL — split: left=band controls (380px), right=context (flex) ===
     auto bottom = bounds.removeFromBottom(controlH).reduced(0, 0);
@@ -1221,17 +1216,17 @@ void AIEqualizerAudioProcessorEditor::resized()
         contextCol.removeFromTop(2);
 
         // AI tab: sensitivity/correction knobs at top.
-        // Fix: give the knob row enough height (80px) and constrain knob bounds
+        // Fix: give the knob row enough height (50px) and constrain knob bounds
         // to a SQUARE centered region so the circular filmstrip doesn't stretch
         // into an ellipse.
         if (activeRightTab == 0)
         {
-            auto knobRow = contextCol.removeFromTop(80);
+            auto knobRow = contextCol.removeFromTop(50);
             auto sensArea = knobRow.removeFromLeft(knobRow.getWidth() / 2);
             auto strArea  = knobRow;
 
-            sensitivityLabel.setBounds(sensArea.removeFromTop(12));
-            strengthLabel.setBounds(strArea.removeFromTop(12));
+            sensitivityLabel.setBounds(sensArea.removeFromTop(10));
+            strengthLabel.setBounds(strArea.removeFromTop(10));
 
             const int sensSize = juce::jmin(sensArea.getWidth(), sensArea.getHeight());
             sensitivityKnob.setBounds(sensArea.withSizeKeepingCentre(sensSize, sensSize));
@@ -1290,14 +1285,8 @@ void AIEqualizerAudioProcessorEditor::resized()
     }
     bandCol.removeFromTop(4);
 
-    // Phase 5: carve ~42px at the bottom of the left column for DynEQCompactBar.
-    // Remainder is the band detail panel (selectedBandPanel).
-    {
-        auto dynBarArea = bandCol.removeFromBottom(42);
-        dynEqCompactBar.setBounds(dynBarArea.reduced(4, 2));
-    }
-
-    // Row 2: band detail panel (all remaining left column space)
+    // DynEQ controls now integrated in selectedBandPanel — no separate compact bar
+    // Full vertical space available for band detail panel
     if (selectedBandPanel)
     {
         selectedBandPanel->setBounds(bandCol);

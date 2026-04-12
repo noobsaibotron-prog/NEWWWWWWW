@@ -1261,13 +1261,14 @@ private:
                     smoothYBuffer[i] = dbToY(applyTilt(db, freq));
                 }
                 cachedPostLine.clear();
+                cachedPostFill.clear();
                 pathBuilder.build(smoothYBuffer.data(), usable,
                                   graphBounds.getX(), graphBounds.getBottom(),
-                                  cachedPostLine, nullptr, 3);
+                                  cachedPostLine, &cachedPostFill, 3);
             }
-            else { cachedPostLine.clear(); }
+            else { cachedPostLine.clear(); cachedPostFill.clear(); }
         }
-        else { cachedPostLine.clear(); }
+        else { cachedPostLine.clear(); cachedPostFill.clear(); }
 
         // --- Delta (post - pre) path ---
         bool showDelta = isDeltaEnabled();
@@ -1344,40 +1345,70 @@ private:
         // Offset so paths (which use graphBounds coordinates) render at image origin
         ig.addTransform(juce::AffineTransform::translation(-graphBounds.getX(), -graphBounds.getY()));
 
-        // Wave 4A: Pre fill — azzurro polvere (dense azure dust) from the
-        // Colors::accentCyan hue family, matching the Liquid Intelligence mockup.
-        // Previously the software fallback was using textSecondary grey (wrong)
-        // or accentYellow (even worse — looked orange). Now it matches the GL
-        // shader path in GLSpectrumComponent.h exactly: top 0x664A9FD9
-        // (40% alpha of Colors::accentCyan azure) → bottom transparent.
+        // =============================================================
+        // Wave 5 Premium Spectrum — software fallback.
+        // Mirrors the 3-pass GL architecture (fill + glow + line) using
+        // plain alpha strokes. juce::Graphics has no additive blend mode,
+        // so the "glow" layer is approximated with a single wide soft
+        // stroke; pixel-perfect parity with the GL path is not possible
+        // here, but the visual hierarchy (pre secondary, post hero)
+        // stays coherent when users toggle OpenGL off. Pro-Q and other
+        // premium analyzers are the percepual reference — not a claim
+        // that this code matches any specific product's internals.
+        // =============================================================
+
+        // ---------- Pre-EQ (3 layers) ------------------------------
         if (!cachedPreFill.isEmpty())
         {
+            // Pass 1: SOLID dusty-azure fill — filled body, NOT transparent at bottom
             juce::ColourGradient fillGrad(
-                juce::Colour(0x664A9FD9), 0, graphBounds.getY(),
-                juce::Colour(0x004A9FD9), 0, graphBounds.getBottom(), false);
+                juce::Colour(0x554A9FD9), 0, graphBounds.getY(),    // ~33 % alpha top
+                juce::Colour(0x284A9FD9), 0, graphBounds.getBottom(), false); // ~16% bottom — still visible
             ig.setGradientFill(fillGrad);
             ig.fillPath(cachedPreFill);
         }
-        // Wave 4A: pre-EQ spectrum line REMOVED — the mockup shows only the
-        // ethereal azure fill, no hard contour outline.
-        // (previous cachedPreLine stroke dropped)
+        if (!cachedPreLine.isEmpty())
+        {
+            // Pass 2: wide soft halo (software glow substitute)
+            ig.setColour(juce::Colour(0x554A9FD9));   // ~33 % alpha
+            ig.strokePath(cachedPreLine,
+                          juce::PathStrokeType(6.0f,
+                                               juce::PathStrokeType::curved,
+                                               juce::PathStrokeType::rounded));
 
-        // Wave 4B Fix 1 (Tribunale): Post-EQ curve is now a luminous cyan,
-        // clearly distinct from the dusty azure pre-EQ fill and the white
-        // main EQ curve. Previous tenue green (0x555ED4A0) blended into the
-        // background and failed the "ciano luminoso e distinto" directive.
-        // Wave 4D: cyan alpha boosted 0x88 → 0xCC (53 % → 80 %) after the
-        // Tribunale video analysis showed the ciano was being swallowed by
-        // the dusty-azure pre-EQ fill. Combined with the pre-EQ alpha drop
-        // (0x66 → 0x22 in GLSpectrumComponent.h) the cyan post-EQ should
-        // now read as a distinct luminous layer above the spectrum.
+            // Pass 3: crisp main stroke
+            ig.setColour(juce::Colour(0xD04A9FD9));   // ~82 % alpha
+            ig.strokePath(cachedPreLine,
+                          juce::PathStrokeType(1.5f,
+                                               juce::PathStrokeType::curved,
+                                               juce::PathStrokeType::rounded));
+        }
+
+        // ---------- Post-EQ (3 layers) -----------------------------
+        if (!cachedPostFill.isEmpty())
+        {
+            // Pass 1: SOLID luminous cyan fill — filled body, distinct from pre-EQ
+            juce::ColourGradient postGrad(
+                juce::Colour(0x4400E5FF), 0, graphBounds.getY(),    // ~27 % alpha top
+                juce::Colour(0x2000E5FF), 0, graphBounds.getBottom(), false); // ~12% bottom — still filled
+            ig.setGradientFill(postGrad);
+            ig.fillPath(cachedPostFill);
+        }
         if (!cachedPostLine.isEmpty())
         {
-            juce::ColourGradient postGrad(
-                juce::Colour(0xCC00E5FF), 0, graphBounds.getY(),
-                juce::Colour(0x0000E5FF), 0, graphBounds.getBottom(), false);
-            ig.setGradientFill(postGrad);
-            ig.strokePath(cachedPostLine, juce::PathStrokeType(1.5f));
+            // Pass 2: wide cyan halo (software glow substitute)
+            ig.setColour(juce::Colour(0x6600E5FF));   // ~40 % alpha
+            ig.strokePath(cachedPostLine,
+                          juce::PathStrokeType(6.0f,
+                                               juce::PathStrokeType::curved,
+                                               juce::PathStrokeType::rounded));
+
+            // Pass 3: crisp vivid cyan main stroke
+            ig.setColour(juce::Colour(0xE600E5FF));   // ~90 % alpha
+            ig.strokePath(cachedPostLine,
+                          juce::PathStrokeType(1.5f,
+                                               juce::PathStrokeType::curved,
+                                               juce::PathStrokeType::rounded));
         }
 
         // Delta line
@@ -1398,9 +1429,15 @@ private:
     void drawGrid(juce::Graphics& g)
     {
         // Liquid Intelligence: vertical frequency grid lines REMOVED entirely.
-        // Only horizontal dB lines remain, barely visible (reference mockup).
+        // Only horizontal dB lines remain as subtle reference marks spanning
+        // the full positive + negative range (+12, +6, 0, -6, -12 dB).
+        //
+        // Wave 5 verdict fix: previous alpha (0.3/0.5 on 0xFF242836) was too
+        // faint against the dark spectrum background — grid lines above 0 dB
+        // were effectively invisible. Bumped to 0.55/0.80 and switched ink to
+        // a lighter slate (0xFF3A4050) so every mark is readable on all
+        // backgrounds without competing with the EQ curve.
 
-        // === Horizontal dB lines — only at 0, ±6, ±12 dB, barely visible ===
         const float dbMarks[] = { -12.0f, -6.0f, 0.0f, 6.0f, 12.0f };
         for (float db : dbMarks)
         {
@@ -1408,12 +1445,10 @@ private:
             float y = dbToY(db);
             bool isZero = std::abs(db) < 0.01f;
 
-            // Liquid Intelligence: 0 dB line slightly more marked (0.5 alpha),
-            // ±6/±12 even more subdued (0.3 alpha), all in the same dark ink.
             if (isZero)
-                g.setColour(juce::Colour(0xFF242836).withAlpha(0.5f));
+                g.setColour(juce::Colour(0xFF3A4050).withAlpha(0.80f));
             else
-                g.setColour(juce::Colour(0xFF242836).withAlpha(0.3f));
+                g.setColour(juce::Colour(0xFF3A4050).withAlpha(0.55f));
 
             g.drawHorizontalLine((int)y, graphBounds.getX(), graphBounds.getRight());
         }
@@ -1660,8 +1695,8 @@ private:
                 ? ModernLookAndFeel::Colors::accentGreen
                 : ModernLookAndFeel::Colors::amber;
 
-            const auto topColour    = base.withAlpha(0.15f);
-            const auto bottomColour = base.withAlpha(0.00f);
+            const auto topColour    = base.withAlpha(0.30f);
+            const auto bottomColour = base.withAlpha(0.08f);
 
             juce::ColourGradient grad(topColour,    zoneRect.getX(), graphTop,
                                       bottomColour, zoneRect.getX(), graphBottom,
@@ -2040,7 +2075,7 @@ private:
                 g.setColour(col.withAlpha(isDragging ? 1.0f : (isSelected ? 0.95f : 0.85f)));
                 g.drawEllipse(nodeBounds, isDragging ? 3.0f : 2.5f);
 
-                // Liquid Intelligence: Roman numerals removed — band identity conveyed via colour ring + BandTabBar
+                // Liquid Intelligence: Roman numerals removed — band identity conveyed via coloured ring only (BandTabBar dropped in Wave 5)
             }
             else
             {
@@ -2763,8 +2798,10 @@ private:
     bool gridCacheDirty = true;
 
     // FIX 2: Cached spectrum paths — rebuilt only when spectrum version changes
+    // Wave 5: post now has a fill path too (for the luminous cyan base layer
+    // under the 2-layer stroke). Matches the GL pipeline's pre/post symmetry.
     juce::Path cachedPreLine, cachedPreFill;
-    juce::Path cachedPostLine;
+    juce::Path cachedPostLine, cachedPostFill;
     juce::Path cachedDeltaLine;
     juce::Path cachedPeakLine;
     juce::Path cachedFrozenLine, cachedFrozenFill;

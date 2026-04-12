@@ -792,6 +792,10 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     wetPaddingDelayBuffer.clear();
     wetPaddingWritePos = 0;
     wetPaddingDelaySamples = 0;
+    // Cat 2 Fix: wet padding smoothing state
+    wetPadLastSamples = 0;
+    wetPadRampStart   = 0;
+    wetPadRampActive  = false;
     phaseTransitionBuffer.setSize(getTotalNumInputChannels(), preallocatedMaxSamples, false, true, false);
     phaseTransitionBuffer.clear();
     oversamplingTransitionBuffer.setSize(getTotalNumInputChannels(), preallocatedMaxSamples, false, true, false);
@@ -1345,6 +1349,11 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     const int qualityModeParam = static_cast<int>(std::round(loadParam(cachedQualityMode, static_cast<float>(qualityModeCached))));
     const auto phaseModeSnapshot = static_cast<PhaseMode>(paramsSnapshot.phaseMode);
     const auto msModeSnapshot = static_cast<MSMode>(paramsSnapshot.msMode);
+    // Cat 2 Fix: snapshot phase transition remaining BEFORE the crossfade blocks
+    // decrement it, so the wet padding ramp (far below) sees the same pre-block
+    // value as the EQ crossfade and stays in sync with it.
+    const int phaseTransitionRemainingAtBlockStart =
+        phaseTransitionSamplesRemaining.load(std::memory_order_acquire);
     const int analyzerResParam = static_cast<int>(std::round(loadParam(cachedAnalyzerResolution, static_cast<float>(analyzerResolutionCached))));
     const int analyzerSpdParam = static_cast<int>(std::round(loadParam(cachedAnalyzerSpeed, static_cast<float>(analyzerSpeedCached))));
     const bool autoGainEnabledLocal = loadParam(cachedAutoGain, 0.0f) > 0.5f;
@@ -2512,6 +2521,14 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     // LP convolver provides full latency naturally (partSize + irSize/2).
     // ZL and NaturalPhase modes need explicit padding so dry/wet are time-aligned
     // for bypass crossfade and DAW PDC is correct.
+    //
+    // Cat 2 Fix (phase 0->1 click): when phaseMode switches, padSamples changes
+    // abruptly (e.g. 2176 -> 2161 for ZL->NaturalPhase with 2x oversampling).
+    // The old integer read jumped the ring position by ~15 samples in one block,
+    // causing a ~0.6-amplitude click on a 1 kHz sine. During a phase transition
+    // we now linearly ramp the pad target from wetPadRampStart to padSamples
+    // over phaseTransitionCrossfadeSamples and use fractional-delay reads so
+    // the read position creeps smoothly — inaudible micro-pitch-shift.
     {
         int actualWetLatency = 0;
         if (mode == PhaseMode::LinearPhase
@@ -2530,10 +2547,69 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
             juce::jmin(worstCaseLatencySamples - actualWetLatency,
                        wetPaddingBufferSize - 1));
 
+        // Phase transition ramp detection (uses pre-crossfade snapshot so we
+        // stay in sync with the EQ crossfade counter that was decremented earlier).
+        const bool transitionActive = phaseTransitionRemainingAtBlockStart > 0;
+        if (transitionActive && !wetPadRampActive)
+        {
+            // Edge: transition just started -> snapshot previous block's pad
+            // as the ramp start. Clamp to a valid ring offset.
+            wetPadRampStart = juce::jlimit(0, wetPaddingBufferSize - 1, wetPadLastSamples);
+            wetPadRampActive = true;
+        }
+        else if (!transitionActive && wetPadRampActive)
+        {
+            // Edge: transition just ended -> disarm ramp
+            wetPadRampActive = false;
+        }
+
         const int chs = juce::jmin(buffer.getNumChannels(),
                                     wetPaddingDelayBuffer.getNumChannels());
-        if (padSamples > 0 && wetPaddingBufferSize > 0)
+
+        if (wetPadRampActive && wetPaddingBufferSize > 0 && chs > 0
+            && wetPadRampStart != padSamples)
         {
+            // Fractional-delay ramp from wetPadRampStart -> padSamples over the
+            // phase transition window. Per-sample t advances by 1/total.
+            const float padStartF = static_cast<float>(wetPadRampStart);
+            const float padEndF   = static_cast<float>(padSamples);
+            const int   total     = juce::jmax(1, phaseTransitionCrossfadeSamples);
+            const int   fadeProgressStart = total - phaseTransitionRemainingAtBlockStart;
+            const float ringSizeF = static_cast<float>(wetPaddingBufferSize);
+
+            for (int ch = 0; ch < chs; ++ch)
+            {
+                float* data = buffer.getWritePointer(ch);
+                float* padBuf = wetPaddingDelayBuffer.getWritePointer(ch);
+                for (int s = 0; s < blockSamples; ++s)
+                {
+                    const int wp = (wetPaddingWritePos + s) % wetPaddingBufferSize;
+                    const float incoming = data[s];
+
+                    const float t = juce::jlimit(0.0f, 1.0f,
+                                    static_cast<float>(fadeProgressStart + s)
+                                  / static_cast<float>(total));
+                    const float localPad = padStartF * (1.0f - t) + padEndF * t;
+
+                    // Fractional delay: linear interpolation between two
+                    // adjacent ring positions (wp - floor(pad)) and (wp - floor(pad) - 1)
+                    float rpf = static_cast<float>(wp) - localPad;
+                    while (rpf < 0.0f)        rpf += ringSizeF;
+                    while (rpf >= ringSizeF)  rpf -= ringSizeF;
+
+                    const int   rp0  = static_cast<int>(rpf);
+                    const float frac = rpf - static_cast<float>(rp0);
+                    const int   rp1  = (rp0 + 1 < wetPaddingBufferSize)
+                                         ? rp0 + 1 : 0;
+
+                    data[s] = padBuf[rp0] * (1.0f - frac) + padBuf[rp1] * frac;
+                    padBuf[wp] = incoming;
+                }
+            }
+        }
+        else if (padSamples > 0 && wetPaddingBufferSize > 0)
+        {
+            // Steady-state integer-delay path (common case, zero overhead vs. original)
             for (int ch = 0; ch < chs; ++ch)
             {
                 float* data = buffer.getWritePointer(ch);
@@ -2565,6 +2641,10 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
             }
         }
         wetPaddingWritePos = (wetPaddingWritePos + blockSamples) % wetPaddingBufferSize;
+
+        // Record this block's applied pad so the next transition's ramp can
+        // pick up where this block left off.
+        wetPadLastSamples = padSamples;
     }
 
     // Checkpoint 4 — OUTPUT (after gain, before bypass crossfade)

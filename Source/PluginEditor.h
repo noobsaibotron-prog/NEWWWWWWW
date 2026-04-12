@@ -11,11 +11,9 @@
 #include "GUI/AIProblemPanel.h"
 #include "GUI/BandControlPanel.h"
 #include "GUI/DynamicEQPanel.h"
-#include "GUI/DynEQCompactBar.h"
 #include "GUI/AIBreathingDot.h"
 #include "GUI/PremiumKnob.h"
 #include "GUI/BandViewport.h"
-#include "GUI/BandTabBar.h"
 #include "GUI/SemanticControlPanel.h"
 #include "GUI/LevelMeter.h"
 #include "GUI/NewSpectrumPipeline.h"
@@ -147,12 +145,11 @@ private:
     // PRE/POST/DELTA pill toggles enough vertical breathing room.
     static constexpr int headerH = 44;
     static constexpr int footerH = 32;    // footer bar (meter, version, bypass)
-    static constexpr int controlH = 240;  // bottom panel (band controls + context)
-                                          // 240 gives BandControlPanel enough room for
-                                          // the 3 LargeAmber filmstrip knobs (Freq/Gain/Q)
-                                          // plus type/slope/enable/solo above + DynEQCompactBar below.
+    static constexpr int controlH = 300;  // bottom panel (band controls + context)
+                                          // 300 gives BandControlPanel proper room for
+                                          // the 3 LargeAmber filmstrip knobs at ~138px
+                                          // and AIProblemPanel ~3 visible problem rows.
     static constexpr int bandPanelH = 140;
-    static constexpr int bandTabH = 28;   // band tab bar (I..VIII) below header
     static constexpr int pad = 6;
     bool aiPanelVisible = true;   // always visible in bottom panel
     
@@ -203,11 +200,12 @@ private:
     std::unique_ptr<NewSpectrumPipeline> spectrumPipeline;
     std::unique_ptr<GLSpectrumHelper>    glSpectrumHelper;
 
-    // Band tab bar (I..VIII) — Phase 10, placed below header
-    BandTabBar bandTabBar;
+    // Wave 5 verdict: BandTabBar (Roman numerals above spectrum) removed.
+    // Band identity now conveyed exclusively via the coloured node rings on
+    // the EQ curve + the three large filmstrip knobs in the left control panel.
+    // BandTabBar.h remains in repo, disconnected.
 
-    // Phase 5: compact dynamic EQ strip under band knobs in left column
-    DynEQCompactBar dynEqCompactBar;
+    // DynEQ controls now integrated directly in BandControlPanel
 
     // Phase 7D: passive breathing amber dot next to logo, driven by timerCallback
     AIBreathingDot  aiBreathingDot;

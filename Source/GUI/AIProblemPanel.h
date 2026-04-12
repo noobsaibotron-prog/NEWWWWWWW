@@ -59,7 +59,7 @@ public:
         
         // Problem list with custom row height
         problemList.setModel(this);
-        problemList.setRowHeight(140);  // Tall rows for detailed info
+        problemList.setRowHeight(56);  // Compact rows — fits 3 problems in 170px visible area
         problemList.setColour(juce::ListBox::backgroundColourId, ModernLookAndFeel::Colors::bgDark);
         problemList.setColour(juce::ListBox::outlineColourId, ModernLookAndFeel::Colors::bgLighter);
         problemList.setOutlineThickness(1);
@@ -165,45 +165,44 @@ public:
     
     void resized() override
     {
-        auto bounds = getLocalBounds().reduced(12);
+        auto bounds = getLocalBounds().reduced(6, 4);
         const bool rtl = isRightToLeft();
-        
-        // Title area
-        auto titleRow = bounds.removeFromTop(24);
+
+        // Hide labels we no longer show — prevents overdraw
+        profileLabel.setVisible(false);
+        statusLabel.setVisible(false);
+
+        // Single title row: title left, genre centre, unmasking right (18px)
+        auto titleRow = bounds.removeFromTop(18);
         if (rtl)
         {
-            unmaskingBtn.setBounds(titleRow.removeFromLeft(100).reduced(2));
-            genreLabel.setBounds(titleRow.removeFromLeft(titleRow.getWidth() - 120));
+            unmaskingBtn.setBounds(titleRow.removeFromLeft(80).reduced(1));
+            genreLabel.setBounds(titleRow.removeFromLeft(titleRow.getWidth() - 90));
             titleLabel.setBounds(titleRow);
             titleLabel.setJustificationType(juce::Justification::centredRight);
             genreLabel.setJustificationType(juce::Justification::centredRight);
-            profileLabel.setJustificationType(juce::Justification::centredRight);
         }
         else
         {
-            titleLabel.setBounds(titleRow.removeFromLeft(100));
-            genreLabel.setBounds(titleRow.removeFromLeft(100));
-            unmaskingBtn.setBounds(titleRow.removeFromRight(100).reduced(2));
+            titleLabel.setBounds(titleRow.removeFromLeft(90));
+            genreLabel.setBounds(titleRow.removeFromLeft(titleRow.getWidth() - 80));
+            unmaskingBtn.setBounds(titleRow.removeFromRight(80).reduced(1));
             titleLabel.setJustificationType(juce::Justification::centredLeft);
             genreLabel.setJustificationType(juce::Justification::centredLeft);
-            profileLabel.setJustificationType(juce::Justification::centredLeft);
         }
-        
-        profileLabel.setBounds(bounds.removeFromTop(16));
-        bounds.removeFromTop(8);
-        
-        // Bottom buttons
-        auto btnRow = bounds.removeFromBottom(32);
-        int btnW = (btnRow.getWidth() - 12) / 4;
-        autoFixBtn.setBounds(btnRow.removeFromLeft(btnW).reduced(2));
-        clearBtn.setBounds(btnRow.removeFromLeft(btnW).reduced(2));
-        undoBtn.setBounds(btnRow.removeFromLeft(btnW).reduced(2));
-        redoBtn.setBounds(btnRow.reduced(2));
-        
-        bounds.removeFromBottom(4);
-        statusLabel.setBounds(bounds.removeFromBottom(18));
-        bounds.removeFromBottom(6);
-        
+
+        bounds.removeFromTop(1); // tiny gap before list
+
+        // Bottom buttons (24px)
+        auto btnRow = bounds.removeFromBottom(24);
+        int btnW = (btnRow.getWidth() - 8) / 4;
+        autoFixBtn.setBounds(btnRow.removeFromLeft(btnW).reduced(1));
+        clearBtn.setBounds(btnRow.removeFromLeft(btnW).reduced(1));
+        undoBtn.setBounds(btnRow.removeFromLeft(btnW).reduced(1));
+        redoBtn.setBounds(btnRow.reduced(1));
+
+        bounds.removeFromBottom(1); // tiny gap above buttons
+
         // Problem list fills rest
         problemList.setBounds(bounds);
     }
@@ -623,29 +622,14 @@ private:
             g.setColour(severityColour);
             g.fillRoundedRectangle(barX, 2.0f, barWidth, h - 4.0f, 3.0f);
 
+            // Severity badge (compact: y=4)
             const float badgeX = rtl ? 12.0f : w - badgeW - 12.0f;
             g.setColour(severityColour.withAlpha(0.3f));
-            g.fillRoundedRectangle(badgeX, 8.0f, badgeW, 18.0f, 4.0f);
+            g.fillRoundedRectangle(badgeX, 4.0f, badgeW, 18.0f, 4.0f);
             g.setColour(severityColour);
-            g.drawRoundedRectangle(badgeX, 8.0f, badgeW, 18.0f, 4.0f, 1.0f);
+            g.drawRoundedRectangle(badgeX, 4.0f, badgeW, 18.0f, 4.0f, 1.0f);
 
-            const float x = 16.0f;
-            const float contentW = w - x - 10.0f;
-            const float fixBoxY = 82.0f;
-            g.setColour(juce::Colour(0xFF1A2A1A));
-            g.fillRoundedRectangle(x, fixBoxY, contentW - 80.0f, 26.0f, 4.0f);
-
-            const float confX = rtl ? x + 10.0f : w - 90.0f;
-            const float confW = 65.0f;
-            g.setColour(ModernLookAndFeel::Colors::bgLighter);
-            g.fillRoundedRectangle(confX, fixBoxY + 6.0f, confW, 14.0f, 4.0f);
-
-            juce::Colour confCol = confidenceValue > 0.7f ? ModernLookAndFeel::Colors::accentGreen
-                                      : (confidenceValue > 0.4f ? ModernLookAndFeel::Colors::accentYellow
-                                                                 : ModernLookAndFeel::Colors::accentRed);
-            g.setColour(confCol);
-            g.fillRoundedRectangle(confX, fixBoxY + 6.0f, confW * confidenceValue, 14.0f, 4.0f);
-
+            // Bottom separator
             g.setColour(ModernLookAndFeel::Colors::bgLighter);
             g.drawHorizontalLine(static_cast<int>(h) - 2, 10.0f, w - 10.0f);
         }
@@ -661,30 +645,33 @@ private:
                 lbl.setBounds(x, y, width, height);
             };
 
+            // Compact 2-row layout (56px row height)
+            // Row 1 (y=4): type + freq + severity badge
+            // Row 2 (y=28): fix suggestion (one line)
+            const int contentW = w - xBase - 10;
+
             if (! rtl)
             {
-                place(typeLabel, xBase, 8, 120, 18);
-                place(freqLabel, xBase + 125, 8, 80, 18);
-                place(sevLabel, w - badgeW - 12, 8, badgeW, 18);
+                place(typeLabel, xBase, 4, 120, 18);
+                place(freqLabel, xBase + 125, 4, 80, 18);
+                place(sevLabel, w - badgeW - 12, 4, badgeW, 18);
             }
             else
             {
-                place(sevLabel, 12, 8, badgeW, 18);
-                place(freqLabel, w - xBase - 80, 8, 80, 18);
-                place(typeLabel, w - xBase - 80 - 120, 8, 120, 18);
+                place(sevLabel, 12, 4, badgeW, 18);
+                place(freqLabel, w - xBase - 80, 4, 80, 18);
+                place(typeLabel, w - xBase - 80 - 120, 4, 120, 18);
             }
 
-            const int contentW = w - xBase - 10;
-            place(explanationLabel, xBase, 30, contentW, 16);
-            place(causeLabel, xBase, 48, contentW, 14);
-            place(impactLabel, xBase, 64, contentW, 14);
+            place(explanationLabel, xBase, 26, contentW, 16);
 
-            const float fixBoxY = 82.0f;
-            place(fixLabel, xBase + 10, static_cast<int>(fixBoxY) + 2, contentW - 110, 22);
-            place(confidenceLabel, w - 90, static_cast<int>(fixBoxY) + 6, 65, 14);
-
-            place(bandLabel, xBase, 112, contentW, 14);
-            place(hintLabel, xBase, 126, contentW, 12);
+            // Hide detailed rows in compact mode — tooltip has full detail
+            causeLabel.setVisible(false);
+            impactLabel.setVisible(false);
+            fixLabel.setBounds(xBase, 42, contentW - 80, 14);
+            confidenceLabel.setBounds(w - 90, 42, 65, 14);
+            bandLabel.setVisible(false);
+            hintLabel.setVisible(false);
         }
 
         juce::String getTooltip() override { return rowTooltip; }

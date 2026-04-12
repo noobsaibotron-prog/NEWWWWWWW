@@ -28,12 +28,14 @@ public:
     //==========================================================================
     void setLevels(float leftDB, float rightDB)
     {
+        lastLevelUpdateTime = juce::Time::getMillisecondCounter();
+
         // Attack (fast)
         if (leftDB > currentLeftDB)
             currentLeftDB = leftDB;
         else
             currentLeftDB = currentLeftDB * 0.85f + leftDB * 0.15f; // Release (slower)
-        
+
         if (rightDB > currentRightDB)
             currentRightDB = rightDB;
         else
@@ -122,17 +124,25 @@ public:
     
     void timerCallback() override
     {
+        // If no levels received for >200ms (playback stopped), decay to silence
+        auto now = juce::Time::getMillisecondCounter();
+        if (now - lastLevelUpdateTime > 200)
+        {
+            currentLeftDB  = std::max(currentLeftDB  - 3.0f, minDB);
+            currentRightDB = std::max(currentRightDB - 3.0f, minDB);
+        }
+
         // Peak hold decay
         if (peakHoldCounterL > 0)
             peakHoldCounterL--;
         else
             peakLeftDB = std::max(peakLeftDB - 1.0f, minDB);
-        
+
         if (peakHoldCounterR > 0)
             peakHoldCounterR--;
         else
             peakRightDB = std::max(peakRightDB - 1.0f, minDB);
-        
+
         repaint();
     }
     
@@ -196,7 +206,8 @@ private:
     static constexpr int peakHoldFrames = 30;  // 1 second at 30fps
     
     bool clipped = false;
-    
+    uint32_t lastLevelUpdateTime = 0;
+
     static constexpr float minDB = -60.0f;
     static constexpr float maxDB = 6.0f;
     

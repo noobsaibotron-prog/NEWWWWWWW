@@ -54,8 +54,9 @@ private:
         beginTest("Partial FIFO pull does not lose samples (staging accumulates)");
 
         constexpr double sr = 48000.0;
-        constexpr size_t fftOrder = 11;  // 2048-point FFT, hopSize = 1024
-        constexpr size_t hopSize = 1024;
+        constexpr size_t fftOrder = 11;  // 2048-point FFT, hopSize = fftSize/4 = 512 (75% overlap)
+        constexpr size_t hopSize = 512;
+        juce::ignoreUnused (hopSize);
 
         LockFreeAudioFIFO<float> preFIFO, postFIFO;
         preFIFO.prepare (65536);
@@ -63,30 +64,30 @@ private:
 
         NewSpectrumPipeline pipeline (preFIFO, postFIFO, fftOrder, sr);
 
-        // Push LESS than one hop (e.g. 500 samples) — this is the partial pull scenario
-        pushSine (preFIFO, 500, sr, 1);
-        pushSine (postFIFO, 500, sr, 1);
+        // Push LESS than one hop (200 samples, hopSize=512) — partial pull scenario
+        pushSine (preFIFO, 200, sr, 1);
+        pushSine (postFIFO, 200, sr, 1);
 
-        // First tick: should NOT produce a hop (not enough data)
+        // First tick: should NOT produce a hop (200 < 512)
         bool result1 = pipeline.process (512);
-        expect (!result1, "First tick with 500 samples should not produce a hop");
+        expect (!result1, "First tick with 200 samples should not produce a hop");
 
-        // Push another 500 — now staging has 1000, still < 1024
-        pushSine (preFIFO, 500, sr, 1);
-        pushSine (postFIFO, 500, sr, 1);
+        // Push another 200 — staging has 400, still < 512
+        pushSine (preFIFO, 200, sr, 1);
+        pushSine (postFIFO, 200, sr, 1);
         bool result2 = pipeline.process (512);
-        expect (!result2, "Second tick with 1000 total should not produce a hop");
+        expect (!result2, "Second tick with 400 total should not produce a hop");
 
-        // Push 100 more — now staging has 1100 > 1024 → should produce a hop
-        pushSine (preFIFO, 100, sr, 1);
-        pushSine (postFIFO, 100, sr, 1);
+        // Push 200 more — staging has 600 > 512 → should produce a hop
+        pushSine (preFIFO, 200, sr, 1);
+        pushSine (postFIFO, 200, sr, 1);
         bool result3 = pipeline.process (512);
-        expect (result3, "Third tick with 1100 total should produce a hop");
+        expect (result3, "Third tick with 600 total should produce a hop");
 
-        // Verify stats: 1100 samples pulled, 1 hop completed, 76 residual
+        // Verify stats: 600 samples pulled, 1 hop completed, 88 samples residual
         auto stats = pipeline.getStats();
-        expect (stats.pre.samplesPulled == 1100,
-                "Should have pulled 1100 samples total, got " +
+        expect (stats.pre.samplesPulled == 600,
+                "Should have pulled 600 samples total, got " +
                 juce::String (stats.pre.samplesPulled));
         expect (stats.pre.hopsCompleted == 1,
                 "Should have completed 1 hop, got " +
@@ -99,7 +100,7 @@ private:
         beginTest("Fragmented input (small blocks) continuously produces hops");
 
         constexpr double sr = 48000.0;
-        constexpr size_t fftOrder = 11;  // hopSize = 1024
+        constexpr size_t fftOrder = 11;  // 2048-point FFT, hopSize = fftSize/4 = 512
         constexpr int blockSize = 256;   // smaller than hopSize
 
         LockFreeAudioFIFO<float> preFIFO, postFIFO;
@@ -109,7 +110,7 @@ private:
         NewSpectrumPipeline pipeline (preFIFO, postFIFO, fftOrder, sr);
 
         // Simulate 100 GUI ticks, each receiving one 256-sample block
-        // At hopSize=1024, we expect ~1 hop every 4 ticks
+        // At hopSize=512, we expect ~1 hop every 2 ticks
         int totalHops = 0;
         for (int tick = 0; tick < 100; ++tick)
         {
@@ -120,10 +121,10 @@ private:
                 ++totalHops;
         }
 
-        // 100 ticks × 256 samples = 25600 samples / 1024 hopSize = 25 hops expected
+        // 100 ticks × 256 samples = 25600 samples / 512 hopSize = 50 hops expected
         // Allow some tolerance for initial accumulation
-        expect (totalHops >= 20 && totalHops <= 25,
-                "Expected ~25 hops from 100×256 samples, got " + juce::String (totalHops));
+        expect (totalHops >= 45 && totalHops <= 50,
+                "Expected ~50 hops from 100×256 samples, got " + juce::String (totalHops));
 
         auto stats = pipeline.getStats();
         logMessage ("  Fragmented: " + juce::String (stats.pre.hopsCompleted) +
@@ -137,7 +138,7 @@ private:
         beginTest("Backlog: burst of data is caught up within reasonable ticks");
 
         constexpr double sr = 48000.0;
-        constexpr size_t fftOrder = 11;  // hopSize = 1024
+        constexpr size_t fftOrder = 11;  // 2048-point FFT, hopSize = fftSize/4 = 512
 
         LockFreeAudioFIFO<float> preFIFO, postFIFO;
         preFIFO.prepare (65536);
@@ -145,11 +146,11 @@ private:
 
         NewSpectrumPipeline pipeline (preFIFO, postFIFO, fftOrder, sr);
 
-        // Push a big burst: 16384 samples (16 hops worth)
+        // Push a big burst: 16384 samples (32 hops worth at hopSize=512)
         pushSine (preFIFO, 16384, sr, 1);
         pushSine (postFIFO, 16384, sr, 1);
 
-        // First tick should drain up to kMaxHopsPerTick (16)
+        // First tick drains up to kMaxHopsPerTick (16) hops per pipeline contract.
         pipeline.process (512);
 
         auto stats = pipeline.getStats();
@@ -168,7 +169,7 @@ private:
         beginTest("Pipeline stats instrumentation reports correct values");
 
         constexpr double sr = 48000.0;
-        constexpr size_t fftOrder = 11;  // hopSize = 1024
+        constexpr size_t fftOrder = 11;  // 2048-point FFT, hopSize = fftSize/4 = 512
 
         LockFreeAudioFIFO<float> preFIFO, postFIFO;
         preFIFO.prepare (65536);
@@ -183,7 +184,7 @@ private:
         expect (s1.pre.samplesPulled == 0, "No data pushed → 0 samples pulled");
         expect (s1.pre.hopsCompleted == 0, "No data → 0 hops");
 
-        // Push exactly 2 hops worth
+        // Push exactly 4 hops worth (2048 samples at hopSize=512)
         pushSine (preFIFO, 2048, sr, 1);
         pushSine (postFIFO, 2048, sr, 1);
         pipeline.process (512);
@@ -191,8 +192,8 @@ private:
         auto s2 = pipeline.getStats();
         expect (s2.pre.samplesPulled == 2048,
                 "Should have pulled 2048, got " + juce::String (s2.pre.samplesPulled));
-        expect (s2.pre.hopsCompleted == 2,
-                "2048 samples / 1024 hop = 2 hops, got " +
+        expect (s2.pre.hopsCompleted == 4,
+                "2048 samples / 512 hop = 4 hops, got " +
                 juce::String (s2.pre.hopsCompleted));
 
         // Reset and verify

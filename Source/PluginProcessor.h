@@ -554,6 +554,17 @@ private:
     int wetPaddingDelaySamples = 0;
     int wetPaddingBufferSize = 0;
 
+    // Wet padding smoothing: ramp padSamples over the phase transition crossfade
+    // window to avoid abrupt read-position jumps when switching phase modes.
+    // Cat 2 Fix: ZL -> NaturalPhase (0->1) caused a ~15-sample discontinuity in
+    // the ring read position, producing a click of ~0.6 amplitude on a 1kHz sine.
+    // During a transition we fractional-read the ring buffer with a linear ramp
+    // from wetPadRampStart to padSamples; outside transitions the integer path
+    // is unchanged (zero overhead in the common case).
+    int wetPadLastSamples = 0;    // padSamples applied in the previous block
+    int wetPadRampStart   = 0;    // starting value for the active ramp
+    bool wetPadRampActive = false;
+
     // Pending A/B whole-chain crossfade: armed by message thread BEFORE parameter
     // changes, consumed by audio thread BEFORE updateEQFromParameters() so the
     // snapshot captures the OLD filter state, not the already-updated one.

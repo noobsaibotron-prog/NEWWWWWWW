@@ -49,6 +49,7 @@ struct ClickMetrics
     bool  hasInf           = false;
     int   clickCount       = 0;      // number of sample-to-sample jumps exceeding threshold
     float avgDelta         = 0.0f;   // average delta for context
+    int   dropoutEndSample = -1;     // sample index where the longest dropout run ended (diag)
 };
 
 // Aggressive thresholds — we want ZERO audible clicks
@@ -110,11 +111,21 @@ static void fillBroadband(juce::AudioBuffer<float>& buf, double sampleRate, int 
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Click analysis
+//
+// Cat 1 Fix (test methodology): `latencyOffset` lets the caller latency-
+// compensate dropout detection. The plugin reports ~2176 samples of static
+// latency (worst-case LP+OS padding). Without compensation, the first ~2176
+// samples of output are zero by design (wet pad warmup) while the input
+// buffer is already live, which the analyzer would flag as a dropout even
+// though the host would see input[t] and output[t+latency] correctly aligned.
+// `maxDelta` / `clickCount` / `peakAbs` are unaffected — they only compare
+// output samples to themselves, independent of the input-side offset.
 // ─────────────────────────────────────────────────────────────────────────────
 static ClickMetrics analyzeForClicks(const juce::AudioBuffer<float>& output,
                                       const juce::AudioBuffer<float>& input,
                                       int regionStart, int regionLength,
-                                      float clickThreshold = kClickDeltaThreshold)
+                                      float clickThreshold = kClickDeltaThreshold,
+                                      int latencyOffset = 0)
 {
     ClickMetrics m;
     if (output.getNumChannels() == 0 || regionLength <= 0) return m;
@@ -152,13 +163,21 @@ static ClickMetrics analyzeForClicks(const juce::AudioBuffer<float>& output,
             }
             prev = s;
 
-            // Dropout detection: output near-zero while input is live
-            if (in != nullptr && std::abs(in[i]) > 0.01f && std::abs(s) < 1.0e-5f)
+            // Dropout detection: output near-zero while input (latency-compensated)
+            // is live. output[t] corresponds to input[t - latencyOffset]; if the
+            // corresponding input index is negative (pre-roll), no dropout to count.
+            const int inIdx = i - latencyOffset;
+            if (in != nullptr && inIdx >= 0
+                && std::abs(in[inIdx]) > 0.01f && std::abs(s) < 1.0e-5f)
                 ++dropoutRun;
             else
                 dropoutRun = 0;
 
-            m.maxDropoutRun = std::max(m.maxDropoutRun, dropoutRun);
+            if (dropoutRun > m.maxDropoutRun)
+            {
+                m.maxDropoutRun = dropoutRun;
+                m.dropoutEndSample = i;
+            }
         }
     }
 
@@ -203,6 +222,7 @@ struct SessionResult
 {
     juce::AudioBuffer<float> output;
     juce::AudioBuffer<float> input;
+    int latencySamples = 0;  // proc.getLatencySamples() captured before releaseResources
 };
 
 using BlockCallback = std::function<void(AIEqualizerAudioProcessor&, juce::AudioProcessorValueTreeState&, int /*block*/)>;
@@ -243,6 +263,11 @@ static SessionResult runSession(double sampleRate, int blockSize, int numBlocks,
         for (int ch = 0; ch < 2; ++ch)
             result.output.copyFrom(ch, block * blockSize, chunk, ch, 0, blockSize);
     }
+
+    // Capture reported latency BEFORE releaseResources. This is the static
+    // worst-case pad (max of LP impulse tail and oversampling padding) that
+    // analyzeForClicks must compensate for when detecting dropouts.
+    result.latencySamples = proc.getLatencySamples();
 
     proc.releaseResources();
     return result;
@@ -344,6 +369,7 @@ private:
                    + " clicks=" + juce::String(m.clickCount)
                    + " peakAbs=" + juce::String(m.peakAbs, 4)
                    + " dropout=" + juce::String(m.maxDropoutRun)
+                   + (m.maxDropoutRun > 0 ? " (ends@" + juce::String(m.dropoutEndSample) + ")" : juce::String())
                    + " avgDelta=" + juce::String(m.avgDelta, 6));
 
         expect(!m.hasNaN,  label + ": NaN in output");
@@ -740,10 +766,15 @@ private:
                 if (block == 190) setChoice(apvts, "band3DynMode", 0);
             });
 
-        // Analyze the entire session
+        // Analyze the entire session. Window starts at block 10 which is BEFORE
+        // the plugin's static latency warmup completes (~17 blocks @ 128). Pass
+        // result.latencySamples so dropout detection aligns output[t] with the
+        // corresponding input[t - latencySamples], rather than flagging the
+        // pre-latency wet-pad silence as a dropout.
         int start = 10 * blockSize;
         int len   = 200 * blockSize;
-        auto m = analyzeForClicks(result.output, result.input, start, len, 0.75f);
+        auto m = analyzeForClicks(result.output, result.input, start, len, 0.75f,
+                                   /*latencyOffset=*/ result.latencySamples);
         // Compound stress: phase transitions produce structural maxDelta ~0.6
         // during crossfade (two different processing paths blending).
         // Allow higher delta but still catch explosions and NaN.
@@ -783,9 +814,13 @@ private:
                 }
             });
 
+        // Small block (32): analysis starts at block 40 = sample 1280, which is
+        // BEFORE the wet-pad latency (~2176 samples). Pass latencyOffset so the
+        // pre-latency silence is not counted as a dropout.
         int start = 40 * blockSize;
         int len   = 320 * blockSize;
-        auto m = analyzeForClicks(result.output, result.input, start, len, 0.70f);
+        auto m = analyzeForClicks(result.output, result.input, start, len, 0.70f,
+                                   /*latencyOffset=*/ result.latencySamples);
         // Small blocks: phase transition crossfade spans many blocks,
         // structural delta is higher because each block is only 32 samples.
         expectClean(m, "Small block (32) transitions",
