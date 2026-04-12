@@ -136,10 +136,13 @@ public:
             parameters, prefix + "Solo", soloBtn);
 
         // DynEQ mode selector
-        dynModeCombo.addItem("Off", 1);
-        dynModeCombo.addItem("Compress", 2);
-        dynModeCombo.addItem("Expand", 3);
-        dynModeCombo.addItem("Gate", 4);
+        // CRITICAL: Must match APVTS AudioParameterChoice indices exactly
+        // APVTS: 0=Off, 1=Compress, 2=Expand, 3=Gate
+        // ComboBox IDs MUST be index+1 because JUCE treats ID 0 as "no selection"
+        dynModeCombo.addItem("Off", 1);       // APVTS index 0
+        dynModeCombo.addItem("Compress", 2);  // APVTS index 1
+        dynModeCombo.addItem("Expand", 3);    // APVTS index 2
+        dynModeCombo.addItem("Gate", 4);      // APVTS index 3
         dynModeCombo.setColour(juce::ComboBox::backgroundColourId, ModernLookAndFeel::Colors::bgPanel);
         dynModeCombo.setColour(juce::ComboBox::textColourId, ModernLookAndFeel::Colors::textPrimary);
         dynModeCombo.setColour(juce::ComboBox::outlineColourId, ModernLookAndFeel::Colors::bgLighter);
@@ -449,6 +452,8 @@ private:
 
     void updateDynEQVisibility()
     {
+        // Note: ComboBox IDs are 1-based (1=Off, 2=Compress, 3=Expand, 4=Gate)
+        // APVTS indices are 0-based, handled by ComboBoxAttachment automatically
         dynEQActive = (dynModeCombo.getSelectedId() > 1); // 1 = Off
         thresholdKnob.setVisible(dynEQActive);
         ratioKnob.setVisible(dynEQActive);

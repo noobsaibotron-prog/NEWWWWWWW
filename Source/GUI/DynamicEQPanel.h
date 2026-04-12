@@ -99,7 +99,15 @@ public:
         }
         titleLabel.setJustificationType(juce::Justification::centredLeft);
         addAndMakeVisible(titleLabel);
-        
+
+        // Close button (✕) — fixes "trapped inside overlay" bug
+        closeBtn.setButtonText(juce::String::charToString(0x00D7)); // × symbol
+        closeBtn.setColour(juce::TextButton::buttonColourId, juce::Colours::transparentBlack);
+        closeBtn.setColour(juce::TextButton::textColourOffId, ModernLookAndFeel::Colors::textSecondary);
+        closeBtn.setTooltip("Close (Range/Knee available via ... button)");
+        closeBtn.onClick = [this] { setVisible(false); };
+        addAndMakeVisible(closeBtn);
+
         // Repaint/refresh hook for graph overlays and selected-band visuals.
         auto notifyDynamicParamChanged = [this, &apvts]()
         {
@@ -180,8 +188,10 @@ public:
 
         auto bounds = getLocalBounds().reduced(10);
 
-        // Title
-        titleLabel.setBounds(bounds.removeFromTop(20));
+        // Title + close button
+        auto titleRow = bounds.removeFromTop(20);
+        closeBtn.setBounds(titleRow.removeFromRight(24).reduced(2));
+        titleLabel.setBounds(titleRow);
         bounds.removeFromTop(5);
 
         // Mode selector
@@ -467,6 +477,7 @@ private:
     PremiumKnob kneeKnob      { "KNEE", PremiumKnob::Style::SmallBlue };
     juce::Label titleLabel, modeLabel, thresholdLabel, ratioLabel;
     juce::Label attackLabel, releaseLabel, rangeLabel, kneeLabel;
+    juce::TextButton closeBtn;  // ✕ close overlay button
 
     // Phase 5: compact mode (hide title/meter/labels, show only mode buttons)
     bool compactMode = false;
