@@ -640,8 +640,10 @@ public:
         mouseInsideSpectrum = false;
         // Don't fade out nodes if a context menu is open — the user
         // is still interacting. The menu callback clears the flag.
+        // Fade to a reduced-but-visible opacity (FabFilter-style): nodes
+        // dim when the cursor leaves the spectrum but never fully disappear.
         if (!bandContextMenuOpen)
-            nodesTargetOpacity = 0.0f;
+            nodesTargetOpacity = kNodesIdleOpacity;
         setMouseCursor(juce::MouseCursor::NormalCursor);
 
         if (aiTooltip.visible)
@@ -1207,7 +1209,7 @@ private:
                 // If mouse is still inside spectrum, keep nodes visible; otherwise fade out.
                 bandContextMenuOpen = false;
                 if (!mouseInsideSpectrum)
-                    nodesTargetOpacity = 0.0f;
+                    nodesTargetOpacity = kNodesIdleOpacity;
 
                 if (result == 0) return; // dismissed without selection
 
@@ -3128,11 +3130,15 @@ private:
     std::vector<SpectrumPeak> detectedPeaks;
     int hoveredPeakIndex = -1;
 
-    // FabFilter-style node visibility: nodes hidden when mouse is outside spectrum.
-    // Smooth opacity transition (0→1 fade-in, 1→0 fade-out) driven by timerCallback.
-    float nodesOpacity = 0.0f;         // current opacity [0..1]
-    float nodesTargetOpacity = 0.0f;   // target: 1 when mouse in, 0 when out
-    bool  mouseInsideSpectrum = false;  // raw tracking flag
+    // FabFilter-style node visibility: nodes dim (but stay visible) when
+    // the cursor leaves the spectrum, and come back to full opacity when
+    // it re-enters. Smooth transition driven by timerCallback.
+    // kNodesIdleOpacity = baseline when mouse is outside (never 0 — Marco's
+    // explicit requirement: "rimangono visibili"). Tune here to taste.
+    static constexpr float kNodesIdleOpacity = 0.35f;
+    float nodesOpacity = kNodesIdleOpacity;         // current opacity [0..1]
+    float nodesTargetOpacity = kNodesIdleOpacity;   // target: 1 when mouse in, idle when out
+    bool  mouseInsideSpectrum = false;              // raw tracking flag
 
     // AI breathing phase (0..2π) — drives subtle glow pulsation on nodes
     // that have pending AI corrections. Fed from editor's breathingPhase.
