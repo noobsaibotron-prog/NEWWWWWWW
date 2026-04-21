@@ -6,6 +6,7 @@
 #include "BiquadCoefficients.h"
 #include <array>
 #include <atomic>
+#include <cstdint>
 
 //==============================================================================
 /**
@@ -170,6 +171,37 @@ public:
     [[nodiscard]] bool isBypassed() const { return bypassed.load(std::memory_order_relaxed); }
 
 private:
+    //==============================================================================
+    // CROSSFADE COMMAND QUEUE (message → audio thread handoff)
+    //
+    // beginBandCrossfade / beginWholeChainCrossfade are called from the
+    // message thread but need to mutate bandStates[] / bandCrossfades[] /
+    // wholeChainXfade which are audio-thread-only. Direct mutation would
+    // race with process() under the C++ memory model.
+    //
+    // Solution: message thread pushes a command, audio thread drains the
+    // queue and executes the setup on-thread at the top of process().
+    //
+    // Addresses audit finding CRIT-1 (2026-04).
+    //==============================================================================
+    struct CrossfadeCommand
+    {
+        enum Kind : uint8_t { PerBand = 0, WholeChain = 1 };
+        Kind kind = PerBand;
+        int  bandIndex = 0;     // ignored when kind == WholeChain
+        int  fadeSamples = 128;
+    };
+
+    // 32 slots is ample for realistic message-thread burst rates (UI drag,
+    // preset recall, automation). If the queue fills, tryPush returns false
+    // and the crossfade is dropped — worst case is a single audible click
+    // on the dropped event, which is strictly better than the prior race.
+    AIEQCore::SPSCQueue<CrossfadeCommand, 32> crossfadeCommands;
+
+    // Audio-thread-only executors (formerly the bodies of the public methods).
+    void executePerBandCrossfadeSetup(int index, int fadeSamples) noexcept;
+    void executeWholeChainCrossfadeSetup(int fadeSamples) noexcept;
+
     //==============================================================================
     void updateCoefficientsForBand(int index);
     

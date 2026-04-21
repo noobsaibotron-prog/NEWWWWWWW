@@ -97,7 +97,27 @@ void ParametricEQProcessor::process(juce::AudioBuffer<float>& buffer)
     // LOCK-FREE PARAMETER READ
     // Read all band parameters atomically at start of block
     //==========================================================================
-    
+
+    //==========================================================================
+    // DRAIN CROSSFADE COMMAND QUEUE (message thread → audio thread handoff)
+    // Must run before version-change detection so that when the message
+    // thread has BOTH queued a crossfade AND updated bandParams (the typical
+    // pattern for type changes), the crossfade snapshot captures the OLD
+    // coefficients before the version-change path overwrites them.
+    //==========================================================================
+    {
+        CrossfadeCommand cmd;
+        // Bounded drain: the queue has 32 slots; processing all in one
+        // block is trivial (< 1µs for 24 bands of copy). No allocation.
+        while (crossfadeCommands.tryPop(cmd))
+        {
+            if (cmd.kind == CrossfadeCommand::PerBand)
+                executePerBandCrossfadeSetup(cmd.bandIndex, cmd.fadeSamples);
+            else
+                executeWholeChainCrossfadeSetup(cmd.fadeSamples);
+        }
+    }
+
     const int localNumBands = numActiveBands.load(std::memory_order_acquire);
     bool hasSolo = false;
     
@@ -639,6 +659,39 @@ void ParametricEQProcessor::beginBandCrossfade(int index, int fadeSamples) noexc
 {
     if (index < 0 || index >= getMaxBands()) return;
 
+    // Message-thread-safe: enqueue command, actual setup runs on audio thread.
+    CrossfadeCommand cmd;
+    cmd.kind = CrossfadeCommand::PerBand;
+    cmd.bandIndex = index;
+    cmd.fadeSamples = fadeSamples;
+
+    // Discard on overflow: advisory fade, not correctness-critical.
+    // If the queue is full the audio thread is heavily loaded;
+    // skipping a fade is preferable to blocking the UI.
+    (void) crossfadeCommands.tryPush(cmd);
+}
+
+void ParametricEQProcessor::beginWholeChainCrossfade(int fadeSamples) noexcept
+{
+    CrossfadeCommand cmd;
+    cmd.kind = CrossfadeCommand::WholeChain;
+    cmd.bandIndex = 0; // unused
+    cmd.fadeSamples = fadeSamples;
+
+    (void) crossfadeCommands.tryPush(cmd);
+}
+
+// ============================================================================
+// Audio-thread executors — formerly the bodies of beginBandCrossfade /
+// beginWholeChainCrossfade. Called only from process() after draining the
+// command queue. Safe to mutate bandStates[] / bandCrossfades[] /
+// wholeChainXfade here because we are on the audio thread.
+// ============================================================================
+
+void ParametricEQProcessor::executePerBandCrossfadeSetup(int index, int fadeSamples) noexcept
+{
+    if (index < 0 || index >= getMaxBands()) return;
+
     auto& state = bandStates[index];
     auto& xfade = bandCrossfades[index];
 
@@ -650,7 +703,7 @@ void ParametricEQProcessor::beginBandCrossfade(int index, int fadeSamples) noexc
     xfade.oldNumStages = state.numActiveStages;
     for (int s = 0; s < BandProcessingState::maxFilterStages; ++s)
     {
-        xfade.oldCoeffs[s] = state.coefficients[s];
+        xfade.oldCoeffs[s]   = state.coefficients[s];
         xfade.oldFiltersL[s] = state.filtersL[s];
         xfade.oldFiltersR[s] = state.filtersR[s];
     }
@@ -661,10 +714,10 @@ void ParametricEQProcessor::beginBandCrossfade(int index, int fadeSamples) noexc
 
     // Start crossfade
     xfade.remaining = fadeSamples;
-    xfade.total = fadeSamples;
+    xfade.total     = fadeSamples;
 }
 
-void ParametricEQProcessor::beginWholeChainCrossfade(int fadeSamples) noexcept
+void ParametricEQProcessor::executeWholeChainCrossfadeSetup(int fadeSamples) noexcept
 {
     auto& wc = wholeChainXfade;
 
@@ -676,22 +729,23 @@ void ParametricEQProcessor::beginWholeChainCrossfade(int fadeSamples) noexcept
     wc.oldNumBands = localNumBands;
 
     // Snapshot all bands.
-    // CRITICAL: bandParams[] are already updated by the message thread (loadStateFromSlot),
-    // so we CANNOT read enabled/solo from bandParams. Instead, determine if a band was
-    // active by checking if it has valid coefficients in bandStates (audio-thread-only data).
-    wc.hadSolo = false; // Solo state from bandStates is not tracked; assume no solo for old chain
+    // Note: we're on the audio thread now, so reading bandStates is safe.
+    // We determine "was active" from bandStates (not bandParams) because
+    // the message thread may have updated bandParams before issuing this
+    // command (e.g. loadStateFromSlot); bandStates reflects what process()
+    // was actually using last block.
+    wc.hadSolo = false;
     for (int i = 0; i < localNumBands; ++i)
     {
         auto& ob = wc.oldBands[i];
         auto& state = bandStates[i];
         ob.numStages = state.numActiveStages;
-        // A band was active if it had valid coefficients from the last process() call
         ob.enabled = state.coefficients[0].valid;
-        ob.solo = false; // Not tracked in bandStates; treat all enabled bands as active
+        ob.solo = false;
 
         for (int s = 0; s < BandProcessingState::maxFilterStages; ++s)
         {
-            ob.coeffs[s] = state.coefficients[s];
+            ob.coeffs[s]   = state.coefficients[s];
             ob.filtersL[s] = state.filtersL[s];
             ob.filtersR[s] = state.filtersR[s];
         }
@@ -706,7 +760,7 @@ void ParametricEQProcessor::beginWholeChainCrossfade(int fadeSamples) noexcept
         bandCrossfades[i].remaining = 0;
 
     wc.remaining = fadeSamples;
-    wc.total = fadeSamples;
+    wc.total     = fadeSamples;
 }
 
 //==============================================================================
