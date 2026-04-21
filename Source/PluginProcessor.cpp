@@ -85,15 +85,21 @@ AIEqualizerAudioProcessor::AIEqualizerAudioProcessor()
     if (auto* osValue = apvts.getRawParameterValue("oversamplingFactor"))
         parameterChanged("oversamplingFactor", osValue->load());
 
-    // Initialize A/B/C/D slots with defaults
-    slotA.bands.fill(BandState());
-    slotB.bands.fill(BandState());
-    slotC.bands.fill(BandState());
-    slotD.bands.fill(BandState());
-    slotA.name = "A";
-    slotB.name = "B";
-    slotC.name = "C";
-    slotD.name = "D";
+    // Initialize A/B/C/D slots with spread-out default frequencies.
+    // BandState defaults all freqs to 1000 Hz — without this, switching to
+    // an unused slot stacks every band on top of each other at 1 kHz.
+    {
+        auto initSlot = [](EQSlot& slot, const char* name) {
+            slot.bands.fill(BandState());
+            for (int i = 0; i < maxBands; ++i)
+                slot.bands[static_cast<size_t>(i)].frequency = defaultBandFrequencies[i];
+            slot.name = name;
+        };
+        initSlot(slotA, "A");
+        initSlot(slotB, "B");
+        initSlot(slotC, "C");
+        initSlot(slotD, "D");
+    }
 
     semanticBandAssignments.fill(-1);
 
@@ -575,18 +581,25 @@ juce::AudioProcessorValueTreeState::ParameterLayout AIEqualizerAudioProcessor::c
         juce::ParameterID{"analyzerSpeed", 1}, "Analyzer Speed",
         juce::StringArray{"Fast", "Medium", "Slow"}, 1));
 
-    // Analyzer slope (visual only): 0 = Flat, 1 = 3 dB/oct, 2 = 4.5 dB/oct
+    // Analyzer slope (visual only): 0=Flat, 1=3dB, 2=4.5dB, 3=6dB
     params.push_back(std::make_unique<juce::AudioParameterChoice>(
         juce::ParameterID{"analyzerSlope", 1}, "Analyzer Slope",
-        juce::StringArray{"Flat", "3 dB/oct", "4.5 dB/oct"}, 2)); // default 4.5 dB/oct
+        juce::StringArray{"Flat", "3 dB/oct", "4.5 dB/oct", "6 dB/oct"}, 2)); // default 4.5
 
     // Peak-hold visualization controls (visual only)
+    params.push_back(std::make_unique<juce::AudioParameterBool>(
+        juce::ParameterID{"showPeakHold", 1}, "Show Peak Hold", false)); // OFF by default
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID{"analyzerPeakHold", 1}, "Analyzer Peak Hold",
         juce::NormalisableRange<float>(0.0f, 5.0f, 0.1f), 2.0f)); // seconds
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID{"analyzerPeakDecay", 1}, "Analyzer Peak Decay",
         juce::NormalisableRange<float>(1.0f, 60.0f, 0.5f), 20.0f)); // dB/sec
+
+    // Continuous spectrum tilt (visual only) — adjustable via drag widget
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID{"spectrumTilt", 1}, "Spectrum Tilt",
+        juce::NormalisableRange<float>(0.0f, 8.0f, 0.1f), 4.5f)); // dB/oct, default 4.5
 
     params.push_back(std::make_unique<juce::AudioParameterBool>(
         juce::ParameterID{"pianoRollOverlay", 1}, "Piano Roll Overlay", false));
@@ -1570,6 +1583,14 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
 
     // Apply smoothed band params (anti-zippering) before processing
     applySmoothedBandParams(blockSamples, needsParamUpdate);
+
+    // FIX: Bump EQ curve version from audio thread after band params are written.
+    // Without this, AI corrections cause a race: the message-thread version bump
+    // fires before eqProcessor.bandParams are updated, so rebuildEQCurvePath()
+    // reads stale data (old filter type/gain) and consumes the version counter.
+    // The curve then stays stale until the next user interaction.
+    if (needsParamUpdate)
+        eqCurveChangeCounter.fetch_add(1, std::memory_order_relaxed);
 
     if (autoGainEnabledLocal)
     {
@@ -3187,11 +3208,25 @@ void AIEqualizerAudioProcessor::applySmoothedBandParams(int blockSamples, bool p
             prevAppliedBandType[idx] = type;
         }
 
+        // FIX: When a band has DynEQ active (Compress/Expand/Gate), the main
+        // static EQ must BYPASS that band in audio processing — the DynamicEQProcessor
+        // handles it entirely, including the biquad EQ + dynamic gain modulation.
+        // Without this, the EQ is applied TWICE: once by the static EQ (always
+        // full strength) and once by the DynEQ (modulated), making the dynamic
+        // effect inaudible because the static EQ masks it.
+        //
+        // We use setBandAudioBypass() instead of setBandEnabled(false) so the band
+        // remains visible in getMagnitudeForFrequencyArray() — this preserves the
+        // EQ curve display and the pulsing GR animation overlay on the spectrum.
+        const bool bandHasDynEQ = (i < maxBands)
+            && (targetDynamicBandParams[idx].dynamicMode != 0); // 0 = Off
+
         if (i < eqProcessor.getNumBands())
         {
             eqProcessor.setBandParameters(i, freq, gain, q, type);
             eqProcessor.setBandSlope(i, slope);
             eqProcessor.setBandEnabled(i, enabled);
+            eqProcessor.setBandAudioBypass(i, bandHasDynEQ);
             eqProcessor.setBandSolo(i, solo);
         }
         if (i < eqProcessorHQ.getNumBands())
@@ -3199,6 +3234,7 @@ void AIEqualizerAudioProcessor::applySmoothedBandParams(int blockSamples, bool p
             eqProcessorHQ.setBandParameters(i, freq, gain, q, type);
             eqProcessorHQ.setBandSlope(i, slope);
             eqProcessorHQ.setBandEnabled(i, enabled);
+            eqProcessorHQ.setBandAudioBypass(i, bandHasDynEQ);
             eqProcessorHQ.setBandSolo(i, solo);
         }
         if (i < eqProcessorMid.getNumBands())
@@ -3206,6 +3242,7 @@ void AIEqualizerAudioProcessor::applySmoothedBandParams(int blockSamples, bool p
             eqProcessorMid.setBandParameters(i, freq, gain, q, type);
             eqProcessorMid.setBandSlope(i, slope);
             eqProcessorMid.setBandEnabled(i, enabled);
+            eqProcessorMid.setBandAudioBypass(i, bandHasDynEQ);
             eqProcessorMid.setBandSolo(i, solo);
         }
         if (i < eqProcessorSide.getNumBands())
@@ -3213,6 +3250,7 @@ void AIEqualizerAudioProcessor::applySmoothedBandParams(int blockSamples, bool p
             eqProcessorSide.setBandParameters(i, freq, gain, q, type);
             eqProcessorSide.setBandSlope(i, slope);
             eqProcessorSide.setBandEnabled(i, enabled);
+            eqProcessorSide.setBandAudioBypass(i, bandHasDynEQ);
             eqProcessorSide.setBandSolo(i, solo);
         }
 

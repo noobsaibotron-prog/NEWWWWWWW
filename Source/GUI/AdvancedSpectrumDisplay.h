@@ -117,6 +117,15 @@ public:
     void setSelectedBand(int band) { selectedBandIndex = band; repaint(); }
     int getSelectedBand() const { return selectedBandIndex; }
 
+    /** When true, the GL pipeline handles pre/post spectrum rendering.
+     *  Software path skips pre/post path builds to avoid double work. */
+    void setGLSpectrumActive(bool v) noexcept { glSpectrumActive = v; }
+    bool isGLSpectrumActive() const noexcept { return glSpectrumActive; }
+
+    /** AI breathing phase (0..2π, 4-second cycle) — fed from editor's timerCallback.
+     *  Used to modulate glow alpha on band nodes that have pending AI corrections. */
+    void setAIBreathingPhase(float phase) noexcept { aiBreathingPhase = phase; }
+
     /** Graph bounds in component-local float coordinates (set during paint/resized). */
     juce::Rectangle<float> getGraphBoundsF() const noexcept { return graphBounds; }
 
@@ -296,6 +305,52 @@ public:
         tBands = lap() - t0;
 #endif
 
+        // ── Tilt drag widget (bottom-left overlay) ─────────────────────
+        {
+            const float tiltVal = getAnalyzerSlopeDbPerOct();
+            juce::String tiltText;
+            if (tiltVal < 0.05f)
+                tiltText = "TILT: FLAT";
+            else
+                tiltText = "TILT: " + juce::String(tiltVal, 1) + " dB";
+
+            const auto font = juce::Font(juce::FontOptions().withHeight(10.0f).withStyle("Bold"));
+            g.setFont(font);
+            const float tw = static_cast<float>(font.getStringWidth(tiltText)) + 24.0f;
+            const float th = 18.0f;
+            const float tx = graphBounds.getX() + 6.0f;
+            const float ty = graphBounds.getBottom() - th - 4.0f;
+            tiltWidgetBounds = { tx, ty, tw, th };
+
+            // Background pill
+            const float bgAlpha = isDraggingTilt ? 0.55f : 0.30f;
+            g.setColour(ModernLookAndFeel::Colors::bgLight.withAlpha(bgAlpha));
+            g.fillRoundedRectangle(tiltWidgetBounds, 4.0f);
+            g.setColour(ModernLookAndFeel::Colors::textPrimary.withAlpha(0.20f));
+            g.drawRoundedRectangle(tiltWidgetBounds, 4.0f, 0.5f);
+
+            // Up/down arrows icon (left side)
+            const float arrowX = tx + 6.0f;
+            const float arrowCY = ty + th * 0.5f;
+            g.setColour(ModernLookAndFeel::Colors::textPrimary.withAlpha(isDraggingTilt ? 0.9f : 0.6f));
+            // Up triangle
+            juce::Path upArrow;
+            upArrow.addTriangle(arrowX, arrowCY - 2.0f,
+                                arrowX - 3.0f, arrowCY - 6.0f,
+                                arrowX + 3.0f, arrowCY - 6.0f);
+            g.fillPath(upArrow);
+            // Down triangle
+            juce::Path downArrow;
+            downArrow.addTriangle(arrowX, arrowCY + 2.0f,
+                                  arrowX - 3.0f, arrowCY + 6.0f,
+                                  arrowX + 3.0f, arrowCY + 6.0f);
+            g.fillPath(downArrow);
+
+            // Text
+            g.setColour(ModernLookAndFeel::Colors::textPrimary.withAlpha(isDraggingTilt ? 0.95f : 0.73f));
+            g.drawText(tiltText, tiltWidgetBounds.withLeft(tx + 14.0f), juce::Justification::centredLeft);
+        }
+
         // Subtle border
         g.setColour(ModernLookAndFeel::Colors::grid);
         g.drawRoundedRectangle(bounds.reduced(0.5f), 4.0f, 1.0f);
@@ -428,6 +483,28 @@ public:
         if (hoverX >= 0 || isDraggingBand || isFrozen || anyDynamicBandActive)
             needsRepaint = true;
 
+        // FabFilter-style node fade: smoothly animate nodesOpacity toward target.
+        // Fade-in ~200ms (6 frames @60Hz), fade-out ~400ms (12 frames).
+        // While animating, force repaint so the transition is visible.
+        {
+            const float fadeInStep  = 1.0f / 6.0f;   // ~166ms @ 60Hz
+            const float fadeOutStep = 1.0f / 12.0f;   // ~200ms @ 60Hz — brisk, not sluggish
+
+            if (nodesOpacity < nodesTargetOpacity)
+            {
+                nodesOpacity = juce::jmin(nodesTargetOpacity, nodesOpacity + fadeInStep);
+                needsRepaint = true;
+            }
+            else if (nodesOpacity > nodesTargetOpacity)
+            {
+                nodesOpacity = juce::jmax(nodesTargetOpacity, nodesOpacity - fadeOutStep);
+                needsRepaint = true;
+            }
+            // While dragging, nodes MUST be fully visible (override fade-out)
+            if (isDraggingBand)
+                nodesOpacity = 1.0f;
+        }
+
         if (needsRepaint)
             repaint();
     }
@@ -441,8 +518,10 @@ public:
         hoveredBandIndex = getBandAtPosition(e.position);
         hoveredPeakIndex = getPeakAtPosition(e.position);
 
-        // Change cursor when over a band
-        if (hoveredBandIndex >= 0 || hoveredPeakIndex >= 0)
+        // Change cursor when over a band or tilt widget
+        if (tiltWidgetBounds.contains(e.position))
+            setMouseCursor(juce::MouseCursor::UpDownResizeCursor);
+        else if (hoveredBandIndex >= 0 || hoveredPeakIndex >= 0)
             setMouseCursor(juce::MouseCursor::PointingHandCursor);
         else
             setMouseCursor(juce::MouseCursor::NormalCursor);
@@ -547,11 +626,22 @@ public:
         }
     }
     
+    void mouseEnter(const juce::MouseEvent&) override
+    {
+        mouseInsideSpectrum = true;
+        nodesTargetOpacity = 1.0f;
+    }
+
     void mouseExit(const juce::MouseEvent&) override
     {
         hoverX = -1;
         hoveredBandIndex = -1;
         hoveredPeakIndex = -1;
+        mouseInsideSpectrum = false;
+        // Don't fade out nodes if a context menu is open — the user
+        // is still interacting. The menu callback clears the flag.
+        if (!bandContextMenuOpen)
+            nodesTargetOpacity = 0.0f;
         setMouseCursor(juce::MouseCursor::NormalCursor);
 
         if (aiTooltip.visible)
@@ -564,9 +654,35 @@ public:
 
     void mouseDown(const juce::MouseEvent& e) override
     {
+        // Tilt widget: click to start drag (left-click only)
+        if (!e.mods.isPopupMenu() && tiltWidgetBounds.contains(e.position))
+        {
+            isDraggingTilt = true;
+            tiltDragStartY = e.position.y;
+            tiltDragStartValue = getAnalyzerSlopeDbPerOct();
+            repaint();
+            return;
+        }
+
+        // Right-click: show per-band context menu if clicking on a band,
+        // otherwise show the global analyzer settings menu.
         if (e.mods.isPopupMenu())
         {
-            showContextMenu(e.getPosition());
+            const int clickedBand = getBandAtPosition(e.position);
+            if (clickedBand >= 0)
+            {
+                selectedBandIndex = clickedBand;
+                if (onBandSelected)
+                    onBandSelected(clickedBand);
+                // Keep nodes visible while the context menu is open
+                bandContextMenuOpen = true;
+                nodesTargetOpacity = 1.0f;
+                showBandContextMenu(e.getPosition(), clickedBand);
+            }
+            else
+            {
+                showContextMenu(e.getPosition());
+            }
             return;
         }
 
@@ -588,29 +704,37 @@ public:
 
         if (!graphBounds.contains(e.position))
             return;
-        
+
         // Prevent re-entrancy if a drag is already active
         if (isDraggingBand)
             return;
 
-        // Check if clicking on a band
+        // Check if clicking on a band (left-click only at this point)
         const int clickedBand = getBandAtPosition(e.position);
-        
+
+        // Alt+click (Option+click on macOS) on a band → instant delete
+        // This is the FabFilter Pro-Q shortcut for fast workflow.
+        if (clickedBand >= 0 && e.mods.isAltDown())
+        {
+            deleteBand(clickedBand);
+            return;
+        }
+
         if (clickedBand >= 0)
         {
             selectedBandIndex = clickedBand;          // UI selection
             draggedBandIndex = clickedBand;           // locked drag target
             isDraggingBand = true;
             dragStartPos = e.position;
-            
+
             auto state = processor.getBandState(clickedBand);
             dragStartFreq = state.frequency;
             dragStartGain = state.gain;
             dragStartQ = state.q;
-            
+
             if (onBandSelected)
                 onBandSelected(clickedBand);
-            
+
             repaint();
         }
         else
@@ -629,6 +753,17 @@ public:
     
     void mouseDrag(const juce::MouseEvent& e) override
     {
+        // Tilt drag: vertical movement adjusts dB/oct continuously
+        if (isDraggingTilt)
+        {
+            const float deltaY = tiltDragStartY - e.position.y; // up = positive
+            const float sensitivity = 0.04f; // dB/oct per pixel
+            float newTilt = juce::jlimit(0.0f, 8.0f, tiltDragStartValue + deltaY * sensitivity);
+            setFloatParameter("spectrumTilt", newTilt);
+            repaint();
+            return;
+        }
+
         const int targetBand = draggedBandIndex;
 
         if (isDraggingBand && targetBand >= 0)
@@ -671,6 +806,12 @@ public:
     
     void mouseUp(const juce::MouseEvent&) override
     {
+        if (isDraggingTilt)
+        {
+            isDraggingTilt = false;
+            repaint();
+            return;
+        }
         isDraggingBand = false;
         draggedBandIndex = -1;
     }
@@ -679,61 +820,79 @@ public:
     {
         if (!graphBounds.contains(e.position))
             return;
-        
-        float freq = quantizeFrequency(xToFreq((float)e.x));
-        float gain = yToGain((float)e.y);
-        
-        // Check if double-clicking on existing band -> reset its gain
-        int clickedBand = getBandAtPosition(e.position);
+
+        // Right double-click: unreliable (context menu steals focus on first
+        // right-click). Delete via Alt+click or context menu instead.
+        if (e.mods.isRightButtonDown() || e.mods.isPopupMenu())
+            return;
+
+        const int clickedBand = getBandAtPosition(e.position);
+
+        // ── LEFT DOUBLE-CLICK on existing band → reset gain to 0 dB ────────
         if (clickedBand >= 0)
         {
-            // Reset gain to 0
             auto state = processor.getBandState(clickedBand);
             state.gain = 0.0f;
             processor.setBandState(clickedBand, state);
-            
+
             selectedBandIndex = clickedBand;
             if (onBandSelected)
                 onBandSelected(clickedBand);
         }
         else
         {
-            // Double-click on empty space -> activate the best available band
-            // Find band with lowest gain (most "unused")
+            // Double-click on empty space → create / activate a new band
+            float freq = quantizeFrequency(xToFreq((float)e.x));
+            float gain = yToGain((float)e.y);
+
+            // Prefer an already-disabled band slot; else pick lowest-gain
             int targetBand = -1;
             float minGain = std::numeric_limits<float>::max();
+            const int numBands = processor.getNumActiveBands();
 
-            // Use the processor's configured active band count
-            int numBands = processor.getNumActiveBands();
+            // First pass: find a disabled slot (clean reuse)
             for (int i = 0; i < numBands; ++i)
             {
-                auto state = processor.getBandState(i);
-                if (std::abs(state.gain) < minGain)
+                auto s = processor.getBandState(i);
+                if (!s.enabled)
                 {
-                    minGain = std::abs(state.gain);
                     targetBand = i;
+                    break;
                 }
             }
-            
+
+            // Second pass: if none disabled, pick the one with smallest |gain|
+            if (targetBand < 0)
+            {
+                for (int i = 0; i < numBands; ++i)
+                {
+                    auto s = processor.getBandState(i);
+                    if (std::abs(s.gain) < minGain)
+                    {
+                        minGain = std::abs(s.gain);
+                        targetBand = i;
+                    }
+                }
+            }
+
             if (targetBand >= 0)
             {
-                // Configure this band at the clicked position
                 auto state = processor.getBandState(targetBand);
                 state.frequency = freq;
                 state.gain = gain;
                 state.enabled = true;
+                state.type = 2;   // Peak (sensible default for new bands)
                 processor.setBandState(targetBand, state);
-                
+
                 selectedBandIndex = targetBand;
-                
+
                 if (onBandCreatedOrActivated)
                     onBandCreatedOrActivated(targetBand, freq, gain);
-                
                 if (onBandSelected)
                     onBandSelected(targetBand);
             }
         }
-        
+
         repaint();
     }
     
@@ -757,18 +916,26 @@ public:
 private:
     float getAnalyzerSlopeDbPerOct() const
     {
-        // New: analyzerSlope choice parameter (0=Flat,1=3dB,2=4.5dB)
+        // Primary: continuous spectrumTilt float param (0-8 dB/oct)
+        if (auto* p = processor.getAPVTS().getRawParameterValue("spectrumTilt"))
+            return p->load();
+        // Fallback: legacy analyzerSlope choice param
         if (auto* p = processor.getAPVTS().getRawParameterValue("analyzerSlope"))
         {
             const int v = static_cast<int>(p->load());
             if (v == 1) return 3.0f;
             if (v == 2) return 4.5f;
+            if (v == 3) return 6.0f;
             return 0.0f;
         }
-        // Backward compatibility: analyzerTilt bool toggles 4.5 dB/oct
-        if (auto* tilt = processor.getAPVTS().getRawParameterValue("analyzerTilt"))
-            return (tilt->load() > 0.5f) ? 4.5f : 0.0f;
         return 4.5f; // default visual
+    }
+
+    bool isPeakHoldEnabled() const
+    {
+        if (auto* p = processor.getAPVTS().getRawParameterValue("showPeakHold"))
+            return p->load() > 0.5f;
+        return false;
     }
 
     bool isPianoRollEnabled() const
@@ -962,6 +1129,127 @@ private:
         }
     }
 
+    void setFloatParameter(const juce::String& paramID, float value)
+    {
+        if (auto* p = processor.getAPVTS().getParameter(paramID))
+        {
+            auto norm = p->convertTo0to1(value);
+            p->beginChangeGesture();
+            p->setValueNotifyingHost(norm);
+            p->endChangeGesture();
+        }
+    }
+
+    // ── FabFilter-style band deletion: disable + reset gain/Q to defaults ──
+    void deleteBand(int bandIndex)
+    {
+        if (bandIndex < 0 || bandIndex >= processor.getNumActiveBands())
+            return;
+
+        auto state = processor.getBandState(bandIndex);
+        state.enabled = false;
+        state.gain = 0.0f;
+        state.q = 1.0f;        // neutral Q
+        processor.setBandState(bandIndex, state);
+
+        // If the deleted band was selected, deselect
+        if (selectedBandIndex == bandIndex)
+            selectedBandIndex = -1;
+
+        if (onBandSelected)
+            onBandSelected(selectedBandIndex);
+
+        repaint();
+    }
+
+    // ── Per-band right-click context menu (FabFilter / Sonible style) ───────
+    void showBandContextMenu(juce::Point<int> pos, int bandIndex)
+    {
+        if (bandIndex < 0 || bandIndex >= processor.getNumActiveBands())
+            return;
+
+        auto state = processor.getBandState(bandIndex);
+        juce::Colour bandCol = bandColors[static_cast<size_t>(bandIndex)];
+
+        juce::PopupMenu menu;
+
+        // Band header (non-clickable label)
+        menu.addSectionHeader("Band " + juce::String(bandIndex + 1));
+
+        // Filter type submenu
+        juce::PopupMenu typeMenu;
+        const char* typeNames[] = { "Low Cut", "Low Shelf", "Peak", "High Shelf", "High Cut", "Notch", "Band Pass" };
+        for (int t = 0; t < 7; ++t)
+            typeMenu.addItem(100 + t, typeNames[t], true, state.type == t);
+        menu.addSubMenu("Filter Type", typeMenu);
+
+        menu.addSeparator();
+
+        // Enable / Solo toggles
+        menu.addItem(10, state.enabled ? "Disable Band" : "Enable Band");
+        menu.addItem(11, state.solo ? "Unsolo" : "Solo Band");
+
+        menu.addSeparator();
+
+        // Reset & Delete
+        menu.addItem(20, "Reset Gain to 0 dB");
+        menu.addItem(21, "Reset Band (Defaults)");
+        menu.addSeparator();
+        menu.addItem(30, "Delete Band");
+
+        menu.showMenuAsync(
+            juce::PopupMenu::Options()
+                .withTargetComponent(this)
+                .withTargetScreenArea({ pos, { 1, 1 } }),
+            [this, bandIndex](int result)
+            {
+                // Menu closed (dismissed or selected) — release node visibility guard.
+                // If mouse is still inside spectrum, keep nodes visible; otherwise fade out.
+                bandContextMenuOpen = false;
+                if (!mouseInsideSpectrum)
+                    nodesTargetOpacity = 0.0f;
+
+                if (result == 0) return; // dismissed without selection
+
+                auto s = processor.getBandState(bandIndex);
+
+                if (result >= 100 && result < 107)
+                {
+                    // Filter type change
+                    s.type = result - 100;
+                    processor.setBandState(bandIndex, s);
+                }
+                else switch (result)
+                {
+                    case 10: // Toggle enable
+                        s.enabled = !s.enabled;
+                        processor.setBandState(bandIndex, s);
+                        break;
+                    case 11: // Toggle solo
+                        s.solo = !s.solo;
+                        processor.setBandState(bandIndex, s);
+                        break;
+                    case 20: // Reset gain
+                        s.gain = 0.0f;
+                        processor.setBandState(bandIndex, s);
+                        break;
+                    case 21: // Reset band to defaults
+                        s.gain = 0.0f;
+                        s.q = 1.0f;
+                        s.type = 2; // Peak
+                        s.solo = false;
+                        processor.setBandState(bandIndex, s);
+                        break;
+                    case 30: // Delete band
+                        deleteBand(bandIndex);
+                        break;
+                    default: break;
+                }
+
+                repaint();
+            });
+    }
+
     void showContextMenu(juce::Point<int> pos)
     {
         juce::PopupMenu menu;
@@ -998,13 +1286,20 @@ private:
         menu.addSubMenu("Analyzer Speed", speedMenu);
 
         menu.addSeparator();
-        menu.addItem(30, "Slope: Flat", true, std::abs(slope) < 0.01f);
-        menu.addItem(31, "Slope: 3 dB/oct", true, std::abs(slope - 3.0f) < 0.01f);
-        menu.addItem(32, "Slope: 4.5 dB/oct", true, std::abs(slope - 4.5f) < 0.01f);
+
+        juce::PopupMenu slopeMenu;
+        slopeMenu.addItem(30, "Flat (0 dB/oct)", true, std::abs(slope) < 0.01f);
+        slopeMenu.addItem(31, "3 dB/oct", true, std::abs(slope - 3.0f) < 0.3f);
+        slopeMenu.addItem(32, "4.5 dB/oct", true, std::abs(slope - 4.5f) < 0.3f);
+        slopeMenu.addItem(33, "6 dB/oct", true, std::abs(slope - 6.0f) < 0.3f);
+        menu.addSubMenu("Spectrum Tilt", slopeMenu);
+
+        bool peakHoldOn = isPeakHoldEnabled();
+        menu.addItem(50, "Peak Hold", true, peakHoldOn);
         menu.addItem(40, "Piano Roll Overlay", true, pianoRoll);
 
         menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(this).withTargetScreenArea({pos, {1, 1}}),
-            [this, showPre, showPost, showDelta, pianoRoll](int result)
+            [this, showPre, showPost, showDelta, pianoRoll, peakHoldOn](int result)
             {
                 switch (result)
                 {
@@ -1018,10 +1313,12 @@ private:
                     case 20: setChoiceParameter("analyzerSpeed", 0); break;
                     case 21: setChoiceParameter("analyzerSpeed", 1); break;
                     case 22: setChoiceParameter("analyzerSpeed", 2); break;
-                    case 30: setChoiceParameter("analyzerSlope", 0); break;
-                    case 31: setChoiceParameter("analyzerSlope", 1); break;
-                    case 32: setChoiceParameter("analyzerSlope", 2); break;
+                    case 30: setFloatParameter("spectrumTilt", 0.0f); break;
+                    case 31: setFloatParameter("spectrumTilt", 3.0f); break;
+                    case 32: setFloatParameter("spectrumTilt", 4.5f); break;
+                    case 33: setFloatParameter("spectrumTilt", 6.0f); break;
                     case 40: setBoolParameter("pianoRollOverlay", !pianoRoll); break;
+                    case 50: setBoolParameter("showPeakHold", !peakHoldOn); break;
                     default: break;
                 }
             });
@@ -1171,18 +1468,21 @@ private:
             else
                 smoothedSpectrum[i] = smoothedSpectrum[i] * displayReleaseCoeff + db * (1.0f - displayReleaseCoeff);
 
-            // Peak-hold tracking
-            if (smoothedSpectrum[i] >= peakHold[i])
+            // Peak-hold tracking (only when enabled — OFF by default)
+            if (isPeakHoldEnabled())
             {
-                peakHold[i] = smoothedSpectrum[i];
-                peakTimers[i] = 0.0f;
-            }
-            else
-            {
-                peakTimers[i] += dt;
-                if (peakTimers[i] > holdSec)
+                if (smoothedSpectrum[i] >= peakHold[i])
                 {
-                    peakHold[i] = juce::jmax(peakHold[i] - decayDbPerSec * dt, spectrumMinDb);
+                    peakHold[i] = smoothedSpectrum[i];
+                    peakTimers[i] = 0.0f;
+                }
+                else
+                {
+                    peakTimers[i] += dt;
+                    if (peakTimers[i] > holdSec)
+                    {
+                        peakHold[i] = juce::jmax(peakHold[i] - decayDbPerSec * dt, spectrumMinDb);
+                    }
                 }
             }
         }
@@ -1216,21 +1516,31 @@ private:
             static_cast<size_t>(std::max(0, static_cast<int>(graphBounds.getWidth()))));
 
         // --- Pre (input) path ---
-        auto* preP = processor.getAPVTS().getRawParameterValue("showPreSpectrum");
-        bool showPre = preP ? preP->load() > 0.5f : false;
-        if (showPre && usable > 4)
+        // When GL is active, the shader already renders the pre spectrum underneath.
+        // Skip the expensive software path build (~3ms saved per rebuild).
+        if (!glSpectrumActive)
         {
-            smoothYBuffer.resize(usable);
-            for (size_t i = 0; i < usable; ++i)
+            auto* preP = processor.getAPVTS().getRawParameterValue("showPreSpectrum");
+            bool showPre = preP ? preP->load() > 0.5f : false;
+            if (showPre && usable > 4)
             {
-                float freq = xToFreq(graphBounds.getX() + static_cast<float>(i));
-                smoothYBuffer[i] = dbToY(applyTilt(preBuffer[i], freq));
+                smoothYBuffer.resize(usable);
+                for (size_t i = 0; i < usable; ++i)
+                {
+                    float freq = xToFreq(graphBounds.getX() + static_cast<float>(i));
+                    smoothYBuffer[i] = dbToY(applyTilt(preBuffer[i], freq));
+                }
+                cachedPreLine.clear();
+                cachedPreFill.clear();
+                pathBuilder.build(smoothYBuffer.data(), usable,
+                                  graphBounds.getX(), graphBounds.getBottom(),
+                                  cachedPreLine, &cachedPreFill, 3);
             }
-            cachedPreLine.clear();
-            cachedPreFill.clear();
-            pathBuilder.build(smoothYBuffer.data(), usable,
-                              graphBounds.getX(), graphBounds.getBottom(),
-                              cachedPreLine, &cachedPreFill, 3);
+            else
+            {
+                cachedPreLine.clear();
+                cachedPreFill.clear();
+            }
         }
         else
         {
@@ -1241,30 +1551,35 @@ private:
         // --- Post (output) path ---
         auto* postP = processor.getAPVTS().getRawParameterValue("showPostSpectrum");
         bool showPost = postP ? postP->load() > 0.5f : false;
-        if (showPost && !isFrozen)
+        // When GL is active, the shader already renders the post spectrum underneath.
+        if (!glSpectrumActive)
         {
-            const auto& postRaw = processor.getPostEQAnalyzer().getSmoothedSpectrum();
-            if (!postRaw.empty() && usable > 4)
+            if (showPost && !isFrozen)
             {
-                smoothYBuffer.resize(usable);
-                const int postFFTSize = processor.getPostEQAnalyzer().getFFTSize();
-                const double postSR = processor.getPostEQAnalyzer().getSampleRate();
-                const int postNumBins = static_cast<int>(postRaw.size());
-                for (size_t i = 0; i < usable; ++i)
+                const auto& postRaw = processor.getPostEQAnalyzer().getSmoothedSpectrum();
+                if (!postRaw.empty() && usable > 4)
                 {
-                    float freq = xToFreq(graphBounds.getX() + static_cast<float>(i));
-                    float binF = freq * static_cast<float>(postFFTSize) / static_cast<float>(postSR);
-                    int b0 = juce::jlimit(0, postNumBins - 1, static_cast<int>(binF));
-                    int b1 = juce::jlimit(0, postNumBins - 1, b0 + 1);
-                    float frac = binF - static_cast<float>(static_cast<int>(binF));
-                    float db = postRaw[b0] * (1.0f - frac) + postRaw[b1] * frac;
-                    smoothYBuffer[i] = dbToY(applyTilt(db, freq));
+                    smoothYBuffer.resize(usable);
+                    const int postFFTSize = processor.getPostEQAnalyzer().getFFTSize();
+                    const double postSR = processor.getPostEQAnalyzer().getSampleRate();
+                    const int postNumBins = static_cast<int>(postRaw.size());
+                    for (size_t i = 0; i < usable; ++i)
+                    {
+                        float freq = xToFreq(graphBounds.getX() + static_cast<float>(i));
+                        float binF = freq * static_cast<float>(postFFTSize) / static_cast<float>(postSR);
+                        int b0 = juce::jlimit(0, postNumBins - 1, static_cast<int>(binF));
+                        int b1 = juce::jlimit(0, postNumBins - 1, b0 + 1);
+                        float frac = binF - static_cast<float>(static_cast<int>(binF));
+                        float db = postRaw[b0] * (1.0f - frac) + postRaw[b1] * frac;
+                        smoothYBuffer[i] = dbToY(applyTilt(db, freq));
+                    }
+                    cachedPostLine.clear();
+                    cachedPostFill.clear();
+                    pathBuilder.build(smoothYBuffer.data(), usable,
+                                      graphBounds.getX(), graphBounds.getBottom(),
+                                      cachedPostLine, &cachedPostFill, 3);
                 }
-                cachedPostLine.clear();
-                cachedPostFill.clear();
-                pathBuilder.build(smoothYBuffer.data(), usable,
-                                  graphBounds.getX(), graphBounds.getBottom(),
-                                  cachedPostLine, &cachedPostFill, 3);
+                else { cachedPostLine.clear(); cachedPostFill.clear(); }
             }
             else { cachedPostLine.clear(); cachedPostFill.clear(); }
         }
@@ -1304,8 +1619,8 @@ private:
         }
         else { cachedDeltaLine.clear(); }
 
-        // --- Peak-hold path ---
-        if (!peakHold.empty() && usable > 4)
+        // --- Peak-hold path (only when enabled) ---
+        if (isPeakHoldEnabled() && !peakHold.empty() && usable > 4)
         {
             const size_t limit = std::min(usable, peakHold.size());
             smoothYBuffer.resize(limit);
@@ -1748,7 +2063,7 @@ private:
                     12);
 
                 g.setColour(base.withAlpha(0.92f));
-                g.setFont(juce::Font(juce::FontOptions().withHeight(10.0f).withStyle("Bold")));
+                g.setFont(aiMarkerFont);
                 g.drawFittedText(labelStr, labelRect,
                                  juce::Justification::centredTop, 1, 0.85f);
             }
@@ -1933,7 +2248,7 @@ private:
             (int) textArea.getX(), cursorY,
             (int) textArea.getWidth(), titleH);
         g.setColour(ModernLookAndFeel::Colors::amber);
-        g.setFont(juce::Font(juce::FontOptions().withHeight(12.0f).withStyle("Bold")));
+        g.setFont(tooltipTitleFont);
         g.drawFittedText(aiTooltip.title, titleRect,
                          juce::Justification::topLeft, 1, 0.9f);
         cursorY += titleH + rowGap;
@@ -1945,7 +2260,7 @@ private:
             (int) textArea.getX(), cursorY,
             (int) textArea.getWidth(), descLineH * descMaxLines);
         g.setColour(ModernLookAndFeel::Colors::textSecondary);
-        g.setFont(juce::Font(juce::FontOptions().withHeight(11.0f)));
+        g.setFont(tooltipDescFont);
         g.drawFittedText(aiTooltip.description, descWrapRect,
                          juce::Justification::topLeft, descMaxLines, 0.85f);
         cursorY += descLineH * descMaxLines + rowGap;
@@ -1956,7 +2271,7 @@ private:
             (int) textArea.getX(), cursorY,
             (int) textArea.getWidth(), suggH);
         g.setColour(ModernLookAndFeel::Colors::textPrimary);
-        g.setFont(juce::Font(juce::FontOptions().withHeight(11.0f).withStyle("Italic")));
+        g.setFont(tooltipSuggFont);
         g.drawFittedText(aiTooltip.suggestion, suggRect,
                          juce::Justification::topLeft, 1, 0.9f);
 
@@ -1972,7 +2287,7 @@ private:
         g.setColour(ModernLookAndFeel::Colors::amber);
         g.fillRoundedRectangle(btnBounds, 3.0f);
         g.setColour(juce::Colour(0xFF181A22));
-        g.setFont(juce::Font(juce::FontOptions().withHeight(10.0f).withStyle("Bold")));
+        g.setFont(tooltipFixFont);
         g.drawFittedText("FIX", btnBounds.toNearestInt(),
                          juce::Justification::centred, 1, 1.0f);
     }
@@ -1983,9 +2298,29 @@ private:
         const int maxBands = AIEqualizerAudioProcessor::maxBands;
         const int limit = std::min(active, maxBands);
 
+        // FabFilter-style: skip all node rendering when fully transparent
+        // (mouse outside spectrum and fade complete). EQ curve stays visible.
+        const float nOp = nodesOpacity;
+        if (nOp <= 0.001f)
+            return;
+
+        // AI Pulse: cache pending corrections once per frame (cheap vector copy)
+        // so each node can check if it has a suggestion.
+        const auto aiCorrections = processor.isProcessorReady()
+            ? processor.getAIEngine().getPendingCorrections()
+            : decltype(processor.getAIEngine().getPendingCorrections()){};
+        // Breathing modulator: 0.0 → 1.0 sine wave (4-second cycle)
+        const float breathMod = 0.5f + 0.5f * std::sin(aiBreathingPhase);
+
         auto drawOne = [&](int i)
         {
             auto state = processor.getBandState(i);
+
+            // Skip disabled bands entirely — they have no visual presence
+            // until the user creates them (FabFilter/Sonible: clean canvas)
+            if (!state.enabled)
+                return;
+
             float x = freqToX(state.frequency);
             float y = gainToY(state.gain);
 
@@ -1997,108 +2332,109 @@ private:
             const bool isHovered = (i == hoveredBandIndex);
             const bool isDragging = (isDraggingBand && i == draggedBandIndex);
 
-            // === Wave 4A: Ethereal Pro-Q 3 style band node — bigger & bolder ===
-            // Inactive: 24 px ring only. Active: 28 px with amber glow + 12% fill + 2.5 px border.
-            // Mockup shows very generous, bold circles (~24–28 px diameter), not
-            // the tight 18/20 px we had in Wave 3.
-            float baseRadius = state.enabled ? 13.0f : 12.0f;
+            // AI Pulse: check if this band has a pending AI correction
+            // (frequency within ±1 semitone ≈ ratio < 0.06 in log2 domain)
+            bool hasAICorrection = false;
+            for (const auto& corr : aiCorrections)
+            {
+                float logRatio = std::abs(std::log2(state.frequency / juce::jmax(20.0f, corr.frequency)));
+                if (logRatio < 0.06f)
+                {
+                    hasAICorrection = true;
+                    break;
+                }
+            }
+
+            // Node radius: base 13, expanded when interacting
+            float baseRadius = 13.0f;
             float radius = baseRadius;
-            if (isDragging) radius = 14.0f + 4.0f;              // dragging feedback: 14 base + 4 grab bump
+            if (isDragging) radius = 18.0f;
             else if (isSelected) radius = baseRadius + 2.0f;
             else if (isHovered) radius = baseRadius + 2.0f;
 
-            // Vertical guide line from 0dB to node (subtle)
-            if (state.enabled && std::abs(state.gain) > 0.3f)
+            // Vertical guide line from 0dB to node (subtle, fades with nodes)
+            if (std::abs(state.gain) > 0.3f)
             {
                 float zeroY = gainToY(0.0f);
-                g.setColour(col.withAlpha(0.15f));
+                g.setColour(col.withAlpha(0.15f * nOp));
                 g.drawLine(x, zeroY, x, y, 1.0f);
             }
 
-            // === AMBER GLOW (selected/hovered/dragging) — signature AI colour ===
-            // Drawn BEFORE the node fill so the node paints on top (correct z-order).
-            // Skip non-dragged glow during drag for perf.
+            // === GLOW: amber when interacting, breathing pulse when AI suggests ===
             if (isDragging)
             {
-                g.setColour(ModernLookAndFeel::Colors::amber.withAlpha(0.10f));
+                g.setColour(ModernLookAndFeel::Colors::amber.withAlpha(0.10f * nOp));
                 g.fillEllipse(x - radius - 10, y - radius - 10, (radius + 10) * 2, (radius + 10) * 2);
-                g.setColour(ModernLookAndFeel::Colors::amber.withAlpha(0.18f));
+                g.setColour(ModernLookAndFeel::Colors::amber.withAlpha(0.18f * nOp));
                 g.fillEllipse(x - radius - 5, y - radius - 5, (radius + 5) * 2, (radius + 5) * 2);
             }
             else if (!isDraggingBand && (isSelected || isHovered))
             {
-                g.setColour(ModernLookAndFeel::Colors::amber.withAlpha(0.12f));
+                g.setColour(ModernLookAndFeel::Colors::amber.withAlpha(0.12f * nOp));
                 g.fillEllipse(x - radius - 6, y - radius - 6, (radius + 6) * 2, (radius + 6) * 2);
+            }
+            else if (hasAICorrection && !isDraggingBand)
+            {
+                // AI Pulse: subtle breathing glow on nodes with pending corrections
+                // Modulates between 0.06 and 0.14 alpha over 4-second cycle
+                float pulseAlpha = 0.06f + 0.08f * breathMod;
+                g.setColour(ModernLookAndFeel::Colors::amber.withAlpha(pulseAlpha * nOp));
+                g.fillEllipse(x - radius - 8, y - radius - 8, (radius + 8) * 2, (radius + 8) * 2);
             }
 
             // Solo badge — skip during drag (font creation is expensive)
             if (state.solo && !isDraggingBand)
             {
                 juce::Rectangle<float> badge(x + radius, y - radius - 4, 16.0f, 12.0f);
-                g.setColour(ModernLookAndFeel::Colors::accentYellow.withAlpha(0.9f));
+                g.setColour(ModernLookAndFeel::Colors::accentYellow.withAlpha(0.9f * nOp));
                 g.fillRoundedRectangle(badge, 3.0f);
-                g.setColour(ModernLookAndFeel::Colors::bgDark);
+                g.setColour(ModernLookAndFeel::Colors::bgDark.withAlpha(nOp));
                 g.setFont(soloBadgeFont);
                 g.drawText("S", badge, juce::Justification::centred);
             }
 
-            if (state.enabled)
-            {
-                juce::Rectangle<float> nodeBounds (x - radius, y - radius, radius * 2, radius * 2);
+            // === Node disc — solid glass, fades with nodesOpacity ===
+            juce::Rectangle<float> nodeBounds (x - radius, y - radius, radius * 2, radius * 2);
 
-                // === Z-ORDER: outer halo → amber glow → fill → border ===
-                // Wave 4A: slightly wider ambient halo (6 px) to match the
-                // bigger node radius — keeps the rim light visible at 28 px.
-                g.setColour(ModernLookAndFeel::Colors::amber.withAlpha(0.28f));
-                g.fillEllipse(nodeBounds.expanded(6.0f));
+            // Outer halos (amber rim light) — slightly brighter when AI pulsing
+            float haloBase = hasAICorrection ? (0.28f + 0.10f * breathMod) : 0.28f;
+            g.setColour(ModernLookAndFeel::Colors::amber.withAlpha(haloBase * nOp));
+            g.fillEllipse(nodeBounds.expanded(6.0f));
+            g.setColour(ModernLookAndFeel::Colors::amber.withAlpha(0.14f * nOp));
+            g.fillEllipse(nodeBounds.expanded(11.0f));
 
-                g.setColour(ModernLookAndFeel::Colors::amber.withAlpha(0.14f));
-                g.fillEllipse(nodeBounds.expanded(11.0f));
+            // Solid glass fill
+            g.setColour(col.withAlpha(0.55f * nOp));
+            g.fillEllipse(nodeBounds);
 
-                // Wave 4B Fix 2 (Tribunale): band nodes are now solid glass
-                // discs, not hollow rings. Previously the inner fill was at
-                // 0.14 alpha which read as "empty ring" on top of the dark
-                // background. Bumped to 0.55 for a clearly visible coloured
-                // disc interior that matches the "disco di vetro solido"
-                // directive. A second inner highlight layer at 0.25 alpha
-                // expanded by -3 px creates a subtle specular that sells
-                // the "glass" metaphor without looking flat.
-                g.setColour(col.withAlpha(0.55f));
-                g.fillEllipse(nodeBounds);
+            // Inner highlight — specular depth
+            g.setColour(col.brighter(0.25f).withAlpha(0.25f * nOp));
+            g.fillEllipse(nodeBounds.reduced(3.0f));
 
-                // Inner highlight — slightly lighter centre to suggest depth
-                g.setColour(col.brighter(0.25f).withAlpha(0.25f));
-                g.fillEllipse(nodeBounds.reduced(3.0f));
-
-                // Luminous coloured border ring — conveys band identity.
-                // Wave 4A: 2.5 px idle / 3.0 px dragging for stronger presence.
-                g.setColour(col.withAlpha(isDragging ? 1.0f : (isSelected ? 0.95f : 0.85f)));
-                g.drawEllipse(nodeBounds, isDragging ? 3.0f : 2.5f);
-
-                // Liquid Intelligence: Roman numerals removed — band identity conveyed via coloured ring only (BandTabBar dropped in Wave 5)
-            }
-            else
-            {
-                // Wave 4A: inactive nodes are 24 px rings, 2 px stroke, no fill, no glow.
-                juce::Rectangle<float> nodeBounds (x - baseRadius, y - baseRadius, baseRadius * 2, baseRadius * 2);
-                g.setColour(col.withAlpha(0.85f));
-                g.drawEllipse(nodeBounds, 2.0f);
-            }
+            // Luminous border ring
+            float ringAlpha = isDragging ? 1.0f : (isSelected ? 0.95f : 0.85f);
+            g.setColour(col.withAlpha(ringAlpha * nOp));
+            g.drawEllipse(nodeBounds, isDragging ? 3.0f : 2.5f);
         };
 
+        // Z-order: non-selected first, selected last (on top)
         for (int i = 0; i < limit; ++i)
         {
-            if (i == selectedBandIndex)
-                continue;
+            if (i == selectedBandIndex) continue;
             drawOne(i);
         }
         if (selectedBandIndex >= 0 && selectedBandIndex < limit)
             drawOne(selectedBandIndex);
 
-        // Tooltip for selected band — FabFilter-style floating info panel (skip during drag for perf)
-        if (!isDraggingBand && selectedBandIndex >= 0 && selectedBandIndex < AIEqualizerAudioProcessor::maxBands)
+        // Tooltip for selected band — FabFilter-style floating info panel
+        // Visible only when nodes are visible AND not dragging
+        if (!isDraggingBand && nOp > 0.3f
+            && selectedBandIndex >= 0 && selectedBandIndex < maxBands)
         {
             auto state = processor.getBandState(selectedBandIndex);
+            if (!state.enabled)
+                return;  // no tooltip for disabled bands
+
             float x = freqToX(state.frequency);
             float y = gainToY(state.gain);
 
@@ -2106,7 +2442,6 @@ private:
                 ? juce::String(state.frequency / 1000.0f, 2) + " kHz"
                 : juce::String(static_cast<int>(state.frequency)) + " Hz";
 
-            // Filter type name
             const char* typeNames[] = { "Low Cut", "Low Shelf", "Peak", "High Shelf", "High Cut", "Notch", "Band Pass" };
             juce::String typeName = (state.type >= 0 && state.type < 7)
                 ? typeNames[state.type] : "Peak";
@@ -2116,46 +2451,46 @@ private:
             int ty = static_cast<int>(y) - th - 14;
             if (ty < graphBounds.getY() + 5) ty = static_cast<int>(y) + 20;
 
+            const float tipAlpha = juce::jmin(1.0f, nOp * 1.2f); // tooltip slightly faster fade
+
             // Drop shadow
-            g.setColour(juce::Colours::black.withAlpha(0.4f));
+            g.setColour(juce::Colours::black.withAlpha(0.4f * tipAlpha));
             g.fillRoundedRectangle(static_cast<float>(tx + 2), static_cast<float>(ty + 2),
                                    static_cast<float>(tw), static_cast<float>(th), 6.0f);
 
             // Background
-            g.setColour(ModernLookAndFeel::Colors::bgDark.withAlpha(0.94f));
+            g.setColour(ModernLookAndFeel::Colors::bgDark.withAlpha(0.94f * tipAlpha));
             g.fillRoundedRectangle(static_cast<float>(tx), static_cast<float>(ty),
                                    static_cast<float>(tw), static_cast<float>(th), 6.0f);
 
-            // Band color accent bar on left
+            // Band color accent bar
             auto bandCol = bandColors[static_cast<size_t>(selectedBandIndex)];
-            g.setColour(bandCol);
+            g.setColour(bandCol.withAlpha(tipAlpha));
             g.fillRoundedRectangle(static_cast<float>(tx), static_cast<float>(ty),
                                    3.0f, static_cast<float>(th), 6.0f);
 
             // Border
-            g.setColour(bandCol.withAlpha(0.4f));
+            g.setColour(bandCol.withAlpha(0.4f * tipAlpha));
             g.drawRoundedRectangle(static_cast<float>(tx), static_cast<float>(ty),
                                    static_cast<float>(tw), static_cast<float>(th), 6.0f, 1.0f);
 
             // Line 1: Band number + type
-            g.setColour(bandCol);
-            auto boldFont = juce::Font(juce::FontOptions().withHeight(11.0f));
-            boldFont.setBold(true);
-            g.setFont(boldFont);
+            g.setColour(bandCol.withAlpha(tipAlpha));
+            g.setFont(bandTooltipBold);
             g.drawText("Band " + juce::String(selectedBandIndex + 1) + "  " + typeName,
                        tx + 8, ty + 4, tw - 14, 14, juce::Justification::centredLeft);
 
-            // Line 2: Freq | Gain | Q — values prominent
-            g.setColour(juce::Colours::white.withAlpha(0.95f));
-            g.setFont(juce::Font(juce::FontOptions().withHeight(13.0f)));
+            // Line 2: Freq | Gain
+            g.setColour(juce::Colours::white.withAlpha(0.95f * tipAlpha));
+            g.setFont(bandTooltipVal);
             g.drawText(freqStr, tx + 8, ty + 20, 60, 14, juce::Justification::centredLeft);
 
             juce::String gainStr = (state.gain >= 0 ? "+" : "") + juce::String(state.gain, 1) + " dB";
             g.drawText(gainStr, tx + 60, ty + 20, 50, 14, juce::Justification::centred);
 
             // Line 3: Q value
-            g.setColour(juce::Colours::white.withAlpha(0.6f));
-            g.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
+            g.setColour(juce::Colours::white.withAlpha(0.6f * tipAlpha));
+            g.setFont(bandTooltipQ);
             g.drawText("Q: " + juce::String(state.q, 2), tx + 8, ty + 36, 60, 12, juce::Justification::centredLeft);
         }
     }
@@ -2337,9 +2672,13 @@ public:
         for (int i = 0; i < std::min(active, maxBands); ++i)
         {
             auto state = processor.getBandState(i);
+            // FabFilter-style: disabled bands are invisible → not hittable
+            if (!state.enabled)
+                continue;
+
             float bx = freqToX(state.frequency);
             float by = gainToY(state.gain);
-            
+
             float dist = std::sqrt((pos.x - bx) * (pos.x - bx) + (pos.y - by) * (pos.y - by));
 
             if (dist < bestDist)
@@ -2348,7 +2687,7 @@ public:
                 bestIndex = i;
             }
         }
-        
+
         return bestIndex; // -1 if nothing within radius
     }
 
@@ -2621,8 +2960,16 @@ private:
                 { needsRebuild = true; break; }
             }
         }
+        // Throttle dynamic EQ rebuild to ~30 Hz max (same as EQ curve during drag)
         if (needsRebuild)
-            rebuildDynamicEQCurvePath();
+        {
+            const double now = juce::Time::getMillisecondCounterHiRes();
+            if (now - lastDynCurveRebuildMs > 33.0 || cachedDynamicEQCurve.isEmpty())
+            {
+                rebuildDynamicEQCurvePath();
+                lastDynCurveRebuildMs = now;
+            }
+        }
 
         const size_t n = dynCurveXPoints.size();
         if (n < 2) return;
@@ -2753,6 +3100,10 @@ private:
     bool isFrozen = false;
     bool hasCaptured = false;
 
+    // GL spectrum active — when true, pre/post spectrum is rendered by GL shader;
+    // software path skips pre/post path builds to avoid double rendering (~6ms saved).
+    bool glSpectrumActive = false;
+
     // Spectrum smoothing
     SpectrumSpeed spectrumSpeed = SpectrumSpeed::Medium;
     float displayReleaseCoeff = 0.70f; // Default: Medium (premium smooth)
@@ -2776,6 +3127,28 @@ private:
     std::array<juce::Colour, AIEqualizerAudioProcessor::maxBands> bandColors;
     std::vector<SpectrumPeak> detectedPeaks;
     int hoveredPeakIndex = -1;
+
+    // FabFilter-style node visibility: nodes hidden when mouse is outside spectrum.
+    // Smooth opacity transition (0→1 fade-in, 1→0 fade-out) driven by timerCallback.
+    float nodesOpacity = 0.0f;         // current opacity [0..1]
+    float nodesTargetOpacity = 0.0f;   // target: 1 when mouse in, 0 when out
+    bool  mouseInsideSpectrum = false;  // raw tracking flag
+
+    // AI breathing phase (0..2π) — drives subtle glow pulsation on nodes
+    // that have pending AI corrections. Fed from editor's breathingPhase.
+    float aiBreathingPhase = 0.0f;
+
+    // Guard: keep nodes visible while a per-band context menu is open.
+    // Without this, mouseExit fires when the popup appears, fading out
+    // the nodes while the user is still looking at the menu.
+    bool bandContextMenuOpen = false;
+
+    // ── Tilt drag widget (bottom-left of spectrum) ──────────────────────
+    // Click + drag up/down to continuously adjust spectrum tilt (dB/oct).
+    juce::Rectangle<float> tiltWidgetBounds;   // set in paint()
+    bool isDraggingTilt = false;
+    float tiltDragStartY = 0.0f;
+    float tiltDragStartValue = 0.0f;
 
     // ── Phase 7C: AI contextual tooltip state ───────────────────────────────
     struct AITooltipState
@@ -2843,12 +3216,21 @@ private:
     std::array<float, AIEqualizerAudioProcessor::maxBands> dynGRAtLastRebuild {};
     // Whether any band has dynamic mode active
     bool anyDynamicBandActive = false;
+    double lastDynCurveRebuildMs = 0.0;  // throttle DynEQ curve rebuilds to ~30 Hz
     // ────────────────────────────────────────────────────────────────────────
 
 
-    // Pre-cached fonts for band drawing — avoid Font construction per band per frame
-    juce::Font bandNumberFont { juce::FontOptions().withHeight(10.0f).withStyle("Bold") };
-    juce::Font soloBadgeFont  { juce::FontOptions().withHeight(8.0f).withStyle("Bold") };
+    // Pre-cached fonts — avoid Font construction in paint() (0.3-0.5ms per frame saved)
+    juce::Font bandNumberFont  { juce::FontOptions().withHeight(10.0f).withStyle("Bold") };
+    juce::Font soloBadgeFont   { juce::FontOptions().withHeight(8.0f).withStyle("Bold") };
+    juce::Font aiMarkerFont    { juce::FontOptions().withHeight(10.0f).withStyle("Bold") };
+    juce::Font tooltipTitleFont{ juce::FontOptions().withHeight(12.0f).withStyle("Bold") };
+    juce::Font tooltipDescFont { juce::FontOptions().withHeight(11.0f) };
+    juce::Font tooltipSuggFont { juce::FontOptions().withHeight(11.0f).withStyle("Italic") };
+    juce::Font tooltipFixFont  { juce::FontOptions().withHeight(10.0f).withStyle("Bold") };
+    juce::Font bandTooltipBold { juce::FontOptions().withHeight(11.0f).withStyle("Bold") };
+    juce::Font bandTooltipVal  { juce::FontOptions().withHeight(13.0f) };
+    juce::Font bandTooltipQ    { juce::FontOptions().withHeight(10.0f) };
 
 #if AIEQ_GUI_DEBUG
     int debugPaintCount = 0;

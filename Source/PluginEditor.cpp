@@ -21,6 +21,30 @@ AIEqualizerAudioProcessorEditor::AIEqualizerAudioProcessorEditor(AIEqualizerAudi
     openGLContext.setPixelFormat(fmt);
     openGLContext.attachTo(*this);
 
+    // Premium matericità: 256×256 tiled ANISOTROPIC noise texture (generated once).
+    // Simulates brushed aluminium with horizontal grain direction.
+    // Each row gets a coherent base luminance; individual pixels deviate ±20
+    // from that base. This creates subtle horizontal striations instead of
+    // uniform sandblast noise. Alpha 6/255 ≈ 2.3% opacity.
+    {
+        const int noiseSz = 256;
+        noiseTexture = juce::Image(juce::Image::ARGB, noiseSz, noiseSz, true);
+        juce::Image::BitmapData bmp(noiseTexture, juce::Image::BitmapData::writeOnly);
+        juce::Random rng(42); // deterministic seed for reproducible look
+        for (int y = 0; y < noiseSz; ++y)
+        {
+            // Per-row base grey → horizontal coherence (brushed grain)
+            const int baseGrey = rng.nextInt(256);
+            for (int x = 0; x < noiseSz; ++x)
+            {
+                // ±20 per-pixel deviation from row base for micro-variation
+                const int deviation = rng.nextInt(41) - 20;
+                const uint8_t grey = static_cast<uint8_t>(juce::jlimit(0, 255, baseGrey + deviation));
+                bmp.setPixelColour(x, y, juce::Colour(grey, grey, grey, static_cast<uint8_t>(6)));
+            }
+        }
+    }
+
     // Metrological 5-layer spectrum pipeline
     glSpectrumHelper = std::make_unique<GLSpectrumHelper>();
     spectrumPipeline = std::make_unique<NewSpectrumPipeline>(
@@ -35,6 +59,9 @@ AIEqualizerAudioProcessorEditor::AIEqualizerAudioProcessorEditor(AIEqualizerAudi
     createBands();
     
     spectrum = std::make_unique<AdvancedSpectrumDisplay>(processor);
+    // GL renders under software paint() which draws an opaque background on top,
+    // so GL spectrum is never visible. Keep software path active for now.
+    // spectrum->setGLSpectrumActive(true);
     addAndMakeVisible(*spectrum);
 
     // Wave 5 verdict: BandTabBar removed — band identity via coloured node
@@ -99,6 +126,8 @@ AIEqualizerAudioProcessorEditor::AIEqualizerAudioProcessorEditor(AIEqualizerAudi
     };
     
     // Tab buttons for switching between AI Detect and Semantic panels
+    // [Gemma Phase 3, Point 2]: "inset" property → CNC-milled recessed look
+    aiTabBtn.getProperties().set("inset", true);
     aiTabBtn.setColour(juce::TextButton::buttonColourId,
         juce::Colour(0xFF232028).interpolatedWith(ModernLookAndFeel::Colors::amber, 0.08f));
     aiTabBtn.setColour(juce::TextButton::textColourOffId, ModernLookAndFeel::Colors::amber);
@@ -106,13 +135,14 @@ AIEqualizerAudioProcessorEditor::AIEqualizerAudioProcessorEditor(AIEqualizerAudi
     aiTabBtn.onClick = [this]() { switchRightTab(0); };
     addAndMakeVisible(aiTabBtn);
 
+    semanticTabBtn.getProperties().set("inset", true);
     semanticTabBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xFF222228));
     semanticTabBtn.setColour(juce::TextButton::textColourOffId, juce::Colour(0xFF56544E));
     semanticTabBtn.setTooltip("Semantic Control - Shape sound with words like 'Air', 'Warmth', 'Punch'");
     semanticTabBtn.onClick = [this]() { switchRightTab(1); };
     addAndMakeVisible(semanticTabBtn);
 
-    optionsBtn.setButtonText("\xe2\x9a\x99");  // ⚙ gear
+    optionsBtn.setButtonText("...");  // Inter font lacks U+2699 gear glyph — ASCII fallback
     optionsBtn.setTooltip("Global options and analyzer settings");
     optionsBtn.onClick = [this]() { showOptionsMenu(); };
     addAndMakeVisible(optionsBtn);
@@ -227,24 +257,11 @@ void AIEqualizerAudioProcessorEditor::openGLContextClosing()
 
 void AIEqualizerAudioProcessorEditor::renderOpenGL()
 {
-    if (!glSpectrumHelper)
-        return;
-
-    const float scale = static_cast<float>(openGLContext.getRenderingScale());
-    const int compW = getWidth();
-    const int compH = getHeight();
-
-    if (compW <= 0 || compH <= 0 || !spectrum)
-        return;
-
-    // Graph bounds in component-local coords → physical pixels (GL Y-up)
-    const auto gb = spectrum->getGraphBoundsF();
-    const int vpX = static_cast<int>(gb.getX()      * scale);
-    const int vpH = static_cast<int>(gb.getHeight() * scale);
-    const int vpW = static_cast<int>(gb.getWidth()  * scale);
-    const int vpY = static_cast<int>((static_cast<float>(compH) - gb.getBottom()) * scale);
-
-    glSpectrumHelper->renderShader(openGLContext, vpX, vpY, vpW, vpH, compW, compH);
+    // GL spectrum disabled: paint() draws an opaque background that covers
+    // anything GL renders underneath. Software path handles the spectrum.
+    // The OpenGL context is still attached for GPU-accelerated component
+    // compositing (setComponentPaintingEnabled=true), just no custom GL drawing.
+    (void) glSpectrumHelper;
 }
 
 //==============================================================================
@@ -1015,6 +1032,21 @@ void AIEqualizerAudioProcessorEditor::paint(juce::Graphics& g)
     g.setGradientFill(bgGrad);
     g.fillAll();
 
+    // Premium matericità: tiled noise overlay breaks gradient banding and
+    // simulates brushed aluminium / polycarbonate surface texture.
+    // CRITICAL: apply ONLY to header + bottom panel + footer — NOT the spectrum
+    // area. The spectrum child is non-opaque, so any parent repaint in its
+    // region forces a full re-tile at 60fps. Restrict noise to static zones.
+    if (noiseTexture.isValid())
+    {
+        g.setTiledImageFill(noiseTexture, 0, 0, 1.0f);
+        // Header only
+        g.fillRect(0.0f, 0.0f, w, static_cast<float>(headerH));
+        // Bottom panel + footer (below spectrum)
+        float panelY = static_cast<float>(getHeight() - footerH - controlH);
+        g.fillRect(0.0f, panelY, w, static_cast<float>(controlH + footerH));
+    }
+
     // === HEADER BAR (gradient + subtle inner shadow + dividers) ===
     {
         auto headerRect = juce::Rectangle<float>(0.0f, 0.0f, w, static_cast<float>(headerH));
@@ -1047,47 +1079,89 @@ void AIEqualizerAudioProcessorEditor::paint(juce::Graphics& g)
         float d2x = static_cast<float>(nextBtn.getRight()) + 4.0f;
         g.fillRect(d2x, divY, 1.0f, divH);
 
-        // Divider 3: between PRE/POST/DELTA and phase combo
-        float d3x = static_cast<float>(phaseModeCombo.getRight()) + 4.0f;
+        // Divider 3: between comparison group (PRE/POST/DELTA/BYPASS) and processing mode (ZL/Phase/OS)
+        float d3x = static_cast<float>(qualityBtn.getX()) - 6.0f;
         g.fillRect(d3x, divY, 1.0f, divH);
 
-        // Divider 4: between phase combo and AI dot
-        float d4x = static_cast<float>(aiPanelToggle.getX()) - 4.0f;
+        // Divider 4: between processing mode group and AI/Options
+        float d4x = static_cast<float>(optionsBtn.getX()) - 6.0f;
         g.fillRect(d4x, divY, 1.0f, divH);
     }
 
-    // === FOOTER BAR ===
+    // === FOOTER BAR — same anodized aluminium chassis material ===
     {
         float ftY = static_cast<float>(getHeight() - footerH);
-        g.setColour(ModernLookAndFeel::Colors::bgPanel.darker(0.08f));
-        g.fillRect(0.0f, ftY, w, static_cast<float>(footerH));
+
+        // Anodized aluminium gradient (matches bottom panel)
+        {
+            juce::ColourGradient footerGrad(
+                juce::Colour(0xFF181A24), 0.0f, ftY,
+                juce::Colour(0xFF101218), 0.0f, ftY + static_cast<float>(footerH),
+                false);
+            g.setGradientFill(footerGrad);
+            g.fillRect(0.0f, ftY, w, static_cast<float>(footerH));
+        }
+
+        // (Noise already applied in the unified block above)
+
+        // Three-line top edge — rim light at 5%
         g.setColour(juce::Colour(0xFF0A0A10));
-        g.fillRect(0.0f, ftY - 1.0f, w, 1.0f);
+        g.fillRect(0.0f, ftY - 1.0f, w, 2.0f);
+        g.setColour(ModernLookAndFeel::Colors::amber.withAlpha(0.22f));
+        g.fillRect(0.0f, ftY + 1.0f, w, 1.0f);
+        g.setColour(juce::Colours::white.withAlpha(0.05f));  // rim light enhanced
+        g.fillRect(0.0f, ftY + 2.0f, w, 1.0f);
+
+        // Bottom bevel (thickness illusion)
+        g.setColour(juce::Colours::black.withAlpha(0.20f));
+        g.drawHorizontalLine(getHeight() - 1, 0.0f, w);
     }
 
-    // === BOTTOM PANEL (gradient + top edge + vertical divider) ===
+    // === BOTTOM PANEL — "Anodized Aluminium Chassis" (Gemma Phase 3) ===
     {
         float cpY = static_cast<float>(getHeight() - footerH - controlH);
         auto bottomRect = juce::Rectangle<float>(0.0f, cpY, w, static_cast<float>(controlH));
 
-        // Wave 4D Fix 5 (Marco from video): bottom bar material refresh.
-        // Previous ColourGradient (bgPanel.brighter(0.03) → bgPanel.darker(0.05))
-        // read as a flat grey wash — no sense of material. New layout:
-        //   1. Solid deep-navy base (#14161E from the Liquid Intelligence mockup)
-        //   2. Three-line top edge stack — dark hairline, amber 22 %, white 3 %
-        //      — to give a sense of bevelled glass
-        //   3. Vertical divider now a 1 px dark line + 1 px amber 8 % hairline
-        //      (the old 18/10 % amber is lowered for subtlety)
-        g.setColour(juce::Colour(0xFF14161E));
-        g.fillRect(bottomRect);
+        // [Point 3] AMBIENT OCCLUSION — soft shadow cast UPWARD from chassis
+        // into spectrum zone. Separates the bar from the analyzer background.
+        // Drawn BEFORE the chassis fill so it appears above the bar edge.
+        {
+            const float aoHeight = 6.0f;
+            juce::ColourGradient aoGrad(
+                juce::Colours::black.withAlpha(0.12f), 0.0f, cpY,        // bar edge: darkest
+                juce::Colours::transparentBlack,       0.0f, cpY - aoHeight, // fades upward
+                false);
+            g.setGradientFill(aoGrad);
+            g.fillRect(0.0f, cpY - aoHeight, w, aoHeight);
+        }
+
+        // [Point 1] ANODIZED ALUMINIUM GRADIENT — subtle top-to-bottom
+        // lighter anthracite → darker anthracite (not flat solid)
+        {
+            juce::ColourGradient chassisGrad(
+                juce::Colour(0xFF181A24), 0.0f, cpY,                        // top: slightly lighter
+                juce::Colour(0xFF101218), 0.0f, cpY + static_cast<float>(controlH), // bottom: darker
+                false);
+            g.setGradientFill(chassisGrad);
+            g.fillRect(bottomRect);
+        }
+
+        // (Noise texture already applied in the unified block above)
 
         // Top edge — three-line stack for material depth
-        g.setColour(juce::Colour(0xFF0A0A10));
+        // [Point 4] RIM LIGHT — 1px high-contrast white at 5% (was 3%)
+        g.setColour(juce::Colour(0xFF0A0A10));             // dark hairline
         g.fillRect(0.0f, cpY - 1.0f, w, 2.0f);
-        g.setColour(ModernLookAndFeel::Colors::amber.withAlpha(0.22f));
+        g.setColour(ModernLookAndFeel::Colors::amber.withAlpha(0.22f));  // amber accent
         g.fillRect(0.0f, cpY + 1.0f, w, 1.0f);
-        g.setColour(juce::Colours::white.withAlpha(0.03f));
+        g.setColour(juce::Colours::white.withAlpha(0.05f));  // rim light (enhanced 3%→5%)
         g.fillRect(0.0f, cpY + 2.0f, w, 1.0f);
+
+        // [Point 5] BOTTOM BEVEL — inner shadow at bar's bottom edge
+        // Gives the chassis physical thickness / Z-axis depth
+        g.setColour(juce::Colours::black.withAlpha(0.20f));
+        g.drawHorizontalLine(static_cast<int>(cpY + static_cast<float>(controlH) - 1),
+                             0.0f, w);
 
         // Vertical divider between band controls (380px) and context panel
         float divX = static_cast<float>(juce::jmin(380, getWidth() / 2));
@@ -1095,6 +1169,51 @@ void AIEqualizerAudioProcessorEditor::paint(juce::Graphics& g)
         g.fillRect(divX, cpY + 6.0f, 1.0f, static_cast<float>(controlH - 12));
         g.setColour(ModernLookAndFeel::Colors::amber.withAlpha(0.08f));
         g.fillRect(divX + 1.0f, cpY + 6.0f, 1.0f, static_cast<float>(controlH - 12));
+
+        // [Point 6] AI PANEL "RECESSED GLASS DISPLAY" — inner glow on right panel
+        // Simulates an OLED screen embedded in metal (matte chassis vs glossy display)
+        {
+            float rpX = divX + 2.0f;
+            float rpW = w - rpX;
+            float rpY = cpY + 4.0f;
+            float rpH = static_cast<float>(controlH) - 8.0f;
+            auto rpRect = juce::Rectangle<float>(rpX, rpY, rpW, rpH);
+
+            // Inner glow: top edge (accentBlue at low opacity)
+            {
+                juce::ColourGradient glowTop(
+                    ModernLookAndFeel::Colors::accentBlue.withAlpha(0.07f), rpX, rpY,
+                    juce::Colours::transparentBlack, rpX, rpY + 4.0f,
+                    false);
+                g.setGradientFill(glowTop);
+                g.fillRect(rpRect.withHeight(4.0f));
+            }
+            // Inner glow: bottom edge
+            {
+                juce::ColourGradient glowBot(
+                    ModernLookAndFeel::Colors::accentBlue.withAlpha(0.05f), rpX, rpY + rpH,
+                    juce::Colours::transparentBlack, rpX, rpY + rpH - 4.0f,
+                    false);
+                g.setGradientFill(glowBot);
+                g.fillRect(rpRect.removeFromBottom(4.0f));
+            }
+            // Inner glow: left edge
+            {
+                juce::ColourGradient glowLeft(
+                    ModernLookAndFeel::Colors::accentBlue.withAlpha(0.06f), rpX, rpY,
+                    juce::Colours::transparentBlack, rpX + 4.0f, rpY,
+                    false);
+                g.setGradientFill(glowLeft);
+                g.fillRect(rpX, rpY, 4.0f, rpH);
+            }
+            // Inset border: dark top/left, light bottom/right
+            g.setColour(juce::Colours::black.withAlpha(0.25f));
+            g.drawHorizontalLine(static_cast<int>(rpY), rpX, rpX + rpW);
+            g.drawVerticalLine(static_cast<int>(rpX), rpY, rpY + rpH);
+            g.setColour(juce::Colours::white.withAlpha(0.03f));
+            g.drawHorizontalLine(static_cast<int>(rpY + rpH), rpX, rpX + rpW);
+            g.drawVerticalLine(static_cast<int>(rpX + rpW - 1.0f), rpY, rpY + rpH);
+        }
     }
 }
 
@@ -1132,19 +1251,30 @@ void AIEqualizerAudioProcessorEditor::resized()
     btnC.setVisible(false);
     btnD.setVisible(false);
 
-    // Right group (from right edge): AI dot → gear → phase → PRE/POST/DELTA
+    // Right group — three logical clusters separated by divider gaps:
+    //   [AI] [...]  |  [OS] [Phase] [ZL]  |  [BYPASS] [DELTA] [POST] [PRE]
+
+    // --- Cluster 3: AI + Options (far right) ---
     aiPanelToggle.setBounds(header.removeFromRight(32).reduced(0, 8));
     header.removeFromRight(8);
     optionsBtn.setVisible(true);
     optionsBtn.setBounds(header.removeFromRight(32).reduced(0, 8));
-    header.removeFromRight(8);
+    header.removeFromRight(12);  // divider gap
 
-    // Phase mode (mockup: "LINEAR PHASE" capsule) — widened to 110 for breathing
+    // --- Cluster 2: Processing Mode (OS, Phase, ZL/HQ) ---
+    oversamplingBtn.setVisible(true);
+    oversamplingBtn.setBounds(header.removeFromRight(38).reduced(0, 8));
+    header.removeFromRight(4);
     phaseModeCombo.setBounds(header.removeFromRight(110).reduced(0, 8));
-    header.removeFromRight(14);  // divider gap before PRE/POST/DELTA group
+    header.removeFromRight(4);
+    qualityBtn.setVisible(true);
+    qualityBtn.setBounds(header.removeFromRight(28).reduced(0, 8));
+    header.removeFromRight(12);  // divider gap
 
-    // Wave 4A: PRE | POST | DELTA — each pill gets its own 6 px gap so the
-    // three toggles actually "breathe" instead of touching each other.
+    // --- Cluster 1: Comparison (BYPASS, DELTA, POST, PRE) ---
+    bypassBtn.setVisible(true);
+    bypassBtn.setBounds(header.removeFromRight(56).reduced(1, 8));
+    header.removeFromRight(6);
     btnDelta.setVisible(true);
     btnPost.setVisible(true);
     btnDelta.setBounds(header.removeFromRight(50).reduced(1, 8));
@@ -1152,9 +1282,6 @@ void AIEqualizerAudioProcessorEditor::resized()
     btnPost .setBounds(header.removeFromRight(44).reduced(1, 8));
     header.removeFromRight(6);
     btnPre  .setBounds(header.removeFromRight(40).reduced(1, 8));
-
-    // BYPASS moved to footer — hide from header
-    bypassBtn.setVisible(false);
 
     // Hide non-essential items (accessible via Options menu)
     savePresetBtn.setVisible(false);
@@ -1164,34 +1291,36 @@ void AIEqualizerAudioProcessorEditor::resized()
     // spectrum now starts immediately below the header, giving the curve and
     // node rings the full canvas for readability.
 
-    // === FOOTER BAR (32px — mockup: OUT meter dB | div | 2x HQ | div | BYPASS | spacer | version) ===
+    // === FOOTER BAR (52px — signal flow only: meter | OUT | MIX | AUTO | version) ===
+    // BYPASS, ZL/HQ, OS moved to header. Footer = monitoring + output controls.
     auto footer = bounds.removeFromBottom(footerH).reduced(12, 0);
     {
-        // OUT label + stereo meter (left side, ~40% width)
-        outputMeter.setBounds(footer.removeFromLeft(juce::jmax(200, footer.getWidth() * 2 / 5)).reduced(0, 6));
+        // Stereo meter (left side)
+        outputMeter.setBounds(footer.removeFromLeft(juce::jmax(160, footer.getWidth() * 3 / 10)).reduced(0, 4));
 
-        // Right side: version label
+        // Version label (far right)
         versionLabel.setVisible(true);
         versionLabel.setBounds(footer.removeFromRight(30));
 
-        // BYPASS toggle (mockup: green when active, before version)
-        bypassBtn.setVisible(true);
-        bypassBtn.setBounds(footer.removeFromRight(52).reduced(0, 5));
-        footer.removeFromRight(8);
-
-        // HQ toggle (mockup style: small footer button)
-        qualityBtn.setVisible(true);
-        qualityBtn.setBounds(footer.removeFromRight(28).reduced(0, 6));
-        footer.removeFromRight(8);
-        // Oversampling combo hidden from footer (accessible via Options menu)
+        // Hidden combo keeps APVTS attachment alive
         oversamplingCombo.setVisible(false);
     }
 
-    // Hide elements not in mockup footer
-    mixLabel.setVisible(false);
-    mixKnob.setVisible(false);
-    outLabel.setVisible(false);
-    outKnob.setVisible(false);
+    // Output Gain — LargeAmber knob, same Manus filmstrip as band knobs
+    footer.removeFromLeft(10);  // gap after meter
+    outLabel.setVisible(true);
+    outLabel.setBounds(footer.removeFromLeft(16).reduced(0, 16));
+    outKnob.setVisible(true);
+    outKnob.setBounds(footer.removeFromLeft(46).reduced(0, 2));
+
+    footer.removeFromLeft(6);  // gap
+
+    // Dry/Wet — LargeAmber knob, same material as band knobs
+    mixLabel.setVisible(true);
+    mixLabel.setBounds(footer.removeFromLeft(16).reduced(0, 16));
+    mixKnob.setVisible(true);
+    mixKnob.setBounds(footer.removeFromLeft(46).reduced(0, 2));
+
     // Auto Gain stays visible — placed in footer before BYPASS
     autoBtn.setVisible(true);
     autoBtn.setBounds(footer.removeFromRight(52).reduced(0, 5));
@@ -1335,6 +1464,8 @@ void AIEqualizerAudioProcessorEditor::timerCallback()
         if (breathingPhase > juce::MathConstants<float>::twoPi)
             breathingPhase -= juce::MathConstants<float>::twoPi;
         aiBreathingDot.setPhase(breathingPhase);
+        if (spectrum)
+            spectrum->setAIBreathingPhase(breathingPhase);
     }
 
     // Drain RT-safe logger queue on message thread (every tick, cheap)
@@ -1363,15 +1494,9 @@ void AIEqualizerAudioProcessorEditor::timerCallback()
                 spectrumPipeline->getPrePixelDB(),
                 spectrumPipeline->getPostPixelDB());
 
-            // Push same data to GLSpectrumHelper for GPU rendering
-            if (glSpectrumHelper)
-            {
-                glSpectrumHelper->updateSpectrumData(
-                    spectrumPipeline->getPrePixelDB(),
-                    spectrumPipeline->getPostPixelDB(),
-                    spectrum->getGraphBoundsF(),
-                    -90.0f, 12.0f);
-            }
+            // GL spectrum feed disabled — renderOpenGL() is a no-op because
+            // paint() covers GL output with opaque background. Saves ~2-3ms
+            // of vector copy + SpinLock per frame on the message thread.
 
             // R[k] = M[k] ∨ D[k]: repaint when new data arrives
             spectrum->repaint();
@@ -1476,6 +1601,21 @@ void AIEqualizerAudioProcessorEditor::timerCallback()
                                  mode == 1 ? ModernLookAndFeel::Colors::textBright
                                            : ModernLookAndFeel::Colors::textPrimary);
             qualityBtn.setColour(juce::TextButton::textColourOnId, juce::Colour(0xFF181A22));
+        }
+
+        // Sync oversampling cycling button with APVTS
+        if (auto* param = processor.getAPVTS().getParameter("oversamplingFactor"))
+        {
+            int os = static_cast<int>(param->convertFrom0to1(param->getValue()) + 0.5f);
+            static const char* osLabels[] = { "OFF", "2x", "4x", "AUTO" };
+            oversamplingBtn.setButtonText(osLabels[juce::jlimit(0, 3, os)]);
+            bool active = os > 0;
+            oversamplingBtn.setColour(juce::TextButton::buttonColourId,
+                                      active ? ModernLookAndFeel::Colors::accentBlue.withAlpha(0.18f)
+                                             : ModernLookAndFeel::Colors::bgLight);
+            oversamplingBtn.setColour(juce::TextButton::textColourOffId,
+                                      active ? ModernLookAndFeel::Colors::textBright
+                                             : ModernLookAndFeel::Colors::textPrimary);
         }
 
     }

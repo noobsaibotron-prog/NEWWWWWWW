@@ -149,50 +149,55 @@ public:
 private:
     void drawChannel(juce::Graphics& g, juce::Rectangle<float> rect, float levelDB, float peakDB)
     {
+        // Save full rect BEFORE any mutation — needed for gradient, peak, and scale
+        auto fullRect = rect;
+
         // Background track
         g.setColour(ModernLookAndFeel::Colors::bgLight);
         g.fillRoundedRectangle(rect, 2.0f);
-        
+
         // Calculate fill height
         float normalized = juce::jmap(juce::jlimit(minDB, maxDB, levelDB), minDB, maxDB, 0.0f, 1.0f);
-        float fillHeight = rect.getHeight() * normalized;
-        
+        float fillHeight = fullRect.getHeight() * normalized;
+
         if (fillHeight > 1.0f)
         {
             auto fillRect = rect.removeFromBottom(fillHeight);
-            
-            // Gradient: green -> yellow -> red
+
+            // Gradient mapped to FULL meter height so colors correspond to dB positions.
+            // Previously the gradient spanned only fillRect, causing the bar to show
+            // only green (low level) or only red (high level) with no transition.
             juce::ColourGradient gradient(
-                juce::Colour(0xFF44BB44), fillRect.getBottomLeft(),  // Green at bottom
-                juce::Colour(0xFFFF4444), fillRect.getTopLeft(),     // Red at top
+                juce::Colour(0xFF44BB44), fullRect.getBottomLeft(),  // Green at -60dB
+                juce::Colour(0xFFFF4444), fullRect.getTopLeft(),     // Red at +6dB
                 false);
-            gradient.addColour(0.6, juce::Colour(0xFFEECC00));       // Yellow at 60%
-            gradient.addColour(0.85, juce::Colour(0xFFFF8800));      // Orange at 85%
-            
+            gradient.addColour(0.6, juce::Colour(0xFFEECC00));       // Yellow at ~-24dB
+            gradient.addColour(0.85, juce::Colour(0xFFFF8800));      // Orange at ~-6dB
+
             g.setGradientFill(gradient);
             g.fillRoundedRectangle(fillRect, 2.0f);
         }
-        
-        // Peak hold marker
+
+        // Peak hold marker — use fullRect (rect was mutated by removeFromBottom)
         float peakNorm = juce::jmap(juce::jlimit(minDB, maxDB, peakDB), minDB, maxDB, 0.0f, 1.0f);
         if (peakNorm > 0.01f)
         {
-            float peakY = rect.getBottom() - rect.getHeight() * peakNorm;
-            
-            juce::Colour peakCol = peakDB >= 0.0f ? juce::Colours::red 
+            float peakY = fullRect.getBottom() - fullRect.getHeight() * peakNorm;
+
+            juce::Colour peakCol = peakDB >= 0.0f ? juce::Colours::red
                                  : peakDB >= -6.0f ? juce::Colour(0xFFFF8800)
                                  : juce::Colour(0xFF44BB44);
             g.setColour(peakCol);
-            g.fillRect(rect.getX(), peakY - 1.0f, rect.getWidth(), 2.0f);
+            g.fillRect(fullRect.getX(), peakY - 1.0f, fullRect.getWidth(), 2.0f);
         }
-        
-        // Scale markers (subtle lines at key dB levels)
+
+        // Scale markers — use fullRect for correct dB positions
         g.setColour(ModernLookAndFeel::Colors::textMuted.withAlpha(0.3f));
         const float dbMarks[] = { 0.0f, -6.0f, -12.0f, -24.0f, -48.0f };
         for (float db : dbMarks)
         {
-            float y = rect.getY() + rect.getHeight() * (1.0f - juce::jmap(db, minDB, maxDB, 0.0f, 1.0f));
-            g.drawHorizontalLine(static_cast<int>(y), rect.getX() + 1, rect.getRight() - 1);
+            float y = fullRect.getY() + fullRect.getHeight() * (1.0f - juce::jmap(db, minDB, maxDB, 0.0f, 1.0f));
+            g.drawHorizontalLine(static_cast<int>(y), fullRect.getX() + 1, fullRect.getRight() - 1);
         }
     }
     

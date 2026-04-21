@@ -94,6 +94,27 @@ public:
         const int knobX = (getWidth() - knobSize) / 2;
         const int knobY = faceTop + (availH - knobSize) / 2;
 
+        // High-quality resampling: prevents aliasing/shimmer on filmstrip reflections
+        // when the knob is rendered smaller than the native frame size (256px amber,
+        // 128px blue). Bilinear→bicubic upgrade — negligible cost for a single blit.
+        g.setImageResamplingQuality(juce::Graphics::highResamplingQuality);
+
+        // Contact shadow / ambient occlusion: drawn BEFORE the filmstrip so the
+        // knob sits "above" the panel. Static cached radial gradient — no per-frame
+        // allocation. Light source is fixed above → shadow offset +2px Y.
+        {
+            auto& shadowImg = getShadowImage();
+            if (!shadowImg.isNull())
+            {
+                const int shadowPad = juce::jmax(2, knobSize / 12);
+                g.drawImage(shadowImg,
+                            knobX - shadowPad, knobY - shadowPad + 2,
+                            knobSize + shadowPad * 2, knobSize + shadowPad * 2,
+                            0, 0, shadowImg.getWidth(), shadowImg.getHeight(),
+                            false);
+            }
+        }
+
         g.drawImage(film,
                     knobX, knobY, knobSize, knobSize,          // square dest rect
                     0, frameIdx * frameH, frameW, frameH,      // source rect
@@ -110,6 +131,30 @@ public:
 private:
     juce::String label;
     Style style;
+
+    /** Cached radial shadow image — generated once, shared across all knob instances.
+     *  128×128 ARGB radial gradient: black 35% at center → transparent at edge.
+     *  Drawn behind the filmstrip to simulate ambient occlusion / contact shadow. */
+    static juce::Image& getShadowImage()
+    {
+        static juce::Image img = []() {
+            const int sz = 128;
+            juce::Image shadow(juce::Image::ARGB, sz, sz, true);
+            juce::Graphics sg(shadow);
+            const float cx = static_cast<float>(sz) * 0.5f;
+            const float cy = static_cast<float>(sz) * 0.5f;
+            const float radius = static_cast<float>(sz) * 0.46f;
+            // Radial gradient: dark center → transparent edge
+            juce::ColourGradient grad(
+                juce::Colours::black.withAlpha(0.35f), cx, cy,
+                juce::Colours::transparentBlack,       cx + radius, cy,
+                true); // radial
+            sg.setGradientFill(grad);
+            sg.fillRect(0, 0, sz, sz);
+            return shadow;
+        }();
+        return img;
+    }
 
     /** Shared filmstrip cache. ImageCache refcounts and auto-frees on plugin unload. */
     static juce::Image& getFilmstrip(Style s)

@@ -242,8 +242,9 @@ void ParametricEQProcessor::process(juce::AudioBuffer<float>& buffer)
                 for (int b = 0; b < localNumBands; ++b)
                 {
                     const bool en = bandParams[b].enabled.load(std::memory_order_relaxed);
+                    const bool ab = bandParams[b].audioBypass.load(std::memory_order_relaxed);
                     const bool sl = bandParams[b].solo.load(std::memory_order_relaxed);
-                    if (!en) continue;
+                    if (!en || ab) continue;
                     if (hasSolo && !sl) continue;
                     auto& st = bandStates[b];
                     if (!st.coefficients[0].valid) continue;
@@ -274,8 +275,9 @@ void ParametricEQProcessor::process(juce::AudioBuffer<float>& buffer)
                 for (int b = 0; b < localNumBands; ++b)
                 {
                     const bool en = bandParams[b].enabled.load(std::memory_order_relaxed);
+                    const bool ab = bandParams[b].audioBypass.load(std::memory_order_relaxed);
                     const bool sl = bandParams[b].solo.load(std::memory_order_relaxed);
-                    if (!en) continue;
+                    if (!en || ab) continue;
                     if (hasSolo && !sl) continue;
                     auto& st = bandStates[b];
                     if (!st.coefficients[0].valid) continue;
@@ -303,12 +305,13 @@ void ParametricEQProcessor::process(juce::AudioBuffer<float>& buffer)
 
         // Read band state atomically
         const bool enabled = params.enabled.load(std::memory_order_relaxed);
+        const bool bypassed_for_dyn = params.audioBypass.load(std::memory_order_relaxed);
         const bool solo = params.solo.load(std::memory_order_relaxed);
         const bool vintage = params.vintageMode.load(std::memory_order_relaxed);
         const int type = params.type.load(std::memory_order_relaxed);
 
-        // Skip if not enabled, or if other bands are solo'd and this one isn't
-        if (!enabled)
+        // Skip if not enabled or audio-bypassed (DynEQ handles this band)
+        if (!enabled || bypassed_for_dyn)
             continue;
         if (hasSolo && !solo)
             continue;
@@ -607,8 +610,16 @@ void ParametricEQProcessor::setBandEnabled(int index, bool enabled)
 {
     if (index < 0 || index >= numActiveBands.load(std::memory_order_acquire))
         return;
-    
+
     bandParams[index].enabled.store(enabled, std::memory_order_relaxed);
+}
+
+void ParametricEQProcessor::setBandAudioBypass(int index, bool bypass)
+{
+    if (index < 0 || index >= numActiveBands.load(std::memory_order_acquire))
+        return;
+
+    bandParams[index].audioBypass.store(bypass, std::memory_order_relaxed);
 }
 
 void ParametricEQProcessor::setBandSolo(int index, bool solo)

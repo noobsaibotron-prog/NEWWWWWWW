@@ -52,6 +52,10 @@ public:
         std::atomic<float> q { 1.0f };
         std::atomic<int> type { static_cast<int>(Peak) };
         std::atomic<bool> enabled { false };
+        std::atomic<bool> audioBypass { false };  // When true, band is skipped in audio processing
+                                                   // but still visible in magnitude response (GUI curve).
+                                                   // Used by DynEQ: static EQ bypasses band while
+                                                   // DynamicEQProcessor handles it dynamically.
         std::atomic<bool> solo { false };
         std::atomic<bool> vintageMode { false };
         std::atomic<int> slope { 0 };  // 0=12dB/oct, 1=24dB/oct, 2=48dB/oct (LowCut/HighCut only)
@@ -123,6 +127,7 @@ public:
     void setBandQ(int index, float q);
     void setBandType(int index, int type);
     void setBandEnabled(int index, bool enabled);
+    void setBandAudioBypass(int index, bool bypass);  // Bypass audio only, keep visual
     void setBandSolo(int index, bool solo);
     void setBandVintageMode(int index, bool vintage);
     

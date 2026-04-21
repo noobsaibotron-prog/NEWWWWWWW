@@ -121,16 +121,18 @@ public:
         enableBtn.setButtonText("ON");
         enableBtn.setClickingTogglesState(true);
         enableBtn.setColour(juce::TextButton::buttonOnColourId, bandColor);
+        enableBtn.getProperties().set("inset", true);
         addAndMakeVisible(enableBtn);
         enableAtt = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
             parameters, prefix + "Enabled", enableBtn);
 
-        // Solo toggle
+        // Solo toggle — inset style (CNC-milled into chassis)
         soloBtn.setButtonText("SOLO");
         soloBtn.setClickingTogglesState(true);
         soloBtn.setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xFFFFD700));
         soloBtn.setColour(juce::TextButton::textColourOnId, juce::Colours::black);
         soloBtn.setTooltip("Solo this band (mutes all others)");
+        soloBtn.getProperties().set("inset", true);
         addAndMakeVisible(soloBtn);
         soloAtt = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
             parameters, prefix + "Solo", soloBtn);
@@ -191,6 +193,11 @@ public:
 
         updateSlopeVisibility();
         updateDynEQVisibility();
+
+        // Premium caching: buffer the entire panel as a GPU-backed image.
+        // Child components (knobs) repaint independently without triggering
+        // a full parent redraw. Huge win when only a knob is rotating.
+        setBufferedToImage(true);
     }
 
     ~BandControlPanel() override
@@ -206,7 +213,7 @@ public:
 
     void setBandIndex(int newIndex)
     {
-        if (newIndex == bandIndex) return;
+        if (newIndex == bandIndex || newIndex < 0) return;
 
         typeCombo.removeListener(this);
 
@@ -265,24 +272,87 @@ public:
         if (!compact && !knobClusterBounds.isEmpty())
         {
             auto kb = knobClusterBounds.toFloat().expanded(2.0f, 2.0f);
+            // Neumorphic recessed panel: darker fill + inner shadow gradient
             g.setColour(ModernLookAndFeel::Colors::bgDark.withAlpha(0.55f));
             g.fillRoundedRectangle(kb, 4.0f);
+
+            // Inner shadow: 4px top gradient (dark → transparent) for depth
+            {
+                juce::ColourGradient innerShadow(
+                    juce::Colours::black.withAlpha(0.25f), kb.getX(), kb.getY(),
+                    juce::Colours::transparentBlack,       kb.getX(), kb.getY() + 4.0f,
+                    false);
+                g.setGradientFill(innerShadow);
+                g.fillRoundedRectangle(kb.withHeight(4.0f), 4.0f);
+            }
+
+            // Bottom highlight: thin light line simulating light hitting the recess edge
+            g.setColour(juce::Colours::white.withAlpha(0.04f));
+            g.drawHorizontalLine(static_cast<int>(kb.getBottom() - 1.0f),
+                                 kb.getX() + 4.0f, kb.getRight() - 4.0f);
+
+            // Accent border (band color)
             g.setColour(bandColor.withAlpha(0.18f));
             g.drawRoundedRectangle(kb, 4.0f, 1.0f);
         }
 
-        // DynEQ knob cluster backdrop (blue accent instead of band color)
+        // DynEQ knob cluster backdrop (blue accent, neumorphic recess)
         if (!compact && dynEQActive && !dynKnobClusterBounds.isEmpty())
         {
             auto dkb = dynKnobClusterBounds.toFloat().expanded(2.0f, 2.0f);
             g.setColour(ModernLookAndFeel::Colors::bgDark.withAlpha(0.55f));
             g.fillRoundedRectangle(dkb, 4.0f);
+
+            // Inner shadow (same depth treatment as main cluster)
+            {
+                juce::ColourGradient innerShadow(
+                    juce::Colours::black.withAlpha(0.25f), dkb.getX(), dkb.getY(),
+                    juce::Colours::transparentBlack,       dkb.getX(), dkb.getY() + 4.0f,
+                    false);
+                g.setGradientFill(innerShadow);
+                g.fillRoundedRectangle(dkb.withHeight(4.0f), 4.0f);
+            }
+
+            // Bottom highlight
+            g.setColour(juce::Colours::white.withAlpha(0.04f));
+            g.drawHorizontalLine(static_cast<int>(dkb.getBottom() - 1.0f),
+                                 dkb.getX() + 4.0f, dkb.getRight() - 4.0f);
+
             g.setColour(ModernLookAndFeel::Colors::accentBlue.withAlpha(0.15f));
             g.drawRoundedRectangle(dkb, 4.0f, 1.0f);
         }
 
-        g.setColour(ModernLookAndFeel::Colors::bgLighter);
-        g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(0.5f), compact ? 3.0f : 4.0f, 1.0f);
+        // 360° inner bevel — simulates milled aluminium panel edge.
+        // Top+Left: highlight (light hitting the top-left at "10 o'clock").
+        // Bottom+Right: shadow (depth on the opposite corner).
+        // Drawn INSTEAD of the old flat bgLighter border for a 3D feel.
+        if (!compact)
+        {
+            auto bevelRect = getLocalBounds().toFloat().reduced(1.5f);
+            const float cr = 4.0f;
+
+            // Top highlight
+            g.setColour(juce::Colours::white.withAlpha(0.05f));
+            g.drawHorizontalLine(static_cast<int>(bevelRect.getY()),
+                                 bevelRect.getX() + cr, bevelRect.getRight() - cr);
+            // Left highlight
+            g.drawVerticalLine(static_cast<int>(bevelRect.getX()),
+                               bevelRect.getY() + cr, bevelRect.getBottom() - cr);
+
+            // Bottom shadow
+            g.setColour(juce::Colours::black.withAlpha(0.14f));
+            g.drawHorizontalLine(static_cast<int>(bevelRect.getBottom()),
+                                 bevelRect.getX() + cr, bevelRect.getRight() - cr);
+            // Right shadow
+            g.drawVerticalLine(static_cast<int>(bevelRect.getRight()),
+                               bevelRect.getY() + cr, bevelRect.getBottom() - cr);
+        }
+        else
+        {
+            // Compact mode: keep simple border
+            g.setColour(ModernLookAndFeel::Colors::bgLighter);
+            g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(0.5f), 3.0f, 1.0f);
+        }
     }
 
     void resized() override

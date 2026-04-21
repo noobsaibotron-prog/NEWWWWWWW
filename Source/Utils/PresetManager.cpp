@@ -55,7 +55,8 @@ void PresetManager::createDefaultFactoryPresets()
 
     auto setNumBands = [&setParamInTree](juce::ValueTree& state, int n)
     {
-        setParamInTree(state, "numActiveBands", static_cast<float>(n));
+        // AudioParameterChoice is 0-indexed: index 0 = "1 band", index 7 = "8 bands"
+        setParamInTree(state, "numActiveBands", static_cast<float>(n - 1));
     };
 
     //==========================================================================
@@ -429,9 +430,12 @@ bool PresetManager::loadPreset(const Preset& preset)
     {
         apvts.replaceState(preset.state);
 
-        // FIX: Force parameter listeners to fire so the UI EQ curve updates.
-        // replaceState() only swaps the tree without calling updateParameterConnectionsToChildTrees,
-        // so parameterChanged() callbacks never trigger and the spectrum display stays stale.
+        // FIX: replaceState() may not trigger APVTS Listener::parameterChanged()
+        // callbacks reliably. sendValueChangedMessageToListeners() fires
+        // AudioProcessor::Listener (wrong interface). We must call
+        // parameterChanged() directly on the processor (which is an APVTS::Listener)
+        // so the processor syncs numActiveBands, phase mode, band coefficients, etc.
+        auto& proc = dynamic_cast<juce::AudioProcessorValueTreeState::Listener&>(apvts.processor);
         for (auto* param : apvts.processor.getParameters())
         {
             if (auto* apvtsParam = dynamic_cast<juce::AudioProcessorParameterWithID*>(param))
@@ -444,8 +448,11 @@ bool PresetManager::loadPreset(const Preset& preset)
                     || id == "oversamplingFactor";
                 if (isCurveAffecting)
                 {
-                    const float currentValue = apvtsParam->getValue();
-                    apvtsParam->sendValueChangedMessageToListeners(currentValue);
+                    // Read the denormalized value from the new state
+                    auto* rangedParam = dynamic_cast<juce::RangedAudioParameter*>(apvtsParam);
+                    const float normValue = apvtsParam->getValue();
+                    const float rawValue = rangedParam ? rangedParam->convertFrom0to1(normValue) : normValue;
+                    proc.parameterChanged(id, rawValue);
                 }
             }
         }

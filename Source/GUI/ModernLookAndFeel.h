@@ -322,13 +322,13 @@ private:
     {
         auto bounds = btn.getLocalBounds().toFloat().reduced(1);
         const bool isQualityToggle = (btn.getComponentID() == "qualityToggle");
-        // Liquid Intelligence pill-style for all header toggles:
-        // rounded corners match the mockup's capsule aesthetic.
         const float corner = isQualityToggle ? 12.0f : 8.0f;
 
-        // Per-button override for the "on" state (set via
-        // setColour(TextButton::buttonOnColourId, ...) at construction time).
-        // Falls back to amber if nothing specific was set.
+        // [Gemma Phase 3, Point 2]: Inset vs Outset rendering.
+        // Bottom-bar buttons have property "inset"=true → CNC-milled recessed look.
+        // Header buttons keep the default outset (raised key) appearance.
+        const bool isInset = (bool) btn.getProperties().getWithDefault("inset", false);
+
         const auto overrideOn = btn.findColour(juce::TextButton::buttonOnColourId);
         juce::Colour onCol = (overrideOn == juce::Colours::transparentBlack)
                               ? Colors::amber
@@ -340,23 +340,84 @@ private:
         if (down) base = base.darker(0.18f);
         else if (hover) base = base.brighter(0.15f);
 
-        g.setColour(base);
-        g.fillRoundedRectangle(bounds, corner);
-
-        // Active state gets an amber glow halo (except when the override color
-        // itself is not amber-family — e.g. SOLO's yellow).
-        if (btn.getToggleState() && onCol == Colors::amber)
+        if (isInset)
         {
-            g.setColour(Colors::amber.withAlpha(hover ? 0.35f : 0.22f));
-            g.drawRoundedRectangle(bounds.expanded(1.5f), corner + 1.0f, 1.8f);
-        }
+            // === INSET RENDERING (CNC-milled into chassis) ===
+            // The button looks carved into the metal panel.
 
-        // Outline — amber when active, subtle when off
-        auto outline = btn.getToggleState()
-            ? onCol.brighter(0.15f).withAlpha(hover ? 0.9f : 0.75f)
-            : Colors::bgLighter.brighter(hover ? 0.35f : 0.15f);
-        g.setColour(outline);
-        g.drawRoundedRectangle(bounds, corner, hover ? 1.5f : 1.2f);
+            // 1. Recessed fill — slightly darker than the chassis
+            juce::Colour insetBase = btn.getToggleState() ? onCol.darker(0.15f) : Colors::bgDark;
+            if (down) insetBase = insetBase.darker(0.12f);
+            else if (hover) insetBase = insetBase.brighter(0.08f);
+
+            // Internal gradient: dark top → slightly lighter bottom (depth illusion)
+            {
+                juce::ColourGradient insetGrad(
+                    insetBase.darker(0.08f), bounds.getX(), bounds.getY(),
+                    insetBase.brighter(0.04f), bounds.getX(), bounds.getBottom(),
+                    false);
+                g.setGradientFill(insetGrad);
+                g.fillRoundedRectangle(bounds, corner);
+            }
+
+            // 2. Top inner edge: 1px dark shadow (overhead light occlusion)
+            g.setColour(juce::Colours::black.withAlpha(0.35f));
+            g.drawHorizontalLine(static_cast<int>(bounds.getY()),
+                                 bounds.getX() + corner, bounds.getRight() - corner);
+
+            // 3. Bottom inner edge: 1px light reflection (light bouncing off carved floor)
+            g.setColour(juce::Colours::white.withAlpha(0.06f));
+            g.drawHorizontalLine(static_cast<int>(bounds.getBottom() - 1.0f),
+                                 bounds.getX() + corner, bounds.getRight() - corner);
+
+            // 4. Left inner edge shadow + right inner edge highlight
+            g.setColour(juce::Colours::black.withAlpha(0.20f));
+            g.drawVerticalLine(static_cast<int>(bounds.getX()),
+                               bounds.getY() + corner, bounds.getBottom() - corner);
+            g.setColour(juce::Colours::white.withAlpha(0.03f));
+            g.drawVerticalLine(static_cast<int>(bounds.getRight() - 1.0f),
+                               bounds.getY() + corner, bounds.getBottom() - corner);
+
+            // Active inset buttons get a subtle glow from within the recess
+            if (btn.getToggleState())
+            {
+                g.setColour(onCol.withAlpha(hover ? 0.18f : 0.10f));
+                g.drawRoundedRectangle(bounds.reduced(1.0f), corner - 1.0f, 1.0f);
+            }
+        }
+        else
+        {
+            // === OUTSET RENDERING (raised physical key — header buttons) ===
+
+            // Micro drop-shadow beneath (non-active only)
+            if (!btn.getToggleState())
+            {
+                g.setColour(juce::Colours::black.withAlpha(0.3f));
+                g.fillRoundedRectangle(bounds.translated(0.0f, 1.0f), corner);
+            }
+
+            g.setColour(base);
+            g.fillRoundedRectangle(bounds, corner);
+
+            // Top highlight (light hitting raised button top)
+            g.setColour(juce::Colours::white.withAlpha(0.04f));
+            g.drawHorizontalLine(static_cast<int>(bounds.getY()),
+                                 bounds.getX() + corner, bounds.getRight() - corner);
+
+            // Active amber glow halo
+            if (btn.getToggleState() && onCol == Colors::amber)
+            {
+                g.setColour(Colors::amber.withAlpha(hover ? 0.35f : 0.22f));
+                g.drawRoundedRectangle(bounds.expanded(1.5f), corner + 1.0f, 1.8f);
+            }
+
+            // Outline
+            auto outline = btn.getToggleState()
+                ? onCol.brighter(0.15f).withAlpha(hover ? 0.9f : 0.75f)
+                : Colors::bgLighter.brighter(hover ? 0.35f : 0.15f);
+            g.setColour(outline);
+            g.drawRoundedRectangle(bounds, corner, hover ? 1.5f : 1.2f);
+        }
     }
 
     void drawToggleButton(juce::Graphics& g, juce::ToggleButton& btn,
@@ -380,12 +441,25 @@ private:
                       int, int, int, int, juce::ComboBox&) override
     {
         auto bounds = juce::Rectangle<int>(0, 0, w, h).toFloat().reduced(1);
-        
+
+        // Micro drop-shadow (1px Y offset) — matches TextButton treatment
+        g.setColour(juce::Colours::black.withAlpha(0.3f));
+        g.fillRoundedRectangle(bounds.translated(0.0f, 1.0f), 4.0f);
+
+        // Main fill
         g.setColour(Colors::bgLight);
         g.fillRoundedRectangle(bounds, 4.0f);
+
+        // Top highlight — neumorphic raised element
+        g.setColour(juce::Colours::white.withAlpha(0.04f));
+        g.drawHorizontalLine(static_cast<int>(bounds.getY()),
+                             bounds.getX() + 4.0f, bounds.getRight() - 4.0f);
+
+        // Border
         g.setColour(Colors::bgLighter);
         g.drawRoundedRectangle(bounds, 4.0f, 1.0f);
 
+        // Dropdown arrow
         juce::Path arrow;
         float ax = w - 14.0f, ay = h / 2.0f;
         arrow.addTriangle(ax - 4, ay - 2, ax + 4, ay - 2, ax, ay + 3);

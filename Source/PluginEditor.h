@@ -144,7 +144,7 @@ private:
     // Wave 4A: headerH bumped 36 → 44 to give the 20px Bold logo + 20px Bold
     // PRE/POST/DELTA pill toggles enough vertical breathing room.
     static constexpr int headerH = 44;
-    static constexpr int footerH = 32;    // footer bar (meter, version, bypass)
+    static constexpr int footerH = 52;    // footer bar (meter, OUT/MIX amber knobs, bypass)
     static constexpr int controlH = 300;  // bottom panel (band controls + context)
                                           // 300 gives BandControlPanel proper room for
                                           // the 3 LargeAmber filmstrip knobs at ~138px
@@ -176,7 +176,8 @@ private:
     juce::Label gainValue, outValue, mixValue;
     juce::ToggleButton autoBtn{"AUTO"};
     juce::TextButton qualityBtn{"ZL"};
-    juce::ComboBox oversamplingCombo;
+    juce::TextButton oversamplingBtn{"OFF"};  // cycles Off→2x→4x→Auto
+    juce::ComboBox oversamplingCombo;         // hidden, keeps APVTS attachment
     juce::ComboBox slopeCombo;
     juce::TextButton captureAnalyzeBtn{"CAPTURE ANALYZE"};
     juce::TextButton startCaptureBtn{"START CAPTURE"};
@@ -195,6 +196,11 @@ private:
     // OpenGL context — accelerates all JUCE software rendering via GPU compositing.
     // setRenderer(this) enables renderOpenGL() for the metrological spectrum pipeline.
     juce::OpenGLContext openGLContext;
+
+    // Premium matericità: 256×256 tiled procedural noise texture (generated once).
+    // Overlaid at 2-3% opacity on backgrounds to simulate brushed aluminium /
+    // polycarbonate surface and eliminate gradient banding.
+    juce::Image noiseTexture;
 
     // Metrological 5-layer spectrum pipeline (Parseval-correct, IIR ballistics, log LUT)
     std::unique_ptr<NewSpectrumPipeline> spectrumPipeline;
