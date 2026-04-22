@@ -144,10 +144,17 @@ void ParametricEQProcessor::process(juce::AudioBuffer<float>& buffer)
                     xfade.oldFiltersL[s] = state.filtersL[s];
                     xfade.oldFiltersR[s] = state.filtersR[s];
                 }
-                // Adaptive fade: 128 base, 256 for high-Q filters where
+                // Adaptive fade: 1024 base, 2048 for high-Q filters where
                 // narrow resonant peaks ring longer and need more settling time.
+                // Rationale (Fix A, 2026-04-22): a 60Hz UI drag leaves ~735 samples
+                // gap between mouseDrag events @ 44.1kHz. The previous 128/256
+                // window ended ~3ms in and left ~12ms of "new steady-state" before
+                // the next version-bump re-armed — producing periodic clicks at the
+                // drag cadence. Extending to 1024/2048 keeps the crossfade active
+                // across consecutive drag updates, so adjacent transitions blend
+                // instead of butt-joining. Still sample-based and deterministic.
                 const float qVal = params.q.load(std::memory_order_relaxed);
-                const int fadeSamples = (qVal > 10.0f) ? 256 : 128;
+                const int fadeSamples = (qVal > 10.0f) ? 2048 : 1024;
                 xfade.remaining = fadeSamples;
                 xfade.total = fadeSamples;
 
