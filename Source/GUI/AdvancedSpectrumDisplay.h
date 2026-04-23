@@ -3107,17 +3107,22 @@ private:
 
     void ensureEQCurveFrequencies()
     {
-        if (eqCurveFrequencies.size() == eqCurvePointCount)
-            return;
-        eqCurveFrequencies.clear();
+        // Width-driven per-pixel sampling: one frequency per visible pixel
+        // of graphBounds. Eliminates high-Q polygonal spikes caused by the
+        // previous fixed 128-point log grid (eqCurvePointCount kept for
+        // backward compat; no longer consulted here).
+        const int targetCount = juce::jmax(2, (int) std::ceil(graphBounds.getWidth()) + 1);
 
-        eqCurveFrequencies.resize(eqCurvePointCount);
-        const float logMin = std::log10(20.0f);
-        const float logMax = std::log10(20000.0f);
-        for (size_t i = 0; i < eqCurveFrequencies.size(); ++i)
+        if ((int) eqCurveFrequencies.size() == targetCount)
+            return;
+
+        eqCurveFrequencies.resize((size_t) targetCount);
+        eqCurveMagnitudes.resize((size_t) targetCount);
+
+        for (int i = 0; i < targetCount; ++i)
         {
-            const float t = static_cast<float>(i) / static_cast<float>(eqCurveFrequencies.size() - 1);
-            eqCurveFrequencies[i] = std::pow(10.0f, logMin + t * (logMax - logMin));
+            const float x = graphBounds.getX() + (float) i;
+            eqCurveFrequencies[(size_t) i] = xToFreq(x);
         }
     }
 
