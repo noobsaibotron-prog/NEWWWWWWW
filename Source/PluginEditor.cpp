@@ -45,14 +45,47 @@ AIEqualizerAudioProcessorEditor::AIEqualizerAudioProcessorEditor(AIEqualizerAudi
         }
     }
 
-    // Metrological 5-layer spectrum pipeline
+    // Metrological 5-layer spectrum pipeline.
+    // FFT size is driven by the "analyzerResolution" APVTS parameter:
+    //   choice 0 → 1024 samples  (fftOrder 10)
+    //   choice 1 → 2048 samples  (fftOrder 11)
+    //   choice 2 → 4096 samples  (fftOrder 12, default "High")
+    //   choice 3 → 8192 samples  (fftOrder 13)
+    // Both PRE and POST must ALWAYS use the same FFT (non-negotiable).
+    int resChoice = 2;
+    if (auto* resParam = processor.getAPVTS().getRawParameterValue("analyzerResolution"))
+        resChoice = juce::jlimit(0, 3, static_cast<int>(std::round(resParam->load())));
+    const size_t initialFFTOrder = static_cast<size_t>(10 + resChoice);
+
     glSpectrumHelper = std::make_unique<GLSpectrumHelper>();
     spectrumPipeline = std::make_unique<NewSpectrumPipeline>(
         processor.getPreEqFifo(),
         processor.getPostEqFifo(),
-        12,    // fftOrder: 2^12 = 4096 samples
+        initialFFTOrder,
         processor.getSampleRate(),
         60.0);
+
+    // Live wiring: menu click, preset load, and DAW automation on
+    // "analyzerResolution" all route through this ParameterAttachment to
+    // NewSpectrumPipeline::setFFTOrder (which holds the pipeline's SpinLock
+    // so process() is never mid-flight when preCore/postCore are rebuilt).
+    if (auto* resParam = processor.getAPVTS().getParameter("analyzerResolution"))
+    {
+        analyzerResolutionAttachment = std::make_unique<juce::ParameterAttachment>(
+            *resParam,
+            [this](float newNormalisedOrChoice)
+            {
+                // RangedAudioParameter::ParameterAttachment callback receives the
+                // already-denormalised value for choice/int params.
+                const int choice = juce::jlimit(0, 3,
+                    static_cast<int>(std::round(newNormalisedOrChoice)));
+                const size_t newOrder = static_cast<size_t>(10 + choice);
+                if (spectrumPipeline)
+                    spectrumPipeline->setFFTOrder(newOrder, processor.getSampleRate());
+            });
+        // No sendInitialUpdate(): the pipeline was just constructed with the
+        // current value, so we'd only waste a rebuild here.
+    }
 
     createHeader();
     createControlPanel();

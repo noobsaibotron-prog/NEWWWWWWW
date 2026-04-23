@@ -206,6 +206,12 @@ private:
     std::unique_ptr<NewSpectrumPipeline> spectrumPipeline;
     std::unique_ptr<GLSpectrumHelper>    glSpectrumHelper;
 
+    // APVTS attachment: forwards "analyzerResolution" param changes (menu,
+    // preset load, DAW automation) to spectrumPipeline->setFFTOrder() so both
+    // PRE and POST always share the same FFT resolution (industry-standard
+    // behaviour; non-negotiable per product requirement 2026-04-23).
+    std::unique_ptr<juce::ParameterAttachment> analyzerResolutionAttachment;
+
     // Wave 5 verdict: BandTabBar (Roman numerals above spectrum) removed.
     // Band identity now conveyed exclusively via the coloured node rings on
     // the EQ curve + the three large filmstrip knobs in the left control panel.
