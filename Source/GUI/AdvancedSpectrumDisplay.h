@@ -3108,9 +3108,8 @@ private:
     void ensureEQCurveFrequencies()
     {
         // Width-driven per-pixel sampling: one frequency per visible pixel
-        // of graphBounds. Eliminates high-Q polygonal spikes caused by the
-        // previous fixed 128-point log grid (eqCurvePointCount kept for
-        // backward compat; no longer consulted here).
+        // of graphBounds, derived via xToFreq(x). Rendering-resolution grid
+        // eliminates high-Q polygonal spikes without smoothing the response.
         const int targetCount = juce::jmax(2, (int) std::ceil(graphBounds.getWidth()) + 1);
 
         if ((int) eqCurveFrequencies.size() == targetCount)
@@ -3253,7 +3252,6 @@ private:
     uint64_t lastEQVersion = std::numeric_limits<uint64_t>::max();
     bool eqCurveDirty = true;
     double lastEQCurveRebuildTime = 0.0;
-    static constexpr size_t eqCurvePointCount = 128;
 
     // Adaptive timer — tracks current rate to avoid redundant startTimerHz calls
     int currentTimerHz = 60;
