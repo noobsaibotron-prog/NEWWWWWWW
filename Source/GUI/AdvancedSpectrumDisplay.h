@@ -141,6 +141,8 @@ public:
         smoothedSpectrum.assign (preDB.begin(), preDB.end());
         if (!postDB.empty())
             injectedPostSpectrum.assign (postDB.begin(), postDB.end());
+        else
+            injectedPostSpectrum.clear();
         ++injectedSpectrumVersion;
     }
 
@@ -1558,30 +1560,49 @@ private:
         {
             if (showPost && !isFrozen)
             {
-                const auto& postRaw = processor.getPostEQAnalyzer().getSmoothedSpectrum();
-                if (!postRaw.empty() && usable > 4)
+                const bool useInjectedPost = injectedSpectrumVersion != 0 && !injectedPostSpectrum.empty();
+                if (useInjectedPost && usable > 4)
                 {
-                    smoothYBuffer.resize(usable);
-                    const int postFFTSize = processor.getPostEQAnalyzer().getFFTSize();
-                    const double postSR = processor.getPostEQAnalyzer().getSampleRate();
-                    const int postNumBins = static_cast<int>(postRaw.size());
-                    for (size_t i = 0; i < usable; ++i)
+                    const size_t limit = std::min(usable, injectedPostSpectrum.size());
+                    smoothYBuffer.resize(limit);
+                    for (size_t i = 0; i < limit; ++i)
                     {
                         float freq = xToFreq(graphBounds.getX() + static_cast<float>(i));
-                        float binF = freq * static_cast<float>(postFFTSize) / static_cast<float>(postSR);
-                        int b0 = juce::jlimit(0, postNumBins - 1, static_cast<int>(binF));
-                        int b1 = juce::jlimit(0, postNumBins - 1, b0 + 1);
-                        float frac = binF - static_cast<float>(static_cast<int>(binF));
-                        float db = postRaw[b0] * (1.0f - frac) + postRaw[b1] * frac;
-                        smoothYBuffer[i] = dbToY(applyTilt(db, freq));
+                        smoothYBuffer[i] = dbToY(applyTilt(injectedPostSpectrum[i], freq));
                     }
                     cachedPostLine.clear();
                     cachedPostFill.clear();
-                    pathBuilder.build(smoothYBuffer.data(), usable,
+                    pathBuilder.build(smoothYBuffer.data(), limit,
                                       graphBounds.getX(), graphBounds.getBottom(),
                                       cachedPostLine, &cachedPostFill, 3);
                 }
-                else { cachedPostLine.clear(); cachedPostFill.clear(); }
+                else
+                {
+                    const auto& postRaw = processor.getPostEQAnalyzer().getSmoothedSpectrum();
+                    if (!postRaw.empty() && usable > 4)
+                    {
+                        smoothYBuffer.resize(usable);
+                        const int postFFTSize = processor.getPostEQAnalyzer().getFFTSize();
+                        const double postSR = processor.getPostEQAnalyzer().getSampleRate();
+                        const int postNumBins = static_cast<int>(postRaw.size());
+                        for (size_t i = 0; i < usable; ++i)
+                        {
+                            float freq = xToFreq(graphBounds.getX() + static_cast<float>(i));
+                            float binF = freq * static_cast<float>(postFFTSize) / static_cast<float>(postSR);
+                            int b0 = juce::jlimit(0, postNumBins - 1, static_cast<int>(binF));
+                            int b1 = juce::jlimit(0, postNumBins - 1, b0 + 1);
+                            float frac = binF - static_cast<float>(static_cast<int>(binF));
+                            float db = postRaw[b0] * (1.0f - frac) + postRaw[b1] * frac;
+                            smoothYBuffer[i] = dbToY(applyTilt(db, freq));
+                        }
+                        cachedPostLine.clear();
+                        cachedPostFill.clear();
+                        pathBuilder.build(smoothYBuffer.data(), usable,
+                                          graphBounds.getX(), graphBounds.getBottom(),
+                                          cachedPostLine, &cachedPostFill, 3);
+                    }
+                    else { cachedPostLine.clear(); cachedPostFill.clear(); }
+                }
             }
             else { cachedPostLine.clear(); cachedPostFill.clear(); }
         }
@@ -1591,33 +1612,56 @@ private:
         bool showDelta = isDeltaEnabled();
         if (showDelta && showPost && !isFrozen)
         {
-            const auto& postRaw = processor.getPostEQAnalyzer().getSmoothedSpectrum();
-            if (!postRaw.empty() && usable > 4)
+            const bool useInjectedPost = injectedSpectrumVersion != 0 && !injectedPostSpectrum.empty();
+            if (useInjectedPost && usable > 4)
             {
                 float zeroY = dbToY(0.0f);
-                smoothYBuffer.resize(usable);
-                const int dFFTSize = processor.getPostEQAnalyzer().getFFTSize();
-                const double dSR = processor.getPostEQAnalyzer().getSampleRate();
-                const int dNumBins = static_cast<int>(postRaw.size());
-                for (size_t i = 0; i < usable; ++i)
+                const size_t limit = std::min(usable, injectedPostSpectrum.size());
+                smoothYBuffer.resize(limit);
+                for (size_t i = 0; i < limit; ++i)
                 {
                     float freq = xToFreq(graphBounds.getX() + static_cast<float>(i));
-                    float binF = freq * static_cast<float>(dFFTSize) / static_cast<float>(dSR);
-                    int b0 = juce::jlimit(0, dNumBins - 1, static_cast<int>(binF));
-                    int b1 = juce::jlimit(0, dNumBins - 1, b0 + 1);
-                    float frac = binF - static_cast<float>(static_cast<int>(binF));
-                    float postDb = postRaw[b0] * (1.0f - frac) + postRaw[b1] * frac;
+                    float postDb = injectedPostSpectrum[i];
                     float preDb = preBuffer[i];
                     float delta = applyTilt(postDb, freq) - applyTilt(preDb, freq);
                     delta = juce::jlimit(-24.0f, 24.0f, delta);
                     smoothYBuffer[i] = zeroY - (delta / 24.0f) * (graphBounds.getHeight() * 0.45f);
                 }
                 cachedDeltaLine.clear();
-                pathBuilder.build(smoothYBuffer.data(), usable,
+                pathBuilder.build(smoothYBuffer.data(), limit,
                                   graphBounds.getX(), graphBounds.getBottom(),
                                   cachedDeltaLine, nullptr, 3);
             }
-            else { cachedDeltaLine.clear(); }
+            else
+            {
+                const auto& postRaw = processor.getPostEQAnalyzer().getSmoothedSpectrum();
+                if (!postRaw.empty() && usable > 4)
+                {
+                    float zeroY = dbToY(0.0f);
+                    smoothYBuffer.resize(usable);
+                    const int dFFTSize = processor.getPostEQAnalyzer().getFFTSize();
+                    const double dSR = processor.getPostEQAnalyzer().getSampleRate();
+                    const int dNumBins = static_cast<int>(postRaw.size());
+                    for (size_t i = 0; i < usable; ++i)
+                    {
+                        float freq = xToFreq(graphBounds.getX() + static_cast<float>(i));
+                        float binF = freq * static_cast<float>(dFFTSize) / static_cast<float>(dSR);
+                        int b0 = juce::jlimit(0, dNumBins - 1, static_cast<int>(binF));
+                        int b1 = juce::jlimit(0, dNumBins - 1, b0 + 1);
+                        float frac = binF - static_cast<float>(static_cast<int>(binF));
+                        float postDb = postRaw[b0] * (1.0f - frac) + postRaw[b1] * frac;
+                        float preDb = preBuffer[i];
+                        float delta = applyTilt(postDb, freq) - applyTilt(preDb, freq);
+                        delta = juce::jlimit(-24.0f, 24.0f, delta);
+                        smoothYBuffer[i] = zeroY - (delta / 24.0f) * (graphBounds.getHeight() * 0.45f);
+                    }
+                    cachedDeltaLine.clear();
+                    pathBuilder.build(smoothYBuffer.data(), usable,
+                                      graphBounds.getX(), graphBounds.getBottom(),
+                                      cachedDeltaLine, nullptr, 3);
+                }
+                else { cachedDeltaLine.clear(); }
+            }
         }
         else { cachedDeltaLine.clear(); }
 
