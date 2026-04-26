@@ -568,23 +568,53 @@ public:
                 if (zone.contains(e.position))
                 {
                     hitIdx = i;
-                    aiTooltip.anchor        = zone;
-                    aiTooltip.title         = juce::String("AI Suggestion");
-                    aiTooltip.description   = corr.description.isNotEmpty()
-                        ? corr.description
-                        : juce::String("Detected issue at ") + juce::String(freq, 0) + " Hz";
-                    aiTooltip.suggestion    = juce::String("FIX: ")
-                                            + juce::String(corr.suggestedGain, 1) + " dB @ Q "
-                                            + juce::String(Q, 2);
-                    aiTooltip.correctionIdx = i;
-                    if (!aiTooltip.visible)
+
+                    // Hero Graph Polish v1.1 — treat the hover as the SAME
+                    // correction (and therefore freeze anchor + payload + text)
+                    // when the underlying zone hasn't moved more than 24 px
+                    // horizontally and the problem type still matches. This
+                    // stops the live AI re-analysis from making the tooltip
+                    // — and the FIX button inside it — slip out from under
+                    // the user's cursor.
+                    const float zoneCx = zone.getCentreX();
+                    const bool isSameCorrection =
+                           aiTooltip.visible
+                        && aiTooltip.snapshotType == corr.type
+                        && std::abs(zoneCx - aiTooltip.anchor.getCentreX()) <= 24.0f;
+
+                    if (!isSameCorrection)
                     {
-                        aiTooltip.visible = true;
-                        setMouseCursor(juce::MouseCursor::PointingHandCursor);
+                        // First show OR genuinely different correction:
+                        // refresh anchor, payload and snapshot in one shot.
+                        aiTooltip.anchor        = zone;
+                        aiTooltip.title         = juce::String("AI Suggestion");
+                        aiTooltip.description   = corr.description.isNotEmpty()
+                            ? corr.description
+                            : juce::String("Detected issue at ") + juce::String(freq, 0) + " Hz";
+                        aiTooltip.suggestion    = juce::String("FIX: ")
+                                                + juce::String(corr.suggestedGain, 1) + " dB @ Q "
+                                                + juce::String(Q, 2);
+
+                        aiTooltip.snapshotFrequency     = freq;
+                        aiTooltip.snapshotSuggestedGain = corr.suggestedGain;
+                        aiTooltip.snapshotSuggestedQ    = Q;
+                        aiTooltip.snapshotType          = corr.type;
+
+                        aiTooltip.correctionIdx = i;
+                        if (!aiTooltip.visible)
+                        {
+                            aiTooltip.visible = true;
+                            setMouseCursor(juce::MouseCursor::PointingHandCursor);
+                        }
                         repaint();
                     }
-                    else
+                    else if (aiTooltip.correctionIdx != i)
                     {
+                        // Same correction conceptually, but the live index
+                        // moved (AI reshuffled the array). Keep the frozen
+                        // anchor / payload, just update the index used by
+                        // the overlay's Subtle Idle / Active highlight.
+                        aiTooltip.correctionIdx = i;
                         repaint();
                     }
                     break;
@@ -693,12 +723,51 @@ public:
         // Phase 7C: click on the FIX button inside the tooltip → approve
         // the correction. Check this BEFORE the band hit test so the click
         // never falls through to drag-start.
+        //
+        // Hero Graph Polish v1.1: do NOT trust aiTooltip.correctionIdx as the
+        // final identity — between the moment the tooltip was shown and the
+        // moment the user clicks FIX, the AI may have re-analysed and either
+        // reordered, removed, or mutated the corrections vector. Re-resolve
+        // the click against a fresh getPendingCorrections() snapshot using
+        // the payload we captured when the tooltip first appeared (type +
+        // log-frequency + gain/Q tolerance, score-ranked).
         if (aiTooltip.visible
-            && aiTooltip.correctionIdx >= 0
             && aiTooltip.fixButtonBounds.contains(e.position))
         {
-            if (processor.isProcessorReady())
-                processor.getAIEngine().approveCorrection(aiTooltip.correctionIdx);
+            if (processor.isProcessorReady()
+                && aiTooltip.snapshotType != AIEngine::ProblemType::None
+                && aiTooltip.snapshotFrequency > 0.0f)
+            {
+                const auto current = processor.getAIEngine().getPendingCorrections();
+                int   bestIdx   = -1;
+                float bestScore = std::numeric_limits<float>::max();
+
+                for (int j = 0; j < (int) current.size(); ++j)
+                {
+                    const auto& c = current[(size_t) j];
+                    if (c.type != aiTooltip.snapshotType)
+                        continue;
+
+                    const float fRatio = std::abs(std::log2(c.frequency
+                                                            / juce::jmax(1.0f, aiTooltip.snapshotFrequency)));
+                    const float gDiff  = std::abs(c.suggestedGain - aiTooltip.snapshotSuggestedGain);
+                    const float qDiff  = std::abs(c.suggestedQ    - aiTooltip.snapshotSuggestedQ);
+
+                    // Hard filters: same problem type, within ~7% of original
+                    // frequency (|log2| ≤ 0.10 ≈ ±7.2 %), within 3 dB of the
+                    // suggested gain, within 1.5 of the suggested Q. Anything
+                    // outside is treated as a different correction.
+                    if (fRatio > 0.10f || gDiff > 3.0f || qDiff > 1.5f)
+                        continue;
+
+                    const float score = fRatio * 8.0f + gDiff * 0.5f + qDiff * 0.25f;
+                    if (score < bestScore) { bestScore = score; bestIdx = j; }
+                }
+
+                if (bestIdx >= 0)
+                    processor.getAIEngine().approveCorrection(bestIdx);
+                // else: snapshot no longer matches anything — silently dismiss.
+            }
 
             aiTooltip.visible = false;
             aiTooltip.correctionIdx = -1;
@@ -3253,11 +3322,22 @@ private:
         juce::String title;
         juce::String description;
         juce::String suggestion;
-        int correctionIdx = -1;
+        int correctionIdx = -1;                  // live index for the AI overlay's "active" highlight
         juce::Rectangle<float> fixButtonBounds;  // for hit testing the FIX button
         juce::Rectangle<float> tooltipBounds;    // Wave 4A: for mouseMove hit-testing — keep
                                                  // tooltip visible while cursor is INSIDE the
                                                  // tooltip rect (even if it has left the ambra zone)
+
+        // Hero Graph Polish v1.1 — payload snapshot taken when the tooltip first
+        // shows for a correction. Used to (a) decide whether a subsequent hover
+        // is the "same" correction (so anchor + payload don't jitter while the
+        // AI re-analyses), and (b) re-resolve the FIX click against a fresh
+        // pendingCorrections vector so we never approve the wrong correction
+        // because the index shifted under us.
+        float                 snapshotFrequency     = 0.0f;
+        float                 snapshotSuggestedGain = 0.0f;
+        float                 snapshotSuggestedQ    = 0.0f;
+        AIEngine::ProblemType snapshotType          = AIEngine::ProblemType::None;
     };
     AITooltipState aiTooltip;
 
