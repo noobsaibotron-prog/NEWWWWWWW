@@ -2528,9 +2528,17 @@ private:
                 g.setColour(ModernLookAndFeel::Colors::amber.withAlpha(0.14f * nOp));
                 g.fillEllipse(x - radius - 4, y - radius - 4, (radius + 4) * 2, (radius + 4) * 2);
             }
-            else if (isSelected || isHovered)
+            else if (isSelected)
             {
-                g.setColour(ModernLookAndFeel::Colors::amber.withAlpha(0.08f * nOp));
+                // Hero Graph Polish v1.2 — selected node gets a stronger,
+                // larger halo than a plain hover so the active band is
+                // clearly distinguishable from idle ones (Scena 3 feedback).
+                g.setColour(ModernLookAndFeel::Colors::amber.withAlpha(0.12f * nOp));
+                g.fillEllipse(x - radius - 6, y - radius - 6, (radius + 6) * 2, (radius + 6) * 2);
+            }
+            else if (isHovered)
+            {
+                g.setColour(ModernLookAndFeel::Colors::amber.withAlpha(0.09f * nOp));
                 g.fillEllipse(x - radius - 5, y - radius - 5, (radius + 5) * 2, (radius + 5) * 2);
             }
             else if (hasAICorrection)
@@ -2567,7 +2575,8 @@ private:
             float ringAlpha;
             float ringThickness;
             if (isDragging)                  { ringAlpha = 1.00f * nOp;            ringThickness = 2.5f; }
-            else if (isSelected || isHovered){ ringAlpha = 0.92f * nOp;            ringThickness = 2.0f; }
+            else if (isSelected)             { ringAlpha = 1.00f * nOp;            ringThickness = 2.5f; }
+            else if (isHovered)              { ringAlpha = 0.92f * nOp;            ringThickness = 2.0f; }
             else                             { ringAlpha = 0.72f * nOp * emphasis; ringThickness = 1.5f; }
             g.setColour(col.withAlpha(ringAlpha));
             g.drawEllipse(nodeBounds, ringThickness);
