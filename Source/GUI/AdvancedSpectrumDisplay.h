@@ -1995,12 +1995,13 @@ private:
 
     void drawAIMarkers(juce::Graphics& g)
     {
-        // Liquid Intelligence (Phase 7A): replaced circle markers with vertical
-        // amber zones that fade from top (15 % amber) to bottom (0 % transparent).
-        // Width is derived from the correction's Q using the musical octave
-        // formula (Tribunale directive):
-        //     half_width = freq * (2^(1/(2*Q)) - 1)
-        // clamped to a minimum of ~20 px so narrow-Q suggestions remain visible.
+        // Hero Graph Polish v1 — Subtle Idle:
+        // idle zones render as a faint wash + thin centre spine so they stay
+        // discoverable without competing with the EQ curve. Only the zone
+        // currently hovered (aiTooltip.correctionIdx, already hover-driven by
+        // mouseMove) intensifies and shows its label. Geometry, Q-derived
+        // width, minWidth and the approved/pending colour mapping are
+        // preserved verbatim from the previous implementation.
         if (!processor.isProcessorReady())
             return;
 
@@ -2019,8 +2020,9 @@ private:
         const double sr = (processor.getSampleRate() > 0.0) ? processor.getSampleRate() : 44100.0;
         const float nyquist = static_cast<float>(sr * 0.5);
 
-        for (const auto& corr : corrections)
+        for (size_t i = 0; i < corrections.size(); ++i)
         {
+            const auto& corr = corrections[i];
             const float freq = corr.frequency;
             const float Q    = juce::jmax(0.01f, corr.suggestedQ);
             if (freq <= 0.0f || freq >= nyquist)
@@ -2056,8 +2058,17 @@ private:
                 ? ModernLookAndFeel::Colors::accentGreen
                 : ModernLookAndFeel::Colors::amber;
 
-            const auto topColour    = base.withAlpha(0.30f);
-            const auto bottomColour = base.withAlpha(0.08f);
+            // Subtle Idle vs Active:
+            // - active = hovered zone (drives the tooltip already), near full peso
+            // - idle   = barely-there wash so overlapping zones don't "wash" the graph
+            const bool isActive = aiTooltip.visible
+                               && aiTooltip.correctionIdx == static_cast<int>(i);
+
+            const float topA    = isActive ? 0.28f  : 0.10f;
+            const float bottomA = isActive ? 0.08f  : 0.025f;
+
+            const auto topColour    = base.withAlpha(topA);
+            const auto bottomColour = base.withAlpha(bottomA);
 
             juce::ColourGradient grad(topColour,    zoneRect.getX(), graphTop,
                                       bottomColour, zoneRect.getX(), graphBottom,
@@ -2065,16 +2076,19 @@ private:
             g.setGradientFill(grad);
             g.fillRect(zoneRect);
 
-            // Wave 4B (Tribunale): AI zone labels — "RUMBLE 42Hz", "MUDDY
-            // 280Hz", "HARSH 4.2kHz" etc. Derived from corr.type via a
-            // compact mapping, with frequency formatted short (Hz for < 1 k,
-            // kHz with one decimal otherwise). Rendered at the top of the
-            // amber zone in small bold amber text. Wave 4D (Tribunale):
-            // lowered the threshold 34 → 18 px because in-production
-            // narrow-Q zones were always under the original 34 px and no
-            // label ever rendered. 18 px still fits 3-4 char labels like
-            // RESO / HARSH / MUDDY without clipping.
-            if (zoneRect.getWidth() >= 18.0f)
+            // Idle-only centre spine: keeps zones discoverable when their
+            // wash is intentionally faint. Active zones already read clearly
+            // through the stronger gradient + label.
+            if (!isActive)
+            {
+                const float xC = juce::jlimit(graphLeft, graphRight, freqToX(freq));
+                g.setColour(base.withAlpha(0.22f));
+                g.drawLine(xC, graphTop, xC, graphBottom, 1.0f);
+            }
+
+            // Active-only label (was always-on; produced background noise on
+            // crowded scenes). Width threshold (≥18 px) preserved.
+            if (isActive && zoneRect.getWidth() >= 18.0f)
             {
                 auto problemLabel = [](AIEngine::ProblemType pt) -> const char*
                 {
@@ -2100,8 +2114,6 @@ private:
                 juce::String labelStr = juce::String(problemLabel(corr.type))
                                         + " " + freqStr;
 
-                // Label rect sits just inside the zone's top edge so the text
-                // doesn't overlap the graph header.
                 auto labelRect = juce::Rectangle<int>(
                     (int) zoneRect.getX(),
                     (int) (graphTop + 4.0f),
@@ -2358,6 +2370,27 @@ private:
         // Breathing modulator: 0.0 → 1.0 sine wave (4-second cycle)
         const float breathMod = 0.5f + 0.5f * std::sin(aiBreathingPhase);
 
+        // Hero Graph Polish v1 — Pass 1: detect whether any enabled band is
+        // currently the user's primary focus (dragged/hovered/selected). The
+        // result drives an emphasis multiplier in Pass 2 so non-focused
+        // nodes step back when one node is leading the scene. No interaction
+        // with hit testing / selection / drag — purely a render-time signal.
+        bool hasPrimaryFocus = false;
+        for (int i = 0; i < limit; ++i)
+        {
+            auto s = processor.getBandState(i);
+            if (!s.enabled)
+                continue;
+            const bool dragThis = isDraggingBand && i == draggedBandIndex;
+            const bool hovThis  = (i == hoveredBandIndex);
+            const bool selThis  = (i == selectedBandIndex);
+            if (dragThis || hovThis || selThis)
+            {
+                hasPrimaryFocus = true;
+                break;
+            }
+        }
+
         auto drawOne = [&](int i)
         {
             auto state = processor.getBandState(i);
@@ -2375,8 +2408,17 @@ private:
 
             juce::Colour col = bandColors[i];
             const bool isSelected = (i == selectedBandIndex);
-            const bool isHovered = (i == hoveredBandIndex);
+            const bool isHovered  = (i == hoveredBandIndex);
             const bool isDragging = (isDraggingBand && i == draggedBandIndex);
+            const bool isPrimary  = isDragging || isSelected || isHovered;
+
+            // Hero Graph Polish v1 — emphasis:
+            //   1.0  primary focus (dragged/hovered/selected)
+            //   0.60 other bands when a primary focus exists
+            //   0.82 calm default when no band is in focus
+            const float emphasis = isPrimary
+                ? 1.0f
+                : (hasPrimaryFocus ? 0.60f : 0.82f);
 
             // AI Pulse: check if this band has a pending AI correction
             // (frequency within ±1 semitone ≈ ratio < 0.06 in log2 domain)
@@ -2391,41 +2433,43 @@ private:
                 }
             }
 
-            // Node radius: base 13, expanded when interacting
-            float baseRadius = 13.0f;
+            // Precise Premium radii — smaller idle, modest selection bump,
+            // dragged still distinct without becoming an "arcade puck".
+            float baseRadius = 11.0f;
             float radius = baseRadius;
-            if (isDragging) radius = 18.0f;
-            else if (isSelected) radius = baseRadius + 2.0f;
-            else if (isHovered) radius = baseRadius + 2.0f;
+            if (isDragging)       radius = 15.5f;
+            else if (isSelected)  radius = 12.5f;
+            else if (isHovered)   radius = 12.5f;
 
-            // Vertical guide line from 0dB to node (subtle, fades with nodes)
+            // Vertical guide line from 0dB to node — calmer alpha + emphasis
             if (std::abs(state.gain) > 0.3f)
             {
                 float zeroY = gainToY(0.0f);
-                g.setColour(col.withAlpha(0.15f * nOp));
+                g.setColour(col.withAlpha(0.10f * nOp * emphasis));
                 g.drawLine(x, zeroY, x, y, 1.0f);
             }
 
-            // === GLOW: amber when interacting, breathing pulse when AI suggests ===
+            // === GLOW: dragged > selected/hovered > AI pulse > nothing ===
+            // No "always-on" amber rim. Halos appear ONLY for nodes that
+            // earned focus or that carry a pending AI suggestion.
             if (isDragging)
             {
-                g.setColour(ModernLookAndFeel::Colors::amber.withAlpha(0.10f * nOp));
-                g.fillEllipse(x - radius - 10, y - radius - 10, (radius + 10) * 2, (radius + 10) * 2);
-                g.setColour(ModernLookAndFeel::Colors::amber.withAlpha(0.18f * nOp));
+                g.setColour(ModernLookAndFeel::Colors::amber.withAlpha(0.08f * nOp));
+                g.fillEllipse(x - radius - 8, y - radius - 8, (radius + 8) * 2, (radius + 8) * 2);
+                g.setColour(ModernLookAndFeel::Colors::amber.withAlpha(0.14f * nOp));
+                g.fillEllipse(x - radius - 4, y - radius - 4, (radius + 4) * 2, (radius + 4) * 2);
+            }
+            else if (isSelected || isHovered)
+            {
+                g.setColour(ModernLookAndFeel::Colors::amber.withAlpha(0.08f * nOp));
                 g.fillEllipse(x - radius - 5, y - radius - 5, (radius + 5) * 2, (radius + 5) * 2);
             }
-            else if (!isDraggingBand && (isSelected || isHovered))
+            else if (hasAICorrection)
             {
-                g.setColour(ModernLookAndFeel::Colors::amber.withAlpha(0.12f * nOp));
-                g.fillEllipse(x - radius - 6, y - radius - 6, (radius + 6) * 2, (radius + 6) * 2);
-            }
-            else if (hasAICorrection && !isDraggingBand)
-            {
-                // AI Pulse: subtle breathing glow on nodes with pending corrections
-                // Modulates between 0.06 and 0.14 alpha over 4-second cycle
-                float pulseAlpha = 0.06f + 0.08f * breathMod;
+                // AI pending pulse — single halo, gentler breath (0.035 → 0.075)
+                float pulseAlpha = 0.035f + 0.040f * breathMod;
                 g.setColour(ModernLookAndFeel::Colors::amber.withAlpha(pulseAlpha * nOp));
-                g.fillEllipse(x - radius - 8, y - radius - 8, (radius + 8) * 2, (radius + 8) * 2);
+                g.fillEllipse(x - radius - 6, y - radius - 6, (radius + 6) * 2, (radius + 6) * 2);
             }
 
             // Solo badge — skip during drag (font creation is expensive)
@@ -2439,28 +2483,25 @@ private:
                 g.drawText("S", badge, juce::Justification::centred);
             }
 
-            // === Node disc — solid glass, fades with nodesOpacity ===
+            // === Node disc — Precise Premium (no permanent amber double-halo) ===
             juce::Rectangle<float> nodeBounds (x - radius, y - radius, radius * 2, radius * 2);
 
-            // Outer halos (amber rim light) — slightly brighter when AI pulsing
-            float haloBase = hasAICorrection ? (0.28f + 0.10f * breathMod) : 0.28f;
-            g.setColour(ModernLookAndFeel::Colors::amber.withAlpha(haloBase * nOp));
-            g.fillEllipse(nodeBounds.expanded(6.0f));
-            g.setColour(ModernLookAndFeel::Colors::amber.withAlpha(0.14f * nOp));
-            g.fillEllipse(nodeBounds.expanded(11.0f));
-
-            // Solid glass fill
-            g.setColour(col.withAlpha(0.55f * nOp));
+            // Fill — softer than before, scales with emphasis
+            g.setColour(col.withAlpha(0.42f * nOp * emphasis));
             g.fillEllipse(nodeBounds);
 
-            // Inner highlight — specular depth
-            g.setColour(col.brighter(0.25f).withAlpha(0.25f * nOp));
+            // Inner highlight — gentler specular
+            g.setColour(col.brighter(0.20f).withAlpha(0.14f * nOp * emphasis));
             g.fillEllipse(nodeBounds.reduced(3.0f));
 
-            // Luminous border ring
-            float ringAlpha = isDragging ? 1.0f : (isSelected ? 0.95f : 0.85f);
-            g.setColour(col.withAlpha(ringAlpha * nOp));
-            g.drawEllipse(nodeBounds, isDragging ? 3.0f : 2.5f);
+            // Border ring — primary stays at full weight, others scale with emphasis
+            float ringAlpha;
+            float ringThickness;
+            if (isDragging)                  { ringAlpha = 1.00f * nOp;            ringThickness = 2.5f; }
+            else if (isSelected || isHovered){ ringAlpha = 0.92f * nOp;            ringThickness = 2.0f; }
+            else                             { ringAlpha = 0.72f * nOp * emphasis; ringThickness = 1.5f; }
+            g.setColour(col.withAlpha(ringAlpha));
+            g.drawEllipse(nodeBounds, ringThickness);
         };
 
         // Z-order: non-selected first, selected last (on top)
