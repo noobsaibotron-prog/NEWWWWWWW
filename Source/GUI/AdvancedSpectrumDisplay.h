@@ -569,18 +569,45 @@ public:
                 {
                     hitIdx = i;
 
-                    // Hero Graph Polish v1.1 — treat the hover as the SAME
-                    // correction (and therefore freeze anchor + payload + text)
-                    // when the underlying zone hasn't moved more than 24 px
-                    // horizontally and the problem type still matches. This
-                    // stops the live AI re-analysis from making the tooltip
-                    // — and the FIX button inside it — slip out from under
-                    // the user's cursor.
+                    // Hero Graph Polish v1.3 — hover identity must use the
+                    // SAME criterion the FIX click resolver uses, otherwise
+                    // in dense scenes two same-type corrections sitting close
+                    // together can decouple three things: the active overlay
+                    // highlight (which follows the live correctionIdx), the
+                    // frozen tooltip text (snapshot-based), and the FIX
+                    // re-match target (also snapshot-based). The user could
+                    // then click FIX on what looks like the active zone and
+                    // approve a different correction.
+                    //
+                    // Primary identity → payload tolerance, mirroring the
+                    // mouseDown FIX resolver exactly:
+                    //   * same ProblemType
+                    //   * |log2(freq / snapshotFreq)| ≤ 0.10  (~±7.2 %)
+                    //   * |Δ suggestedGain|              ≤ 3 dB
+                    //   * |Δ suggestedQ|                 ≤ 1.5
+                    //
+                    // Auxiliary geometric guard → ≤24 px horizontal drift on
+                    // the zone centre. Applied as AND, not OR, so two distinct
+                    // corrections that happen to share a near-identical
+                    // payload but live far apart on the graph still count as
+                    // different (extremely rare, but cheap to defend against).
                     const float zoneCx = zone.getCentreX();
-                    const bool isSameCorrection =
-                           aiTooltip.visible
+                    bool isSameCorrection = false;
+                    if (aiTooltip.visible
                         && aiTooltip.snapshotType == corr.type
-                        && std::abs(zoneCx - aiTooltip.anchor.getCentreX()) <= 24.0f;
+                        && aiTooltip.snapshotFrequency > 0.0f)
+                    {
+                        const float fRatio = std::abs(std::log2(freq
+                                                                / juce::jmax(1.0f, aiTooltip.snapshotFrequency)));
+                        const float gDiff  = std::abs(corr.suggestedGain - aiTooltip.snapshotSuggestedGain);
+                        const float qDiff  = std::abs(Q                  - aiTooltip.snapshotSuggestedQ);
+                        const float xDiff  = std::abs(zoneCx - aiTooltip.anchor.getCentreX());
+
+                        isSameCorrection = fRatio <= 0.10f
+                                        && gDiff  <= 3.0f
+                                        && qDiff  <= 1.5f
+                                        && xDiff  <= 24.0f;
+                    }
 
                     if (!isSameCorrection)
                     {
