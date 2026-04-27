@@ -579,18 +579,11 @@ public:
                     // then click FIX on what looks like the active zone and
                     // approve a different correction.
                     //
-                    // Primary identity → payload tolerance, mirroring the
-                    // mouseDown FIX resolver exactly:
-                    //   * same ProblemType
-                    //   * |log2(freq / snapshotFreq)| ≤ 0.10  (~±7.2 %)
-                    //   * |Δ suggestedGain|              ≤ 3 dB
-                    //   * |Δ suggestedQ|                 ≤ 1.5
-                    //
-                    // Auxiliary geometric guard → ≤24 px horizontal drift on
-                    // the zone centre. Applied as AND, not OR, so two distinct
-                    // corrections that happen to share a near-identical
-                    // payload but live far apart on the graph still count as
-                    // different (extremely rare, but cheap to defend against).
+                    // Tolerances live in kTooltip*Max constants so this site
+                    // and the FIX resolver below stay in lock-step. Auxiliary
+                    // geometric guard is ANDed in to defend against the rare
+                    // case of two distinct corrections sharing a near-identical
+                    // payload but living far apart on the graph.
                     const float zoneCx = zone.getCentreX();
                     bool isSameCorrection = false;
                     if (aiTooltip.visible
@@ -603,10 +596,10 @@ public:
                         const float qDiff  = std::abs(Q                  - aiTooltip.snapshotSuggestedQ);
                         const float xDiff  = std::abs(zoneCx - aiTooltip.anchor.getCentreX());
 
-                        isSameCorrection = fRatio <= 0.10f
-                                        && gDiff  <= 3.0f
-                                        && qDiff  <= 1.5f
-                                        && xDiff  <= 24.0f;
+                        isSameCorrection = fRatio <= kTooltipFreqRatioMax
+                                        && gDiff  <= kTooltipGainDiffMaxDb
+                                        && qDiff  <= kTooltipQDiffMax
+                                        && xDiff  <= kTooltipPixelDriftMax;
                     }
 
                     if (!isSameCorrection)
@@ -780,11 +773,13 @@ public:
                     const float gDiff  = std::abs(c.suggestedGain - aiTooltip.snapshotSuggestedGain);
                     const float qDiff  = std::abs(c.suggestedQ    - aiTooltip.snapshotSuggestedQ);
 
-                    // Hard filters: same problem type, within ~7% of original
-                    // frequency (|log2| ≤ 0.10 ≈ ±7.2 %), within 3 dB of the
-                    // suggested gain, within 1.5 of the suggested Q. Anything
-                    // outside is treated as a different correction.
-                    if (fRatio > 0.10f || gDiff > 3.0f || qDiff > 1.5f)
+                    // Hard filters: same problem type plus payload tolerances
+                    // shared with the mouseMove hover-identity test (single
+                    // source of truth in kTooltip*Max). Anything outside is
+                    // treated as a different correction.
+                    if (fRatio > kTooltipFreqRatioMax
+                        || gDiff > kTooltipGainDiffMaxDb
+                        || qDiff > kTooltipQDiffMax)
                         continue;
 
                     const float score = fRatio * 8.0f + gDiff * 0.5f + qDiff * 0.25f;
@@ -3376,6 +3371,17 @@ private:
         AIEngine::ProblemType snapshotType          = AIEngine::ProblemType::None;
     };
     AITooltipState aiTooltip;
+
+    // Hero Graph Polish v1.4 — single source of truth for the AI tooltip
+    // identity criterion. Both the mouseMove "same correction" test and the
+    // mouseDown FIX click resolver MUST use the same tolerances, otherwise
+    // the active overlay highlight, the tooltip text and the FIX target can
+    // disagree in dense scenes (Codex P1, fixed in 029743db). Tweaking any
+    // value here updates both call sites in lock-step.
+    static constexpr float kTooltipFreqRatioMax  = 0.10f;  // |log2(f / fSnap)|, ~±7.2 %
+    static constexpr float kTooltipGainDiffMaxDb = 3.0f;   // |Δ suggestedGain|, dB
+    static constexpr float kTooltipQDiffMax      = 1.5f;   // |Δ suggestedQ|
+    static constexpr float kTooltipPixelDriftMax = 24.0f;  // auxiliary geometric guard, px
 
     // FIX 4: Off-screen grid + labels cache (static between resizes)
     juce::Image gridCache;
