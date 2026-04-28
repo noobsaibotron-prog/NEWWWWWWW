@@ -1068,6 +1068,7 @@ if(HAVE_JUCE)
         Source/Tests/SoloModeTransitionTest.cpp
         Source/Tests/BandDragContinuityTest.cpp
         Source/Tests/HostSessionClickTest.cpp
+        Source/Tests/DynEQRoutingOwnershipTest.cpp
         Source/Tests/RBValidationTest.cpp
         Source/Tests/RB4BehavioralTest.cpp
         Source/Tests/RB2EquivalenceTest.cpp

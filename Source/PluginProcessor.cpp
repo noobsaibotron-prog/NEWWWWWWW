@@ -3208,25 +3208,19 @@ void AIEqualizerAudioProcessor::applySmoothedBandParams(int blockSamples, bool p
             prevAppliedBandType[idx] = type;
         }
 
-        // FIX: When a band has DynEQ active (Compress/Expand/Gate), the main
-        // static EQ must BYPASS that band in audio processing — the DynamicEQProcessor
-        // handles it entirely, including the biquad EQ + dynamic gain modulation.
-        // Without this, the EQ is applied TWICE: once by the static EQ (always
-        // full strength) and once by the DynEQ (modulated), making the dynamic
-        // effect inaudible because the static EQ masks it.
-        //
-        // We use setBandAudioBypass() instead of setBandEnabled(false) so the band
-        // remains visible in getMagnitudeForFrequencyArray() — this preserves the
-        // EQ curve display and the pulsing GR animation overlay on the spectrum.
-        const bool bandHasDynEQ = (i < maxBands)
-            && (targetDynamicBandParams[idx].dynamicMode != 0); // 0 = Off
+        // targetDynamicBandParams[idx].enabled is the routing ownership flag:
+        // true means this band is currently owned by / enabled inside the
+        // dynamic stage, so the static EQ bypasses it in audio while the white
+        // curve keeps showing the configured band shape.
+        const bool bandOwnedByDynamicStage = (i < maxBands)
+            && targetDynamicBandParams[idx].enabled;
 
         if (i < eqProcessor.getNumBands())
         {
             eqProcessor.setBandParameters(i, freq, gain, q, type);
             eqProcessor.setBandSlope(i, slope);
             eqProcessor.setBandEnabled(i, enabled);
-            eqProcessor.setBandAudioBypass(i, bandHasDynEQ);
+            eqProcessor.setBandAudioBypass(i, bandOwnedByDynamicStage);
             eqProcessor.setBandSolo(i, solo);
         }
         if (i < eqProcessorHQ.getNumBands())
@@ -3234,7 +3228,7 @@ void AIEqualizerAudioProcessor::applySmoothedBandParams(int blockSamples, bool p
             eqProcessorHQ.setBandParameters(i, freq, gain, q, type);
             eqProcessorHQ.setBandSlope(i, slope);
             eqProcessorHQ.setBandEnabled(i, enabled);
-            eqProcessorHQ.setBandAudioBypass(i, bandHasDynEQ);
+            eqProcessorHQ.setBandAudioBypass(i, bandOwnedByDynamicStage);
             eqProcessorHQ.setBandSolo(i, solo);
         }
         if (i < eqProcessorMid.getNumBands())
@@ -3242,7 +3236,7 @@ void AIEqualizerAudioProcessor::applySmoothedBandParams(int blockSamples, bool p
             eqProcessorMid.setBandParameters(i, freq, gain, q, type);
             eqProcessorMid.setBandSlope(i, slope);
             eqProcessorMid.setBandEnabled(i, enabled);
-            eqProcessorMid.setBandAudioBypass(i, bandHasDynEQ);
+            eqProcessorMid.setBandAudioBypass(i, bandOwnedByDynamicStage);
             eqProcessorMid.setBandSolo(i, solo);
         }
         if (i < eqProcessorSide.getNumBands())
@@ -3250,7 +3244,7 @@ void AIEqualizerAudioProcessor::applySmoothedBandParams(int blockSamples, bool p
             eqProcessorSide.setBandParameters(i, freq, gain, q, type);
             eqProcessorSide.setBandSlope(i, slope);
             eqProcessorSide.setBandEnabled(i, enabled);
-            eqProcessorSide.setBandAudioBypass(i, bandHasDynEQ);
+            eqProcessorSide.setBandAudioBypass(i, bandOwnedByDynamicStage);
             eqProcessorSide.setBandSolo(i, solo);
         }
 
@@ -3261,7 +3255,7 @@ void AIEqualizerAudioProcessor::applySmoothedBandParams(int blockSamples, bool p
             dynParams.gain = gain;
             dynParams.q = q;
             dynParams.filterType = type;
-            dynParams.enabled = enabled;
+            dynParams.enabled = bandOwnedByDynamicStage;
             dynamicEQProcessor.setBandParams(i, dynParams);
             dynamicEQProcessorHQ.setBandParams(i, dynParams);
             dynamicEQProcessorMid.setBandParams(i, dynParams);
@@ -3329,6 +3323,9 @@ void AIEqualizerAudioProcessor::updateEQFromParameters()
     //--------------------------------------------------------------------------
     // Update Global Dynamic EQ settings (use cached pointers)
     //--------------------------------------------------------------------------
+    const bool dynEqEnabledTarget = cachedDynEqEnabled
+        ? (cachedDynEqEnabled->load(std::memory_order_relaxed) > 0.5f)
+        : true;
     float dynMix = 1.0f;
     bool dynAutoMakeup = false;
     if (cachedDynEqMix)
@@ -3340,6 +3337,12 @@ void AIEqualizerAudioProcessor::updateEQFromParameters()
     dynamicEQProcessor.setAutoMakeup(dynAutoMakeup);
     dynamicEQProcessorHQ.setGlobalMix(dynMix);
     dynamicEQProcessorHQ.setAutoMakeup(dynAutoMakeup);
+    dynamicEQProcessorMid.setGlobalMix(dynMix);
+    dynamicEQProcessorMid.setAutoMakeup(dynAutoMakeup);
+    dynamicEQProcessorSide.setGlobalMix(dynMix);
+    dynamicEQProcessorSide.setAutoMakeup(dynAutoMakeup);
+    dynamicEQProcessorForIR.setGlobalMix(dynMix);
+    dynamicEQProcessorForIR.setAutoMakeup(dynAutoMakeup);
 
     // Update active bands count (robust against NaN / invalid)
     {
@@ -3411,12 +3414,18 @@ void AIEqualizerAudioProcessor::updateEQFromParameters()
         float range = loadParam(p.dynRange, 24.0f);
         float knee = loadParam(p.dynKnee, 6.0f);
 
+        const bool bandOwnedByDynamicStage = dynEqEnabledTarget
+            && enabledFiltered
+            && dynMode != DynamicEQProcessor::DynamicMode_Off;
+
         DynamicEQProcessor::DynamicBandParams dynParams;
         dynParams.frequency = freq;
         dynParams.gain = gain;
         dynParams.q = q;
         dynParams.filterType = type;
-        dynParams.enabled = enabledFiltered;
+        // In plugin integration, .enabled means "owned by / enabled inside the
+        // dynamic stage", not the raw UI band-enabled state.
+        dynParams.enabled = bandOwnedByDynamicStage;
         dynParams.dynamicMode = dynMode;  // Now int, not enum class
         dynParams.threshold = threshold;
         dynParams.ratio = ratio;
@@ -3455,7 +3464,7 @@ void AIEqualizerAudioProcessor::updateEQFromParameters()
         if (i < eqProcessorForIR.getNumBands())
         {
             eqProcessorForIR.setBandParameters(i, freq, gain, q, type);
-            eqProcessorForIR.setBandEnabled(i, enabledFiltered);
+            eqProcessorForIR.setBandEnabled(i, enabledFiltered && !bandOwnedByDynamicStage);
             eqProcessorForIR.setBandSolo(i, solo);
             eqProcessorForIR.setBandSlope(i, static_cast<int>(loadParam(p.slope, 0.0f)));
         }
