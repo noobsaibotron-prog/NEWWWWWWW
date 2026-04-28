@@ -142,6 +142,15 @@ public:
     //==============================================================================
     // Magnitude response (for GUI curve drawing)
     [[nodiscard]] float getMagnitudeForFrequency(float freq, double sampleRate) const;
+    // Returns the dB delta that must be added to the displayed static EQ curve
+    // for bands owned by the dynamic stage. This is replacement semantics, not
+    // an additive extra stage: the GUI uses it to swap the static white band
+    // shape with the audible live DynEQ transfer function.
+    void evaluateDynamicReplacementDeltaDbForFrequencyArray(
+        const float* frequenciesHz,
+        float* deltaDbOut,
+        size_t numPoints,
+        double sampleRate) const noexcept;
 
 private:
     //==============================================================================
@@ -170,6 +179,12 @@ private:
         std::atomic<float> meterInputLevel { -100.0f };
         std::atomic<float> meterGainReduction { 0.0f };
         std::atomic<float> meterOutputLevel { -100.0f };
+
+        // End-of-block mirrors of the values actually applied to audio.
+        // The GUI live-curve evaluator consumes these instead of the
+        // instantaneous meter values, which intentionally remain pre-smoothing.
+        std::atomic<float> liveCurrentGainDb { 0.0f };
+        std::atomic<float> liveGateAmount { 1.0f };
         
         uint64_t lastVersion = 0;
         bool prepared = false;
@@ -184,6 +199,7 @@ private:
                                              float knee,
                                              float range) const;
     [[nodiscard]] float computeSoftKnee(float inputDb, float threshold, float ratio, float knee) const;
+    [[nodiscard]] float computeAutoMakeupGainLinear() const noexcept;
 
     [[nodiscard]] BiquadCoeffs makeEQCoefficients(
         int filterType, float freq, float gain, float q) const;

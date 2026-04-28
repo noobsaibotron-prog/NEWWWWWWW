@@ -1,4 +1,29 @@
 #include "DynamicEQProcessor.h"
+#include <algorithm>
+
+namespace
+{
+std::complex<double> evaluateComplexResponse(const BiquadCoeffs& coeffs,
+                                             double freq,
+                                             double sampleRate) noexcept
+{
+    if (!coeffs.valid)
+        return { 1.0, 0.0 };
+
+    constexpr std::complex<double> kJ(0.0, 1.0);
+    const std::complex<double> zInv =
+        std::exp(-6.28318530717958647692 * freq * kJ / sampleRate);
+    const std::complex<double> zInv2 = zInv * zInv;
+
+    const std::complex<double> numerator = static_cast<double>(coeffs.b0)
+                                         + static_cast<double>(coeffs.b1) * zInv
+                                         + static_cast<double>(coeffs.b2) * zInv2;
+    const std::complex<double> denominator = 1.0
+                                           + static_cast<double>(coeffs.a1) * zInv
+                                           + static_cast<double>(coeffs.a2) * zInv2;
+    return numerator / denominator;
+}
+}
 
 //==============================================================================
 DynamicEQProcessor::DynamicEQProcessor()
@@ -74,6 +99,11 @@ void DynamicEQProcessor::prepare(double sampleRate, int samplesPerBlock, int cha
         // Cache applied SC params
         state.scFreqApplied = smoothedSidechainFreq[i].getCurrentValue();
         state.scQApplied = smoothedSidechainQ[i].getCurrentValue();
+        state.liveCurrentGainDb.store(0.0f, std::memory_order_relaxed);
+        state.liveGateAmount.store(1.0f, std::memory_order_relaxed);
+        state.meterInputLevel.store(-100.0f, std::memory_order_relaxed);
+        state.meterGainReduction.store(0.0f, std::memory_order_relaxed);
+        state.meterOutputLevel.store(-100.0f, std::memory_order_relaxed);
     }
     
     // RB-4 FIX: always allocate lookahead buffer for the maximum possible delay (20ms)
@@ -109,6 +139,11 @@ void DynamicEQProcessor::reset()
         state.envelopeR = 0.0f;
         state.currentGain = 0.0f;
         state.targetGain = 0.0f;
+        state.liveCurrentGainDb.store(0.0f, std::memory_order_relaxed);
+        state.liveGateAmount.store(1.0f, std::memory_order_relaxed);
+        state.meterInputLevel.store(-100.0f, std::memory_order_relaxed);
+        state.meterGainReduction.store(0.0f, std::memory_order_relaxed);
+        state.meterOutputLevel.store(-100.0f, std::memory_order_relaxed);
     }
     
     if (lookaheadBuffer.getNumSamples() > 0)
@@ -243,6 +278,8 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
             state.meterGainReduction.store(0.0f, std::memory_order_relaxed);
             state.meterInputLevel.store(-100.0f, std::memory_order_relaxed);
             state.meterOutputLevel.store(-100.0f, std::memory_order_relaxed);
+            state.liveCurrentGainDb.store(0.0f, std::memory_order_relaxed);
+            state.liveGateAmount.store(1.0f, std::memory_order_relaxed);
             continue;
         }
         
@@ -337,6 +374,7 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
             float* outRPtr = channels > 1 ? buffer.getWritePointer(1) : nullptr;
             const float* detectBaseL = useLookahead && detectDelayL ? detectDelayL : outLPtr;
             const float* detectBaseR = (useLookahead && detectDelayR) ? detectDelayR : (channels > 1 ? outRPtr : detectBaseL);
+            float lastGateAmount = 1.0f;
             
             for (int sample = 0; sample < numSamples; ++sample)
             {
@@ -448,11 +486,16 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
                 {
                     if (smoothedEnv < threshold)
                     {
-                        float gateAmount = juce::jmap(smoothedEnv, 
+                        float gateAmount = juce::jmap(smoothedEnv,
                             threshold - range, threshold, 0.0f, 1.0f);
                         gateAmount = juce::jlimit(0.0f, 1.0f, gateAmount);
                         outL *= gateAmount;
                         outR *= gateAmount;
+                        lastGateAmount = gateAmount;
+                    }
+                    else
+                    {
+                        lastGateAmount = 1.0f;
                     }
                 }
                 
@@ -464,6 +507,9 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
                     juce::Decibels::gainToDecibels(std::max(std::abs(outL), std::abs(outR))),
                     std::memory_order_relaxed);
             }
+
+            state.liveCurrentGainDb.store(state.currentGain, std::memory_order_relaxed);
+            state.liveGateAmount.store(lastGateAmount, std::memory_order_relaxed);
         }
         else
         {
@@ -505,6 +551,8 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
             }
 
             state.meterGainReduction.store(0.0f, std::memory_order_relaxed);
+            state.liveCurrentGainDb.store(0.0f, std::memory_order_relaxed);
+            state.liveGateAmount.store(1.0f, std::memory_order_relaxed);
         }
     }
     
@@ -531,23 +579,7 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
     //==========================================================================
     if (autoMakeupEnabled.load(std::memory_order_relaxed))
     {
-        float totalGainLinear = 1.0f;
-        for (int i = 0; i < maxBands; ++i)
-        {
-            if (bandParams[i].enabled.load(std::memory_order_relaxed) &&
-                bandParams[i].dynamicMode.load(std::memory_order_relaxed) != DynamicMode_Off)
-            {
-                const float grDb = bandStates[i].meterGainReduction.load(std::memory_order_relaxed);
-                totalGainLinear *= juce::Decibels::decibelsToGain(grDb);
-            }
-        }
-        
-        if (totalGainLinear < 0.999f)
-        {
-            // Safety clamp to avoid extreme boosts
-            const float makeupGain = juce::jlimit(0.25f, 4.0f, 1.0f / totalGainLinear);
-            buffer.applyGain(makeupGain);
-        }
+        buffer.applyGain(computeAutoMakeupGainLinear());
     }
 }
 
@@ -734,6 +766,26 @@ float DynamicEQProcessor::getTotalGainReduction() const
     return totalGR;
 }
 
+float DynamicEQProcessor::computeAutoMakeupGainLinear() const noexcept
+{
+    float totalGainLinear = 1.0f;
+
+    for (int i = 0; i < maxBands; ++i)
+    {
+        if (bandParams[i].enabled.load(std::memory_order_relaxed)
+            && bandParams[i].dynamicMode.load(std::memory_order_relaxed) != DynamicMode_Off)
+        {
+            const float grDb = bandStates[i].meterGainReduction.load(std::memory_order_relaxed);
+            totalGainLinear *= juce::Decibels::decibelsToGain(grDb);
+        }
+    }
+
+    if (totalGainLinear < 0.999f)
+        return juce::jlimit(0.25f, 4.0f, 1.0f / totalGainLinear);
+
+    return 1.0f;
+}
+
 //==============================================================================
 void DynamicEQProcessor::updateBandCoefficients(int bandIndex)
 {
@@ -848,4 +900,109 @@ float DynamicEQProcessor::getMagnitudeForFrequency(float freq, double sampleRate
     }
     
     return static_cast<float>(magnitude);
+}
+
+void DynamicEQProcessor::evaluateDynamicReplacementDeltaDbForFrequencyArray(
+    const float* frequenciesHz,
+    float* deltaDbOut,
+    size_t numPoints,
+    double sampleRate) const noexcept
+{
+    if (frequenciesHz == nullptr || deltaDbOut == nullptr || numPoints == 0)
+        return;
+
+    if (sampleRate <= 0.0)
+        sampleRate = currentSampleRate.load(std::memory_order_relaxed);
+    if (sampleRate <= 0.0)
+        sampleRate = 44100.0;
+
+    struct DynamicBandSnapshot
+    {
+        BiquadCoeffs coeffs;
+        int mode = DynamicMode_Off;
+        float range = 1.0f;
+        float liveCurrentGainDb = 0.0f;
+        float liveGateAmount = 1.0f;
+    };
+
+    std::array<DynamicBandSnapshot, maxBands> activeBands {};
+    size_t activeCount = 0;
+
+    for (int i = 0; i < maxBands; ++i)
+    {
+        if (!bandParams[i].enabled.load(std::memory_order_relaxed))
+            continue;
+
+        const int mode = bandParams[i].dynamicMode.load(std::memory_order_relaxed);
+        if (mode == DynamicMode_Off)
+            continue;
+
+        auto& snapshot = activeBands[activeCount++];
+        snapshot.coeffs = bandStates[i].eqCoeffs;
+        snapshot.mode = mode;
+        snapshot.range = juce::jmax(1.0e-3f, bandParams[i].range.load(std::memory_order_relaxed));
+        snapshot.liveCurrentGainDb = bandStates[i].liveCurrentGainDb.load(std::memory_order_relaxed);
+        snapshot.liveGateAmount = bandStates[i].liveGateAmount.load(std::memory_order_relaxed);
+    }
+
+    if (activeCount == 0)
+    {
+        std::fill(deltaDbOut, deltaDbOut + numPoints, 0.0f);
+        return;
+    }
+
+    const double mix = static_cast<double>(globalMix.load(std::memory_order_relaxed));
+    const double makeupGain = autoMakeupEnabled.load(std::memory_order_relaxed)
+        ? static_cast<double>(computeAutoMakeupGainLinear())
+        : 1.0;
+    constexpr double kFloor = 1.0e-6;
+    constexpr std::complex<double> kOne(1.0, 0.0);
+
+    for (size_t point = 0; point < numPoints; ++point)
+    {
+        const double freq = static_cast<double>(frequenciesHz[point]);
+        double staticMagnitudeProduct = 1.0;
+        std::complex<double> liveProduct = kOne;
+
+        for (size_t band = 0; band < activeCount; ++band)
+        {
+            const auto& snapshot = activeBands[band];
+            const std::complex<double> response =
+                evaluateComplexResponse(snapshot.coeffs, freq, sampleRate);
+
+            staticMagnitudeProduct *= std::abs(response);
+
+            std::complex<double> effectiveResponse = response;
+            if (snapshot.mode == DynamicMode_Compress)
+            {
+                const double eqAmount = juce::jlimit(
+                    0.0, 1.0,
+                    1.0 - std::abs(static_cast<double>(snapshot.liveCurrentGainDb))
+                        / static_cast<double>(snapshot.range));
+                effectiveResponse = kOne + (response - kOne) * eqAmount;
+            }
+            else if (snapshot.mode == DynamicMode_Expand)
+            {
+                const double eqAmount = juce::jlimit(
+                    0.0, 2.0,
+                    1.0 + static_cast<double>(snapshot.liveCurrentGainDb)
+                        / static_cast<double>(snapshot.range));
+                effectiveResponse = kOne + (response - kOne) * eqAmount;
+            }
+            else if (snapshot.mode == DynamicMode_Gate)
+            {
+                effectiveResponse = response * static_cast<double>(snapshot.liveGateAmount);
+            }
+
+            liveProduct *= effectiveResponse;
+        }
+
+        const std::complex<double> stageResponse =
+            ((1.0 - mix) + mix * liveProduct) * makeupGain;
+        const double stageMag = std::max(kFloor, std::abs(stageResponse));
+        const double staticMag = std::max(kFloor, staticMagnitudeProduct);
+
+        deltaDbOut[point] = static_cast<float>(
+            20.0 * std::log10(stageMag) - 20.0 * std::log10(staticMag));
+    }
 }

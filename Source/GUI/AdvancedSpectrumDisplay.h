@@ -3023,9 +3023,9 @@ public:
 
 private:
     // ── Dynamic GR smoothing — called from timerCallback ─────────────────────
-    // Reads instantaneous GR per band from the DSP meter cache (lock-free),
-    // applies 1-pole smoothing (fast attack ~3 frames, slow release ~10 frames),
-    // and marks the dynamic path dirty if values changed enough to be worth redrawing.
+    // Reads instantaneous GR per band from the DSP meter cache (lock-free)
+    // only for repaint heuristics. The dynamic live curve itself is rebuilt
+    // from the DSP replacement-delta evaluator, not from these smoothed values.
     void updateDynamicGRSmoothing()
     {
         if (!processor.isProcessorReady()) return;
@@ -3038,19 +3038,17 @@ private:
         for (int i = 0; i < limit; ++i)
         {
             const auto dynParams = dynProc.getBandParams(i);
-            if (dynParams.dynamicMode == DynamicEQProcessor::DynamicMode_Off || !dynParams.enabled)
+            if (!dynParams.enabled)
             {
                 dynGRSmoothed[static_cast<size_t>(i)] *= 0.85f; // decay to zero when deactivated
                 continue;
             }
 
+            hasAny = true;
             const float gr = processor.getDynamicBandMeter(i).gainReduction; // negative = compressing
             float& s = dynGRSmoothed[static_cast<size_t>(i)];
             const float coeff = (std::abs(gr) > std::abs(s)) ? 0.55f : 0.12f; // fast attack, slow release
             s = s * (1.0f - coeff) + gr * coeff;
-
-            if (std::abs(s) > 0.05f)
-                hasAny = true;
         }
 
         anyDynamicBandActive = hasAny;
@@ -3063,30 +3061,21 @@ private:
     {
         if (graphBounds.isEmpty()) return;
 
-        const int numActive = processor.getNumActiveBands();
-        const int limit     = std::min(numActive, AIEqualizerAudioProcessor::maxBands);
         const auto& dynProc = processor.getDynamicEQProcessor();
+        rebuildEQCurvePath();
 
-        // Build per-band gain offsets from smoothed GR
-        std::array<float, AIEqualizerAudioProcessor::maxBands> offsets {};
-        for (int i = 0; i < limit; ++i)
-        {
-            const auto p = dynProc.getBandParams(i);
-            if (p.dynamicMode != DynamicEQProcessor::DynamicMode_Off && p.enabled)
-                offsets[static_cast<size_t>(i)] = dynGRSmoothed[static_cast<size_t>(i)];
-        }
+        if (eqCurveFrequencies.empty() || eqCurveMagnitudes.size() != eqCurveFrequencies.size())
+            return;
 
-        ensureEQCurveFrequencies();
-        dynCurveMagnitudes.resize(eqCurveFrequencies.size(), 1.0f);
-
-        auto& eq  = processor.getEQProcessor();
         double sr = processor.getSampleRate();
         if (sr <= 0) sr = 44100.0;
 
-        eq.getMagnitudeForFrequencyArrayWithGainOffsets(
-            eqCurveFrequencies.data(), dynCurveMagnitudes.data(),
-            eqCurveFrequencies.size(), sr,
-            offsets.data(), static_cast<int>(offsets.size()));
+        dynCurveDeltaDb.resize(eqCurveFrequencies.size(), 0.0f);
+        dynProc.evaluateDynamicReplacementDeltaDbForFrequencyArray(
+            eqCurveFrequencies.data(),
+            dynCurveDeltaDb.data(),
+            eqCurveFrequencies.size(),
+            sr);
 
         // Store per-point X and Y for both curves
         const size_t n = eqCurveFrequencies.size();
@@ -3102,22 +3091,23 @@ private:
             const float x = freqToX(eqCurveFrequencies[i]);
             dynCurveXPoints[i] = x;
 
-            // Dynamic curve Y
-            float dynDb = juce::Decibels::gainToDecibels(dynCurveMagnitudes[i], -48.0f);
-            dynDb = juce::jlimit(-24.0f, 24.0f, dynDb);
-            dynCurveYPoints[i] = gainToY(dynDb);  // Use gainToY for consistent centering
-
             // Static curve Y (from already-computed magnitudes)
             float statDb = (i < eqCurveMagnitudes.size())
                 ? juce::Decibels::gainToDecibels(eqCurveMagnitudes[i], -48.0f) : 0.0f;
             statDb = juce::jlimit(-24.0f, 24.0f, statDb);
             staticCurveYPoints[i] = gainToY(statDb);  // Use gainToY for consistent centering
 
+            // Dynamic curve Y: static white curve plus DSP-provided replacement delta
+            float liveDb = statDb + dynCurveDeltaDb[i];
+            liveDb = juce::jlimit(-24.0f, 24.0f, liveDb);
+            dynCurveYPoints[i] = gainToY(liveDb);
+
             if (!started) { cachedDynamicEQCurve.startNewSubPath(x, dynCurveYPoints[i]); started = true; }
             else cachedDynamicEQCurve.lineTo(x, dynCurveYPoints[i]);
         }
 
-        dynGRAtLastRebuild = dynGRSmoothed;
+        lastDynCurveEQVersion = lastEQVersion;
+        lastDynCurveBounds = graphBounds;
     }
 
     // ── Draw dynamic GR overlay (TDR Nova style) ─────────────────────────────
@@ -3136,26 +3126,19 @@ private:
         // Ensure static curve is built
         rebuildEQCurvePath();
 
-        // Check if GR values changed enough to warrant a dynamic path rebuild
-        bool needsRebuild = cachedDynamicEQCurve.isEmpty();
-        if (!needsRebuild)
+        const bool staticCurveChanged = lastDynCurveEQVersion != lastEQVersion
+            || lastDynCurveBounds != graphBounds
+            || dynCurveXPoints.size() != eqCurveFrequencies.size();
+        const double now = juce::Time::getMillisecondCounterHiRes();
+
+        // Rebuild at most ~30 Hz while any band is owned by the dynamic stage.
+        // This keeps the live curve honest even when GR is near zero but mix < 100%.
+        if (cachedDynamicEQCurve.isEmpty()
+            || staticCurveChanged
+            || now - lastDynCurveRebuildMs > 33.0)
         {
-            const int limit = std::min(processor.getNumActiveBands(), AIEqualizerAudioProcessor::maxBands);
-            for (int i = 0; i < limit; ++i)
-            {
-                if (std::abs(dynGRSmoothed[static_cast<size_t>(i)] - dynGRAtLastRebuild[static_cast<size_t>(i)]) > 0.05f)
-                { needsRebuild = true; break; }
-            }
-        }
-        // Throttle dynamic EQ rebuild to ~30 Hz max (same as EQ curve during drag)
-        if (needsRebuild)
-        {
-            const double now = juce::Time::getMillisecondCounterHiRes();
-            if (now - lastDynCurveRebuildMs > 33.0 || cachedDynamicEQCurve.isEmpty())
-            {
-                rebuildDynamicEQCurvePath();
-                lastDynCurveRebuildMs = now;
-            }
+            rebuildDynamicEQCurvePath();
+            lastDynCurveRebuildMs = now;
         }
 
         const size_t n = dynCurveXPoints.size();
@@ -3424,15 +3407,15 @@ private:
     std::array<float, AIEqualizerAudioProcessor::maxBands> dynGRSmoothed {};
     // Cached dynamic EQ curve path + per-point coordinate arrays for fill construction
     juce::Path cachedDynamicEQCurve;
-    std::vector<float> dynCurveMagnitudes;   // magnitude buffer (reused)
+    std::vector<float> dynCurveDeltaDb;      // replacement delta returned by DSP evaluator
     std::vector<float> dynCurveXPoints;       // X pixel positions (shared between static & dynamic)
     std::vector<float> dynCurveYPoints;       // Y pixel positions (dynamic curve)
     std::vector<float> staticCurveYPoints;    // Y pixel positions (static curve, for fill)
-    // Last smoothed GR values used to build the cached dynamic path
-    std::array<float, AIEqualizerAudioProcessor::maxBands> dynGRAtLastRebuild {};
-    // Whether any band has dynamic mode active
+    // Whether any band is currently owned by the dynamic stage
     bool anyDynamicBandActive = false;
     double lastDynCurveRebuildMs = 0.0;  // throttle DynEQ curve rebuilds to ~30 Hz
+    uint64_t lastDynCurveEQVersion = std::numeric_limits<uint64_t>::max();
+    juce::Rectangle<float> lastDynCurveBounds;
     // ────────────────────────────────────────────────────────────────────────
 
 
