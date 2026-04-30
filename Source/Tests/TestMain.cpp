@@ -2,6 +2,22 @@
 #include <juce_events/juce_events.h>
 #include <iostream>
 
+class HarnessSelfTest : public juce::UnitTest
+{
+public:
+    HarnessSelfTest() : juce::UnitTest("Harness Self-Test", "Meta") {}
+
+    void runTest() override
+    {
+        beginTest("Failure propagation sanity check");
+
+        if (juce::SystemStats::getEnvironmentVariable("AIEQ_HARNESS_SELFTEST", "0") == "1")
+            expect(false, "Synthetic failure to verify harness reporting");
+    }
+};
+
+static HarnessSelfTest harnessSelfTest;
+
 /**
  * Test runner with proper exit codes and optional category filtering / verbosity.
  */
@@ -13,6 +29,13 @@ public:
         juce::String category;
         bool verbose = false;
         bool runAll = false;
+    };
+
+    struct Summary
+    {
+        int totalAssertions = 0;
+        int totalPasses = 0;
+        int totalFailures = 0;
     };
 
     static Options parseArgs(int argc, char** argv)
@@ -33,21 +56,25 @@ public:
 
     static int run(const Options& opts)
     {
-        juce::UnitTestRunner runner;
-
         std::cout << "========================================" << std::endl;
         std::cout << "     AI Equalizer Pro - Test Suite      " << std::endl;
         std::cout << "========================================" << std::endl;
 
+        Summary summary;
+
         if (opts.category.isNotEmpty())
         {
             std::cout << "Running category: " << opts.category << std::endl;
+            juce::UnitTestRunner runner;
             runner.runTestsInCategory(opts.category);
+            accumulateResults(runner, summary, opts.verbose);
         }
         else if (opts.runAll)
         {
             std::cout << "Running all registered tests..." << std::endl;
+            juce::UnitTestRunner runner;
             runner.runAllTests();
+            accumulateResults(runner, summary, opts.verbose);
         }
         else
         {
@@ -56,7 +83,11 @@ public:
                       << projectCategories.joinIntoString(", ") << std::endl;
 
             for (const auto& category : projectCategories)
+            {
+                juce::UnitTestRunner runner;
                 runner.runTestsInCategory(category);
+                accumulateResults(runner, summary, opts.verbose);
+            }
         }
 
         std::cout << std::endl;
@@ -64,44 +95,46 @@ public:
         std::cout << "              RESULTS                   " << std::endl;
         std::cout << "========================================" << std::endl;
 
-        int totalTests = 0;
-        int totalPasses = 0;
-        int totalFailures = 0;
+        std::cout << std::endl;
+        std::cout << "----------------------------------------" << std::endl;
+        std::cout << "Total assertions: " << summary.totalAssertions << std::endl;
+        std::cout << "Passed:           " << summary.totalPasses << std::endl;
+        std::cout << "Failed:           " << summary.totalFailures << std::endl;
+        std::cout << "----------------------------------------" << std::endl;
 
+        if (summary.totalFailures == 0)
+        {
+            std::cout << "ALL TESTS PASSED" << std::endl;
+            return 0;
+        }
+
+        std::cout << "FAILED: " << summary.totalFailures << " TEST(S) FAILED" << std::endl;
+        return 1;
+    }
+
+private:
+    static void accumulateResults(const juce::UnitTestRunner& runner,
+                                  Summary& summary,
+                                  bool verbose)
+    {
         for (int i = 0; i < runner.getNumResults(); ++i)
         {
             if (const auto* result = runner.getResult(i))
             {
-                totalPasses += result->passes;
-                totalFailures += result->failures;
-                totalTests += result->passes + result->failures;
+                summary.totalPasses += result->passes;
+                summary.totalFailures += result->failures;
+                summary.totalAssertions += result->passes + result->failures;
 
                 const juce::String status = (result->failures == 0) ? "[PASS]" : "[FAIL]";
                 std::cout << status << " " << result->unitTestName << std::endl;
 
-                if (opts.verbose && result->messages.size() > 0)
+                if (verbose && result->messages.size() > 0)
                 {
                     for (const auto& message : result->messages)
                         std::cout << "       " << message << std::endl;
                 }
             }
         }
-
-        std::cout << std::endl;
-        std::cout << "----------------------------------------" << std::endl;
-        std::cout << "Total assertions: " << totalTests << std::endl;
-        std::cout << "Passed:           " << totalPasses << std::endl;
-        std::cout << "Failed:           " << totalFailures << std::endl;
-        std::cout << "----------------------------------------" << std::endl;
-
-        if (totalFailures == 0)
-        {
-            std::cout << "ALL TESTS PASSED" << std::endl;
-            return 0;
-        }
-
-        std::cout << "FAILED: " << totalFailures << " TEST(S) FAILED" << std::endl;
-        return 1;
     }
 };
 
@@ -114,4 +147,3 @@ int main(int argc, char** argv)
     juce::MessageManager::deleteInstance();
     return result;
 }
-
