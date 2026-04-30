@@ -766,13 +766,15 @@ private:
                 if (block == 190) setChoice(apvts, "band3DynMode", 0);
             });
 
-        // Analyze the entire session. Window starts at block 10 which is BEFORE
-        // the plugin's static latency warmup completes (~17 blocks @ 128). Pass
-        // result.latencySamples so dropout detection aligns output[t] with the
-        // corresponding input[t - latencySamples], rather than flagging the
-        // pre-latency wet-pad silence as a dropout.
-        int start = 10 * blockSize;
-        int len   = 200 * blockSize;
+        // Analyze the session only after the fixed wet-path latency has fully
+        // flushed and one extra block of settling has passed. Starting earlier
+        // can still catch the tail end of the initial warmup silence, which is
+        // unrelated to the compound transitions themselves.
+        const int requestedStart = 10 * blockSize;
+        const int stableStart = result.latencySamples + 2 * blockSize;
+        const int start = juce::jmax(requestedStart, stableStart);
+        const int end = 210 * blockSize;
+        const int len = juce::jmax(0, end - start);
         auto m = analyzeForClicks(result.output, result.input, start, len, 0.75f,
                                    /*latencyOffset=*/ result.latencySamples);
         // Compound stress: phase transitions produce structural maxDelta ~0.6

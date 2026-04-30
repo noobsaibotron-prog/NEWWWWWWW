@@ -76,7 +76,10 @@ private:
 
         DynamicEQProcessor::DynamicBandParams params;
         params.frequency   = 1000.0f;
-        params.gain        = 0.0f;
+        // Give the band an actual static boost to modulate. With a 0 dB peak
+        // filter, the biquad is unity and compression can only show up on the
+        // meter, not in the audio output.
+        params.gain        = 6.0f;
         params.q           = 1.0f;
         params.filterType  = 2; // Peak
         params.enabled     = true;
@@ -97,16 +100,26 @@ private:
             proc.process(buf);
         }
 
-        // Measure gain reduction: output should be quieter than input when above threshold
-        auto inputBuf  = makeSine(1000.0f, kBlockSize);
-        const float inputRMS = rms(inputBuf);
+        // Measure against a static EQ reference. With a positive static gain,
+        // compression pulls the band back toward unity; it does not necessarily
+        // make the output quieter than the dry input.
+        DynamicEQProcessor staticRef;
+        staticRef.prepare(kSampleRate, kBlockSize, kChannels);
+        auto staticParams = params;
+        staticParams.dynamicMode = DynamicEQProcessor::DynamicMode_Off;
+        staticRef.setBandParams(0, staticParams);
+
+        auto inputBuf = makeSine(1000.0f, kBlockSize);
+        auto staticBuf = inputBuf;
+        staticRef.process(staticBuf);
+        const float staticRMS = rms(staticBuf);
+
         proc.process(inputBuf);
         const float outputRMS = rms(inputBuf);
 
         expect(isFinite(inputBuf), "Non-finite samples in dynamic compress output");
-        // Signal is above threshold → compressor must have reduced gain
-        expect(outputRMS < inputRMS * 0.99f,
-               "Dynamic compressor (no sidechain) did not reduce gain above threshold");
+        expect(outputRMS < staticRMS * 0.99f,
+               "Dynamic compressor (no sidechain) did not reduce gain relative to the static EQ path");
 
         const float grDB = proc.getBandMeter(0).gainReduction;
         logMessage("GR meter: " + juce::String(grDB, 2) + " dB");

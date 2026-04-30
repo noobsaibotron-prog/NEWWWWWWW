@@ -3022,10 +3022,11 @@ public:
     };
 
 private:
-    // ── Dynamic GR smoothing — called from timerCallback ─────────────────────
-    // Reads instantaneous GR per band from the DSP meter cache (lock-free)
-    // only for repaint heuristics. The dynamic live curve itself is rebuilt
-    // from the DSP replacement-delta evaluator, not from these smoothed values.
+    // ── Dynamic overlay activity tracking — called from timerCallback ────────
+    // The live DynEQ curve shape now comes from the DSP replacement-delta
+    // evaluator, so the GUI no longer needs per-band GR smoothing here.
+    // We only track whether any band is currently owned by the dynamic stage
+    // to keep the live overlay active when needed.
     void updateDynamicGRSmoothing()
     {
         if (!processor.isProcessorReady()) return;
@@ -3039,16 +3040,9 @@ private:
         {
             const auto dynParams = dynProc.getBandParams(i);
             if (!dynParams.enabled)
-            {
-                dynGRSmoothed[static_cast<size_t>(i)] *= 0.85f; // decay to zero when deactivated
                 continue;
-            }
 
             hasAny = true;
-            const float gr = processor.getDynamicBandMeter(i).gainReduction; // negative = compressing
-            float& s = dynGRSmoothed[static_cast<size_t>(i)];
-            const float coeff = (std::abs(gr) > std::abs(s)) ? 0.55f : 0.12f; // fast attack, slow release
-            s = s * (1.0f - coeff) + gr * coeff;
         }
 
         anyDynamicBandActive = hasAny;
@@ -3402,9 +3396,7 @@ private:
     // Adaptive timer — tracks current rate to avoid redundant startTimerHz calls
     int currentTimerHz = 60;
 
-    // ── Dynamic EQ GR overlay (TDR Nova style) ──────────────────────────────
-    // Per-band smoothed gain reduction values (1-pole IIR)
-    std::array<float, AIEqualizerAudioProcessor::maxBands> dynGRSmoothed {};
+    // ── Dynamic EQ live overlay ──────────────────────────────────────────────
     // Cached dynamic EQ curve path + per-point coordinate arrays for fill construction
     juce::Path cachedDynamicEQCurve;
     std::vector<float> dynCurveDeltaDb;      // replacement delta returned by DSP evaluator
