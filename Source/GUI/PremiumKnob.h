@@ -67,6 +67,29 @@ public:
         const float proportion = static_cast<float>(valueToProportionOfLength(getValue()));
         const float angle = startAngle + proportion * (endAngle - startAngle);
 
+        // Value arc (track + filled portion)
+        {
+            const float arcR = radius * 0.95f;
+            const float arcThickness = 2.5f;
+
+            // Background track
+            juce::Path arcBg;
+            arcBg.addCentredArc(centre.x, centre.y, arcR, arcR, 0.0f, startAngle, endAngle, true);
+            g.setColour(juce::Colour(0xFF1a1a24));
+            g.strokePath(arcBg, juce::PathStrokeType(arcThickness, juce::PathStrokeType::curved,
+                                                      juce::PathStrokeType::rounded));
+
+            // Filled arc (accent blue)
+            if (proportion > 0.005f)
+            {
+                juce::Path arcVal;
+                arcVal.addCentredArc(centre.x, centre.y, arcR, arcR, 0.0f, startAngle, angle, true);
+                g.setColour(juce::Colour(0xFF4A90D9).withAlpha(0.85f));
+                g.strokePath(arcVal, juce::PathStrokeType(arcThickness, juce::PathStrokeType::curved,
+                                                           juce::PathStrokeType::rounded));
+            }
+        }
+
         // Indicator glow pulse
         const float t = static_cast<float>(juce::Time::getMillisecondCounterHiRes() * 0.002);
         const float glow = 0.35f + 0.25f * std::sin(t);

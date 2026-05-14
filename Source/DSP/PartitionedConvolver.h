@@ -148,11 +148,12 @@ public:
         const auto numChannels = block.getNumChannels();
         const auto numSamples  = block.getNumSamples();
 
+        // RT-SAFETY: never allocate in audio thread — silently limit to prepared channels
         if (numChannels > chState.size())
         {
-            chState.resize(numChannels);
-            for (size_t c = chState.size(); c < numChannels; ++c)
-                allocChannel(chState[c]);
+            jassertfalse; // host sent more channels than prepare() allocated
+            block.clear();
+            return;
         }
 
         const int currentActive = activeSet.load(std::memory_order_acquire);

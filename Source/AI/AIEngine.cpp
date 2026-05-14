@@ -2453,44 +2453,53 @@ std::vector<AIEngine::Correction> AIEngine::getFilteredAndPrioritizedCorrections
     std::vector<Correction> filtered;
     filtered.reserve(pendingCorrections.size());
     
-    // Filter by thresholds (MINIMAL thresholds to ensure problems appear)
+    // Filter by thresholds.
+    // Normal UI usage stays permissive, but explicit max thresholds (1.0 / 1.0)
+    // are treated as a strict request and must not be softened.
+    const bool strictThresholds = (minSeverity >= 1.0f || minConfidence >= 1.0f);
+
     for (const auto& c : pendingCorrections)
     {
-        // Apply MINIMAL thresholds (40% of input - very permissive)
-        float adjustedMinSeverity = minSeverity * 0.4f;  // Very lenient (was 0.5f)
-        float adjustedMinConfidence = minConfidence * 0.5f;  // Very lenient (was 0.6f)
+        float adjustedMinSeverity = strictThresholds ? minSeverity : (minSeverity * 0.4f);
+        float adjustedMinConfidence = strictThresholds ? minConfidence : (minConfidence * 0.5f);
         
         // Type-specific thresholds (some problems need different sensitivity)
         float typeMinSeverity = adjustedMinSeverity;
         float typeMinConfidence = adjustedMinConfidence;
         
-        switch (c.type)
+        if (!strictThresholds)
         {
-            case ProblemType::Resonance:
-            case ProblemType::Harshness:
-            case ProblemType::Sibilance:
-                // Critical problems: even lower thresholds (more sensitive)
-                typeMinSeverity = adjustedMinSeverity * 0.5f;  // 50% of already reduced threshold (was 0.6f)
-                typeMinConfidence = adjustedMinConfidence * 0.6f;  // 60% (was 0.7f)
-                break;
-                
-            case ProblemType::ThinSound:
-            case ProblemType::DullSound:
-                // Subtle problems: slightly higher but still very lenient
-                typeMinSeverity = adjustedMinSeverity * 0.9f;  // Slightly lower (was 1.0f)
-                typeMinConfidence = adjustedMinConfidence * 0.8f;  // Lower (was 0.9f)
-                break;
-                
-            default:
-                break;
+            switch (c.type)
+            {
+                case ProblemType::Resonance:
+                case ProblemType::Harshness:
+                case ProblemType::Sibilance:
+                    // Critical problems: even lower thresholds (more sensitive)
+                    typeMinSeverity = adjustedMinSeverity * 0.5f;
+                    typeMinConfidence = adjustedMinConfidence * 0.6f;
+                    break;
+                    
+                case ProblemType::ThinSound:
+                case ProblemType::DullSound:
+                    // Subtle problems: slightly higher but still lenient
+                    typeMinSeverity = adjustedMinSeverity * 0.9f;
+                    typeMinConfidence = adjustedMinConfidence * 0.8f;
+                    break;
+                    
+                default:
+                    break;
+            }
         }
         
         // Also accept if priority (severity * confidence) is above a minimum threshold
-        // This ensures we show at least some problems even with low individual scores
+        // during normal permissive UI usage. In strict mode, respect the caller's
+        // thresholds exactly.
         float priority = c.severity * c.confidence;
-        const float minPriority = 0.03f;  // Minimum priority to show (3% of max)
+        const float minPriority = 0.03f;
+        const bool passesThresholds = (c.severity >= typeMinSeverity && c.confidence >= typeMinConfidence);
+        const bool passesPriorityBypass = (!strictThresholds && priority >= minPriority);
         
-        if ((c.severity >= typeMinSeverity && c.confidence >= typeMinConfidence) || priority >= minPriority)
+        if (passesThresholds || passesPriorityBypass)
         {
             filtered.push_back(c);
         }

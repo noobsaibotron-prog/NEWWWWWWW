@@ -1,4 +1,5 @@
 #pragma once
+#include <optional>
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_opengl/juce_opengl.h>
@@ -13,6 +14,7 @@
 #include "GUI/PremiumKnob.h"
 #include "GUI/BandViewport.h"
 #include "GUI/SemanticControlPanel.h"
+#include "GUI/LevelMeter.h"
 #include <atomic>
 #include <vector>
 
@@ -130,8 +132,8 @@ private:
     ModernLookAndFeel lookAndFeel;
     
     // Layout
-    static constexpr int headerH = 32;
-    static constexpr int controlH = 55;
+    static constexpr int headerH = 34;
+    static constexpr int controlH = 72;
     static constexpr int bandPanelH = 140;
     static constexpr int pad = 6;
     bool aiPanelVisible = false;
@@ -139,6 +141,7 @@ private:
     // Header
     juce::TextButton prevBtn{"<"}, nextBtn{">"};
     juce::ComboBox presetBox;
+    juce::TextButton savePresetBtn{"SAVE"};
     juce::TextButton optionsBtn{"Options"};
     juce::TextButton aiPanelToggle{"AI"};
     juce::ComboBox phaseModeCombo;
@@ -188,9 +191,8 @@ private:
     int selectedBand = 0;
     std::unique_ptr<BandControlPanel> selectedBandPanel;
     std::atomic<bool> isAnalyzing { false };
-    // Analysis threads: stored so destructor can join them before teardown,
-    // avoiding detached threads that outlive the editor (use-after-free risk).
-    std::vector<std::thread> analysisThreads;
+    // Single analysis thread — joined before launching a new one (isAnalyzing serializes).
+    std::optional<std::thread> analysisThread;
     
     // Dynamic EQ controls
     std::unique_ptr<DynamicEQPanel> dynamicEQPanel;
@@ -213,8 +215,19 @@ private:
         bypassAtt, preAtt, postAtt, deltaAtt, autoAtt;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> 
         outAtt, mixAtt, sensitivityAtt, strengthAtt;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> 
-        phaseModeAtt, oversamplingAtt, slopeAtt, sourceProfileAtt;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment>
+        phaseModeAtt, oversamplingAtt, slopeAtt;
+
+    // Output level meter
+    LevelMeter outputMeter;
+    juce::Label versionLabel;
+
+    // Preset navigation
+    std::vector<PresetManager::Preset> cachedPresetList;
+    int currentPresetIndex = -1;
+    void rebuildPresetMenu();
+    void navigatePreset(int direction);
+    void showSavePresetDialog();
 
     uint64_t lastParameterChangeCount = 0;
     uint32_t lastBlockClampEvents = 0;

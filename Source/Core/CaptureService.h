@@ -51,7 +51,7 @@ public:
         jassert(numChannels > 0 && numChannels <= 2);
         jassert(maxBlockSize > 0);
         
-        currentSampleRate = sampleRate;
+        currentSampleRate.store(sampleRate, std::memory_order_release);
         channelCount = juce::jlimit(1, 2, numChannels);
         
         // Ring buffer for retroactive capture (last N seconds), sized to handle burst blocks
@@ -144,7 +144,7 @@ public:
         
         // Reset write position (buffer is pre-allocated)
         manualCaptureWritePos.store(0, std::memory_order_release);
-        capturedSampleRate = currentSampleRate;
+        capturedSampleRate = currentSampleRate.load(std::memory_order_acquire);
         
         return true;
     }
@@ -247,11 +247,11 @@ public:
         if (!prepared || lengthMs <= 0)
             return;
         
-        const int samplesRequested = static_cast<int>(currentSampleRate * 
+        const int samplesRequested = static_cast<int>(currentSampleRate.load(std::memory_order_relaxed) *
                                                        (static_cast<double>(lengthMs) / 1000.0));
         
         ringBuffer.readMono(capturedAudioMono, samplesRequested);
-        capturedSampleRate = currentSampleRate;
+        capturedSampleRate = currentSampleRate.load(std::memory_order_acquire);
     }
     
     /**
@@ -323,7 +323,7 @@ private:
         const int channelsToCopy = std::min(buffer.getNumChannels(), juce::jmax(1, channelCount));
         const size_t samplesToAdd = static_cast<size_t>(numSamples * channelsToCopy);
         
-        const size_t currentPos = manualCaptureWritePos.load(std::memory_order_relaxed);
+        const size_t currentPos = manualCaptureWritePos.load(std::memory_order_acquire);
         
         // Check if we have space (no allocation!)
         if (currentPos + samplesToAdd > manualCaptureMaxSamples)
@@ -384,7 +384,7 @@ private:
                                                                std::memory_order_acq_rel))
                 {
                     manualCaptureWritePos.store(0, std::memory_order_release);
-                    autoCaptureCooldown = static_cast<int>(currentSampleRate * 2.0); // 2s cooldown
+                    autoCaptureCooldown = static_cast<int>(currentSampleRate.load(std::memory_order_relaxed) * 2.0); // 2s cooldown
                 }
             }
         }
@@ -396,7 +396,7 @@ private:
     // State
     //==========================================================================
     bool prepared = false;
-    double currentSampleRate = 44100.0;
+    std::atomic<double> currentSampleRate { 44100.0 };
     int channelCount = 2;
     
     // Lock-free ring buffer for retroactive capture

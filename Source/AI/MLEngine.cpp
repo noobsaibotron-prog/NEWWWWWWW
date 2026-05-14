@@ -252,7 +252,8 @@ std::vector<MLEngine::ProblemDetection> MLEngine::detectProblems(
             ProblemDetection det;
             det.type = static_cast<ProblemType>(i);
             det.confidence = prob;
-            det.severity = (prob - threshold) / (1.0f - threshold);
+            det.severity = (1.0f - threshold) > 1e-6f
+                         ? (prob - threshold) / (1.0f - threshold) : 1.0f;
             
             // Calculate frequency from network output and problem range
             const auto& range = problemFreqRanges[static_cast<size_t>(i)];
@@ -399,9 +400,10 @@ std::vector<float> MLEngine::extractMelBands(const std::vector<float>& spectrum,
         if (count > 0)
             energy /= static_cast<float>(count);
         
-        // Log compression (simulates dB scale)
-        melBands[static_cast<size_t>(band)] = std::log10(energy + 1e-10f) / std::log10(1e-10f) * -1.0f;
-        melBands[static_cast<size_t>(band)] = juce::jlimit(0.0f, 1.0f, melBands[static_cast<size_t>(band)]);
+        // Convert energy to normalized [0, 1] range via dB scale
+        // gainToDecibels handles near-zero safely; /−100 maps −100dB→1.0, 0dB→0.0
+        melBands[static_cast<size_t>(band)] = juce::jlimit(0.0f, 1.0f,
+            juce::Decibels::gainToDecibels(energy + 1e-10f, -100.0f) / -100.0f);
     }
     
     return melBands;

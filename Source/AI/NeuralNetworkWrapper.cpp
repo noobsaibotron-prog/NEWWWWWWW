@@ -18,6 +18,7 @@ public:
     
     bool loadModel(const juce::File& modelFile)
     {
+        originalModelPath = modelFile;
 #if defined(AIEQ_ENABLE_TFLITE)
         unloadModel();
 
@@ -172,27 +173,60 @@ public:
     
     bool startTraining(const std::vector<TrainingSample>& samples, const TrainingConfig& config)
     {
-        // TODO: Implement training
-        return false;
-    }
-    
-    void stopTraining()
-    {
-        // TODO: Implement training stop
-    }
-    
-    bool saveModel(const juce::File& path)
-    {
-        // TODO: Implement model saving
+        if (samples.empty())
+            return false;
+
+        // TFLite C API (v2.x) does not expose backpropagation or fine-tuning of
+        // FlatBuffer models at runtime. Gradient-based training requires the
+        // TFLite Model Maker Python library or a custom training delegate.
+        // We log the intent so the caller knows why this returns false, and the
+        // outer AIEngine will fall back to heuristic adjustments instead.
+        juce::ignoreUnused(config);
+#if defined(AIEQ_ENABLE_TFLITE)
+        AIEQ_LOG_WARNING("NeuralNetworkWrapper: TFLite C API does not support online "
+                         "fine-tuning. Use TFLite Model Maker offline to retrain.");
+#else
+        AIEQ_LOG_WARNING("NeuralNetworkWrapper: No ML backend compiled in — "
+                         "training unavailable. Build with AIEQ_ENABLE_TFLITE to enable inference.");
+#endif
+        trainingActive.store(false, std::memory_order_release);
         return false;
     }
 
+    void stopTraining()
+    {
+        trainingActive.store(false, std::memory_order_release);
+    }
+
+    bool saveModel(const juce::File& path)
+    {
 #if defined(AIEQ_ENABLE_TFLITE)
-private:
+        // TFLite C API provides no API to serialise an interpreter back to a FlatBuffer.
+        // The best we can do is copy the original file that was loaded.
+        if (!model || !originalModelPath.existsAsFile())
+        {
+            AIEQ_LOG_WARNING("NeuralNetworkWrapper::saveModel() — no model file to copy");
+            return false;
+        }
+        const bool ok = originalModelPath.copyFileTo(path);
+        if (!ok)
+            AIEQ_LOG_WARNING("NeuralNetworkWrapper::saveModel() — file copy failed: " + path.getFullPathName());
+        return ok;
+#else
+        juce::ignoreUnused(path);
+        return false;
+#endif
+    }
+
+#if defined(AIEQ_ENABLE_TFLITE)
     TfLiteModel* model = nullptr;
     TfLiteInterpreterOptions* options = nullptr;
     TfLiteInterpreter* interpreter = nullptr;
 #endif
+
+private:
+    juce::File originalModelPath;
+    std::atomic<bool> trainingActive { false };
 };
 
 //==============================================================================
@@ -334,7 +368,13 @@ bool NeuralNetworkWrapper::saveFineTunedModel(const juce::File& outputPath)
 
 bool NeuralNetworkWrapper::exportToONNX(const juce::File& outputPath)
 {
-    // TODO: Implement ONNX export
+    // Runtime ONNX export requires libtorch's onnx::export() or the ONNX Runtime SDK.
+    // TFLite FlatBuffer models can be converted offline via the 'tf2onnx' Python tool:
+    //   python -m tf2onnx.convert --tflite model.tflite --output model.onnx
+    // In-plugin export is not supported without a torch build.
+    juce::ignoreUnused(outputPath);
+    AIEQ_LOG_WARNING("NeuralNetworkWrapper::exportToONNX() is not supported at runtime. "
+                     "Convert the TFLite model offline with tf2onnx.");
     return false;
 }
 
@@ -354,13 +394,21 @@ juce::String NeuralNetworkWrapper::getModelTypeName(ModelType type)
 
 bool NeuralNetworkWrapper::isTorchAvailable()
 {
-    // TODO: Check if libtorch is linked
-    return false;
+#if defined(AIEQ_ENABLE_TFLITE)
+    return true;   // TFLite C API compiled in — inference is available
+#else
+    return false;  // No ML backend compiled; build with AIEQ_ENABLE_TFLITE
+#endif
 }
 
 juce::String NeuralNetworkWrapper::getTorchVersion()
 {
-    // TODO: Return actual torch version
-    return "Not Available";
+#if defined(AIEQ_ENABLE_TFLITE)
+    // TFLite C API does not expose a runtime version string.
+    // We return a compile-time label so callers can reason about the backend.
+    return "TFLite C API (version embedded in flatbuffer)";
+#else
+    return "Unavailable — build with -DAIEQ_ENABLE_TFLITE=ON to enable ML inference";
+#endif
 }
 

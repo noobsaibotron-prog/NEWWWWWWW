@@ -863,7 +863,7 @@ private:
         
         if (n == 0)
         {
-            statusLabel.setText(tr("No issues detected", "No issues detected"), juce::dontSendNotification);
+            statusLabel.setText(juce::String::fromUTF8("\xe2\x96\xb6 ") + tr("Play audio to start analysis", "Play audio to start analysis"), juce::dontSendNotification);
         }
         else
         {

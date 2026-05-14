@@ -71,9 +71,10 @@ void LinearPhaseProcessor::process(const juce::dsp::ProcessContextReplacing<floa
 
     ensureChannels(numChannels);
 
-    const int currentActive = activeSlot.load(std::memory_order_acquire);
+    // Cache activeSlot once per block — single load for validity check + processing
+    const int cachedSlot = activeSlot.load(std::memory_order_acquire);
 
-    if (!irSlots[currentActive].valid)
+    if (!irSlots[cachedSlot].valid)
     {
         block.clear();
         return;
@@ -92,7 +93,7 @@ void LinearPhaseProcessor::process(const juce::dsp::ProcessContextReplacing<floa
             {
                 state.inputCount = 0;
 
-                const float* currentIR = irSlots[activeSlot.load(std::memory_order_acquire)].freqDomain.data();
+                const float* currentIR = irSlots[cachedSlot].freqDomain.data();
                 processOLAFrame(state, currentIR, state.outputQueue.data(), fftWorkBuf.data());
 
                 state.outputReadPos  = 0;

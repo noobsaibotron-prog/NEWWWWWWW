@@ -68,15 +68,22 @@ public:
     {
         const int writeIdx = writeIndex.load(std::memory_order_relaxed);
         buffers[writeIdx] = newState;
-        
-        // Swap write and ready indices
+
+        // Swap write and ready indices (bounded retry for RT safety)
         int expected = readyIndex.load(std::memory_order_relaxed);
+        int retries = 0;
         while (!readyIndex.compare_exchange_weak(expected, writeIdx,
                                                   std::memory_order_release,
-                                                  std::memory_order_relaxed))
+                                                  std::memory_order_relaxed)
+               && ++retries < 16)
         {
-            // CAS failed, expected now contains current value, retry
+            // CAS failed, expected updated to current value, retry
         }
+
+        // If CAS failed after max retries, force-store to prevent audio thread stall
+        if (retries >= 16)
+            readyIndex.store(writeIdx, std::memory_order_release);
+
         writeIndex.store(expected, std::memory_order_relaxed);
     }
 
@@ -86,11 +93,21 @@ public:
      */
     [[nodiscard]] T read() const noexcept
     {
-        // Try to get latest ready buffer
+        // Try to swap readIndex with readyIndex to get the latest published buffer.
+        //
+        // CAS semantics:
+        //  - If CAS succeeds: readyIndex was `expected` (the ready buffer), now becomes
+        //    `currentRead` (our old read buffer). `expected` still holds the ready index
+        //    → we adopt it as our new read buffer.
+        //  - If CAS fails: another thread changed readyIndex between our load and CAS.
+        //    `expected` is updated to the NEW readyIndex value (still the latest ready
+        //    buffer) → we adopt it as our new read buffer.
+        //  - In both cases: `expected` ends up pointing to the newest data.
+        //
+        // This is wait-free: at most one CAS attempt, no retry loop.
         int expected = readyIndex.load(std::memory_order_acquire);
         int currentRead = readIndex.load(std::memory_order_relaxed);
-        
-        // Swap if there's new data
+
         if (expected != currentRead)
         {
             readyIndex.compare_exchange_strong(expected, currentRead,
@@ -101,7 +118,7 @@ public:
                 readIndex.store(expected, std::memory_order_relaxed);
             }
         }
-        
+
         return buffers[readIndex.load(std::memory_order_relaxed)];
     }
 

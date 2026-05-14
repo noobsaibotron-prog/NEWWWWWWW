@@ -21,7 +21,19 @@ AIEqualizerAudioProcessorEditor::AIEqualizerAudioProcessorEditor(AIEqualizerAudi
     
     spectrum = std::make_unique<AdvancedSpectrumDisplay>(processor);
     addAndMakeVisible(*spectrum);
-    
+
+    // Sync display speed with saved analyzer speed parameter
+    {
+        auto* speedParam = processor.getAPVTS().getRawParameterValue("analyzerSpeed");
+        if (speedParam)
+        {
+            int spd = static_cast<int>(std::round(speedParam->load()));
+            if (spd == 0) spectrum->setSpectrumSpeed(AdvancedSpectrumDisplay::SpectrumSpeed::Fast);
+            else if (spd == 2) spectrum->setSpectrumSpeed(AdvancedSpectrumDisplay::SpectrumSpeed::Slow);
+            else spectrum->setSpectrumSpeed(AdvancedSpectrumDisplay::SpectrumSpeed::Medium);
+        }
+    }
+
     // Setup spectrum callbacks for band interaction
     spectrum->onBandSelected = [this](int bandIndex) {
         selectBand(bandIndex);
@@ -101,7 +113,17 @@ AIEqualizerAudioProcessorEditor::AIEqualizerAudioProcessorEditor(AIEqualizerAudi
     // FIX 2: persistent selected band panel (avoid recreating on every selection)
     selectedBandPanel = std::make_unique<BandControlPanel>(0, processor.getAPVTS());
     addAndMakeVisible(*selectedBandPanel);
-    
+
+    // Output level meter (stereo VU with peak hold)
+    addAndMakeVisible(outputMeter);
+
+    // Version label (bottom-right branding)
+    versionLabel.setText("v2.1.1", juce::dontSendNotification);
+    versionLabel.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
+    versionLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted);
+    versionLabel.setJustificationType(juce::Justification::centredRight);
+    addAndMakeVisible(versionLabel);
+
     setSize(1200, 750);
     setResizable(true, true);
     setResizeLimits(1100, 680, 1800, 1100);
@@ -111,19 +133,19 @@ AIEqualizerAudioProcessorEditor::AIEqualizerAudioProcessorEditor(AIEqualizerAudi
     
     // FIX: 20Hz is sufficient for smooth UI and reduces risk of message thread starvation
     // in Ableton (which can freeze the DAW if the message thread is overloaded at 30Hz).
-    startTimerHz(20);
+    startTimerHz(60); // 60Hz for responsive spectrum — processFFT is lightweight with overlap
 }
 
 AIEqualizerAudioProcessorEditor::~AIEqualizerAudioProcessorEditor()
 {
-    // Join analysis threads before teardown to avoid use-after-free.
-    // Threads are short-lived (single analysis pass), so this returns quickly.
-    for (auto& t : analysisThreads)
-        if (t.joinable()) t.join();
-    analysisThreads.clear();
+    // Stop timer FIRST — prevents callbacks from accessing half-destroyed components
+    stopTimer();
+
+    // Join analysis thread before teardown to avoid use-after-free.
+    if (analysisThread && analysisThread->joinable())
+        analysisThread->join();
 
     openGLContext.detach();
-    stopTimer();
     setLookAndFeel(nullptr);
 }
 
@@ -132,26 +154,32 @@ void AIEqualizerAudioProcessorEditor::createHeader()
     // Nav buttons with tooltips
     prevBtn.setTooltip("Previous preset");
     nextBtn.setTooltip("Next preset");
+    prevBtn.onClick = [this]() { navigatePreset(-1); };
+    nextBtn.onClick = [this]() { navigatePreset(1); };
     addAndMakeVisible(prevBtn);
     addAndMakeVisible(nextBtn);
-    
-    // Preset with tooltip
-    {
-        static const char* profiles[] = { "Generic", "Vocals", "Drums", "Bass", "Synth", "Master", "EDM" };
-        presetBox.clear(juce::dontSendNotification);
-        for (int i = 0; i < 7; ++i)
-            presetBox.addItem(profiles[i], i + 1);
 
-        if (auto* param = processor.getAPVTS().getParameter("sourceProfile"))
+    // Preset selector — shows factory + user presets
+    rebuildPresetMenu();
+    presetBox.setTooltip("Select EQ preset");
+    presetBox.onChange = [this]()
+    {
+        const int id = presetBox.getSelectedId();
+        if (id <= 0) return;
+        const int idx = id - 1;
+        if (idx >= 0 && idx < static_cast<int>(cachedPresetList.size()))
         {
-            const int idx = static_cast<int>(param->convertFrom0to1(param->getValue()) + 0.5f);
-            presetBox.setSelectedId(idx + 1, juce::dontSendNotification);
+            if (processor.hasPresetManager())
+                processor.getPresetManager().loadPreset(cachedPresetList[static_cast<size_t>(idx)]);
+            currentPresetIndex = idx;
         }
-    }
-    presetBox.setTooltip("Select source profile - AI adapts detection thresholds accordingly");
-    sourceProfileAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
-        processor.getAPVTS(), "sourceProfile", presetBox);
+    };
     addAndMakeVisible(presetBox);
+
+    // Save button for user presets
+    savePresetBtn.setTooltip("Save current settings as user preset");
+    savePresetBtn.onClick = [this]() { showSavePresetDialog(); };
+    addAndMakeVisible(savePresetBtn);
     
     // A/B with tooltips
     btnA.setRadioGroupId(1001);
@@ -371,10 +399,12 @@ void AIEqualizerAudioProcessorEditor::createControlPanel()
         captureStatusLabel.setText("Analyzing...", juce::dontSendNotification);
         captureStatusLabel.setColour(juce::Label::textColourId, juce::Colours::yellow);
 
-        // Bug I fix: capture safeThis by value (not raw this) so the thread body is safe
-        // if the editor is destroyed before the thread finishes.
+        // Join previous analysis thread if still around (isAnalyzing serializes, so it's done)
+        if (analysisThread && analysisThread->joinable())
+            analysisThread->join();
+
         juce::Component::SafePointer<AIEqualizerAudioProcessorEditor> safeThis(this);
-        analysisThreads.emplace_back([safeThis]() {
+        analysisThread.emplace([safeThis]() {
             auto* ed = safeThis.getComponent();
             if (ed == nullptr) return;
 
@@ -437,9 +467,12 @@ void AIEqualizerAudioProcessorEditor::createControlPanel()
         startCaptureBtn.setEnabled(false);
         stopCaptureBtn.setEnabled(false);
 
-        // Bug I fix: capture safeThis by value so thread body is safe if editor is destroyed.
+        // Join previous analysis thread if still around
+        if (analysisThread && analysisThread->joinable())
+            analysisThread->join();
+
         juce::Component::SafePointer<AIEqualizerAudioProcessorEditor> safeThis(this);
-        analysisThreads.emplace_back([safeThis]() {
+        analysisThread.emplace([safeThis]() {
             auto* ed = safeThis.getComponent();
             if (ed == nullptr) return;
 
@@ -707,9 +740,18 @@ void AIEqualizerAudioProcessorEditor::showOptionsMenu()
         {
             juce::PopupMenu spd;
             const int cur = getChoice("analyzerSpeed");
-            spd.addItem(makeItem(50, "Fast", cur == 0, [=]() { setChoice("analyzerSpeed", 0); }));
-            spd.addItem(makeItem(51, "Medium", cur == 1, [=]() { setChoice("analyzerSpeed", 1); }));
-            spd.addItem(makeItem(52, "Slow", cur == 2, [=]() { setChoice("analyzerSpeed", 2); }));
+            spd.addItem(makeItem(50, "Fast", cur == 0, [=]() {
+                setChoice("analyzerSpeed", 0);
+                spectrum->setSpectrumSpeed(AdvancedSpectrumDisplay::SpectrumSpeed::Fast);
+            }));
+            spd.addItem(makeItem(51, "Medium", cur == 1, [=]() {
+                setChoice("analyzerSpeed", 1);
+                spectrum->setSpectrumSpeed(AdvancedSpectrumDisplay::SpectrumSpeed::Medium);
+            }));
+            spd.addItem(makeItem(52, "Slow", cur == 2, [=]() {
+                setChoice("analyzerSpeed", 2);
+                spectrum->setSpectrumSpeed(AdvancedSpectrumDisplay::SpectrumSpeed::Slow);
+            }));
             analyzer.addSubMenu("Speed", spd);
         }
         // Peak hold
@@ -825,20 +867,62 @@ void AIEqualizerAudioProcessorEditor::showOptionsMenu()
 
 void AIEqualizerAudioProcessorEditor::paint(juce::Graphics& g)
 {
-    g.fillAll(ModernLookAndFeel::Colors::bgDark);
+    // Main background — subtle vertical gradient for depth
+    {
+        juce::ColourGradient bg(
+            ModernLookAndFeel::Colors::bgDark, 0.0f, 0.0f,
+            ModernLookAndFeel::Colors::bgDark.darker(0.15f), 0.0f, static_cast<float>(getHeight()),
+            false);
+        g.setGradientFill(bg);
+        g.fillRect(getLocalBounds());
+    }
 
-    // Header bar
-    g.setColour(ModernLookAndFeel::Colors::bgLight);
-    g.fillRect(0, 0, getWidth(), headerH);
-    g.setColour(ModernLookAndFeel::Colors::bgLighter);
-    g.drawHorizontalLine(headerH - 1, 0.0f, (float)getWidth());
+    const float w = static_cast<float>(getWidth());
 
-    // Bottom bar
-    int cpY = getHeight() - controlH;
-    g.setColour(ModernLookAndFeel::Colors::bgPanel);
-    g.fillRect(0, cpY, getWidth(), controlH);
-    g.setColour(ModernLookAndFeel::Colors::bgLighter);
-    g.drawHorizontalLine(cpY, 0.0f, (float)getWidth());
+    // === HEADER BAR (gradient + subtle inner shadow) ===
+    {
+        auto headerRect = juce::Rectangle<float>(0.0f, 0.0f, w, static_cast<float>(headerH));
+        juce::ColourGradient headerGrad(
+            ModernLookAndFeel::Colors::bgLight.brighter(0.06f), 0.0f, 0.0f,
+            ModernLookAndFeel::Colors::bgLight.darker(0.04f), 0.0f, static_cast<float>(headerH),
+            false);
+        g.setGradientFill(headerGrad);
+        g.fillRect(headerRect);
+
+        // Bottom edge highlight
+        g.setColour(ModernLookAndFeel::Colors::accentBlue.withAlpha(0.12f));
+        g.fillRect(0.0f, static_cast<float>(headerH - 1), w, 1.0f);
+
+        // Separator line
+        g.setColour(ModernLookAndFeel::Colors::bgDark);
+        g.fillRect(0.0f, static_cast<float>(headerH), w, 1.0f);
+
+    }
+
+    // === BOTTOM CONTROL BAR (gradient + top edge) ===
+    {
+        float cpY = static_cast<float>(getHeight() - controlH);
+        auto bottomRect = juce::Rectangle<float>(0.0f, cpY, w, static_cast<float>(controlH));
+
+        juce::ColourGradient bottomGrad(
+            ModernLookAndFeel::Colors::bgPanel.brighter(0.03f), 0.0f, cpY,
+            ModernLookAndFeel::Colors::bgPanel.darker(0.05f), 0.0f, cpY + controlH,
+            false);
+        g.setGradientFill(bottomGrad);
+        g.fillRect(bottomRect);
+
+        // Top edge — prominent accent separator (FabFilter-style divider)
+        g.setColour(juce::Colour(0xFF0A0A10));
+        g.fillRect(0.0f, cpY - 1.0f, w, 2.0f);
+        g.setColour(ModernLookAndFeel::Colors::accentBlue.withAlpha(0.18f));
+        g.fillRect(0.0f, cpY + 1.0f, w, 1.0f);
+
+        // Version text (bottom-right corner)
+        g.setColour(ModernLookAndFeel::Colors::textMuted.withAlpha(0.5f));
+        g.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
+        g.drawText("v2.1.1", getWidth() - 44, getHeight() - 14, 40, 12,
+                   juce::Justification::centredRight);
+    }
 }
 
 void AIEqualizerAudioProcessorEditor::resized()
@@ -850,9 +934,11 @@ void AIEqualizerAudioProcessorEditor::resized()
     // Left group: nav + preset
     prevBtn.setBounds(header.removeFromLeft(24).reduced(1));
     nextBtn.setBounds(header.removeFromLeft(24).reduced(1));
+    header.removeFromLeft(4);
+    presetBox.setBounds(header.removeFromLeft(160).reduced(0, 2));
+    header.removeFromLeft(2);
+    savePresetBtn.setBounds(header.removeFromLeft(40).reduced(1));
     header.removeFromLeft(6);
-    presetBox.setBounds(header.removeFromLeft(130).reduced(0, 2));
-    header.removeFromLeft(8);
     // Center group: A/B + phase
     btnA.setBounds(header.removeFromLeft(24).reduced(1));
     btnB.setBounds(header.removeFromLeft(24).reduced(1));
@@ -896,26 +982,45 @@ void AIEqualizerAudioProcessorEditor::resized()
     // === BOTTOM BAR (55px) ===
     auto bottom = bounds.removeFromBottom(controlH).reduced(4, 4);
 
-    // Band selector (left)
-    numBandsLabel.setBounds(bottom.removeFromLeft(40));
-    numBandsCombo.setBounds(bottom.removeFromLeft(50).reduced(0, 4));
-    bottom.removeFromLeft(8);
-    bandSelectCombo.setBounds(bottom.removeFromLeft(80).reduced(0, 4));
-    bottom.removeFromLeft(8);
+    // === LEFT: band selector ===
+    auto leftCtrl = bottom.removeFromLeft(200);
+    {
+        auto row1 = leftCtrl.removeFromTop(leftCtrl.getHeight() / 2);
+        auto numArea = row1.removeFromLeft(90);
+        numBandsLabel.setBounds(numArea.removeFromLeft(42));
+        numBandsCombo.setBounds(numArea.reduced(0, 4));
+        row1.removeFromLeft(6);
+        bandSelectCombo.setBounds(row1.reduced(0, 4));
+    }
 
-    // Output section (right of bottom bar)
-    auto rightControls = bottom.removeFromRight(140);
-    auto mixArea = rightControls.removeFromLeft(46);
-    mixLabel.setBounds(mixArea.removeFromTop(12));
-    mixKnob.setBounds(mixArea);
-    rightControls.removeFromLeft(4);
-    auto outArea = rightControls.removeFromLeft(46);
-    outLabel.setBounds(outArea.removeFromTop(12));
-    outKnob.setBounds(outArea);
-    rightControls.removeFromLeft(4);
-    autoBtn.setBounds(rightControls.removeFromLeft(40).reduced(0, 8));
+    // === RIGHT: output section (meter + knobs) ===
+    auto rightControls = bottom.removeFromRight(240);
+    {
+        // Level meter — tall, visible
+        outputMeter.setBounds(rightControls.removeFromRight(36).reduced(0, 2));
+        rightControls.removeFromRight(8);
 
-    // Band detail fills center
+        // Version label below meter area
+        versionLabel.setBounds(rightControls.removeFromRight(0));  // hidden from bar, shown in paint
+        versionLabel.setVisible(false);
+
+        // Output knobs (bigger)
+        auto mixArea = rightControls.removeFromLeft(56);
+        mixLabel.setBounds(mixArea.removeFromTop(13));
+        mixKnob.setBounds(mixArea);
+        rightControls.removeFromLeft(6);
+
+        auto outArea = rightControls.removeFromLeft(56);
+        outLabel.setBounds(outArea.removeFromTop(13));
+        outKnob.setBounds(outArea);
+        rightControls.removeFromLeft(6);
+
+        autoBtn.setBounds(rightControls.removeFromLeft(44).reduced(0, 12));
+    }
+
+    // === CENTER: band detail panel ===
+    bottom.removeFromLeft(8);
+    bottom.removeFromRight(8);
     if (selectedBandPanel)
     {
         selectedBandPanel->setBounds(bottom);
@@ -948,6 +1053,15 @@ void AIEqualizerAudioProcessorEditor::timerCallback()
 
     // Drain RT-safe logger queue on message thread (every tick, cheap)
     AIEQLogger::getInstance().flushRTLogs();
+
+    // Output level meter — feed every tick (20 Hz, smooth ballistics in LevelMeter)
+    {
+        float peakL = processor.getOutputPeakLeft();
+        float peakR = processor.getOutputPeakRight();
+        float dbL = peakL > 1e-10f ? juce::Decibels::gainToDecibels(peakL) : -100.0f;
+        float dbR = peakR > 1e-10f ? juce::Decibels::gainToDecibels(peakR) : -100.0f;
+        outputMeter.setLevels(dbL, dbR);
+    }
 
     // Spectrum - process only when audio flagged new data (every tick)
     if (processor.consumeSpectrumDataReady())
@@ -1041,14 +1155,6 @@ void AIEqualizerAudioProcessorEditor::timerCallback()
             qualityBtn.setColour(juce::TextButton::textColourOnId, ModernLookAndFeel::Colors::textBright);
         }
 
-        // Sync source profile combo with parameter (covers preset load/automation)
-        if (auto* param = processor.getAPVTS().getParameter("sourceProfile"))
-        {
-            const int idx = static_cast<int>(param->convertFrom0to1(param->getValue()) + 0.5f);
-            const int desiredId = idx + 1;
-            if (presetBox.getSelectedId() != desiredId)
-                presetBox.setSelectedId(desiredId, juce::dontSendNotification);
-        }
     }
 
     // Sync capture state
@@ -1168,6 +1274,10 @@ void AIEqualizerAudioProcessorEditor::selectBand(int bandIndex)
     if (dynamicEQPanel)
         dynamicEQPanel->setBandIndex(bandIndex);
     
+    // Update EQBandControl selected state (glow on selected node)
+    for (int i = 0; i < bands.size(); ++i)
+        bands[i]->setSelected(i == bandIndex);
+
     // Update band toggle highlight
     for (size_t i = 0; i < bandToggles.size(); ++i)
     {
@@ -1238,6 +1348,84 @@ void AIEqualizerAudioProcessorEditor::switchRightTab(int tab)
         aiTabBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xFF333333));
         aiTabBtn.setColour(juce::TextButton::textColourOffId, juce::Colour(0xFFAAAAAA));
     }
-    
+
     repaint();
+}
+
+//==============================================================================
+// Preset Navigation
+//==============================================================================
+void AIEqualizerAudioProcessorEditor::rebuildPresetMenu()
+{
+    presetBox.clear(juce::dontSendNotification);
+    cachedPresetList.clear();
+
+    if (!processor.hasPresetManager())
+        return;
+
+    auto& pm = processor.getPresetManager();
+    auto all = pm.getAllPresets();
+
+    int id = 1;
+    juce::String lastCategory;
+
+    for (const auto& preset : all)
+    {
+        // Add category separator if category changed
+        if (preset.category != lastCategory)
+        {
+            if (!lastCategory.isEmpty())
+                presetBox.addSeparator();
+            presetBox.addSectionHeading(preset.category.toUpperCase());
+            lastCategory = preset.category;
+        }
+        presetBox.addItem(preset.name, id);
+        cachedPresetList.push_back(preset);
+        ++id;
+    }
+}
+
+void AIEqualizerAudioProcessorEditor::navigatePreset(int direction)
+{
+    if (cachedPresetList.empty())
+        return;
+
+    currentPresetIndex += direction;
+
+    if (currentPresetIndex < 0)
+        currentPresetIndex = static_cast<int>(cachedPresetList.size()) - 1;
+    else if (currentPresetIndex >= static_cast<int>(cachedPresetList.size()))
+        currentPresetIndex = 0;
+
+    presetBox.setSelectedId(currentPresetIndex + 1, juce::sendNotification);
+}
+
+void AIEqualizerAudioProcessorEditor::showSavePresetDialog()
+{
+    auto* aw = new juce::AlertWindow("Save Preset",
+                                      "Enter a name for your preset:",
+                                      juce::MessageBoxIconType::NoIcon);
+    aw->addTextEditor("name", "My Preset", "Name:");
+    aw->addComboBox("category", { "User", "Vocals", "Drums", "Bass", "Guitar", "Keys", "Master", "EDM", "Creative", "Utility" }, "Category:");
+    aw->addButton("Save", 1, juce::KeyPress(juce::KeyPress::returnKey));
+    aw->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+
+    aw->enterModalState(true, juce::ModalCallbackFunction::create(
+        [this, aw](int result)
+        {
+            if (result == 1)
+            {
+                auto name = aw->getTextEditorContents("name").trim();
+                auto* catBox = aw->getComboBoxComponent("category");
+                auto category = catBox ? catBox->getText() : "User";
+
+                if (name.isNotEmpty() && processor.hasPresetManager())
+                {
+                    processor.getPresetManager().saveUserPreset(name, category);
+                    rebuildPresetMenu();
+                }
+            }
+            delete aw;
+        }),
+        true);
 }

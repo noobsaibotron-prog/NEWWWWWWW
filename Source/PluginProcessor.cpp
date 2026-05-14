@@ -15,6 +15,22 @@ namespace
         2800.0f, 4000.0f, 5600.0f, 8000.0f, 11000.0f,15000.0f,
         18000.0f,22000.0f,26000.0f,30000.0f,34000.0f,38000.0f
     };
+
+    // M/S encoding/decoding scale factor (1 / sqrt(2))
+    // Used in both encodeStereoToMS() and decodeMSToStereo() to normalise
+    // mid and side channels to the same RMS level as the input L/R pair.
+    constexpr float kInvSqrt2 = 0.7071067811865476f;
+
+    // Band-assignment scoring constants (used in applyAICorrections and
+    // applySemanticCorrections to pick the best existing EQ band to reuse).
+    // ~1/5 octave: if an existing band is within this ratio of the target
+    // frequency it is a candidate for reuse instead of allocating a new band.
+    constexpr float kBandReuseThresholdOctave = 0.148f;
+    // Score multiplier applied to unused bands — strongly prefers free bands.
+    constexpr float kUnusedBandScoreMult = 0.3f;
+    // Score multiplier applied when a band is within reuse threshold — even
+    // stronger preference for merging near-frequency corrections.
+    constexpr float kReuseThresholdScoreMult = 0.2f;
 }
 
 //==============================================================================
@@ -163,6 +179,10 @@ void AIEqualizerAudioProcessor::irBuilderThreadFunc()
 
         // SAFETY: Skip IR building if sample rate not yet initialized
         if (sr <= 0.0)
+            continue;
+
+        // SAFETY: Skip if prepareToPlay() hasn't allocated the double-buffer yet
+        if (pendingFreqIR.buffers[0].empty() || pendingFreqIR.buffers[1].empty())
             continue;
 
         // SAFETY: Check for null pointer before dereferencing
@@ -376,12 +396,22 @@ void AIEqualizerAudioProcessor::irBuilderThreadFunc()
             std::copy(scaledIR.begin(), scaledIR.end(), freqBuf.begin());
             fft.performRealOnlyForwardTransform(freqBuf.data());
 
-            {
-                std::lock_guard<std::mutex> lock(pendingFreqIR.mutex);
-                pendingFreqIR.freqDomain = std::move(freqBuf);
-                pendingFreqIR.valid = true;
-            }
-            pendingIRReady.store(true, std::memory_order_release);
+            // Lock-free double-buffer write.
+            // ABA guard: spin until the audio thread is not reading our target buffer.
+            // storeFreqIRDirect is a fast memcpy, so this wait is bounded and negligible
+            // compared to the IR build time (tens of ms). Not in the audio thread — safe to spin.
+            int wi = pendingFreqIR.writeIndex.load(std::memory_order_relaxed);
+            while (wi == pendingFreqIR.readingIndex.load(std::memory_order_acquire))
+                wi = 1 - wi;
+
+            // std::copy preserves pre-allocated capacity of buffers[wi] (resize in prepareToPlay).
+            // Do NOT use std::move here: it would transfer ownership and lose the pre-allocation.
+            jassert(freqBuf.size() == pendingFreqIR.buffers[wi].size());
+            std::copy(freqBuf.begin(), freqBuf.end(), pendingFreqIR.buffers[wi].begin());
+
+            pendingFreqIR.readyIndex.store(wi, std::memory_order_release);
+            // Release ordering on writeIndex ensures the flip is visible after the data write.
+            pendingFreqIR.writeIndex.store(1 - wi, std::memory_order_release);
         }
     }
     }
@@ -524,7 +554,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout AIEqualizerAudioProcessor::c
         juce::ParameterID{"showPreSpectrum", 1}, "Show Pre-EQ Spectrum", true));
 
     params.push_back(std::make_unique<juce::AudioParameterBool>(
-        juce::ParameterID{"showPostSpectrum", 1}, "Show Post-EQ Spectrum", false));
+        juce::ParameterID{"showPostSpectrum", 1}, "Show Post-EQ Spectrum", true));
 
     params.push_back(std::make_unique<juce::AudioParameterBool>(
         juce::ParameterID{"showDeltaSpectrum", 1}, "Show Delta Spectrum", false));
@@ -749,6 +779,10 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     soloMonitorFilterR.reset();
     preProcessingInputCopy.setSize(getTotalNumInputChannels(), preallocatedMaxSamples, false, true, false);
     preProcessingInputCopy.clear();
+    soloOutputBuffer.setSize(getTotalNumInputChannels(), preallocatedMaxSamples, false, true, false);
+    soloOutputBuffer.clear();
+    soloWarmupBuffer.setSize(getTotalNumInputChannels(), preallocatedMaxSamples, false, true, false);
+    soloWarmupBuffer.clear();
 
     auto toResolution = [](int idx) {
         switch (idx)
@@ -899,13 +933,37 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     crossfadeBuffer.clear();
     crossfadeSamplesRemaining = 0;
 
-    // Pre-allocate pending freq-domain IR buffer (builder thread → audio thread handoff)
+    // Pre-allocate double buffers for lock-free IR handoff (builder thread -> audio thread).
+    // IMPORTANT: The builder thread reads/writes pendingFreqIR.buffers concurrently.
+    // We must pause it before reallocating the vectors, otherwise .assign() can
+    // invalidate pointers the builder is using → use-after-free / segfault.
     {
-        std::lock_guard<std::mutex> lock(pendingFreqIR.mutex);
-        pendingFreqIR.freqDomain.resize(LinearPhaseProcessor::fftSize * 2, 0.0f);
-        pendingFreqIR.valid = false;
+        const bool builderWasRunning = irBuilderThread.joinable()
+                                       && !stopIRBuilder.load(std::memory_order_relaxed);
+        if (builderWasRunning)
+        {
+            stopIRBuilder.store(true, std::memory_order_release);
+            irBuildEvent.signal();
+            irBuilderThread.join();
+        }
+
+        const size_t freqBufSize = LinearPhaseProcessor::fftSize * 2;
+        pendingFreqIR.buffers[0].assign(freqBufSize, 0.0f);
+        pendingFreqIR.buffers[1].assign(freqBufSize, 0.0f);
+        pendingFreqIR.readyIndex.store(-1, std::memory_order_relaxed);
+        pendingFreqIR.writeIndex.store(0, std::memory_order_relaxed);
+        pendingFreqIR.readingIndex.store(-1, std::memory_order_relaxed);
+
+        // Restart the builder thread after safe reallocation
+        if (builderWasRunning)
+        {
+            stopIRBuilder.store(false, std::memory_order_release);
+            irBuilderThread = std::thread([this]() { irBuilderThreadFunc(); });
+        }
     }
-    pendingIRReady.store(false, std::memory_order_relaxed);
+
+    // Pre-allocate silent spectrum buffer for processBlock fallback
+    silentSpectrumBuffer.assign(aiSpectrumBins, -80.0f);
     previousIRIndex = 0;
 
     // Start OSC parameter server (deferred from constructor to avoid crash during plugin scan)
@@ -965,7 +1023,8 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     autoGainCompensation.store(0.0f, std::memory_order_relaxed);
     autoGainBlockCounter = 0;
     parametersNeedUpdate.store(true, std::memory_order_relaxed);
-    lastProcessedParameterChangeCounter = parameterChangeCounter.load(std::memory_order_relaxed);
+    lastProcessedParameterChangeCounter.store(parameterChangeCounter.load(std::memory_order_relaxed),
+                                              std::memory_order_relaxed);
 
     // FIX: Initialize smoothed output gain (50ms ramp time to prevent zippering)
     smoothedOutputGain.reset(sampleRate, 0.05);
@@ -990,8 +1049,10 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
         oversamplingLatency = std::max(oversamplingLatency, static_cast<int>(oversampler4x->getLatencyInSamples()));
     if (oversampler2x)
         oversamplingLatency = std::max(oversamplingLatency, static_cast<int>(oversampler2x->getLatencyInSamples()));
-    // Include worst-case 4x oversampling latency so host never needs reconfiguration
-    // when user switches oversampling rate during playback.
+    // Report ACTUAL latency for the current mode, not worst-case.
+    // This avoids unnecessary delay compensation in ZeroLatency/NaturalPhase modes.
+    // When user switches phase mode, we update via parameterChanged().
+    // Cache worst-case for reference but report actual.
     {
         juce::dsp::Oversampling<float> tempOversampler(
             static_cast<size_t>(getTotalNumInputChannels()),
@@ -999,11 +1060,18 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
             juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR,
             true);
         tempOversampler.reset();
-        oversamplingLatency = std::max(oversamplingLatency, static_cast<int>(tempOversampler.getLatencyInSamples()));
+        worstCaseOversamplingLatency = std::max(oversamplingLatency, static_cast<int>(tempOversampler.getLatencyInSamples()));
     }
-    worstCaseLatencySamples = std::max(linearPhaseLatency, oversamplingLatency);
-    setLatencySamples(worstCaseLatencySamples);
-    lastReportedLatency = worstCaseLatencySamples;
+    int actualLatency;
+    if (currentMode == PhaseMode::LinearPhase)
+        actualLatency = linearPhaseLatency;
+    else if (currentMode == PhaseMode::NaturalPhase)
+        actualLatency = oversamplingLatency;
+    else
+        actualLatency = 0; // ZeroLatency: truly zero
+    worstCaseLatencySamples = actualLatency;
+    setLatencySamples(actualLatency);
+    lastReportedLatency = actualLatency;
 
     // Signal that processor is ready for GUI access
     processorReady.store(true, std::memory_order_release);
@@ -1075,7 +1143,6 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
 
         readyIRIndex.store(-1, std::memory_order_relaxed);
         activeIRIndex.store(0, std::memory_order_relaxed);
-        pendingIRIndex = -1;
         previousIRIndex = 0;
         crossfadeSamplesRemaining = 0;
         for (auto& loaded : linearIRLoaded)
@@ -1152,24 +1219,24 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         }
     }
 
+    // Read bypass state early (needed to decide dryBuffer capture for crossfade)
+    bool bypassed = false;
+    if (cachedBypass)
+        bypassed = cachedBypass->load(std::memory_order_relaxed) > 0.5f;
+
     // Global dry/wet mix
     const float dryWetPct = loadParam(cachedDryWet, 100.0f);
     const float wet = juce::jlimit(0.0f, 100.0f, dryWetPct) * 0.01f;
     const float dry = 1.0f - wet;
     const bool needsDry = dry > 0.0001f;
-    if (needsDry)
+    const bool needsDryForBypassFade = bypassCrossfadeRemaining > 0 || (bypassed != wasBypassed);
+    if (needsDry || needsDryForBypassFade)
     {
         jassert(dryBuffer.getNumSamples() >= blockSamples);
         const int chs = juce::jmin(buffer.getNumChannels(), dryBuffer.getNumChannels());
         for (int ch = 0; ch < chs; ++ch)
             dryBuffer.copyFrom(ch, 0, buffer, ch, 0, blockSamples);
     }
-
-    // SAFETY: Use cached pointer with safe fallback (no hash map lookup in audio thread)
-    bool bypassed = false;
-    if (cachedBypass)
-        bypassed = cachedBypass->load(std::memory_order_relaxed) > 0.5f;
-    // If cached pointer is null, assume not bypassed (safe default)
     const int qualityModeParam = static_cast<int>(std::round(loadParam(cachedQualityMode, static_cast<float>(qualityModeCached))));
     const auto phaseModeSnapshot = static_cast<PhaseMode>(paramsSnapshot.phaseMode);
     const auto msModeSnapshot = static_cast<MSMode>(paramsSnapshot.msMode);
@@ -1200,12 +1267,20 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     // Process any pending AI commands from the lock-free queue
     processAICommands();
 
-    // Check bypass
-    if (bypassed)
+    // Check bypass — with crossfade to avoid clicks on toggle
+    if (bypassed != wasBypassed)
+        bypassCrossfadeRemaining = bypassCrossfadeSamples;
+    wasBypassed = bypassed;
+
+    if (bypassed && bypassCrossfadeRemaining <= 0)
     {
-        clearDynamicMeterCache(); // reset GR meters when bypassed
+        // Steady-state bypass: skip processing entirely
+        clearDynamicMeterCache();
         return;
     }
+    // If bypassed but still crossfading: fall through, process this block
+    if (bypassed)
+        clearDynamicMeterCache();
 
     // Handle quality/latency mode (adjust lookahead dynamically)
     int qualityMode = juce::jlimit(0, 1, qualityModeParam);
@@ -1258,11 +1333,11 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     // Update EQ parameters only when something actually changed
     const auto currentParamCounter = parameterChangeCounter.load(std::memory_order_acquire);
     const bool needsParamUpdate = parametersNeedUpdate.exchange(false, std::memory_order_acq_rel)
-                                  || currentParamCounter != lastProcessedParameterChangeCounter;
+                                  || currentParamCounter != lastProcessedParameterChangeCounter.load(std::memory_order_relaxed);
     if (needsParamUpdate)
     {
         updateEQFromParameters();
-        lastProcessedParameterChangeCounter = currentParamCounter;
+        lastProcessedParameterChangeCounter.store(currentParamCounter, std::memory_order_relaxed);
     }
 
     // Apply smoothed band params (anti-zippering) before processing
@@ -1305,7 +1380,7 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         }
         else
         {
-            static const std::vector<float> dummySpectrum(aiSpectrumBins, -80.0f);
+            const auto& dummySpectrum = silentSpectrumBuffer;
             enqueueAISpectrum(dummySpectrum);
         }
     }
@@ -1644,77 +1719,96 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
             if (freqChanged || !wasSoloed)
             {
                 auto coeffs = juce::IIRCoefficients::makeBandPass(sr, soloFreq, soloQ);
-                soloMonitorFilterL.reset();
-                soloMonitorFilterR.reset();
-                soloMonitorFilterL.setCoefficients(coeffs);
-                soloMonitorFilterR.setCoefficients(coeffs);
-                lastSoloFreq = soloFreq;
-                lastSoloQ    = soloQ;
 
-                // Warm up filter with pre-EQ input to avoid transient on enable
-                if (!wasSoloed && preProcessingInputCopy.getNumSamples() >= numSamples)
+                if (!wasSoloed)
                 {
-                    // Run a few dummy blocks to prime the IIR state
-                    constexpr int warmupBlocks = 4;
-                    juce::AudioBuffer<float> warmup(preProcessingInputCopy.getNumChannels(), numSamples);
-                    for (int wb = 0; wb < warmupBlocks; ++wb)
+                    // First enable: reset state + warmup + crossfade
+                    soloMonitorFilterL.reset();
+                    soloMonitorFilterR.reset();
+                    soloMonitorFilterL.setCoefficients(coeffs);
+                    soloMonitorFilterR.setCoefficients(coeffs);
+
+                    // Warm up filter with pre-EQ input to avoid transient on enable
+                    if (preProcessingInputCopy.getNumSamples() >= numSamples)
                     {
-                        warmup.makeCopyOf(preProcessingInputCopy);
-                        if (warmup.getNumChannels() > 0)
-                            soloMonitorFilterL.processSamples(warmup.getWritePointer(0), numSamples);
-                        if (warmup.getNumChannels() > 1)
-                            soloMonitorFilterR.processSamples(warmup.getWritePointer(1), numSamples);
+                        constexpr int warmupBlocks = 2;
+                        const int warmupChs = juce::jmin(soloWarmupBuffer.getNumChannels(), preProcessingInputCopy.getNumChannels());
+                        for (int wb = 0; wb < warmupBlocks; ++wb)
+                        {
+                            for (int ch = 0; ch < warmupChs; ++ch)
+                                soloWarmupBuffer.copyFrom(ch, 0, preProcessingInputCopy, ch, 0, numSamples);
+                            if (warmupChs > 0)
+                                soloMonitorFilterL.processSamples(soloWarmupBuffer.getWritePointer(0), numSamples);
+                            if (warmupChs > 1)
+                                soloMonitorFilterR.processSamples(soloWarmupBuffer.getWritePointer(1), numSamples);
+                        }
                     }
+
+                    soloCrossfadeRemaining = soloCrossfadeSamples;
+                }
+                else
+                {
+                    // Already soloed, freq/Q changed during drag:
+                    // Update coefficients WITHOUT resetting filter state.
+                    // The IIR state adapts naturally to the new coefficients,
+                    // avoiding the impulse/crackle caused by a hard reset.
+                    soloMonitorFilterL.setCoefficients(coeffs);
+                    soloMonitorFilterR.setCoefficients(coeffs);
                 }
 
-                soloCrossfadeRemaining = soloCrossfadeSamples;
+                lastSoloFreq = soloFreq;
+                lastSoloQ    = soloQ;
             }
 
-            // Build solo output buffer (pre-EQ signal + bandpass)
-            juce::AudioBuffer<float> soloOut(buffer.getNumChannels(), numSamples);
+            // Build solo output using pre-allocated buffer (NO heap allocation)
+            const int soloChs = juce::jmin(soloOutputBuffer.getNumChannels(), buffer.getNumChannels());
             if (preProcessingInputCopy.getNumChannels() >= buffer.getNumChannels()
                 && preProcessingInputCopy.getNumSamples() >= numSamples)
             {
-                soloOut.makeCopyOf(preProcessingInputCopy);
-                soloOut.setSize(buffer.getNumChannels(), numSamples, true, false, true);
+                for (int ch = 0; ch < soloChs; ++ch)
+                    soloOutputBuffer.copyFrom(ch, 0, preProcessingInputCopy, ch, 0, numSamples);
             }
             else
             {
-                soloOut.makeCopyOf(buffer);
+                for (int ch = 0; ch < soloChs; ++ch)
+                    soloOutputBuffer.copyFrom(ch, 0, buffer, ch, 0, numSamples);
             }
 
-            if (soloOut.getNumChannels() > 0)
-                soloMonitorFilterL.processSamples(soloOut.getWritePointer(0), numSamples);
-            if (soloOut.getNumChannels() > 1)
-                soloMonitorFilterR.processSamples(soloOut.getWritePointer(1), numSamples);
+            if (soloChs > 0)
+                soloMonitorFilterL.processSamples(soloOutputBuffer.getWritePointer(0), numSamples);
+            if (soloChs > 1)
+                soloMonitorFilterR.processSamples(soloOutputBuffer.getWritePointer(1), numSamples);
 
-            soloOut.applyGain(juce::Decibels::decibelsToGain(soloMakeupGainDB));
+            // Apply makeup gain in-place on pre-allocated buffer
+            for (int ch = 0; ch < soloChs; ++ch)
+                juce::FloatVectorOperations::multiply(soloOutputBuffer.getWritePointer(ch),
+                    juce::Decibels::decibelsToGain(soloMakeupGainDB), numSamples);
 
             // Crossfade from wet EQ output → solo bandpass output to avoid click on enable
             if (soloCrossfadeRemaining > 0)
             {
                 const int fadeLen = juce::jmin(soloCrossfadeRemaining, numSamples);
-                for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+                for (int ch = 0; ch < soloChs; ++ch)
                 {
                     float* wet  = buffer.getWritePointer(ch);
-                    const float* dry = soloOut.getReadPointer(ch);
+                    const float* dryS = soloOutputBuffer.getReadPointer(ch);
                     for (int s = 0; s < fadeLen; ++s)
                     {
                         const float t = static_cast<float>(soloCrossfadeSamples - soloCrossfadeRemaining + s)
                                       / static_cast<float>(soloCrossfadeSamples);
-                        wet[s] = wet[s] * (1.0f - t) + dry[s] * t;
+                        wet[s] = wet[s] * (1.0f - t) + dryS[s] * t;
                     }
                     // Rest of block: pure solo
                     for (int s = fadeLen; s < numSamples; ++s)
-                        wet[s] = dry[s];
+                        wet[s] = dryS[s];
                 }
                 soloCrossfadeRemaining = juce::jmax(0, soloCrossfadeRemaining - numSamples);
             }
             else
             {
-                // Full solo — copy directly
-                for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
-                    buffer.copyFrom(ch, 0, soloOut, ch, 0, numSamples);
+                // Full solo — copy directly from pre-allocated buffer
+                for (int ch = 0; ch < soloChs; ++ch)
+                    buffer.copyFrom(ch, 0, soloOutputBuffer, ch, 0, numSamples);
             }
 
             wasSoloed = true;
@@ -1777,6 +1871,46 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     // This is more efficient than manual sample-by-sample loop and prevents stereo image shift
     const int numSamples = buffer.getNumSamples();
     smoothedOutputGain.applyGain(buffer, numSamples);
+
+    // Bypass crossfade: blend processed+gained ↔ dry(ungained) to match steady-state behavior
+    if (bypassCrossfadeRemaining > 0)
+    {
+        const int fadeLen = juce::jmin(bypassCrossfadeRemaining, numSamples);
+        const int chs = juce::jmin(buffer.getNumChannels(), dryBuffer.getNumChannels());
+
+        for (int ch = 0; ch < chs; ++ch)
+        {
+            float* out = buffer.getWritePointer(ch);
+            const float* dry = dryBuffer.getReadPointer(ch);
+
+            for (int s = 0; s < fadeLen; ++s)
+            {
+                const float t = static_cast<float>(bypassCrossfadeSamples - bypassCrossfadeRemaining + s)
+                              / static_cast<float>(bypassCrossfadeSamples);
+                // t: 0→1.  bypassed: wet→dry.  !bypassed: dry→wet.
+                if (bypassed)
+                    out[s] = out[s] * (1.0f - t) + dry[s] * t;
+                else
+                    out[s] = dry[s] * (1.0f - t) + out[s] * t;
+            }
+
+            // After crossfade ends mid-block: rest is target signal
+            if (bypassed)
+            {
+                for (int s = fadeLen; s < numSamples; ++s)
+                    out[s] = dry[s];
+            }
+        }
+        bypassCrossfadeRemaining = juce::jmax(0, bypassCrossfadeRemaining - numSamples);
+    }
+
+    // Output peak metering (lock-free, for GUI level meter)
+    {
+        float peakL = buffer.getMagnitude(0, 0, numSamples);
+        float peakR = totalNumInputChannels > 1 ? buffer.getMagnitude(1, 0, numSamples) : peakL;
+        outputPeakLeft.store(peakL, std::memory_order_relaxed);
+        outputPeakRight.store(peakR, std::memory_order_relaxed);
+    }
 }
 
 void AIEqualizerAudioProcessor::parameterChanged(const juce::String& parameterID, float newValue)
@@ -1800,6 +1934,26 @@ void AIEqualizerAudioProcessor::parameterChanged(const juce::String& parameterID
             readyIRIndex.store(-1, std::memory_order_relaxed);
             crossfadeSamplesRemaining = 0;
             triggerEQCurveUpdate();
+        }
+
+        // Update reported latency to match the new phase mode
+        // This ensures DAW delay compensation is accurate
+        {
+            int newLatency = 0;
+            if (newMode == PhaseMode::LinearPhase)
+                newLatency = static_cast<int>(LinearPhaseProcessor::usePartitioned
+                    ? LinearPhaseProcessor::partSize
+                    : LinearPhaseProcessor::hopSize);
+            else if (newMode == PhaseMode::NaturalPhase)
+                newLatency = worstCaseOversamplingLatency;
+            // ZeroLatency: 0
+
+            if (newLatency != lastReportedLatency)
+            {
+                worstCaseLatencySamples = newLatency;
+                setLatencySamples(newLatency);
+                lastReportedLatency = newLatency;
+            }
         }
         return;
     }
@@ -1834,27 +1988,26 @@ void AIEqualizerAudioProcessor::triggerEQCurveUpdate()
 
 void AIEqualizerAudioProcessor::updateLinearPhaseIRIfNeeded()
 {
-    if (!pendingIRReady.load(std::memory_order_acquire))
-        return;
+    // Lock-free: atomically claim the ready buffer index.
+    int ri = pendingFreqIR.readyIndex.exchange(-1, std::memory_order_acquire);
+    if (ri < 0)
+        return;  // No new IR data available
 
-    std::unique_lock<std::mutex> lock(pendingFreqIR.mutex, std::try_to_lock);
-    if (!lock.owns_lock())
-        return;  // builder is writing, try next block
+    // ABA guard: mark the buffer we are about to read so the builder won't overwrite it.
+    // Must be set before we dereference buffers[ri].data().
+    pendingFreqIR.readingIndex.store(ri, std::memory_order_release);
 
-    if (pendingFreqIR.valid)
-    {
-        // Feed pre-computed freq-domain IR directly into LP processor 0.
-        // LinearPhaseProcessor handles the internal A/B crossfade (4096 samples, hop-aligned).
-        auto* lp = linearPhaseProcessors[0].get();
-        if (lp != nullptr)
-            lp->storeFreqIRDirect(pendingFreqIR.freqDomain.data());
+    // Feed pre-computed freq-domain IR to LinearPhaseProcessor.
+    // LinearPhaseProcessor handles the internal A/B crossfade.
+    auto* lp = linearPhaseProcessors[0].get();
+    if (lp != nullptr)
+        lp->storeFreqIRDirect(pendingFreqIR.buffers[ri].data());
 
-        linearIRLoaded[0].store(true, std::memory_order_release);
-        activeIRIndex.store(0, std::memory_order_relaxed);
+    // Signal that the read is complete so the builder may reuse this buffer.
+    pendingFreqIR.readingIndex.store(-1, std::memory_order_release);
 
-        pendingFreqIR.valid = false;
-        pendingIRReady.store(false, std::memory_order_release);
-    }
+    linearIRLoaded[0].store(true, std::memory_order_release);
+    activeIRIndex.store(0, std::memory_order_relaxed);
 }
 
 void AIEqualizerAudioProcessor::requestIRBuild()
@@ -2735,7 +2888,7 @@ void AIEqualizerAudioProcessor::applyAICorrections()
         float bestScore = std::numeric_limits<float>::max();
 
         const float targetFreq = scaled.frequency;
-        const float reuseThreshold = targetFreq * 0.148f; // ~1/5 octave
+        const float reuseThreshold = targetFreq * kBandReuseThresholdOctave;
 
         for (int i = 0; i < activeBands; ++i)
         {
@@ -2745,13 +2898,13 @@ void AIEqualizerAudioProcessor::applyAICorrections()
             // Prefer unused bands (much lower score)
             if (!bandUsed[i])
             {
-                score *= 0.3f;
+                score *= kUnusedBandScoreMult;
             }
 
             // Prefer bands within reuse threshold (can merge)
             if (dist < reuseThreshold)
             {
-                score *= 0.2f;  // Strong preference for reuse
+                score *= kReuseThresholdScoreMult;
             }
 
             if (score < bestScore)
@@ -2866,7 +3019,7 @@ void AIEqualizerAudioProcessor::applySingleCorrection(const AIEngine::Correction
     float bestScore = std::numeric_limits<float>::max();
 
     const float targetFreq = scaled.frequency;
-    const float reuseThreshold = targetFreq * 0.148f; // ~1/5 octave
+    const float reuseThreshold = targetFreq * kBandReuseThresholdOctave;
 
     for (int i = 0; i < activeBands; ++i)
     {
@@ -2876,13 +3029,13 @@ void AIEqualizerAudioProcessor::applySingleCorrection(const AIEngine::Correction
         // Prefer unused bands (much lower score)
         if (!bandUsed[i])
         {
-            score *= 0.3f;
+            score *= kUnusedBandScoreMult;
         }
 
         // Prefer bands within reuse threshold (can merge)
         if (dist < reuseThreshold)
         {
-            score *= 0.2f;  // Strong preference for reuse
+            score *= kReuseThresholdScoreMult;
         }
 
         if (score < bestScore)
@@ -3342,18 +3495,24 @@ void AIEqualizerAudioProcessor::setStateInformation(const void* data, int sizeIn
                 const int slotIdx = static_cast<int>(currentABState.load(std::memory_order_relaxed));
                 const bool needsIRRebuild = (currentPhaseMode.load(std::memory_order_relaxed) == PhaseMode::LinearPhase);
 
-                auto doRestore = [this, slotIdx, needsIRRebuild]()
+                // Use WeakReference to prevent use-after-free if processor is
+                // destroyed before the async callback fires (matches pattern
+                // used elsewhere in this file, e.g. lines 2391, 2717, 3076).
+                juce::WeakReference<AIEqualizerAudioProcessor> weakThis(this);
+                auto doRestore = [weakThis, slotIdx, needsIRRebuild]()
                 {
-                    if (!processorReady.load(std::memory_order_acquire))
+                    auto* self = weakThis.get();
+                    if (self == nullptr)
                         return;
-                    saveCurrentStateToSlot(static_cast<ABState>(slotIdx));
+                    if (!self->processorReady.load(std::memory_order_acquire))
+                        return;
+                    self->saveCurrentStateToSlot(static_cast<ABState>(slotIdx));
 
-                    // Bug E fix: trigger IR rebuild after state load in Linear Phase mode
                     if (needsIRRebuild)
                     {
-                        for (auto& loaded : linearIRLoaded)
+                        for (auto& loaded : self->linearIRLoaded)
                             loaded.store(false, std::memory_order_relaxed);
-                        triggerEQCurveUpdate();
+                        self->triggerEQCurveUpdate();
                     }
                 };
 
@@ -3402,14 +3561,12 @@ void AIEqualizerAudioProcessor::encodeMidSide(juce::AudioBuffer<float>& buffer, 
     float* midTmp = msBuffer.getWritePointer(0);
     float* sideTmp = msBuffer.getWritePointer(1);
 
-    const float sqrt2Inv = 0.7071067811865476f; // 1/sqrt(2)
-
     juce::FloatVectorOperations::add(midTmp, left, right, samples);
-    juce::FloatVectorOperations::multiply(midTmp, sqrt2Inv, samples);
+    juce::FloatVectorOperations::multiply(midTmp, kInvSqrt2, samples);
 
     juce::FloatVectorOperations::copy(sideTmp, left, samples);
     juce::FloatVectorOperations::subtract(sideTmp, right, samples);
-    juce::FloatVectorOperations::multiply(sideTmp, sqrt2Inv, samples);
+    juce::FloatVectorOperations::multiply(sideTmp, kInvSqrt2, samples);
 
     buffer.copyFrom(0, 0, midTmp, samples);
     buffer.copyFrom(1, 0, sideTmp, samples);
@@ -3430,14 +3587,12 @@ void AIEqualizerAudioProcessor::decodeMidSide(juce::AudioBuffer<float>& buffer, 
     float* left = msBuffer.getWritePointer(0);
     float* right = msBuffer.getWritePointer(1);
 
-    const float sqrt2Inv = 0.7071067811865476f; // 1/sqrt(2)
-
     juce::FloatVectorOperations::add(left, mid, side, samples);
-    juce::FloatVectorOperations::multiply(left, sqrt2Inv, samples);
+    juce::FloatVectorOperations::multiply(left, kInvSqrt2, samples);
 
     juce::FloatVectorOperations::copy(right, mid, samples);
     juce::FloatVectorOperations::subtract(right, side, samples);
-    juce::FloatVectorOperations::multiply(right, sqrt2Inv, samples);
+    juce::FloatVectorOperations::multiply(right, kInvSqrt2, samples);
 
     buffer.copyFrom(0, 0, left, samples);
     buffer.copyFrom(1, 0, right, samples);

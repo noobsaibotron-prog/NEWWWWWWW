@@ -178,6 +178,26 @@ public:
         g.setColour(juce::Colour(0xFF2A2A2A));
         g.drawHorizontalLine(y, 10.0f, static_cast<float>(getWidth() - 10));
         
+        // Draw center notch marks on quality sliders
+        for (const auto& qs : qualitySliders)
+        {
+            if (qs.slider && qs.slider->isVisible())
+            {
+                auto sb = qs.slider->getBounds().toFloat();
+                // The slider track center (value 0 is at center of range -1..1)
+                float centerX = sb.getX() + sb.getWidth() * 0.5f;
+                float topY = sb.getY() + 4.0f;
+                float botY = sb.getBottom() - 4.0f;
+                g.setColour(juce::Colour(0xFF555555));
+                g.drawLine(centerX, topY, centerX, botY, 1.0f);
+                // Small triangle marker at bottom
+                juce::Path tri;
+                tri.addTriangle(centerX - 3.0f, botY + 1.0f, centerX + 3.0f, botY + 1.0f, centerX, botY - 2.0f);
+                g.setColour(juce::Colour(0xFF666666));
+                g.fillPath(tri);
+            }
+        }
+
         // Draw active quality visualizer
         drawQualityVisualizer(g);
     }
@@ -321,13 +341,21 @@ private:
         data.slider->setSliderStyle(juce::Slider::LinearHorizontal);
         data.slider->setRange(-1.0, 1.0, 0.01);
         data.slider->setValue(0.0);
-        data.slider->setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
+        data.slider->setTextBoxStyle(juce::Slider::TextBoxRight, false, 38, 16);
         data.slider->setColour(juce::Slider::thumbColourId, color);
         data.slider->setColour(juce::Slider::trackColourId, juce::Colour(0xFF2A2A2A));
         data.slider->setColour(juce::Slider::backgroundColourId, juce::Colour(0xFF1A1A1A));
+        data.slider->setColour(juce::Slider::textBoxTextColourId, juce::Colour(0xFFAAAAAA));
+        data.slider->setColour(juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
         data.slider->setTooltip(tooltip);
         data.slider->addListener(this);
         data.slider->setDoubleClickReturnValue(true, 0.0);
+        data.slider->textFromValueFunction = [](double v) {
+            return (v >= 0 ? "+" : "") + juce::String(static_cast<int>(v * 100)) + "%";
+        };
+        data.slider->valueFromTextFunction = [](const juce::String& text) {
+            return text.getDoubleValue() / 100.0;
+        };
         addAndMakeVisible(*data.slider);
         
         data.label->setText(name, juce::dontSendNotification);

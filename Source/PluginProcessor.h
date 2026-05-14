@@ -179,7 +179,11 @@ public:
     [[nodiscard]] bool consumeAIProblemsChanged() noexcept { return aiProblemsChanged.exchange(false, std::memory_order_acquire); }
     [[nodiscard]] uint64_t getParameterChangeCounter() const noexcept { return parameterChangeCounter.load(std::memory_order_relaxed); }
     [[nodiscard]] uint32_t getBlockClampEvents() const noexcept { return blockClampEvents.load(std::memory_order_relaxed); }
-    
+
+    // Output peak metering (GUI reads, audio thread writes)
+    [[nodiscard]] float getOutputPeakLeft() const noexcept { return outputPeakLeft.load(std::memory_order_relaxed); }
+    [[nodiscard]] float getOutputPeakRight() const noexcept { return outputPeakRight.load(std::memory_order_relaxed); }
+
     // Parameter tree access
     [[nodiscard]] juce::AudioProcessorValueTreeState& getAPVTS() noexcept { return apvts; }
     [[nodiscard]] PhaseMode getCurrentPhaseMode() const noexcept { return currentPhaseMode.load(std::memory_order_relaxed); }
@@ -434,6 +438,8 @@ private:
     // Solo acoustic monitor (band-pass audition)
     juce::IIRFilter soloMonitorFilterL;
     juce::IIRFilter soloMonitorFilterR;
+    juce::AudioBuffer<float> soloOutputBuffer;  // Pre-allocated in prepareToPlay
+    juce::AudioBuffer<float> soloWarmupBuffer;  // Pre-allocated in prepareToPlay
     juce::AudioBuffer<float> preProcessingInputCopy;
     float lastSoloFreq  = -1.0f;   // cached to skip setCoefficients when unchanged
     float lastSoloQ     = -1.0f;
@@ -441,6 +447,11 @@ private:
     int   soloCrossfadeRemaining = 0;
     static constexpr int   soloCrossfadeSamples = 256;  // ~5ms @ 48kHz
     static constexpr float soloMakeupGainDB = 6.0f;
+
+    // Bypass crossfade state — avoids click on bypass toggle
+    bool  wasBypassed = false;
+    int   bypassCrossfadeRemaining = 0;
+    static constexpr int bypassCrossfadeSamples = 256;  // ~5ms @ 48kHz
 
     // IR build debounce: accumulate rapid drag events, rebuild only after silence
     std::atomic<int64_t> irBuildRequestedAt { 0 };    // ms timestamp of last request
@@ -463,7 +474,6 @@ private:
     std::array<std::unique_ptr<LinearPhaseProcessor>, 2> linearPhaseProcessors;
     std::atomic<int> activeIRIndex { 0 };
     std::atomic<int> readyIRIndex { -1 };
-    int pendingIRIndex = -1;
     std::array<std::atomic<bool>, 2> linearIRLoaded { false, false };
     int consecutiveIRReadyBlocks = 0;
     
@@ -473,14 +483,17 @@ private:
     int previousIRIndex = 0;
     alignas(64) juce::AudioBuffer<float> crossfadeBuffer;
 
-    // Pre-computed freq-domain IR handoff (builder thread → audio thread)
+    // Lock-free double-buffer for freq-domain IR handoff (builder thread -> audio thread)
+    // Protocol: builder writes to buffers[writeIndex], publishes via readyIndex (release).
+    // Audio thread claims with readyIndex.exchange(-1, acquire), guards the read via
+    // readingIndex so the builder never overwrites an in-progress read (ABA guard).
     struct PendingFreqIR {
-        std::vector<float> freqDomain;   // fftSize * 2, pre-allocated
-        bool valid = false;
-        std::mutex mutex;
+        std::vector<float> buffers[2];   // Double buffer, pre-allocated in prepareToPlay
+        std::atomic<int> readyIndex { -1 };   // Index of buffer with fresh data (-1 = none)
+        std::atomic<int> writeIndex { 0 };    // Index builder will write to next
+        std::atomic<int> readingIndex { -1 }; // Index audio thread is reading (-1 = none)
     };
     PendingFreqIR pendingFreqIR;
-    std::atomic<bool> pendingIRReady { false };
     
     //==============================================================================
     // AI Components
@@ -517,6 +530,7 @@ private:
     int analyzerSpeedCached = 1;
     int lastReportedLatency = 0;
     int worstCaseLatencySamples = 0;
+    int worstCaseOversamplingLatency = 0;
     int preallocatedMaxSamples = 0;
     int aiAnalysisSamples = 0;
     int aiAnalysisIntervalSamples = 0;
@@ -562,6 +576,7 @@ private:
     static constexpr size_t aiSpectrumBins = 2049; // 4096 FFT -> 2049 bins
     static constexpr size_t aiSpectrumQueueCapacity = 8;
     using AISpectrumFrame = std::array<float, aiSpectrumBins>;
+    std::vector<float> silentSpectrumBuffer;  // Pre-allocated silent spectrum for processBlock fallback
     AIEQCore::SPSCQueue<AISpectrumFrame, aiSpectrumQueueCapacity> aiSpectrumQueue;
     juce::WaitableEvent aiSpectrumEvent;
     std::thread aiAnalysisThread;
@@ -576,8 +591,15 @@ private:
     std::atomic<bool> spectrumDataReady { false };
     std::atomic<bool> meterDataReady { false };
     std::atomic<bool> aiProblemsChanged { false };
+
+    // Output peak metering (lock-free, written by audio thread, read by GUI)
+    std::atomic<float> outputPeakLeft { 0.0f };
+    std::atomic<float> outputPeakRight { 0.0f };
     std::atomic<uint64_t> parameterChangeCounter { 0 };
-    uint64_t lastProcessedParameterChangeCounter { 0 };
+    // Atomic to prevent data race if prepareToPlay (message thread) overlaps with
+    // processBlock (audio thread) during host reconfiguration. Relaxed ordering is
+    // sufficient: the variable is effectively owned by the audio thread during processing.
+    std::atomic<uint64_t> lastProcessedParameterChangeCounter { 0 };
     std::atomic<uint64_t> irCoeffVersion { 0 };
     std::atomic<uint32_t> blockClampEvents { 0 };
     

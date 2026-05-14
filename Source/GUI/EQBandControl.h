@@ -35,6 +35,8 @@ public:
     void setParameters(const BandParameters& p) { params = p; repaint(); }
     const BandParameters& getParameters() const { return params; }
     int getBandIndex() const { return bandIndex; }
+    void setSelected(bool sel) { selected = sel; repaint(); }
+    bool isSelected() const { return selected; }
 
     void paint(juce::Graphics& g) override
     {
@@ -45,39 +47,58 @@ public:
 
         if (!params.enabled)
         {
-            // Disabled: small dim circle
-            g.setColour(color.withAlpha(0.2f));
+            // Disabled: small dim circle with subtle border
+            g.setColour(color.withAlpha(0.15f));
             g.fillEllipse(cx - 4, cy - 4, 8, 8);
-            g.setColour(color.withAlpha(0.4f));
+            g.setColour(color.withAlpha(0.3f));
             g.drawEllipse(cx - 4, cy - 4, 8, 8, 1.0f);
             return;
         }
 
-        // === SELECTION RING (when hovered or dragging) ===
-        if (isMouseOver() || dragging)
+        // === DROP SHADOW ===
+        g.setColour(juce::Colours::black.withAlpha(0.3f));
+        g.fillEllipse(cx - r + 1.5f, cy - r + 2.0f, r * 2, r * 2);
+
+        // === SELECTION RING (selected, hovered, or dragging) ===
+        if (selected || isMouseOver() || dragging)
         {
-            g.setColour(color.withAlpha(0.25f));
-            g.fillEllipse(cx - r - 6, cy - r - 6, (r + 6) * 2, (r + 6) * 2);
-            
-            g.setColour(color.withAlpha(0.5f));
-            g.drawEllipse(cx - r - 4, cy - r - 4, (r + 4) * 2, (r + 4) * 2, 2.0f);
+            float glowAlpha = selected ? 0.22f : 0.15f;
+            float midAlpha  = selected ? 0.35f : 0.25f;
+            float ringAlpha = selected ? 0.8f  : 0.6f;
+
+            // Outer glow
+            g.setColour(color.withAlpha(glowAlpha));
+            g.fillEllipse(cx - r - 8, cy - r - 8, (r + 8) * 2, (r + 8) * 2);
+            g.setColour(color.withAlpha(midAlpha));
+            g.fillEllipse(cx - r - 5, cy - r - 5, (r + 5) * 2, (r + 5) * 2);
+
+            g.setColour(color.withAlpha(ringAlpha));
+            g.drawEllipse(cx - r - 3, cy - r - 3, (r + 3) * 2, (r + 3) * 2, selected ? 2.0f : 1.5f);
         }
 
-        // === MAIN CIRCLE ===
-        // Filled background
-        g.setColour(color.withAlpha(0.9f));
-        g.fillEllipse(cx - r, cy - r, r * 2, r * 2);
-        
+        // === MAIN CIRCLE — gradient for 3D depth ===
+        {
+            juce::ColourGradient bodyGrad(
+                color.brighter(0.2f), cx, cy - r,
+                color.darker(0.2f), cx, cy + r, false);
+            g.setGradientFill(bodyGrad);
+            g.fillEllipse(cx - r, cy - r, r * 2, r * 2);
+        }
+
         // Border
-        g.setColour(dragging ? color.brighter(0.3f) : color.brighter(0.1f));
-        g.drawEllipse(cx - r, cy - r, r * 2, r * 2, 2.0f);
-        
-        // Inner highlight (top)
-        g.setColour(juce::Colours::white.withAlpha(0.2f));
-        g.fillEllipse(cx - r * 0.4f, cy - r * 0.6f, r * 0.6f, r * 0.35f);
+        g.setColour(dragging ? color.brighter(0.4f) : color.brighter(0.15f));
+        g.drawEllipse(cx - r, cy - r, r * 2, r * 2, 1.8f);
+
+        // Inner specular highlight (top-left)
+        {
+            juce::ColourGradient spec(
+                juce::Colours::white.withAlpha(0.28f), cx - r * 0.3f, cy - r * 0.5f,
+                juce::Colours::transparentWhite, cx, cy, true);
+            g.setGradientFill(spec);
+            g.fillEllipse(cx - r * 0.7f, cy - r * 0.75f, r * 1.0f, r * 0.7f);
+        }
 
         // === BAND NUMBER ===
-        // Use Roman numerals for first 4, then numbers
         juce::String label;
         switch (bandIndex)
         {
@@ -87,11 +108,16 @@ public:
             case 3: label = "IV"; break;
             default: label = juce::String(bandIndex + 1); break;
         }
-        
-        g.setColour(ModernLookAndFeel::Colors::bgDark);
+
+        // Text shadow
+        g.setColour(juce::Colours::black.withAlpha(0.4f));
         auto font = juce::Font(juce::FontOptions().withHeight(bandIndex < 4 ? 11.0f : 12.0f));
         font.setBold(true);
         g.setFont(font);
+        g.drawText(label, bounds.translated(0.5f, 0.5f), juce::Justification::centred);
+
+        // Text
+        g.setColour(juce::Colours::white.withAlpha(0.95f));
         g.drawText(label, bounds, juce::Justification::centred);
     }
 
@@ -167,6 +193,7 @@ private:
     BandParameters params;
     juce::Colour color;
     
+    bool selected = false;
     bool dragging = false;
     juce::Point<float> dragStart;
     float startFreq = 0, startGain = 0, startQ = 0;

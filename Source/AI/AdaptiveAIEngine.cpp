@@ -198,16 +198,11 @@ AdaptiveAIEngine::AdaptiveConfig AdaptiveAIEngine::getAdaptiveConfig(
 
 void AdaptiveAIEngine::applyAdaptiveConfig(AIEngine& aiEngine, const AdaptiveConfig& config)
 {
-    // Apply configuration to AIEngine
-    // Note: This requires AIEngine to expose these parameters
-    // For now, we'll set sensitivity if available
     aiEngine.setSensitivity(config.sensitivity);
-    
-    // TODO: Apply other adaptive parameters when AIEngine exposes them:
-    // - detectionThreshold
-    // - temporalSmoothing
-    // - transientMode
-    // - sparseMode
+    aiEngine.setDetectionThreshold(config.detectionThreshold);
+    aiEngine.setTemporalSmoothing(config.temporalSmoothing);
+    aiEngine.setTransientModeEnabled(config.enableTransientMode);
+    aiEngine.setSparseModeEnabled(config.enableSparseMode);
 }
 
 //==============================================================================
@@ -288,6 +283,10 @@ std::vector<AdaptiveAIEngine::Transient> AdaptiveAIEngine::detectTransients(
                         maxBin = k;
                     }
                 }
+
+                // Guard: silent signal → skip (avoids 0 Hz transient)
+                if (maxMag < 1e-10f)
+                    continue;
 
                 transient.frequency = static_cast<float>(maxBin) * static_cast<float>(sampleRate) / static_cast<float>(fftSize);
 

@@ -58,6 +58,7 @@ void SpectrumAnalyzer::reset()
 {
     fifo.reset();
     std::fill(fifoBuffer.begin(), fifoBuffer.end(), 0.0f);
+    overlapBuffer.clear();
     
     auto& state = getActiveState();
     std::fill(state.fftData.begin(), state.fftData.end(), 0.0f);
@@ -136,63 +137,96 @@ void SpectrumAnalyzer::processFFT()
         lastProcessMs = nowMs;
     }
 
+    // 50% overlap: we only need hopSize new samples to produce a new frame
+    const int hopSize = fftSize / 2;
     const int available = fifo.getNumReady();
-    if (available < fftSize)
+    if (available < hopSize)
         return;
-    
+
     auto& state = getActiveState();
     auto& fftData = state.fftData;
-    
-    int start1, size1, start2, size2;
-    fifo.prepareToRead(fftSize, start1, size1, start2, size2);
-    
-    if (size1 > 0)
-        std::copy(fifoBuffer.begin() + start1, fifoBuffer.begin() + start1 + size1, fftData.begin());
-    if (size2 > 0)
-        std::copy(fifoBuffer.begin() + start2, fifoBuffer.begin() + start2 + size2, fftData.begin() + size1);
-    
-    fifo.finishedRead(fftSize);
-    
-    std::fill(fftData.begin() + fftSize, fftData.end(), 0.0f);
-    
-    if (state.window)
-        state.window->multiplyWithWindowingTable(fftData.data(), static_cast<size_t>(fftSize));
-    if (state.fft)
-        state.fft->performFrequencyOnlyForwardTransform(fftData.data());
-    
-    // Cache once to avoid TOCTOU: if activeBufferIndex changed between two loads,
-    // writeIndex and readIndex could alias the same buffer.
-    const int readIndex  = activeBufferIndex.load();
-    const int writeIndex = 1 - readIndex;
-    
-    auto& magOut = state.spectrumBuffers[writeIndex];
-    auto& dbOut = state.spectrumDBBuffers[writeIndex];
-    auto& peakOut = state.peakHoldBuffers[writeIndex];
-    
-    const auto& prevDB = state.spectrumDBBuffers[readIndex];
-    const auto& prevPeak = state.peakHoldBuffers[readIndex];
-    
-    for (int i = 0; i < numBins; ++i)
+
+    // Drain all available frames (process multiple hops if data accumulated)
+    int framesProcessed = 0;
+    constexpr int maxFramesPerCall = 4; // cap to avoid GUI stall
+
+    while (fifo.getNumReady() >= hopSize && framesProcessed < maxFramesPerCall)
     {
-        float mag = fftData[static_cast<size_t>(i)] / static_cast<float>(fftSize);
-        mag = std::max(mag, 1e-10f);
-        
-        magOut[i] = mag;
-        
-        float magDB = 20.0f * std::log10(mag);
-        magDB = juce::jlimit(minDecibels, maxDecibels, magDB);
-        
-        // Dual-time-constant smoothing (attack/release) for responsive yet stable display
-        const bool rising = magDB > prevDB[i];
-        const float coeff = rising ? attackCoeff : releaseCoeff;
-        const float smoothedDB = prevDB[i] + coeff * (magDB - prevDB[i]);
-        dbOut[i] = smoothedDB;
-        
-        float decayedPeak = prevPeak[i] * decayFactor;
-        peakOut[i] = std::max(smoothedDB, decayedPeak);
+        // Shift previous data left by hopSize, then read hopSize new samples at the end
+        if (framesProcessed == 0 && overlapBuffer.empty())
+        {
+            // First ever frame: need full fftSize samples
+            if (fifo.getNumReady() < fftSize)
+                break;
+            int s1, sz1, s2, sz2;
+            fifo.prepareToRead(fftSize, s1, sz1, s2, sz2);
+            if (sz1 > 0) std::copy(fifoBuffer.begin() + s1, fifoBuffer.begin() + s1 + sz1, fftData.begin());
+            if (sz2 > 0) std::copy(fifoBuffer.begin() + s2, fifoBuffer.begin() + s2 + sz2, fftData.begin() + sz1);
+            fifo.finishedRead(fftSize);
+
+            // Save second half for overlap
+            overlapBuffer.resize(static_cast<size_t>(hopSize));
+            std::copy(fftData.begin() + hopSize, fftData.begin() + fftSize, overlapBuffer.begin());
+        }
+        else
+        {
+            // Overlap: reuse previous second half as first half
+            std::copy(overlapBuffer.begin(), overlapBuffer.end(), fftData.begin());
+
+            // Read hopSize new samples into second half
+            int s1, sz1, s2, sz2;
+            fifo.prepareToRead(hopSize, s1, sz1, s2, sz2);
+            auto dest = fftData.begin() + hopSize;
+            if (sz1 > 0) std::copy(fifoBuffer.begin() + s1, fifoBuffer.begin() + s1 + sz1, dest);
+            if (sz2 > 0) std::copy(fifoBuffer.begin() + s2, fifoBuffer.begin() + s2 + sz2, dest + sz1);
+            fifo.finishedRead(hopSize);
+
+            // Save new second half for next overlap
+            std::copy(fftData.begin() + hopSize, fftData.begin() + fftSize, overlapBuffer.begin());
+        }
+
+        // Zero-pad remainder and apply window + FFT
+        std::fill(fftData.begin() + fftSize, fftData.end(), 0.0f);
+
+        if (state.window)
+            state.window->multiplyWithWindowingTable(fftData.data(), static_cast<size_t>(fftSize));
+        if (state.fft)
+            state.fft->performFrequencyOnlyForwardTransform(fftData.data());
+
+        // Double-buffer swap
+        const int readIndex  = activeBufferIndex.load(std::memory_order_acquire);
+        const int writeIndex = 1 - readIndex;
+
+        auto& magOut = state.spectrumBuffers[writeIndex];
+        auto& dbOut = state.spectrumDBBuffers[writeIndex];
+        auto& peakOut = state.peakHoldBuffers[writeIndex];
+
+        const auto& prevDB = state.spectrumDBBuffers[readIndex];
+        const auto& prevPeak = state.peakHoldBuffers[readIndex];
+
+        for (int i = 0; i < numBins; ++i)
+        {
+            float mag = fftData[static_cast<size_t>(i)] / static_cast<float>(fftSize);
+            mag = std::max(mag, 1e-10f);
+
+            magOut[i] = mag;
+
+            float magDB = 20.0f * std::log10(mag);
+            magDB = juce::jlimit(minDecibels, maxDecibels, magDB);
+
+            const bool rising = magDB > prevDB[i];
+            const float coeff = rising ? attackCoeff : releaseCoeff;
+            const float smoothedDB = prevDB[i] + coeff * (magDB - prevDB[i]);
+            dbOut[i] = smoothedDB;
+
+            float decayedPeak = prevPeak[i] * decayFactor;
+            peakOut[i] = std::max(smoothedDB, decayedPeak);
+        }
+
+        activeBufferIndex.store(writeIndex, std::memory_order_release);
+        ++framesProcessed;
     }
-    
-    activeBufferIndex.store(writeIndex);
+
     newDataAvailable.store(false);
 }
 
@@ -201,9 +235,14 @@ void SpectrumAnalyzer::processFFT()
 //==============================================================================
 void SpectrumAnalyzer::updateSmoothingCoeffs()
 {
-    constexpr float updateRate = 60.0f;
-    attackCoeff = 1.0f - std::exp(-1.0f / (attackTimeMs * 0.001f * updateRate));
-    releaseCoeff = 1.0f - std::exp(-1.0f / (releaseTimeMs * 0.001f * updateRate));
+    // Actual FFT update rate: with 50% overlap, hopSize = fftSize/2
+    // At 48kHz with 4096 FFT: hop = 2048, rate = 48000/2048 = ~23Hz
+    // Use a realistic estimate based on current FFT size and expected sample rate
+    const float sr = static_cast<float>(std::max(44100.0, currentSampleRate));
+    const float hopSize = static_cast<float>(fftSize) / 2.0f;
+    const float actualUpdateRate = std::max(10.0f, sr / hopSize);
+    attackCoeff = 1.0f - std::exp(-1.0f / (attackTimeMs * 0.001f * actualUpdateRate));
+    releaseCoeff = 1.0f - std::exp(-1.0f / (releaseTimeMs * 0.001f * actualUpdateRate));
 }
 
 void SpectrumAnalyzer::setSpeed(Speed s)
@@ -212,17 +251,17 @@ void SpectrumAnalyzer::setSpeed(Speed s)
     switch (s)
     {
         case Speed::Fast:
-            attackTimeMs = 3.0f;
-            releaseTimeMs = 40.0f;
+            attackTimeMs = 1.5f;
+            releaseTimeMs = 30.0f;
             break;
         case Speed::Slow:
-            attackTimeMs = 15.0f;
-            releaseTimeMs = 180.0f;
+            attackTimeMs = 8.0f;
+            releaseTimeMs = 120.0f;
             break;
         case Speed::Medium:
         default:
-            attackTimeMs = 7.0f;
-            releaseTimeMs = 90.0f;
+            attackTimeMs = 2.0f;
+            releaseTimeMs = 50.0f;
             break;
     }
     updateSmoothingCoeffs();
@@ -258,10 +297,12 @@ void SpectrumAnalyzer::setFFTResolution(Resolution res)
     numBins = newState.numBins;
     resolution = res;
     
-    // Clear FIFO (safe on GUI thread)
+    // Clear FIFO and overlap buffer (safe on GUI thread)
     fifo.reset();
     std::fill(fifoBuffer.begin(), fifoBuffer.end(), 0.0f);
+    overlapBuffer.clear(); // Force full-frame read on next processFFT
     newDataAvailable.store(false, std::memory_order_release);
+    updateSmoothingCoeffs(); // Recalc for new FFT size
 
     reconfiguring.store(false, std::memory_order_release);
 }

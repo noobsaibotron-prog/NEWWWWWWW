@@ -61,7 +61,7 @@ private:
     void createDefaultFactoryPresets();
     Preset createPreset(const juce::String& name, const juce::String& category,
                        const juce::String& description,
-                       std::function<void(juce::AudioProcessorValueTreeState&)> setupFunc);
+                       std::function<void(juce::ValueTree&)> setupFunc);
     
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PresetManager)
 };

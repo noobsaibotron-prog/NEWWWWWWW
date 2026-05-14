@@ -142,7 +142,31 @@ public:
     
     void setSensitivity(float s) { sensitivity.store(juce::jlimit(0.0f, 1.0f, s), std::memory_order_relaxed); }
     float getSensitivity() const { return sensitivity.load(std::memory_order_relaxed); }
-    
+
+    void setDetectionThreshold(float t) noexcept
+    {
+        detectionThreshold.store(juce::jlimit(0.0f, 1.0f, t), std::memory_order_relaxed);
+    }
+    float getDetectionThreshold() const noexcept
+    {
+        return detectionThreshold.load(std::memory_order_relaxed);
+    }
+
+    void setTemporalSmoothing(float s) noexcept
+    {
+        temporalSmoothing.store(juce::jlimit(0.0f, 1.0f, s), std::memory_order_relaxed);
+    }
+    float getTemporalSmoothing() const noexcept
+    {
+        return temporalSmoothing.load(std::memory_order_relaxed);
+    }
+
+    void setTransientModeEnabled(bool e) noexcept { enableTransientMode.store(e, std::memory_order_relaxed); }
+    bool isTransientModeEnabled() const noexcept  { return enableTransientMode.load(std::memory_order_relaxed); }
+
+    void setSparseModeEnabled(bool e) noexcept { enableSparseMode.store(e, std::memory_order_relaxed); }
+    bool isSparseModeEnabled() const noexcept  { return enableSparseMode.load(std::memory_order_relaxed); }
+
     void setStrength(float s);
     float getStrength() const { return strength.load(std::memory_order_relaxed); }
     
@@ -452,16 +476,22 @@ private:
         
         spectrumBuffers[static_cast<size_t>(writeIdx)].fill(spectrum, rms, avgRms);
         
-        // Swap write buffer with ready buffer (atomic exchange)
+        // Swap write buffer with ready buffer (bounded retry for RT safety)
         int expected = spectrumReadyIndex.load(std::memory_order_acquire);
         expected = (expected < 0 || expected > 2) ? 2 : expected;
-        
+
+        int retries = 0;
         while (!spectrumReadyIndex.compare_exchange_weak(expected, writeIdx,
                                                           std::memory_order_release,
-                                                          std::memory_order_relaxed)) {
+                                                          std::memory_order_relaxed)
+               && ++retries < 16) {
             expected = (expected < 0 || expected > 2) ? 2 : expected;
         }
-        
+
+        // Force-store if CAS exhausted retries (prevents audio thread stall)
+        if (retries >= 16)
+            spectrumReadyIndex.store(writeIdx, std::memory_order_release);
+
         // Clamp before storing
         expected = (expected < 0 || expected > 2) ? 1 : expected;
         spectrumWriteIndex.store(expected, std::memory_order_relaxed);
@@ -478,12 +508,19 @@ private:
         expected = (expected < 0 || expected > 2) ? 0 : expected;
         readIdx = (readIdx < 0 || readIdx > 2) ? 1 : readIdx;
         
+        int retries = 0;
         while (!spectrumReadyIndex.compare_exchange_weak(expected, readIdx,
                                                           std::memory_order_acquire,
-                                                          std::memory_order_relaxed)) {
+                                                          std::memory_order_relaxed)
+               && ++retries < 16) {
             // Re-clamp expected after failed exchange
             expected = (expected < 0 || expected > 2) ? 0 : expected;
         }
+
+        // If CAS exhausted retries, force-store to prevent stall
+        if (retries >= 16)
+            spectrumReadyIndex.store(readIdx, std::memory_order_release);
+
         spectrumReadIndex.store(expected, std::memory_order_relaxed);
         
         // Final bounds check before access
@@ -573,17 +610,33 @@ private:
     void detectProblemsWithML();  // ML-enhanced detection
     
     //==========================================================================
-    // Advanced AI Systems
+    // Advanced AI Systems — Maturity Classification (v1.0)
+    //
+    // SHIPPING:      AIEngine (heuristic detection), SemanticEQEngine,
+    //                ReferenceMatcher, AdaptiveAIEngine, UserLearning
+    // EXPERIMENTAL:  MLEngine (no trained weights bundled — heuristic fallback active),
+    //                OnlineLearningSystem (replay buffer works, training backend absent)
+    // DISABLED:      NeuralNetworkWrapper (requires TFLite model file),
+    //                MultiTrackUnmasking (requires multi-instance host support)
+    //
+    // Experimental/disabled modules are lazy-initialized and gated by feature flags.
+    // They compile and link but have no runtime cost when disabled (default).
+    //==========================================================================
     std::unique_ptr<MultiTrackUnmasking> multiTrackUnmasking;
     std::unique_ptr<NeuralNetworkWrapper> neuralNetwork;
     std::unique_ptr<AdaptiveAIEngine> adaptiveEngine;
     std::unique_ptr<OnlineLearningSystem> onlineLearning;
-    
-    // Advanced features flags
+
+    // Feature flags — all disabled by default; enable via setXxxEnabled(true)
     bool enableMultiTrackUnmasking = false;
     bool enableNeuralNetworks = false;
     bool enableAdaptiveProcessing = false;
     bool enableOnlineLearning = false;
-    
+
+    std::atomic<float> detectionThreshold { 0.5f };
+    std::atomic<float> temporalSmoothing  { 0.1f };
+    std::atomic<bool>  enableTransientMode { false };
+    std::atomic<bool>  enableSparseMode    { false };
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AIEngine)
 };
