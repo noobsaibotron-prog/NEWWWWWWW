@@ -1589,7 +1589,27 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     // fires before eqProcessor.bandParams are updated, so rebuildEQCurvePath()
     // reads stale data (old filter type/gain) and consumes the version counter.
     // The curve then stays stale until the next user interaction.
-    if (needsParamUpdate)
+    //
+    // Additionally: while ANY band's freq/gain/Q smoothing is still in flight,
+    // band params are still morphing block-to-block. Bumping only on the
+    // initial needsParamUpdate would freeze the curve on a mid-transition
+    // snapshot — visible during profile A/B switches as a stale curve that
+    // only unfreezes when the user touches a node. So we also bump while
+    // smoothing is active, letting the GUI repaint the morph.
+    bool anyBandSmoothing = false;
+    for (int i = 0; i < maxBands; ++i)
+    {
+        const auto idx = static_cast<size_t>(i);
+        if (smoothedBandFreq[idx].isSmoothing()
+            || smoothedBandGain[idx].isSmoothing()
+            || smoothedBandQ[idx].isSmoothing())
+        {
+            anyBandSmoothing = true;
+            break;
+        }
+    }
+
+    if (needsParamUpdate || anyBandSmoothing)
         eqCurveChangeCounter.fetch_add(1, std::memory_order_relaxed);
 
     if (autoGainEnabledLocal)
