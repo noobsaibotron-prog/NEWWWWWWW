@@ -164,8 +164,8 @@ private:
         std::array<BiquadState, 2> eqFiltersR;
         BiquadState scFilterL, scFilterR;
         
-        float envelopeL = 0.0f;
-        float envelopeR = 0.0f;
+        float envelopeL = -100.0f;
+        float envelopeR = -100.0f;
         float currentGain = 0.0f;
         float targetGain = 0.0f;
         float scFreqApplied = 0.0f;
@@ -184,7 +184,10 @@ private:
         // The GUI live-curve evaluator consumes these instead of the
         // instantaneous meter values, which intentionally remain pre-smoothing.
         std::atomic<float> liveCurrentGainDb { 0.0f };
+        std::atomic<float> liveEffectiveGainDb { 0.0f };
         std::atomic<float> liveGateAmount { 1.0f };
+
+        float appliedEffectiveGainDb = 0.0f;
         
         uint64_t lastVersion = 0;
         bool prepared = false;
@@ -203,6 +206,9 @@ private:
 
     [[nodiscard]] BiquadCoeffs makeEQCoefficients(
         int filterType, float freq, float gain, float q) const;
+    void beginCoeffCrossfade(int bandIndex,
+                             const BiquadCoeffs& newCoeffs,
+                             int fadeSamples) noexcept;
 
     // Per-band output crossfade: eliminates biquad coefficient-jump clicks.
     // Mirrors ParametricEQProcessor::beginBandCrossfade() approach.

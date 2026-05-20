@@ -27,6 +27,11 @@ public:
     {
         testBelowThresholdTransparency();
         testAboveThresholdGainReduction();
+        testAboveThresholdExpansionIncreasesBoost();
+        testNegativeCutCompressionDeepensCut();
+        testNegativeCutExpansionRelaxesCut();
+        testZeroGainCompressionCreatesDynamicCut();
+        testZeroGainExpansionCreatesDynamicBoost();
         testAttackReleaseTiming();
         testBypassEquivalence();
         testChannelSymmetry();
@@ -216,6 +221,261 @@ private:
         expect(diffDB < -2.0f,
             "Expected compressor to reduce EQ boost but diff was only "
             + juce::String(diffDB, 3) + " dB");
+    }
+
+    void testAboveThresholdExpansionIncreasesBoost()
+    {
+        beginTest("Above-threshold expansion: expander increases EQ boost");
+
+        auto staticProc = makePrepared();
+        {
+            DynamicEQProcessor::DynamicBandParams p;
+            p.frequency = 1000.0f;
+            p.gain = 12.0f;
+            p.q = 1.0f;
+            p.filterType = 2;
+            p.enabled = true;
+            p.dynamicMode = DynamicEQProcessor::DynamicMode_Off;
+            staticProc->setBandParams(0, p);
+        }
+
+        auto dynProc = makePrepared();
+        {
+            DynamicEQProcessor::DynamicBandParams p;
+            p.frequency = 1000.0f;
+            p.gain = 12.0f;
+            p.q = 1.0f;
+            p.filterType = 2;
+            p.enabled = true;
+            p.dynamicMode = DynamicEQProcessor::DynamicMode_Expand;
+            p.threshold = -30.0f;
+            p.ratio = 4.0f;
+            p.attackMs = 1.0f;
+            p.releaseMs = 50.0f;
+            p.knee = 0.0f;
+            p.range = 24.0f;
+            dynProc->setBandParams(0, p);
+        }
+
+        const float amplitude = std::pow(10.0f, -6.0f / 20.0f);
+        const int numSamples = kBlockSize * 16;
+        auto staticBuf = generateSine(1000.0f, numSamples, amplitude);
+        auto dynBuf = generateSine(1000.0f, numSamples, amplitude);
+        processInChunks(*staticProc, staticBuf, kBlockSize);
+        processInChunks(*dynProc, dynBuf, kBlockSize);
+
+        const int warmup = kBlockSize * 6;
+        const float staticRMS = computeRMS(staticBuf, 0, warmup, numSamples);
+        const float dynRMS = computeRMS(dynBuf, 0, warmup, numSamples);
+        const float diffDB = rmsToDb(dynRMS) - rmsToDb(staticRMS);
+
+        logMessage("Positive-boost expand diff: " + juce::String(diffDB, 3) + " dB");
+        expect(diffDB > 1.0f,
+               "Expand on a boosted band should increase output beyond the static boost");
+    }
+
+    void testNegativeCutCompressionDeepensCut()
+    {
+        beginTest("Negative-gain band: compress deepens the cut");
+
+        auto staticProc = makePrepared();
+        {
+            DynamicEQProcessor::DynamicBandParams p;
+            p.frequency = 1000.0f;
+            p.gain = -12.0f;
+            p.q = 1.0f;
+            p.filterType = 2;
+            p.enabled = true;
+            p.dynamicMode = DynamicEQProcessor::DynamicMode_Off;
+            staticProc->setBandParams(0, p);
+        }
+
+        auto dynProc = makePrepared();
+        {
+            DynamicEQProcessor::DynamicBandParams p;
+            p.frequency = 1000.0f;
+            p.gain = -12.0f;
+            p.q = 1.0f;
+            p.filterType = 2;
+            p.enabled = true;
+            p.dynamicMode = DynamicEQProcessor::DynamicMode_Compress;
+            p.threshold = -30.0f;
+            p.ratio = 8.0f;
+            p.attackMs = 1.0f;
+            p.releaseMs = 50.0f;
+            p.knee = 0.0f;
+            p.range = 24.0f;
+            dynProc->setBandParams(0, p);
+        }
+
+        const float amplitude = std::pow(10.0f, -6.0f / 20.0f);
+        const int numSamples = kBlockSize * 16;
+        auto staticBuf = generateSine(1000.0f, numSamples, amplitude);
+        auto dynBuf = generateSine(1000.0f, numSamples, amplitude);
+        processInChunks(*staticProc, staticBuf, kBlockSize);
+        processInChunks(*dynProc, dynBuf, kBlockSize);
+
+        const int warmup = kBlockSize * 6;
+        const float staticRMS = computeRMS(staticBuf, 0, warmup, numSamples);
+        const float dynRMS = computeRMS(dynBuf, 0, warmup, numSamples);
+        const float diffDB = rmsToDb(dynRMS) - rmsToDb(staticRMS);
+
+        logMessage("Negative-cut compress diff: " + juce::String(diffDB, 3) + " dB");
+        expect(diffDB < -1.0f,
+               "Compress on a cut band should attenuate more than the static cut");
+    }
+
+    void testNegativeCutExpansionRelaxesCut()
+    {
+        beginTest("Negative-gain band: expand relaxes the cut");
+
+        auto staticProc = makePrepared();
+        {
+            DynamicEQProcessor::DynamicBandParams p;
+            p.frequency = 1000.0f;
+            p.gain = -12.0f;
+            p.q = 1.0f;
+            p.filterType = 2;
+            p.enabled = true;
+            p.dynamicMode = DynamicEQProcessor::DynamicMode_Off;
+            staticProc->setBandParams(0, p);
+        }
+
+        auto dynProc = makePrepared();
+        {
+            DynamicEQProcessor::DynamicBandParams p;
+            p.frequency = 1000.0f;
+            p.gain = -12.0f;
+            p.q = 1.0f;
+            p.filterType = 2;
+            p.enabled = true;
+            p.dynamicMode = DynamicEQProcessor::DynamicMode_Expand;
+            p.threshold = -30.0f;
+            p.ratio = 4.0f;
+            p.attackMs = 1.0f;
+            p.releaseMs = 50.0f;
+            p.knee = 0.0f;
+            p.range = 24.0f;
+            dynProc->setBandParams(0, p);
+        }
+
+        const float amplitude = std::pow(10.0f, -6.0f / 20.0f);
+        const int numSamples = kBlockSize * 16;
+        auto staticBuf = generateSine(1000.0f, numSamples, amplitude);
+        auto dynBuf = generateSine(1000.0f, numSamples, amplitude);
+        processInChunks(*staticProc, staticBuf, kBlockSize);
+        processInChunks(*dynProc, dynBuf, kBlockSize);
+
+        const int warmup = kBlockSize * 6;
+        const float staticRMS = computeRMS(staticBuf, 0, warmup, numSamples);
+        const float dynRMS = computeRMS(dynBuf, 0, warmup, numSamples);
+        const float diffDB = rmsToDb(dynRMS) - rmsToDb(staticRMS);
+
+        logMessage("Negative-cut expand diff: " + juce::String(diffDB, 3) + " dB");
+        expect(diffDB > 1.0f,
+               "Expand on a cut band should attenuate less than the static cut");
+    }
+
+    void testZeroGainCompressionCreatesDynamicCut()
+    {
+        beginTest("Zero-gain band: compress creates a real dynamic cut");
+
+        auto staticProc = makePrepared();
+        {
+            DynamicEQProcessor::DynamicBandParams p;
+            p.frequency = 1000.0f;
+            p.gain = 0.0f;
+            p.q = 1.0f;
+            p.filterType = 2;
+            p.enabled = true;
+            p.dynamicMode = DynamicEQProcessor::DynamicMode_Off;
+            staticProc->setBandParams(0, p);
+        }
+
+        auto dynProc = makePrepared();
+        {
+            DynamicEQProcessor::DynamicBandParams p;
+            p.frequency = 1000.0f;
+            p.gain = 0.0f;
+            p.q = 1.0f;
+            p.filterType = 2;
+            p.enabled = true;
+            p.dynamicMode = DynamicEQProcessor::DynamicMode_Compress;
+            p.threshold = -30.0f;
+            p.ratio = 8.0f;
+            p.attackMs = 1.0f;
+            p.releaseMs = 50.0f;
+            p.knee = 0.0f;
+            p.range = 24.0f;
+            dynProc->setBandParams(0, p);
+        }
+
+        const float amplitude = std::pow(10.0f, -6.0f / 20.0f);
+        const int numSamples = kBlockSize * 16;
+        auto staticBuf = generateSine(1000.0f, numSamples, amplitude);
+        auto dynBuf = generateSine(1000.0f, numSamples, amplitude);
+        processInChunks(*staticProc, staticBuf, kBlockSize);
+        processInChunks(*dynProc, dynBuf, kBlockSize);
+
+        const int warmup = kBlockSize * 6;
+        const float staticRMS = computeRMS(staticBuf, 0, warmup, numSamples);
+        const float dynRMS = computeRMS(dynBuf, 0, warmup, numSamples);
+        const float diffDB = rmsToDb(dynRMS) - rmsToDb(staticRMS);
+
+        logMessage("Zero-gain compress diff: " + juce::String(diffDB, 3) + " dB");
+        expect(diffDB < -1.0f,
+               "Compress on a zero-gain band should no longer be a no-op");
+    }
+
+    void testZeroGainExpansionCreatesDynamicBoost()
+    {
+        beginTest("Zero-gain band: expand creates a real dynamic boost");
+
+        auto staticProc = makePrepared();
+        {
+            DynamicEQProcessor::DynamicBandParams p;
+            p.frequency = 1000.0f;
+            p.gain = 0.0f;
+            p.q = 1.0f;
+            p.filterType = 2;
+            p.enabled = true;
+            p.dynamicMode = DynamicEQProcessor::DynamicMode_Off;
+            staticProc->setBandParams(0, p);
+        }
+
+        auto dynProc = makePrepared();
+        {
+            DynamicEQProcessor::DynamicBandParams p;
+            p.frequency = 1000.0f;
+            p.gain = 0.0f;
+            p.q = 1.0f;
+            p.filterType = 2;
+            p.enabled = true;
+            p.dynamicMode = DynamicEQProcessor::DynamicMode_Expand;
+            p.threshold = -30.0f;
+            p.ratio = 4.0f;
+            p.attackMs = 1.0f;
+            p.releaseMs = 50.0f;
+            p.knee = 0.0f;
+            p.range = 24.0f;
+            dynProc->setBandParams(0, p);
+        }
+
+        const float amplitude = std::pow(10.0f, -6.0f / 20.0f);
+        const int numSamples = kBlockSize * 16;
+        auto staticBuf = generateSine(1000.0f, numSamples, amplitude);
+        auto dynBuf = generateSine(1000.0f, numSamples, amplitude);
+        processInChunks(*staticProc, staticBuf, kBlockSize);
+        processInChunks(*dynProc, dynBuf, kBlockSize);
+
+        const int warmup = kBlockSize * 6;
+        const float staticRMS = computeRMS(staticBuf, 0, warmup, numSamples);
+        const float dynRMS = computeRMS(dynBuf, 0, warmup, numSamples);
+        const float diffDB = rmsToDb(dynRMS) - rmsToDb(staticRMS);
+
+        logMessage("Zero-gain expand diff: " + juce::String(diffDB, 3) + " dB");
+        expect(diffDB > 1.0f,
+               "Expand on a zero-gain band should no longer be a no-op");
     }
 
     //==============================================================================

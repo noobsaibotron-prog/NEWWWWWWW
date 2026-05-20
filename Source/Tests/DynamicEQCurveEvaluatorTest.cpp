@@ -16,10 +16,14 @@ public:
     {
         testNoDynamicBandsYieldZeroDelta();
         testCompressFullMixProducesNegativeDelta();
+        testNegativeCutCompressProducesNegativeDelta();
         testMixZeroCancelsStaticContribution();
         testMixHalfSitsBetweenDryAndWet();
         testGateProducesStrongAttenuation();
         testExpandProducesPositiveDelta();
+        testNegativeCutExpandMatchesAudioDirection();
+        testZeroGainCompressProducesNegativeDelta();
+        testZeroGainExpandProducesPositiveDelta();
         testAutoMakeupAddsBroadbandOffset();
         testDeepNotchStaysFinite();
         testRangeSweepRemainsContinuous();
@@ -101,6 +105,46 @@ private:
         return juce::Decibels::gainToDecibels(magnitude, -120.0f);
     }
 
+    static juce::AudioBuffer<float> renderTone(DynamicEQProcessor& proc,
+                                               float amplitude,
+                                               int blocks = 20,
+                                               float freqHz = kToneFreq)
+    {
+        juce::AudioBuffer<float> output(kChannels, blocks * kBlockSize);
+        double phase = 0.0;
+        const double delta = juce::MathConstants<double>::twoPi
+            * static_cast<double>(freqHz) / kSampleRate;
+
+        for (int block = 0; block < blocks; ++block)
+        {
+            juce::AudioBuffer<float> buffer(kChannels, kBlockSize);
+            for (int ch = 0; ch < kChannels; ++ch)
+            {
+                auto* data = buffer.getWritePointer(ch);
+                double localPhase = phase;
+                for (int sample = 0; sample < kBlockSize; ++sample)
+                {
+                    data[sample] = amplitude * std::sin(localPhase);
+                    localPhase += delta;
+                }
+            }
+
+            phase += delta * static_cast<double>(kBlockSize);
+            proc.process(buffer);
+            for (int ch = 0; ch < kChannels; ++ch)
+                output.copyFrom(ch, block * kBlockSize, buffer, ch, 0, kBlockSize);
+        }
+
+        return output;
+    }
+
+    static float rmsDb(const juce::AudioBuffer<float>& buffer, int startSample)
+    {
+        const int numSamples = juce::jmax(1, buffer.getNumSamples() - startSample);
+        return juce::Decibels::gainToDecibels(
+            buffer.getRMSLevel(0, startSample, numSamples), -120.0f);
+    }
+
     static float expectedAutoMakeupDb(const DynamicEQProcessor& proc)
     {
         float totalGainLinear = 1.0f;
@@ -157,6 +201,22 @@ private:
         const float deltaDb = evaluateDeltaAt(*proc, kToneFreq);
         logMessage("compress delta @1k = " + juce::String(deltaDb, 3) + " dB");
         expect(deltaDb < -2.0f, "Expected a clearly negative replacement delta");
+    }
+
+    void testNegativeCutCompressProducesNegativeDelta()
+    {
+        beginTest("Compress on a negative-gain band deepens the cut");
+
+        auto proc = makePrepared(1.0f, false);
+        auto params = makeBaseBand();
+        params.gain = -12.0f;
+        proc->setBandParams(0, params);
+        driveTone(*proc, 0.5f);
+
+        const float deltaDb = evaluateDeltaAt(*proc, kToneFreq);
+        logMessage("negative-cut compress delta @1k = " + juce::String(deltaDb, 3) + " dB");
+        expect(deltaDb < -0.5f,
+               "Compress on a cut band should make the live curve more negative");
     }
 
     void testMixZeroCancelsStaticContribution()
@@ -239,6 +299,72 @@ private:
         const float deltaDb = evaluateDeltaAt(*proc, kToneFreq);
         logMessage("expand delta @1k = " + juce::String(deltaDb, 3) + " dB");
         expect(deltaDb > 0.5f, "Expected positive replacement delta in expand mode");
+    }
+
+    void testNegativeCutExpandMatchesAudioDirection()
+    {
+        beginTest("Expand on a negative-gain band: curve agrees with audio direction");
+
+        auto staticProc = makePrepared(1.0f, false);
+        auto staticParams = makeBaseBand();
+        staticParams.gain = -12.0f;
+        staticParams.dynamicMode = DynamicEQProcessor::DynamicMode_Off;
+        staticProc->setBandParams(0, staticParams);
+
+        auto dynProc = makePrepared(1.0f, false);
+        auto dynParams = makeBaseBand();
+        dynParams.gain = -12.0f;
+        dynParams.dynamicMode = DynamicEQProcessor::DynamicMode_Expand;
+        dynParams.ratio = 4.0f;
+        dynProc->setBandParams(0, dynParams);
+
+        const auto staticBuf = renderTone(*staticProc, 0.5f);
+        const auto dynBuf = renderTone(*dynProc, 0.5f);
+        const int warmup = kBlockSize * 6;
+        const float audioDeltaDb = rmsDb(dynBuf, warmup) - rmsDb(staticBuf, warmup);
+        const float curveDeltaDb = evaluateDeltaAt(*dynProc, kToneFreq);
+
+        logMessage("negative-cut expand audio delta = " + juce::String(audioDeltaDb, 3)
+                   + " dB, curve delta = " + juce::String(curveDeltaDb, 3) + " dB");
+
+        expect(audioDeltaDb > 0.5f,
+               "Expand on a cut band should attenuate less than the static cut");
+        expectWithinAbsoluteError(curveDeltaDb, audioDeltaDb, 2.0f,
+                                  "Curve delta should agree with the audio direction and rough magnitude");
+    }
+
+    void testZeroGainCompressProducesNegativeDelta()
+    {
+        beginTest("Compress on a zero-gain band creates a negative live delta");
+
+        auto proc = makePrepared(1.0f, false);
+        auto params = makeBaseBand();
+        params.gain = 0.0f;
+        proc->setBandParams(0, params);
+        driveTone(*proc, 0.5f);
+
+        const float deltaDb = evaluateDeltaAt(*proc, kToneFreq);
+        logMessage("zero-gain compress delta @1k = " + juce::String(deltaDb, 3) + " dB");
+        expect(deltaDb < -0.5f,
+               "Compress on a zero-gain band should no longer be a no-op in the live curve");
+    }
+
+    void testZeroGainExpandProducesPositiveDelta()
+    {
+        beginTest("Expand on a zero-gain band creates a positive live delta");
+
+        auto proc = makePrepared(1.0f, false);
+        auto params = makeBaseBand();
+        params.gain = 0.0f;
+        params.dynamicMode = DynamicEQProcessor::DynamicMode_Expand;
+        params.ratio = 4.0f;
+        proc->setBandParams(0, params);
+        driveTone(*proc, 0.5f);
+
+        const float deltaDb = evaluateDeltaAt(*proc, kToneFreq);
+        logMessage("zero-gain expand delta @1k = " + juce::String(deltaDb, 3) + " dB");
+        expect(deltaDb > 0.5f,
+               "Expand on a zero-gain band should no longer be a no-op in the live curve");
     }
 
     void testAutoMakeupAddsBroadbandOffset()

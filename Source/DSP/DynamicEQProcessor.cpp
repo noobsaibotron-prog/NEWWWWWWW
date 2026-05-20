@@ -3,6 +3,39 @@
 
 namespace
 {
+constexpr int kDynamicControlSliceSamples = 16;
+constexpr int kDynamicCoeffCrossfadeSamples = 16;
+constexpr float kEffectiveGainEpsilonDb = 0.05f;
+
+[[nodiscard]] bool isGainBearingDynamicFilterType(int filterType) noexcept
+{
+    switch (filterType)
+    {
+        case 1: // LowShelf
+        case 2: // Peak
+        case 3: // HighShelf
+        case 7: // VintageLowShelf
+        case 8: // VintageHighShelf
+            return true;
+        default:
+            return false;
+    }
+}
+
+[[nodiscard]] float vintageShelfQ(float q) noexcept
+{
+    return juce::jlimit(0.3f, 1.0f, q * 0.6f);
+}
+
+[[nodiscard]] float processBiquadOrBypass(BiquadState& state,
+                                          float input,
+                                          const BiquadCoeffs& coeffs) noexcept
+{
+    if (!coeffs.valid)
+        return input;
+    return state.processSample(input, coeffs);
+}
+
 std::complex<double> evaluateComplexResponse(const BiquadCoeffs& coeffs,
                                              double freq,
                                              double sampleRate) noexcept
@@ -22,6 +55,12 @@ std::complex<double> evaluateComplexResponse(const BiquadCoeffs& coeffs,
                                            + static_cast<double>(coeffs.a1) * zInv
                                            + static_cast<double>(coeffs.a2) * zInv2;
     return numerator / denominator;
+}
+
+[[nodiscard]] float computeEffectiveGainDb(float staticGainDb,
+                                           float dynamicDeltaDb) noexcept
+{
+    return staticGainDb + dynamicDeltaDb;
 }
 }
 
@@ -69,6 +108,10 @@ void DynamicEQProcessor::prepare(double sampleRate, int samplesPerBlock, int cha
             filter.reset();
         state.scFilterL.reset();
         state.scFilterR.reset();
+        state.envelopeL = -100.0f;
+        state.envelopeR = -100.0f;
+        state.currentGain = 0.0f;
+        state.targetGain = 0.0f;
         
         state.prepared = true;
         state.lastVersion = 0;  // Force update
@@ -100,6 +143,9 @@ void DynamicEQProcessor::prepare(double sampleRate, int samplesPerBlock, int cha
         state.scFreqApplied = smoothedSidechainFreq[i].getCurrentValue();
         state.scQApplied = smoothedSidechainQ[i].getCurrentValue();
         state.liveCurrentGainDb.store(0.0f, std::memory_order_relaxed);
+        state.liveEffectiveGainDb.store(bandParams[i].gain.load(std::memory_order_relaxed),
+                                        std::memory_order_relaxed);
+        state.appliedEffectiveGainDb = bandParams[i].gain.load(std::memory_order_relaxed);
         state.liveGateAmount.store(1.0f, std::memory_order_relaxed);
         state.meterInputLevel.store(-100.0f, std::memory_order_relaxed);
         state.meterGainReduction.store(0.0f, std::memory_order_relaxed);
@@ -126,8 +172,9 @@ void DynamicEQProcessor::prepare(double sampleRate, int samplesPerBlock, int cha
 
 void DynamicEQProcessor::reset()
 {
-    for (auto& state : bandStates)
+    for (int i = 0; i < maxBands; ++i)
     {
+        auto& state = bandStates[i];
         for (auto& filter : state.eqFiltersL)
             filter.reset();
         for (auto& filter : state.eqFiltersR)
@@ -135,11 +182,15 @@ void DynamicEQProcessor::reset()
         state.scFilterL.reset();
         state.scFilterR.reset();
         
-        state.envelopeL = 0.0f;
-        state.envelopeR = 0.0f;
+        state.envelopeL = -100.0f;
+        state.envelopeR = -100.0f;
         state.currentGain = 0.0f;
         state.targetGain = 0.0f;
         state.liveCurrentGainDb.store(0.0f, std::memory_order_relaxed);
+        state.liveEffectiveGainDb.store(
+            bandParams[i].gain.load(std::memory_order_relaxed),
+            std::memory_order_relaxed);
+        state.appliedEffectiveGainDb = bandParams[i].gain.load(std::memory_order_relaxed);
         state.liveGateAmount.store(1.0f, std::memory_order_relaxed);
         state.meterInputLevel.store(-100.0f, std::memory_order_relaxed);
         state.meterGainReduction.store(0.0f, std::memory_order_relaxed);
@@ -186,6 +237,40 @@ void DynamicEQProcessor::updateLookaheadBuffer(double sampleRate, int samplesPer
         lookaheadBuffer.setSize(0, 0);
     }
     lookaheadWritePos = 0;
+}
+
+void DynamicEQProcessor::beginCoeffCrossfade(int bandIndex,
+                                             const BiquadCoeffs& newCoeffs,
+                                             int fadeSamples) noexcept
+{
+    if (bandIndex < 0 || bandIndex >= maxBands)
+        return;
+
+    auto& state = bandStates[bandIndex];
+    auto& xfade = bandCrossfades[bandIndex];
+
+    if (xfade.remaining > 0)
+        return;
+
+    const bool oldWasActive = state.eqCoeffs.valid;
+    if (oldWasActive)
+    {
+        xfade.oldCoeffs = state.eqCoeffs;
+        xfade.oldFiltersL = state.eqFiltersL;
+        xfade.oldFiltersR = state.eqFiltersR;
+        xfade.remaining = fadeSamples;
+        xfade.total = fadeSamples;
+    }
+
+    state.eqCoeffs = newCoeffs;
+
+    if (oldWasActive)
+    {
+        for (auto& f : state.eqFiltersL)
+            f.reset();
+        for (auto& f : state.eqFiltersR)
+            f.reset();
+    }
 }
 
 //==============================================================================
@@ -279,6 +364,7 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
             state.meterInputLevel.store(-100.0f, std::memory_order_relaxed);
             state.meterOutputLevel.store(-100.0f, std::memory_order_relaxed);
             state.liveCurrentGainDb.store(0.0f, std::memory_order_relaxed);
+            state.liveEffectiveGainDb.store(0.0f, std::memory_order_relaxed);
             state.liveGateAmount.store(1.0f, std::memory_order_relaxed);
             continue;
         }
@@ -287,32 +373,38 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
         const uint64_t currentVersion = params.version.load(std::memory_order_acquire);
         if (currentVersion != state.lastVersion)
         {
-            // ── Arm per-band output crossfade BEFORE updating coefficients ──
-            // Save old filter state so we can blend old→new, eliminating the
-            // biquad coefficient-jump discontinuity (pop/click).
-            // Guard: don't re-arm if a crossfade is already active — during fast
-            // drags, stability (letting the current fade finish) beats thrashing
-            // (restarting the crossfade every micro-movement).
-            auto& xfade = bandCrossfades[bandIdx];
-            if (xfade.remaining <= 0 && state.eqCoeffs.valid)
-            {
-                xfade.oldCoeffs = state.eqCoeffs;
-                xfade.oldFiltersL = state.eqFiltersL;
-                xfade.oldFiltersR = state.eqFiltersR;
-                // Adaptive fade: 128 base, 256 for high-Q bands
-                const float qVal = params.q.load(std::memory_order_relaxed);
-                const int fadeSamples = (qVal > 10.0f) ? 256 : 128;
-                xfade.remaining = fadeSamples;
-                xfade.total = fadeSamples;
-
-                // Reset live filters for clean start with new coefficients
-                for (auto& f : state.eqFiltersL) f.reset();
-                for (auto& f : state.eqFiltersR) f.reset();
-            }
-
+            const BiquadCoeffs previousCoeffs = state.eqCoeffs;
             updateBandCoefficients(bandIdx);
             updateAttackReleaseCoeffs(bandIdx);
             state.lastVersion = currentVersion;
+
+            const bool coeffsChanged =
+                previousCoeffs.valid != state.eqCoeffs.valid
+                || std::abs(previousCoeffs.b0 - state.eqCoeffs.b0) > 1.0e-6f
+                || std::abs(previousCoeffs.b1 - state.eqCoeffs.b1) > 1.0e-6f
+                || std::abs(previousCoeffs.b2 - state.eqCoeffs.b2) > 1.0e-6f
+                || std::abs(previousCoeffs.a1 - state.eqCoeffs.a1) > 1.0e-6f
+                || std::abs(previousCoeffs.a2 - state.eqCoeffs.a2) > 1.0e-6f;
+
+            if (coeffsChanged)
+            {
+                const float qVal = params.q.load(std::memory_order_relaxed);
+                const int fadeSamples = (qVal > 10.0f) ? 256 : 128;
+                auto& xfade = bandCrossfades[bandIdx];
+                if (xfade.remaining <= 0 && previousCoeffs.valid)
+                {
+                    xfade.oldCoeffs = previousCoeffs;
+                    xfade.oldFiltersL = state.eqFiltersL;
+                    xfade.oldFiltersR = state.eqFiltersR;
+                    xfade.remaining = fadeSamples;
+                    xfade.total = fadeSamples;
+
+                    for (auto& f : state.eqFiltersL)
+                        f.reset();
+                    for (auto& f : state.eqFiltersR)
+                        f.reset();
+                }
+            }
 
             // Update meter GR immediately (for GUI responsiveness) but do NOT
             // snap state.currentGain — the per-sample smoother handles the audio
@@ -353,12 +445,11 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
             }
         }
 
-        // Skip if no valid coefficients
-        if (!state.eqCoeffs.valid)
-            continue;
-        
         // Read dynamic mode
         const int dynMode = params.dynamicMode.load(std::memory_order_relaxed);
+        const int filterType = params.filterType.load(std::memory_order_relaxed);
+        const bool gainBearingMode = (dynMode == DynamicMode_Compress || dynMode == DynamicMode_Expand)
+            && isGainBearingDynamicFilterType(filterType);
         
         //----------------------------------------------------------------------
         // DYNAMIC PROCESSING
@@ -369,6 +460,9 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
             const bool scEnabled = params.sidechainEnabled.load(std::memory_order_relaxed);
             const float attackCoeff = state.attackCoeff;
             const float releaseCoeff = state.releaseCoeff;
+            const float staticGainDb = params.gain.load(std::memory_order_relaxed);
+            const float bandFreq = params.frequency.load(std::memory_order_relaxed);
+            const float bandQ = params.q.load(std::memory_order_relaxed);
             
             float* outLPtr = buffer.getWritePointer(0);
             float* outRPtr = channels > 1 ? buffer.getWritePointer(1) : nullptr;
@@ -444,6 +538,26 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
                 // it was effectively double-smoothed (audio + GUI decay).
                 state.meterInputLevel.store(smoothedEnv, std::memory_order_relaxed);
                 state.meterGainReduction.store(dynamicGainDb, std::memory_order_relaxed);
+
+                if (gainBearingMode
+                    && (sample % kDynamicControlSliceSamples) == 0)
+                {
+                    const float targetEffectiveGainDb =
+                        computeEffectiveGainDb(staticGainDb, state.currentGain);
+                    if (std::abs(targetEffectiveGainDb - state.appliedEffectiveGainDb)
+                        > kEffectiveGainEpsilonDb)
+                    {
+                        auto& xfade = bandCrossfades[bandIdx];
+                        if (xfade.remaining <= 0)
+                        {
+                            const BiquadCoeffs newCoeffs = makeEQCoefficients(
+                                filterType, bandFreq, targetEffectiveGainDb, bandQ);
+                            beginCoeffCrossfade(bandIdx, newCoeffs,
+                                                kDynamicCoeffCrossfadeSamples);
+                            state.appliedEffectiveGainDb = targetEffectiveGainDb;
+                        }
+                    }
+                }
                 
                 // Apply EQ (with crossfade if coefficients just changed)
                 float outL, outR;
@@ -451,10 +565,14 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
                     auto& xfade = bandCrossfades[bandIdx];
                     if (xfade.remaining > 0)
                     {
-                        const float newL = state.eqFiltersL[0].processSample(inL, state.eqCoeffs);
-                        const float newR = channels > 1 ? state.eqFiltersR[0].processSample(inR, state.eqCoeffs) : newL;
-                        const float oldL = xfade.oldFiltersL[0].processSample(inL, xfade.oldCoeffs);
-                        const float oldR = channels > 1 ? xfade.oldFiltersR[0].processSample(inR, xfade.oldCoeffs) : oldL;
+                        const float newL = processBiquadOrBypass(state.eqFiltersL[0], inL, state.eqCoeffs);
+                        const float newR = channels > 1
+                            ? processBiquadOrBypass(state.eqFiltersR[0], inR, state.eqCoeffs)
+                            : newL;
+                        const float oldL = processBiquadOrBypass(xfade.oldFiltersL[0], inL, xfade.oldCoeffs);
+                        const float oldR = channels > 1
+                            ? processBiquadOrBypass(xfade.oldFiltersR[0], inR, xfade.oldCoeffs)
+                            : oldL;
                         const float fade = 1.0f - static_cast<float>(xfade.remaining) / static_cast<float>(xfade.total);
                         outL = oldL + (newL - oldL) * fade;
                         outR = oldR + (newR - oldR) * fade;
@@ -462,27 +580,16 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
                     }
                     else
                     {
-                        outL = state.eqFiltersL[0].processSample(inL, state.eqCoeffs);
-                        outR = channels > 1 ? state.eqFiltersR[0].processSample(inR, state.eqCoeffs) : outL;
+                        outL = processBiquadOrBypass(state.eqFiltersL[0], inL, state.eqCoeffs);
+                        outR = channels > 1
+                            ? processBiquadOrBypass(state.eqFiltersR[0], inR, state.eqCoeffs)
+                            : outL;
                     }
                 }
                 
-                // Apply dynamic behavior
-                if (dynMode == DynamicMode_Compress)
-                {
-                    float eqAmount = 1.0f - (std::abs(state.currentGain) / range);
-                    eqAmount = juce::jlimit(0.0f, 1.0f, eqAmount);
-                    outL = inL + (outL - inL) * eqAmount;
-                    outR = inR + (outR - inR) * eqAmount;
-                }
-                else if (dynMode == DynamicMode_Expand)
-                {
-                    float eqAmount = 1.0f + (state.currentGain / range);
-                    eqAmount = juce::jlimit(0.0f, 2.0f, eqAmount);
-                    outL = inL + (outL - inL) * eqAmount;
-                    outR = inR + (outR - inR) * eqAmount;
-                }
-                else if (dynMode == DynamicMode_Gate)
+                // Gate remains a post-filter amplitude control. Compress/expand
+                // now modulate the live filter gain directly via effectiveGainDb.
+                if (dynMode == DynamicMode_Gate)
                 {
                     if (smoothedEnv < threshold)
                     {
@@ -509,6 +616,9 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
             }
 
             state.liveCurrentGainDb.store(state.currentGain, std::memory_order_relaxed);
+            state.liveEffectiveGainDb.store(
+                gainBearingMode ? state.appliedEffectiveGainDb : staticGainDb,
+                std::memory_order_relaxed);
             state.liveGateAmount.store(lastGateAmount, std::memory_order_relaxed);
         }
         else
@@ -525,26 +635,26 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
                 if (xfade.remaining > 0)
                 {
                     const float fade = 1.0f - static_cast<float>(xfade.remaining) / static_cast<float>(xfade.total);
-                    float newL = state.eqFiltersL[0].processSample(outLPtr[sample], state.eqCoeffs);
-                    float oldL = xfade.oldFiltersL[0].processSample(outLPtr[sample], xfade.oldCoeffs);
+                    float newL = processBiquadOrBypass(state.eqFiltersL[0], outLPtr[sample], state.eqCoeffs);
+                    float oldL = processBiquadOrBypass(xfade.oldFiltersL[0], outLPtr[sample], xfade.oldCoeffs);
                     outLPtr[sample] = oldL + (newL - oldL) * fade;
 
                     if (channels > 1)
                     {
-                        float newR = state.eqFiltersR[0].processSample(outRPtr[sample], state.eqCoeffs);
-                        float oldR = xfade.oldFiltersR[0].processSample(outRPtr[sample], xfade.oldCoeffs);
+                        float newR = processBiquadOrBypass(state.eqFiltersR[0], outRPtr[sample], state.eqCoeffs);
+                        float oldR = processBiquadOrBypass(xfade.oldFiltersR[0], outRPtr[sample], xfade.oldCoeffs);
                         outRPtr[sample] = oldR + (newR - oldR) * fade;
                     }
                     --xfade.remaining;
                 }
                 else
                 {
-                    float outL = state.eqFiltersL[0].processSample(outLPtr[sample], state.eqCoeffs);
+                    float outL = processBiquadOrBypass(state.eqFiltersL[0], outLPtr[sample], state.eqCoeffs);
                     outLPtr[sample] = outL;
 
                     if (channels > 1)
                     {
-                        float outR = state.eqFiltersR[0].processSample(outRPtr[sample], state.eqCoeffs);
+                        float outR = processBiquadOrBypass(state.eqFiltersR[0], outRPtr[sample], state.eqCoeffs);
                         outRPtr[sample] = outR;
                     }
                 }
@@ -552,6 +662,8 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
 
             state.meterGainReduction.store(0.0f, std::memory_order_relaxed);
             state.liveCurrentGainDb.store(0.0f, std::memory_order_relaxed);
+            state.liveEffectiveGainDb.store(params.gain.load(std::memory_order_relaxed),
+                                            std::memory_order_relaxed);
             state.liveGateAmount.store(1.0f, std::memory_order_relaxed);
         }
     }
@@ -801,6 +913,8 @@ void DynamicEQProcessor::updateBandCoefficients(int bandIndex)
     const int filterType = params.filterType.load(std::memory_order_relaxed);
     
     state.eqCoeffs = makeEQCoefficients(filterType, freq, gain, q);
+    state.appliedEffectiveGainDb = gain;
+    state.liveEffectiveGainDb.store(gain, std::memory_order_relaxed);
 
     // Update sidechain filter if enabled
     if (params.sidechainEnabled.load(std::memory_order_relaxed))
@@ -878,6 +992,12 @@ BiquadCoeffs DynamicEQProcessor::makeEQCoefficients(
             return BiquadCoeffs::makeNotch(sr, freq, q);
         case 6: // BandPass
             return BiquadCoeffs::makeBandPass(sr, freq, q);
+        case 7: // VintageLowShelf
+            return BiquadCoeffs::makeLowShelf(
+                sr, freq, vintageShelfQ(q), juce::Decibels::decibelsToGain(gain));
+        case 8: // VintageHighShelf
+            return BiquadCoeffs::makeHighShelf(
+                sr, freq, vintageShelfQ(q), juce::Decibels::decibelsToGain(gain));
         default:
             return BiquadCoeffs::makeAllPass(sr, 20.0f, 0.1f);
     }
@@ -889,14 +1009,19 @@ float DynamicEQProcessor::getMagnitudeForFrequency(float freq, double sampleRate
     
     for (int i = 0; i < maxBands; ++i)
     {
-        if (!bandParams[i].enabled.load(std::memory_order_relaxed))
-            continue;
-        
-        const auto& state = bandStates[i];
-        if (!state.eqCoeffs.valid)
+        const auto& params = bandParams[i];
+        if (!params.enabled.load(std::memory_order_relaxed))
             continue;
 
-        magnitude *= state.eqCoeffs.getMagnitudeForFrequency(freq, sampleRate);
+        const BiquadCoeffs coeffs = makeEQCoefficients(
+            params.filterType.load(std::memory_order_relaxed),
+            params.frequency.load(std::memory_order_relaxed),
+            params.gain.load(std::memory_order_relaxed),
+            params.q.load(std::memory_order_relaxed));
+        if (!coeffs.valid)
+            continue;
+
+        magnitude *= coeffs.getMagnitudeForFrequency(freq, sampleRate);
     }
     
     return static_cast<float>(magnitude);
@@ -918,10 +1043,9 @@ void DynamicEQProcessor::evaluateDynamicReplacementDeltaDbForFrequencyArray(
 
     struct DynamicBandSnapshot
     {
-        BiquadCoeffs coeffs;
+        BiquadCoeffs staticCoeffs;
+        BiquadCoeffs liveCoeffs;
         int mode = DynamicMode_Off;
-        float range = 1.0f;
-        float liveCurrentGainDb = 0.0f;
         float liveGateAmount = 1.0f;
     };
 
@@ -937,11 +1061,20 @@ void DynamicEQProcessor::evaluateDynamicReplacementDeltaDbForFrequencyArray(
         if (mode == DynamicMode_Off)
             continue;
 
+        const int filterType = bandParams[i].filterType.load(std::memory_order_relaxed);
+        const float freq = bandParams[i].frequency.load(std::memory_order_relaxed);
+        const float q = bandParams[i].q.load(std::memory_order_relaxed);
+        const float staticGainDb = bandParams[i].gain.load(std::memory_order_relaxed);
+        const float liveEffectiveGainDb =
+            bandStates[i].liveEffectiveGainDb.load(std::memory_order_relaxed);
+
         auto& snapshot = activeBands[activeCount++];
-        snapshot.coeffs = bandStates[i].eqCoeffs;
         snapshot.mode = mode;
-        snapshot.range = juce::jmax(1.0e-3f, bandParams[i].range.load(std::memory_order_relaxed));
-        snapshot.liveCurrentGainDb = bandStates[i].liveCurrentGainDb.load(std::memory_order_relaxed);
+        snapshot.staticCoeffs = makeEQCoefficients(filterType, freq, staticGainDb, q);
+        snapshot.liveCoeffs =
+            (mode == DynamicMode_Gate || !isGainBearingDynamicFilterType(filterType))
+                ? snapshot.staticCoeffs
+                : makeEQCoefficients(filterType, freq, liveEffectiveGainDb, q);
         snapshot.liveGateAmount = bandStates[i].liveGateAmount.load(std::memory_order_relaxed);
     }
 
@@ -967,31 +1100,20 @@ void DynamicEQProcessor::evaluateDynamicReplacementDeltaDbForFrequencyArray(
         for (size_t band = 0; band < activeCount; ++band)
         {
             const auto& snapshot = activeBands[band];
-            const std::complex<double> response =
-                evaluateComplexResponse(snapshot.coeffs, freq, sampleRate);
+            const std::complex<double> staticResponse =
+                evaluateComplexResponse(snapshot.staticCoeffs, freq, sampleRate);
 
-            staticMagnitudeProduct *= std::abs(response);
+            staticMagnitudeProduct *= std::abs(staticResponse);
 
-            std::complex<double> effectiveResponse = response;
-            if (snapshot.mode == DynamicMode_Compress)
+            std::complex<double> effectiveResponse = staticResponse;
+            if (snapshot.mode == DynamicMode_Compress || snapshot.mode == DynamicMode_Expand)
             {
-                const double eqAmount = juce::jlimit(
-                    0.0, 1.0,
-                    1.0 - std::abs(static_cast<double>(snapshot.liveCurrentGainDb))
-                        / static_cast<double>(snapshot.range));
-                effectiveResponse = kOne + (response - kOne) * eqAmount;
-            }
-            else if (snapshot.mode == DynamicMode_Expand)
-            {
-                const double eqAmount = juce::jlimit(
-                    0.0, 2.0,
-                    1.0 + static_cast<double>(snapshot.liveCurrentGainDb)
-                        / static_cast<double>(snapshot.range));
-                effectiveResponse = kOne + (response - kOne) * eqAmount;
+                effectiveResponse =
+                    evaluateComplexResponse(snapshot.liveCoeffs, freq, sampleRate);
             }
             else if (snapshot.mode == DynamicMode_Gate)
             {
-                effectiveResponse = response * static_cast<double>(snapshot.liveGateAmount);
+                effectiveResponse = staticResponse * static_cast<double>(snapshot.liveGateAmount);
             }
 
             liveProduct *= effectiveResponse;

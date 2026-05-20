@@ -19,6 +19,10 @@ public:
         testActiveCompressionStillDivergesFromStaticReference();
         testRapidMasterToggleStaysFinite();
         testLinearPhaseDoesNotAddStaticIRContribution();
+        testLowCutCompressFallsBackToStaticEQ();
+        testHighCutExpandFallsBackToStaticEQ();
+        testNotchCompressFallsBackToStaticEQ();
+        testBandPassExpandFallsBackToStaticEQ();
     }
 
 private:
@@ -173,6 +177,65 @@ private:
                 if (!std::isfinite(buf.getSample(ch, i)))
                     return false;
         return true;
+    }
+
+    void expectUnsupportedFilterFallsBackToStaticEQ(const juce::String& label,
+                                                    int filterType,
+                                                    int dynMode,
+                                                    float bandFreq,
+                                                    float bandQ,
+                                                    float toneFreq)
+    {
+        AIEqualizerAudioProcessor routed;
+        routed.prepareToPlay(kSampleRate, kBlockSize);
+        auto& routedApvts = routed.getAPVTS();
+
+        AIEqualizerAudioProcessor reference;
+        reference.prepareToPlay(kSampleRate, kBlockSize);
+        auto& refApvts = reference.getAPVTS();
+
+        auto dynBand = makeBaseBand();
+        dynBand.type = filterType;
+        dynBand.frequency = bandFreq;
+        dynBand.q = bandQ;
+        dynBand.gain = 0.0f;
+        dynBand.dynMode = dynMode;
+
+        auto staticBand = dynBand;
+        staticBand.dynMode = DynamicEQProcessor::DynamicMode_Off;
+
+        configureProcessor(routed, routedApvts, dynBand, true);
+        configureProcessor(reference, refApvts, staticBand, false);
+
+        prime(routed, 12);
+        prime(reference, 12);
+
+        const auto signal = makeTone(24, 0.7f, toneFreq);
+        const auto routedOut = processSignal(routed, signal);
+        const auto refOut = processSignal(reference, signal);
+
+        const int warmup = kBlockSize * 8;
+        const float refRmsDb = rmsDb(refOut, warmup);
+        const float diffDb = rmsDb(routedOut, warmup) - rmsDb(refOut, warmup);
+
+        float maxSampleDiff = 0.0f;
+        for (int ch = 0; ch < kChannels; ++ch)
+        {
+            for (int i = warmup; i < routedOut.getNumSamples(); ++i)
+            {
+                maxSampleDiff = std::max(maxSampleDiff,
+                    std::abs(routedOut.getSample(ch, i) - refOut.getSample(ch, i)));
+            }
+        }
+
+        logMessage(label + " RMS delta: " + juce::String(diffDb, 3)
+                 + " dB, max sample diff: " + juce::String(maxSampleDiff, 5));
+        expect(refRmsDb > -40.0f,
+               label + " reference output should not be effectively silent");
+        expectWithinAbsoluteError(diffDb, 0.0f, 0.5f,
+                                  label + " should stay on the static EQ path");
+        expect(maxSampleDiff < 0.02f,
+               label + " should match the static EQ sample-by-sample after warmup");
     }
 
     void testMasterOffFallsBackToStaticEQ()
@@ -357,6 +420,58 @@ private:
         logMessage("LP vs ZL RMS delta: " + juce::String(diffDb, 3) + " dB");
         expectWithinAbsoluteError(diffDb, 0.0f, 0.75f,
                                   "LP path should not add a static IR contribution on top of DynEQ");
+    }
+
+    void testLowCutCompressFallsBackToStaticEQ()
+    {
+        beginTest("LowCut + Compress falls back to static EQ");
+
+        expectUnsupportedFilterFallsBackToStaticEQ(
+            "LowCut + Compress",
+            static_cast<int>(ParametricEQProcessor::LowCut),
+            DynamicEQProcessor::DynamicMode_Compress,
+            1000.0f,
+            0.707f,
+            2000.0f);
+    }
+
+    void testHighCutExpandFallsBackToStaticEQ()
+    {
+        beginTest("HighCut + Expand falls back to static EQ");
+
+        expectUnsupportedFilterFallsBackToStaticEQ(
+            "HighCut + Expand",
+            static_cast<int>(ParametricEQProcessor::HighCut),
+            DynamicEQProcessor::DynamicMode_Expand,
+            1000.0f,
+            0.707f,
+            250.0f);
+    }
+
+    void testNotchCompressFallsBackToStaticEQ()
+    {
+        beginTest("Notch + Compress falls back to static EQ");
+
+        expectUnsupportedFilterFallsBackToStaticEQ(
+            "Notch + Compress",
+            static_cast<int>(ParametricEQProcessor::Notch),
+            DynamicEQProcessor::DynamicMode_Compress,
+            1000.0f,
+            8.0f,
+            250.0f);
+    }
+
+    void testBandPassExpandFallsBackToStaticEQ()
+    {
+        beginTest("BandPass + Expand falls back to static EQ");
+
+        expectUnsupportedFilterFallsBackToStaticEQ(
+            "BandPass + Expand",
+            static_cast<int>(ParametricEQProcessor::BandPass),
+            DynamicEQProcessor::DynamicMode_Expand,
+            1000.0f,
+            2.0f,
+            1000.0f);
     }
 };
 

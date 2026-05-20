@@ -3308,6 +3308,21 @@ void AIEqualizerAudioProcessor::updateEQFromParameters()
         return ptr ? ptr->load() : fallback;
     };
 
+    auto isGainBearingDynFilterType = [](int filterType) noexcept
+    {
+        switch (filterType)
+        {
+            case ParametricEQProcessor::LowShelf:
+            case ParametricEQProcessor::Peak:
+            case ParametricEQProcessor::HighShelf:
+            case ParametricEQProcessor::VintageLowShelf:
+            case ParametricEQProcessor::VintageHighShelf:
+                return true;
+            default:
+                return false;
+        }
+    };
+
     // Update AI parameters (use cached pointers - NO hash map lookups in audio thread!)
     if (cachedAISensitivity)
     {
@@ -3416,7 +3431,9 @@ void AIEqualizerAudioProcessor::updateEQFromParameters()
 
         const bool bandOwnedByDynamicStage = dynEqEnabledTarget
             && enabledFiltered
-            && dynMode != DynamicEQProcessor::DynamicMode_Off;
+            && dynMode != DynamicEQProcessor::DynamicMode_Off
+            && (dynMode == DynamicEQProcessor::DynamicMode_Gate
+                || isGainBearingDynFilterType(type));
 
         DynamicEQProcessor::DynamicBandParams dynParams;
         dynParams.frequency = freq;
