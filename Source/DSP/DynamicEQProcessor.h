@@ -154,6 +154,8 @@ public:
 
 private:
     //==============================================================================
+    static constexpr int dynamicWarmupHistorySamples = 64;
+
     // Processing state for each band (audio thread only)
     struct BandState
     {
@@ -188,6 +190,11 @@ private:
         std::atomic<float> liveGateAmount { 1.0f };
 
         float appliedEffectiveGainDb = 0.0f;
+
+        std::array<float, dynamicWarmupHistorySamples> inputHistoryL {};
+        std::array<float, dynamicWarmupHistorySamples> inputHistoryR {};
+        int inputHistoryWritePos = 0;
+        int inputHistoryCount = 0;
         
         uint64_t lastVersion = 0;
         bool prepared = false;
@@ -195,6 +202,8 @@ private:
     
     void updateBandCoefficients(int bandIndex);
     void updateAttackReleaseCoeffs(int bandIndex);
+    void pushBandInputHistory(BandState& state, float inputL, float inputR) noexcept;
+    void warmBandFiltersFromHistory(BandState& state, const BiquadCoeffs& coeffs) noexcept;
     [[nodiscard]] float calculateDynamicGain(float inputLevelDb,
                                              int dynMode,
                                              float threshold,

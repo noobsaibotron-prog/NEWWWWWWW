@@ -4,16 +4,16 @@
 namespace
 {
 // Control slice width and crossfade settings for live coefficient updates.
-// The biquad state is reset on every coefficient swap (see beginCoeffCrossfade)
-// because preserving state across updates breaks the LP+DynEQ threshold-sweep
-// anti-pop test. With the reset in place, each update produces a cold-start
-// transient that the 16-sample crossfade masks. To keep the residual crackle
-// below audibility under continuous dynamic modulation, we raise the gain
-// epsilon at which a delta is considered worth applying — same slice/fade
-// timing as before (so block-size independence is preserved), just fewer
-// updates per second. 0.25 dB resolution on the dynamic gain is well below
-// the JND for level (~0.5–1 dB) and reduces update rate by ~5× vs the
-// original 0.05 dB threshold.
+// The live DynEQ path rebuilds a biquad whenever the smoothed effective gain
+// moves far enough. A zero-state swap is stable but creates a cold-start
+// transient; blindly preserving the old state avoids the transient but drifts
+// into a coefficient/state mismatch under rapid modulation and breaks the LP
+// anti-pop regression. The compromise used here is:
+//   1. keep the 16-sample control slice + 16-sample crossfade
+//   2. keep a modest 0.25 dB epsilon so tiny retargets do not thrash
+//   3. warm-start the new biquad from a short recent input history for this
+//      band, so each swap starts near its steady-state for the current signal
+//      without reusing stale internal state indefinitely
 constexpr int kDynamicControlSliceSamples = 16;
 constexpr int kDynamicCoeffCrossfadeSamples = 16;
 constexpr float kEffectiveGainEpsilonDb = 0.25f;
@@ -123,6 +123,10 @@ void DynamicEQProcessor::prepare(double sampleRate, int samplesPerBlock, int cha
         state.envelopeR = -100.0f;
         state.currentGain = 0.0f;
         state.targetGain = 0.0f;
+        state.inputHistoryWritePos = 0;
+        state.inputHistoryCount = 0;
+        state.inputHistoryL.fill(0.0f);
+        state.inputHistoryR.fill(0.0f);
         
         state.prepared = true;
         state.lastVersion = 0;  // Force update
@@ -197,6 +201,10 @@ void DynamicEQProcessor::reset()
         state.envelopeR = -100.0f;
         state.currentGain = 0.0f;
         state.targetGain = 0.0f;
+        state.inputHistoryWritePos = 0;
+        state.inputHistoryCount = 0;
+        state.inputHistoryL.fill(0.0f);
+        state.inputHistoryR.fill(0.0f);
         state.liveCurrentGainDb.store(0.0f, std::memory_order_relaxed);
         state.liveEffectiveGainDb.store(
             bandParams[i].gain.load(std::memory_order_relaxed),
@@ -250,6 +258,44 @@ void DynamicEQProcessor::updateLookaheadBuffer(double sampleRate, int samplesPer
     lookaheadWritePos = 0;
 }
 
+void DynamicEQProcessor::pushBandInputHistory(BandState& state,
+                                              float inputL,
+                                              float inputR) noexcept
+{
+    const int writePos = state.inputHistoryWritePos;
+    state.inputHistoryL[static_cast<size_t>(writePos)] = inputL;
+    state.inputHistoryR[static_cast<size_t>(writePos)] = inputR;
+
+    state.inputHistoryWritePos = (writePos + 1) % dynamicWarmupHistorySamples;
+    state.inputHistoryCount = juce::jmin(state.inputHistoryCount + 1,
+                                         dynamicWarmupHistorySamples);
+}
+
+void DynamicEQProcessor::warmBandFiltersFromHistory(BandState& state,
+                                                    const BiquadCoeffs& coeffs) noexcept
+{
+    for (auto& f : state.eqFiltersL)
+        f.reset();
+    for (auto& f : state.eqFiltersR)
+        f.reset();
+
+    if (!coeffs.valid || state.inputHistoryCount <= 0)
+        return;
+
+    const bool historyWrapped = state.inputHistoryCount == dynamicWarmupHistorySamples;
+    const int start = historyWrapped ? state.inputHistoryWritePos : 0;
+    const int count = state.inputHistoryCount;
+
+    for (int i = 0; i < count; ++i)
+    {
+        const int idx = historyWrapped
+            ? (start + i) % dynamicWarmupHistorySamples
+            : i;
+        (void) state.eqFiltersL[0].processSample(state.inputHistoryL[static_cast<size_t>(idx)], coeffs);
+        (void) state.eqFiltersR[0].processSample(state.inputHistoryR[static_cast<size_t>(idx)], coeffs);
+    }
+}
+
 void DynamicEQProcessor::beginCoeffCrossfade(int bandIndex,
                                              const BiquadCoeffs& newCoeffs,
                                              int fadeSamples) noexcept
@@ -275,21 +321,10 @@ void DynamicEQProcessor::beginCoeffCrossfade(int bandIndex,
 
     state.eqCoeffs = newCoeffs;
 
-    // Reset the new filter's state so the old/new branches in the crossfade
-    // are independent. Keeping stale state across coefficient swaps was
-    // tempting (it would dodge the cold-start transient) but in practice it
-    // accumulates a state-vs-coefficient mismatch under fast modulation that
-    // shows up as an occasional large click in stress tests (LP + DynEQ
-    // threshold sweep). The cold-start transient is masked by the crossfade,
-    // and the larger control-slice + epsilon keep the transient rate low
-    // enough to stay below audibility under realistic dynamic loads.
-    if (oldWasActive)
-    {
-        for (auto& f : state.eqFiltersL)
-            f.reset();
-        for (auto& f : state.eqFiltersR)
-            f.reset();
-    }
+    // Warm-start the new filter from the recent pre-EQ input seen by this
+    // band. This avoids the cold-start transient of a zeroed state without
+    // carrying forward stale old-coefficient state indefinitely.
+    warmBandFiltersFromHistory(state, newCoeffs);
 }
 
 //==============================================================================
@@ -379,6 +414,8 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
         if (!params.enabled.load(std::memory_order_relaxed))
         {
             // FIX: zero the meter when band is disabled so it doesn't freeze at last value
+            state.inputHistoryWritePos = 0;
+            state.inputHistoryCount = 0;
             state.meterGainReduction.store(0.0f, std::memory_order_relaxed);
             state.meterInputLevel.store(-100.0f, std::memory_order_relaxed);
             state.meterOutputLevel.store(-100.0f, std::memory_order_relaxed);
@@ -628,6 +665,8 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
                 outLPtr[sample] = outL;
                 if (channels > 1)
                     outRPtr[sample] = outR;
+
+                pushBandInputHistory(state, inL, inR);
                 
                 state.meterOutputLevel.store(
                     juce::Decibels::gainToDecibels(std::max(std::abs(outL), std::abs(outR))),
@@ -651,32 +690,37 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
             auto& xfade = bandCrossfades[bandIdx];
             for (int sample = 0; sample < numSamples; ++sample)
             {
+                const float inL = outLPtr[sample];
+                const float inR = channels > 1 ? outRPtr[sample] : inL;
+
                 if (xfade.remaining > 0)
                 {
                     const float fade = 1.0f - static_cast<float>(xfade.remaining) / static_cast<float>(xfade.total);
-                    float newL = processBiquadOrBypass(state.eqFiltersL[0], outLPtr[sample], state.eqCoeffs);
-                    float oldL = processBiquadOrBypass(xfade.oldFiltersL[0], outLPtr[sample], xfade.oldCoeffs);
+                    float newL = processBiquadOrBypass(state.eqFiltersL[0], inL, state.eqCoeffs);
+                    float oldL = processBiquadOrBypass(xfade.oldFiltersL[0], inL, xfade.oldCoeffs);
                     outLPtr[sample] = oldL + (newL - oldL) * fade;
 
                     if (channels > 1)
                     {
-                        float newR = processBiquadOrBypass(state.eqFiltersR[0], outRPtr[sample], state.eqCoeffs);
-                        float oldR = processBiquadOrBypass(xfade.oldFiltersR[0], outRPtr[sample], xfade.oldCoeffs);
+                        float newR = processBiquadOrBypass(state.eqFiltersR[0], inR, state.eqCoeffs);
+                        float oldR = processBiquadOrBypass(xfade.oldFiltersR[0], inR, xfade.oldCoeffs);
                         outRPtr[sample] = oldR + (newR - oldR) * fade;
                     }
                     --xfade.remaining;
                 }
                 else
                 {
-                    float outL = processBiquadOrBypass(state.eqFiltersL[0], outLPtr[sample], state.eqCoeffs);
+                    float outL = processBiquadOrBypass(state.eqFiltersL[0], inL, state.eqCoeffs);
                     outLPtr[sample] = outL;
 
                     if (channels > 1)
                     {
-                        float outR = processBiquadOrBypass(state.eqFiltersR[0], outRPtr[sample], state.eqCoeffs);
+                        float outR = processBiquadOrBypass(state.eqFiltersR[0], inR, state.eqCoeffs);
                         outRPtr[sample] = outR;
                     }
                 }
+
+                pushBandInputHistory(state, inL, inR);
             }
 
             state.meterGainReduction.store(0.0f, std::memory_order_relaxed);
