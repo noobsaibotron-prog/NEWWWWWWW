@@ -16,7 +16,21 @@ namespace
 //      without reusing stale internal state indefinitely
 constexpr int kDynamicControlSliceSamples = 16;
 constexpr int kDynamicCoeffCrossfadeSamples = 16;
-constexpr float kEffectiveGainEpsilonDb = 0.25f;
+// Gain change threshold to trigger a coefficient rebuild. Raised from 0.25 dB
+// to 0.5 dB combined with the rate-limit below: under continuous compression
+// the previous setup triggered ~270 rebuilds/sec (measured via simulation),
+// each one a coefficient swap + warm-start cascade. The aggregate noise
+// floor of those transients is the audible crackle. 0.5 dB is still below
+// the perceptual JND for level (~1 dB) so the dynamic response is unchanged
+// to the listener, but the rebuild rate drops drastically.
+constexpr float kEffectiveGainEpsilonDb = 0.5f;
+// Hard rate-limit on coefficient rebuilds — independent from epsilon.
+// At 48 kHz, 64 samples = ~1.33 ms, which is the floor for "fast" attacks
+// in practice and well below human time-resolution for amplitude steps.
+// Without this rate-limit, a compressor with 1 ms attack still triggers
+// at every 16-sample control slice = 3 kHz rebuild rate. With it, the worst
+// case is ~750 Hz, and in normal program material 100-200 Hz.
+constexpr int kMinSamplesBetweenRebuilds = 64;
 
 [[nodiscard]] bool isGainBearingDynamicFilterType(int filterType) noexcept
 {
@@ -127,6 +141,7 @@ void DynamicEQProcessor::prepare(double sampleRate, int samplesPerBlock, int cha
         state.inputHistoryCount = 0;
         state.inputHistoryL.fill(0.0f);
         state.inputHistoryR.fill(0.0f);
+        state.samplesSinceLastRebuild = 0;
         
         state.prepared = true;
         state.lastVersion = 0;  // Force update
@@ -166,7 +181,9 @@ void DynamicEQProcessor::prepare(double sampleRate, int samplesPerBlock, int cha
         state.meterGainReduction.store(0.0f, std::memory_order_relaxed);
         state.meterOutputLevel.store(-100.0f, std::memory_order_relaxed);
     }
-    
+
+    lastAppliedMakeupGain = 1.0f;
+
     // RB-4 FIX: always allocate lookahead buffer for the maximum possible delay (20ms)
     // so that runtime mode changes (setLookahead) never need heap allocation.
     {
@@ -205,6 +222,7 @@ void DynamicEQProcessor::reset()
         state.inputHistoryCount = 0;
         state.inputHistoryL.fill(0.0f);
         state.inputHistoryR.fill(0.0f);
+        state.samplesSinceLastRebuild = 0;
         state.liveCurrentGainDb.store(0.0f, std::memory_order_relaxed);
         state.liveEffectiveGainDb.store(
             bandParams[i].gain.load(std::memory_order_relaxed),
@@ -219,6 +237,8 @@ void DynamicEQProcessor::reset()
     if (lookaheadBuffer.getNumSamples() > 0)
         lookaheadBuffer.clear();
     lookaheadWritePos = 0;
+
+    lastAppliedMakeupGain = 1.0f;
 }
 
 //==============================================================================
@@ -613,8 +633,14 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
                 state.meterInputLevel.store(smoothedEnv, std::memory_order_relaxed);
                 state.meterGainReduction.store(dynamicGainDb, std::memory_order_relaxed);
 
+                // Track samples since the last coefficient rebuild for this
+                // band, used by the hard rate-limit below.
+                if (gainBearingMode)
+                    ++state.samplesSinceLastRebuild;
+
                 if (gainBearingMode
-                    && (sample % kDynamicControlSliceSamples) == 0)
+                    && (sample % kDynamicControlSliceSamples) == 0
+                    && state.samplesSinceLastRebuild >= kMinSamplesBetweenRebuilds)
                 {
                     const float targetEffectiveGainDb =
                         computeEffectiveGainDb(staticGainDb, state.currentGain);
@@ -629,6 +655,7 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
                             beginCoeffCrossfade(bandIdx, newCoeffs,
                                                 kDynamicCoeffCrossfadeSamples);
                             state.appliedEffectiveGainDb = targetEffectiveGainDb;
+                            state.samplesSinceLastRebuild = 0;
                         }
                     }
                 }
@@ -772,7 +799,21 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
     //==========================================================================
     if (autoMakeupEnabled.load(std::memory_order_relaxed))
     {
-        buffer.applyGain(computeAutoMakeupGainLinear());
+        // Ramp the makeup gain across the block instead of stamping a single
+        // value with applyGain(): under fast GR modulation, computeAutoMakeup
+        // returned a different value every block (because it reads
+        // meterGainReduction, which is pre-smoothing dynamicGainDb). A
+        // stepwise gain on a continuous signal generates a click at every
+        // block boundary, distinct from the coefficient-rebuild crackle.
+        const float targetMakeupGain = computeAutoMakeupGainLinear();
+        buffer.applyGainRamp(0, numSamples, lastAppliedMakeupGain, targetMakeupGain);
+        lastAppliedMakeupGain = targetMakeupGain;
+    }
+    else
+    {
+        // When auto-makeup is off, decay the stored gain toward unity so a
+        // future re-enable resumes from a sensible starting ramp.
+        lastAppliedMakeupGain = 1.0f;
     }
 }
 

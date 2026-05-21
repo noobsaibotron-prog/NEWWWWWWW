@@ -200,7 +200,13 @@ private:
         std::array<float, dynamicWarmupHistorySamples> inputHistoryR {};
         int inputHistoryWritePos = 0;
         int inputHistoryCount = 0;
-        
+
+        // Hard rate-limit counter for coefficient rebuilds. Reset to 0 on every
+        // rebuild trigger; incremented every sample in the dynamic branch.
+        // Together with the raised epsilon, prevents the rebuild cascade that
+        // was the audible crackle source under continuous compression.
+        int samplesSinceLastRebuild = 0;
+
         uint64_t lastVersion = 0;
         bool prepared = false;
     };
@@ -260,6 +266,13 @@ private:
     std::atomic<float> globalMix { 1.0f };
     std::atomic<bool> autoMakeupEnabled { false };
     std::atomic<float> lookaheadMs { 0.0f };
+
+    // Audio-thread only: previous block's auto-makeup gain. Used to ramp the
+    // makeup application across blocks (applyGainRamp) instead of the previous
+    // applyGain() that stamped a single value per block. Block-stepwise gain
+    // was a second source of crackle, distinct from the coefficient-rebuild
+    // crackle, and is audible when meterGainReduction modulates quickly.
+    float lastAppliedMakeupGain = 1.0f;
     
     // Sample rate and block size
     std::atomic<double> currentSampleRate { 44100.0 };
