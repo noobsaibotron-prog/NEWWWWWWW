@@ -493,10 +493,15 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
                     xfade.remaining = fadeSamples;
                     xfade.total = fadeSamples;
 
-                    for (auto& f : state.eqFiltersL)
-                        f.reset();
-                    for (auto& f : state.eqFiltersR)
-                        f.reset();
+                    // Warm-start the new biquad from the recent input history
+                    // instead of starting from zero state. This is the same
+                    // continuity mechanism used by beginCoeffCrossfade() for
+                    // dynamic gain modulation; without it, UI drag on a
+                    // dynamic-owned band produces an audible click on every
+                    // parameter version bump (~60 Hz at typical UI rate), which
+                    // is the crackle Marco still heard on band-drag after the
+                    // previous fix only covered the dynamic-modulation path.
+                    warmBandFiltersFromHistory(state, state.eqCoeffs);
                 }
             }
 
