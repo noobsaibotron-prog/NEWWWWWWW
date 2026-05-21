@@ -170,8 +170,13 @@ private:
         float envelopeR = -100.0f;
         float currentGain = 0.0f;
         float targetGain = 0.0f;
+        float staticFreqApplied = 0.0f;
+        float staticGainApplied = 0.0f;
+        float staticQApplied = 1.0f;
+        int staticFilterTypeApplied = -1;
         float scFreqApplied = 0.0f;
         float scQApplied = 1.0f;
+        bool sidechainEnabledApplied = false;
         
         // Cached attack/release coefficients
         float attackCoeff = 0.0f;
@@ -201,6 +206,8 @@ private:
     };
     
     void updateBandCoefficients(int bandIndex);
+    void updateDynamicTargets(int bandIndex);
+    void updateSidechainState(int bandIndex);
     void updateAttackReleaseCoeffs(int bandIndex);
     void pushBandInputHistory(BandState& state, float inputL, float inputR) noexcept;
     void warmBandFiltersFromHistory(BandState& state, const BiquadCoeffs& coeffs) noexcept;

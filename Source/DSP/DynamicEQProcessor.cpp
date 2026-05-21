@@ -429,18 +429,36 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
         const uint64_t currentVersion = params.version.load(std::memory_order_acquire);
         if (currentVersion != state.lastVersion)
         {
+            const float freqNow = params.frequency.load(std::memory_order_relaxed);
+            const float gainNow = params.gain.load(std::memory_order_relaxed);
+            const float qNow = params.q.load(std::memory_order_relaxed);
+            const int filterTypeNow = params.filterType.load(std::memory_order_relaxed);
+            const bool sidechainEnabledNow = params.sidechainEnabled.load(std::memory_order_relaxed);
+            const bool staticShapeChanged =
+                state.staticFilterTypeApplied != filterTypeNow
+                || std::abs(state.staticFreqApplied - freqNow) > 1.0e-6f
+                || std::abs(state.staticGainApplied - gainNow) > 1.0e-6f
+                || std::abs(state.staticQApplied - qNow) > 1.0e-6f;
+
+            const bool sidechainStateChanged =
+                state.sidechainEnabledApplied != sidechainEnabledNow;
+
             const BiquadCoeffs previousCoeffs = state.eqCoeffs;
-            updateBandCoefficients(bandIdx);
+            updateDynamicTargets(bandIdx);
+            if (staticShapeChanged)
+                updateBandCoefficients(bandIdx);
+            if (sidechainStateChanged)
+                updateSidechainState(bandIdx);
             updateAttackReleaseCoeffs(bandIdx);
             state.lastVersion = currentVersion;
 
-            const bool coeffsChanged =
-                previousCoeffs.valid != state.eqCoeffs.valid
-                || std::abs(previousCoeffs.b0 - state.eqCoeffs.b0) > 1.0e-6f
-                || std::abs(previousCoeffs.b1 - state.eqCoeffs.b1) > 1.0e-6f
-                || std::abs(previousCoeffs.b2 - state.eqCoeffs.b2) > 1.0e-6f
-                || std::abs(previousCoeffs.a1 - state.eqCoeffs.a1) > 1.0e-6f
-                || std::abs(previousCoeffs.a2 - state.eqCoeffs.a2) > 1.0e-6f;
+            const bool coeffsChanged = staticShapeChanged
+                && (previousCoeffs.valid != state.eqCoeffs.valid
+                    || std::abs(previousCoeffs.b0 - state.eqCoeffs.b0) > 1.0e-6f
+                    || std::abs(previousCoeffs.b1 - state.eqCoeffs.b1) > 1.0e-6f
+                    || std::abs(previousCoeffs.b2 - state.eqCoeffs.b2) > 1.0e-6f
+                    || std::abs(previousCoeffs.a1 - state.eqCoeffs.a1) > 1.0e-6f
+                    || std::abs(previousCoeffs.a2 - state.eqCoeffs.a2) > 1.0e-6f);
 
             if (coeffsChanged)
             {
@@ -976,28 +994,57 @@ void DynamicEQProcessor::updateBandCoefficients(int bandIndex)
     const int filterType = params.filterType.load(std::memory_order_relaxed);
     
     state.eqCoeffs = makeEQCoefficients(filterType, freq, gain, q);
+    state.staticFreqApplied = freq;
+    state.staticGainApplied = gain;
+    state.staticQApplied = q;
+    state.staticFilterTypeApplied = filterType;
     state.appliedEffectiveGainDb = gain;
     state.liveEffectiveGainDb.store(gain, std::memory_order_relaxed);
+}
 
-    // Update sidechain filter if enabled
-    if (params.sidechainEnabled.load(std::memory_order_relaxed))
-    {
-        const float scFreq = params.sidechainFreq.load(std::memory_order_relaxed);
-        const float scQ = params.sidechainQ.load(std::memory_order_relaxed);
-        const double sr = currentSampleRate.load(std::memory_order_relaxed);
+void DynamicEQProcessor::updateDynamicTargets(int bandIndex)
+{
+    if (bandIndex < 0 || bandIndex >= maxBands)
+        return;
 
-        state.scCoeffs = BiquadCoeffs::makeBandPass(sr, scFreq, scQ);
-        state.scFreqApplied = scFreq;
-        state.scQApplied = scQ;
-    }
-    
-    // Update smoothed targets for dynamic parameters
+    const auto& params = bandParams[bandIndex];
     smoothedThresholds[bandIndex].setTargetValue(params.threshold.load(std::memory_order_relaxed));
     smoothedRatios[bandIndex].setTargetValue(params.ratio.load(std::memory_order_relaxed));
     smoothedRanges[bandIndex].setTargetValue(params.range.load(std::memory_order_relaxed));
     smoothedKnees[bandIndex].setTargetValue(params.knee.load(std::memory_order_relaxed));
     smoothedSidechainFreq[bandIndex].setTargetValue(params.sidechainFreq.load(std::memory_order_relaxed));
     smoothedSidechainQ[bandIndex].setTargetValue(params.sidechainQ.load(std::memory_order_relaxed));
+}
+
+void DynamicEQProcessor::updateSidechainState(int bandIndex)
+{
+    if (bandIndex < 0 || bandIndex >= maxBands)
+        return;
+
+    const auto& params = bandParams[bandIndex];
+    auto& state = bandStates[bandIndex];
+    const bool enabled = params.sidechainEnabled.load(std::memory_order_relaxed);
+    state.sidechainEnabledApplied = enabled;
+
+    if (!enabled)
+    {
+        state.scCoeffs = BiquadCoeffs::makeBypass();
+        state.scFreqApplied = params.sidechainFreq.load(std::memory_order_relaxed);
+        state.scQApplied = params.sidechainQ.load(std::memory_order_relaxed);
+        state.scFilterL.reset();
+        state.scFilterR.reset();
+        return;
+    }
+
+    const float scFreq = params.sidechainFreq.load(std::memory_order_relaxed);
+    const float scQ = params.sidechainQ.load(std::memory_order_relaxed);
+    const double sr = currentSampleRate.load(std::memory_order_relaxed);
+
+    state.scCoeffs = BiquadCoeffs::makeBandPass(sr, scFreq, scQ);
+    state.scFreqApplied = scFreq;
+    state.scQApplied = scQ;
+    state.scFilterL.reset();
+    state.scFilterR.reset();
 }
 
 void DynamicEQProcessor::updateAttackReleaseCoeffs(int bandIndex)

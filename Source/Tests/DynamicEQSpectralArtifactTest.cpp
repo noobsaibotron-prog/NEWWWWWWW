@@ -19,6 +19,7 @@ public:
     {
         testNoSpectralArtifactAtControlSliceRate();
         testSustainedCompressionEnvelopeStability();
+        testThresholdDragRemainsSpectrallyClean();
         testMultiBandCumulativeNoiseFloor();
     }
 
@@ -356,6 +357,96 @@ private:
                "Sustained compression envelope is varying too much in steady state");
         expect(dcSuppressionDb > 55.0f,
                "Steady-state envelope shows unexpectedly strong periodic modulation");
+    }
+
+    void testThresholdDragRemainsSpectrallyClean()
+    {
+        beginTest("Threshold drag on an active band remains spectrally clean");
+
+        constexpr int kToneBin = 1365;
+        constexpr double kThresholdModHz = 1.5;
+        constexpr int kTotalSeconds = 8;
+
+        const float toneHz = alignedFreqForBin(kToneBin);
+        const int totalSamples = static_cast<int>(kSampleRate) * kTotalSeconds;
+
+        auto proc = makePrepared();
+        auto params = makeCompressBand(toneHz);
+        params.threshold = -20.0f;
+        proc->setBandParams(0, params);
+
+        juce::AudioBuffer<float> output(kChannels, totalSamples);
+        output.clear();
+        juce::AudioBuffer<float> block(kChannels, kBlockSize);
+
+        int rendered = 0;
+        while (rendered < totalSamples)
+        {
+            const double tBlock = static_cast<double>(rendered) / kSampleRate;
+            params.threshold = static_cast<float>(
+                -20.0 + 18.0 * std::sin(juce::MathConstants<double>::twoPi * kThresholdModHz * tBlock));
+            proc->setBandParams(0, params);
+
+            const int thisBlock = juce::jmin(kBlockSize, totalSamples - rendered);
+            block.clear();
+
+            for (int ch = 0; ch < kChannels; ++ch)
+            {
+                auto* data = block.getWritePointer(ch);
+                for (int i = 0; i < thisBlock; ++i)
+                {
+                    const double t = static_cast<double>(rendered + i) / kSampleRate;
+                    data[i] = 0.5f * static_cast<float>(
+                        std::sin(juce::MathConstants<double>::twoPi * static_cast<double>(toneHz) * t));
+                }
+            }
+
+            if (thisBlock != kBlockSize)
+            {
+                juce::AudioBuffer<float> shortBlock(kChannels, thisBlock);
+                for (int ch = 0; ch < kChannels; ++ch)
+                    shortBlock.copyFrom(ch, 0, block, ch, 0, thisBlock);
+                proc->process(shortBlock);
+                for (int ch = 0; ch < kChannels; ++ch)
+                    output.copyFrom(ch, rendered, shortBlock, ch, 0, thisBlock);
+            }
+            else
+            {
+                proc->process(block);
+                for (int ch = 0; ch < kChannels; ++ch)
+                    output.copyFrom(ch, rendered, block, ch, 0, thisBlock);
+            }
+
+            rendered += thisBlock;
+        }
+
+        const int analysisStart = totalSamples - kFftSize;
+        const auto spectrumDb = computeMagnitudeSpectrumDb(output, analysisStart);
+        const float fundamentalDb = spectrumDb[static_cast<size_t>(kToneBin)];
+
+        const std::vector<std::pair<float, float>> allowedBandsHz {
+            { toneHz - 350.0f, toneHz + 350.0f }
+        };
+        const float maxFarSpurDb = maxDbOutsideBands(spectrumDb, allowedBandsHz, 100.0f);
+        const float maxControlSliceFamilyDb = juce::jmax(
+            maxDbNearHz(spectrumDb, static_cast<float>(kControlSliceRateHz), 2),
+            juce::jmax(
+                maxDbNearHz(spectrumDb, toneHz + static_cast<float>(kControlSliceRateHz), 2),
+                maxDbNearHz(spectrumDb, toneHz - static_cast<float>(kControlSliceRateHz), 2)));
+
+        const float farSpurSuppressionDb = fundamentalDb - maxFarSpurDb;
+        const float controlSliceSuppressionDb = fundamentalDb - maxControlSliceFamilyDb;
+
+        logMessage("threshold-drag carrier = " + juce::String(fundamentalDb, 1) + " dB");
+        logMessage("threshold-drag max far spur = " + juce::String(maxFarSpurDb, 1)
+                   + " dB, suppression = " + juce::String(farSpurSuppressionDb, 1) + " dB");
+        logMessage("threshold-drag control-slice family = " + juce::String(maxControlSliceFamilyDb, 1)
+                   + " dB, suppression = " + juce::String(controlSliceSuppressionDb, 1) + " dB");
+
+        expect(farSpurSuppressionDb > 45.0f,
+               "Threshold drag creates too much far-out spectral residue");
+        expect(controlSliceSuppressionDb > 40.0f,
+               "Threshold drag creates a hot control-slice-related spur family");
     }
 
     void testMultiBandCumulativeNoiseFloor()
