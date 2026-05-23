@@ -480,29 +480,38 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
                     || std::abs(previousCoeffs.a1 - state.eqCoeffs.a1) > 1.0e-6f
                     || std::abs(previousCoeffs.a2 - state.eqCoeffs.a2) > 1.0e-6f);
 
-            if (coeffsChanged)
+            if (coeffsChanged && previousCoeffs.valid)
             {
                 const float qVal = params.q.load(std::memory_order_relaxed);
                 const int fadeSamples = (qVal > 10.0f) ? 256 : 128;
                 auto& xfade = bandCrossfades[bandIdx];
-                if (xfade.remaining <= 0 && previousCoeffs.valid)
-                {
-                    xfade.oldCoeffs = previousCoeffs;
-                    xfade.oldFiltersL = state.eqFiltersL;
-                    xfade.oldFiltersR = state.eqFiltersR;
-                    xfade.remaining = fadeSamples;
-                    xfade.total = fadeSamples;
 
-                    // Warm-start the new biquad from the recent input history
-                    // instead of starting from zero state. This is the same
-                    // continuity mechanism used by beginCoeffCrossfade() for
-                    // dynamic gain modulation; without it, UI drag on a
-                    // dynamic-owned band produces an audible click on every
-                    // parameter version bump (~60 Hz at typical UI rate), which
-                    // is the crackle Marco still heard on band-drag after the
-                    // previous fix only covered the dynamic-modulation path.
-                    warmBandFiltersFromHistory(state, state.eqCoeffs);
-                }
+                // Always re-arm the crossfade on a real coefficient change.
+                // The previous guard (xfade.remaining <= 0) skipped this block
+                // if a crossfade was already in flight, but updateBandCoefficients()
+                // had already mutated state.eqCoeffs underneath. The "new"
+                // branch of the in-flight crossfade was then running with
+                // freshly-rebuilt coefficients against filter states warmed
+                // for the previous "new" coefficient set — exact mismatch
+                // condition that produces the residual drag crackle.
+                //
+                // Now we treat the current state.eqFiltersL/R (warmed against
+                // previousCoeffs, possibly mid-fade) as the new "old", and
+                // warm a fresh "new" set against the just-rebuilt eqCoeffs.
+                // Any in-flight crossfade is replaced from this point forward.
+                xfade.oldCoeffs = previousCoeffs;
+                xfade.oldFiltersL = state.eqFiltersL;
+                xfade.oldFiltersR = state.eqFiltersR;
+                xfade.remaining = fadeSamples;
+                xfade.total = fadeSamples;
+
+                // Warm-start the new biquad from the recent input history
+                // instead of starting from zero state. Same continuity
+                // mechanism used by beginCoeffCrossfade() for dynamic gain
+                // modulation. Without warm-start, UI drag on a dynamic-owned
+                // band produces an audible click on every parameter version
+                // bump (~60 Hz at typical UI rate).
+                warmBandFiltersFromHistory(state, state.eqCoeffs);
             }
 
             // Update meter GR immediately (for GUI responsiveness) but do NOT
@@ -1033,19 +1042,33 @@ void DynamicEQProcessor::updateBandCoefficients(int bandIndex)
 
     const auto& params = bandParams[bandIndex];
     auto& state = bandStates[bandIndex];
-    
+
     const float freq = params.frequency.load(std::memory_order_relaxed);
     const float gain = params.gain.load(std::memory_order_relaxed);
     const float q = params.q.load(std::memory_order_relaxed);
     const int filterType = params.filterType.load(std::memory_order_relaxed);
-    
-    state.eqCoeffs = makeEQCoefficients(filterType, freq, gain, q);
+    const int dynMode = params.dynamicMode.load(std::memory_order_relaxed);
+
+    // If the band is actively dynamic-owned (Compress/Expand on a gain-bearing
+    // filter type), rebuild the live biquad against the CURRENT effective gain
+    // — not the raw static gain. Otherwise a UI freq/Q/gain drag bumps the
+    // version, this helper rebuilds against staticGainDb, then the dynamic
+    // control-slice path notices the mismatch with staticGainDb + currentGain
+    // and triggers ANOTHER crossfade right after. Two crossfades within a few
+    // ms = audible coefficient churn on every drag frame, which is the residual
+    // crackle the previous warm-start fix did not close.
+    const bool dynamicActive =
+        (dynMode == DynamicMode_Compress || dynMode == DynamicMode_Expand)
+        && isGainBearingDynamicFilterType(filterType);
+    const float effectiveGain = dynamicActive ? (gain + state.currentGain) : gain;
+
+    state.eqCoeffs = makeEQCoefficients(filterType, freq, effectiveGain, q);
     state.staticFreqApplied = freq;
     state.staticGainApplied = gain;
     state.staticQApplied = q;
     state.staticFilterTypeApplied = filterType;
-    state.appliedEffectiveGainDb = gain;
-    state.liveEffectiveGainDb.store(gain, std::memory_order_relaxed);
+    state.appliedEffectiveGainDb = effectiveGain;
+    state.liveEffectiveGainDb.store(effectiveGain, std::memory_order_relaxed);
 }
 
 void DynamicEQProcessor::updateDynamicTargets(int bandIndex)
