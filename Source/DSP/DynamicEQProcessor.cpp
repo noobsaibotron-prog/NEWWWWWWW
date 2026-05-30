@@ -483,7 +483,29 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
             if (coeffsChanged && previousCoeffs.valid)
             {
                 const float qVal = params.q.load(std::memory_order_relaxed);
-                const int fadeSamples = (qVal > 10.0f) ? 256 : 128;
+                const int dynModeNow = params.dynamicMode.load(std::memory_order_relaxed);
+                const bool dynamicActiveBand =
+                    (dynModeNow == DynamicMode_Compress || dynModeNow == DynamicMode_Expand)
+                    && isGainBearingDynamicFilterType(filterTypeNow);
+
+                // PATH-ARBITRATION FIX (residual drag crackle).
+                // A long (128-256 sample) drag crossfade STARVES the dynamic
+                // control-slice rebuild: that path is guarded by
+                // `xfade.remaining <= 0` (see the gain-bearing branch below), so
+                // while the long drag fade is in flight the control slice cannot
+                // retune. state.currentGain keeps drifting (per-sample smoother)
+                // while state.appliedEffectiveGainDb stays frozen at the drag
+                // instant's effective gain. When the long fade finally ends, the
+                // accumulated |target - applied| jumps past the epsilon and fires
+                // a single oversized coefficient step — an audible click on every
+                // drag frame. For a dynamic-owned band we therefore keep the drag
+                // crossfade as short as the dynamic cadence (16 samples), so the
+                // control slice resumes almost immediately and effective-gain
+                // tracking stays tight. Static bands keep the original 128/256
+                // fade (no competing modulation path to starve).
+                const int fadeSamples = dynamicActiveBand
+                    ? kDynamicCoeffCrossfadeSamples
+                    : ((qVal > 10.0f) ? 256 : 128);
                 auto& xfade = bandCrossfades[bandIdx];
 
                 // Always re-arm the crossfade on a real coefficient change.

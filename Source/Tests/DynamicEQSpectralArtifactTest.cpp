@@ -20,6 +20,7 @@ public:
         testNoSpectralArtifactAtControlSliceRate();
         testSustainedCompressionEnvelopeStability();
         testThresholdDragRemainsSpectrallyClean();
+        testFreqQGainDragOnActiveDynamicBandRemainsClean();
         testMultiBandCumulativeNoiseFloor();
     }
 
@@ -447,6 +448,142 @@ private:
                "Threshold drag creates too much far-out spectral residue");
         expect(controlSliceSuppressionDb > 40.0f,
                "Threshold drag creates a hot control-slice-related spur family");
+    }
+
+    void testFreqQGainDragOnActiveDynamicBandRemainsClean()
+    {
+        beginTest("Freq/Q/gain drag on an active dynamic band stays click-free");
+
+        // This is the scenario Marco reported as crackling: dragging a band that
+        // is SIMULTANEOUSLY in Compress mode. Two coefficient-update paths fight:
+        //   1. the version-bump (UI drag) rebuild of state.eqCoeffs (long
+        //      crossfade), and
+        //   2. the per-sample dynamic control-slice rebuild toward
+        //      staticGain + currentGain (short crossfade, guarded by
+        //      xfade.remaining <= 0).
+        // The crackle is a TIME-DOMAIN transient (click), not a steady-state
+        // spectral floor: when the compressor's gain is ACTIVELY MOVING (the
+        // input envelope is modulated) while a drag arms a long crossfade, the
+        // control slice is starved for the whole fade; at fade end the accumulated
+        // effective-gain mismatch fires a single oversized coefficient step. So we
+        // drive an AM-modulated tone (so currentGain is always chasing) and a
+        // dense freq/Q/gain drag, then look for sample-to-sample discontinuities
+        // that a smooth band-limited signal cannot produce. A pure tone through a
+        // smoothly-varying filter has a bounded second difference (~A*w^2); a
+        // coefficient-jump click spikes it well above that bound.
+        constexpr int kToneBin = 1365;
+        constexpr double kModHz = 7.0;       // input envelope modulation -> moving GR
+        constexpr double kDragHz = 2.3;      // ~2 Hz: a brisk, continuous UI drag
+        constexpr float kBaseAmp = 0.5f;
+        constexpr float kModDepth = 0.6f;    // envelope 0.2 .. 0.8 -> compressor active
+        constexpr int kTotalSeconds = 8;
+        constexpr int kWarmupSamples = static_cast<int>(kSampleRate); // skip 1 s settle
+
+        const float toneHz = alignedFreqForBin(kToneBin);
+        const double w = juce::MathConstants<double>::twoPi * static_cast<double>(toneHz) / kSampleRate;
+        const int totalSamples = static_cast<int>(kSampleRate) * kTotalSeconds;
+
+        auto proc = makePrepared();
+        auto params = makeCompressBand(toneHz); // Compress, thr -30, ratio 8 => active
+        proc->setBandParams(0, params);
+
+        juce::AudioBuffer<float> output(kChannels, totalSamples);
+        output.clear();
+        juce::AudioBuffer<float> block(kChannels, kBlockSize);
+
+        int rendered = 0;
+        while (rendered < totalSamples)
+        {
+            const double tBlock = static_cast<double>(rendered) / kSampleRate;
+            const double phase = juce::MathConstants<double>::twoPi * kDragHz * tBlock;
+
+            // Dense per-block param trajectory simulating a drag gesture. Kept to
+            // ±~0.58 octave / 6..18 dB / Q 1..6 — a brisk but realistic drag.
+            params.frequency = static_cast<float>(
+                static_cast<double>(toneHz) * std::pow(2.0, 0.585 * std::sin(phase)));
+            params.q = static_cast<float>(3.5 + 2.5 * std::sin(phase * 1.3 + 0.5));   // ~1 .. 6
+            params.gain = static_cast<float>(12.0 + 6.0 * std::sin(phase * 0.7 + 1.1)); // 6 .. 18 dB
+            proc->setBandParams(0, params);
+
+            const int thisBlock = juce::jmin(kBlockSize, totalSamples - rendered);
+            block.clear();
+
+            for (int ch = 0; ch < kChannels; ++ch)
+            {
+                auto* data = block.getWritePointer(ch);
+                for (int i = 0; i < thisBlock; ++i)
+                {
+                    const double t = static_cast<double>(rendered + i) / kSampleRate;
+                    const double env = 1.0 + static_cast<double>(kModDepth)
+                        * std::sin(juce::MathConstants<double>::twoPi * kModHz * t);
+                    data[i] = static_cast<float>(static_cast<double>(kBaseAmp) * env
+                        * std::sin(w * static_cast<double>(rendered + i)));
+                }
+            }
+
+            if (thisBlock != kBlockSize)
+            {
+                juce::AudioBuffer<float> shortBlock(kChannels, thisBlock);
+                for (int ch = 0; ch < kChannels; ++ch)
+                    shortBlock.copyFrom(ch, 0, block, ch, 0, thisBlock);
+                proc->process(shortBlock);
+                for (int ch = 0; ch < kChannels; ++ch)
+                    output.copyFrom(ch, rendered, shortBlock, ch, 0, thisBlock);
+            }
+            else
+            {
+                proc->process(block);
+                for (int ch = 0; ch < kChannels; ++ch)
+                    output.copyFrom(ch, rendered, block, ch, 0, thisBlock);
+            }
+
+            rendered += thisBlock;
+        }
+
+        // Time-domain click metric: max |second difference| past warmup. A click
+        // (coefficient jump) injects a localized high-curvature spike. We also
+        // track the running peak so we can express the click as a ratio to signal
+        // level (a click that is small relative to a loud signal is inaudible).
+        float peakAbs = 0.0f;
+        float maxSecondDiff = 0.0f;
+        int   clickBurstSamples = 0;
+        const float* ch0 = output.getReadPointer(0);
+        for (int i = kWarmupSamples + 1; i < totalSamples - 1; ++i)
+        {
+            peakAbs = juce::jmax(peakAbs, std::abs(ch0[i]));
+            const float secondDiff = std::abs(ch0[i + 1] - 2.0f * ch0[i] + ch0[i - 1]);
+            maxSecondDiff = juce::jmax(maxSecondDiff, secondDiff);
+        }
+
+        // Expected bound for the legit signal: |second diff| <= peak * w^2 with a
+        // generous slack factor for the AM/drag amplitude variation.
+        const float legitSecondDiffBound = peakAbs * static_cast<float>(w * w);
+        const float clickRatio = maxSecondDiff / juce::jmax(legitSecondDiffBound, 1.0e-9f);
+
+        // Count how many samples exceed a hard absolute step relative to peak —
+        // a defensive secondary metric matching the AntiPop click convention.
+        const float stepThresh = 0.25f * juce::jmax(peakAbs, 1.0e-6f);
+        for (int i = kWarmupSamples + 1; i < totalSamples; ++i)
+            if (std::abs(ch0[i] - ch0[i - 1]) > stepThresh
+                && std::abs(ch0[i]) < 0.5f * peakAbs)   // discontinuity in a quiet region
+                ++clickBurstSamples;
+
+        logMessage("freq/Q/gain-drag peakAbs = " + juce::String(peakAbs, 4));
+        logMessage("freq/Q/gain-drag legit 2nd-diff bound = " + juce::String(legitSecondDiffBound, 6)
+                   + ", max 2nd-diff = " + juce::String(maxSecondDiff, 6)
+                   + ", ratio = " + juce::String(clickRatio, 2));
+        logMessage("freq/Q/gain-drag quiet-region click bursts = " + juce::String(clickBurstSamples));
+
+        // A smoothly-varying filtered tone keeps the second difference within a
+        // few times its theoretical bound. A coefficient-jump click pushes the
+        // ratio far higher. Threshold chosen with headroom over the clean (fixed)
+        // build's measured ratio and well under the unfixed build's.
+        expect(clickRatio < 8.0f,
+               "Freq/Q/gain drag on an active dynamic band injects a high-curvature click "
+               "(ratio=" + juce::String(clickRatio, 2) + ")");
+        expect(clickBurstSamples == 0,
+               "Freq/Q/gain drag produces sample discontinuities in quiet regions "
+               "(bursts=" + juce::String(clickBurstSamples) + ")");
     }
 
     void testMultiBandCumulativeNoiseFloor()

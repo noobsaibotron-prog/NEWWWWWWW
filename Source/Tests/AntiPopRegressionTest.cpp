@@ -33,6 +33,17 @@ public:
         testDynEQThresholdDragLP();
         testLPBandDragPlusDynEQ();
 
+        // Dynamic-band freq/Q/gain drag while actively compressing — the exact
+        // gesture Marco reported as crackling, which no other test covered.
+        testDynEQBandFreqDragWhileCompressing();
+
+        // Same gesture but through the Natural-Phase 4x oversampled HQ path
+        // (dynamicEQProcessorHQ). Marco's repro condition: oversampling 4x,
+        // block 256-512. The sample-domain constants (control slice 16,
+        // rate-limit 64, crossfade 16/128/256) span 1/4 the real time at 4x,
+        // which is the leading suspect for the offline<->real divergence.
+        testDynEQBandDragOversampled4x();
+
         // Adversarial / stress tests
         testAdversarialBlockSizeBypass();
         testStormBypassToggle();
@@ -534,6 +545,229 @@ private:
                + " maxDelta=" + juce::String(metrics.maxDelta, 4));
 
         logMessage("  LP+DynEQ combined: maxDelta=" + juce::String(metrics.maxDelta, 4)
+                   + " clicks=" + juce::String(metrics.clickCount)
+                   + " peakAbs=" + juce::String(metrics.peakAbs, 4));
+    }
+
+    //==========================================================================
+    // Test 6b: Dynamic-band freq/Q/gain drag while the band is actively
+    // compressing.
+    //
+    // This is the gesture Marco reported as crackling: grabbing a band that is
+    // in Compress mode and dragging it around the spectrum. Two coefficient
+    // update paths run at once on the same band:
+    //   1. the version-bump (drag) rebuild of the live biquad with a long
+    //      crossfade, and
+    //   2. the per-sample dynamic control-slice rebuild toward the live
+    //      effective gain (short crossfade, guarded by xfade.remaining <= 0).
+    // The danger is the long drag crossfade starving the control slice while the
+    // compressor's gain reduction is actively moving, producing an oversized
+    // coefficient step (click) at fade end. We keep the compressor's GR moving
+    // with an AM-modulated tone and drag freq+Q+gain densely, then assert the
+    // full-processor output is click-free.
+    //==========================================================================
+    void testDynEQBandFreqDragWhileCompressing()
+    {
+        beginTest("DynEQ band freq/Q/gain drag while compressing produces no click");
+
+        AIEqualizerAudioProcessor proc;
+        prepareProcessor(proc);
+        auto& apvts = proc.getAPVTS();
+
+        // Zero-latency / natural phase to isolate the DynEQ coefficient path
+        // (no convolver crossfade in the picture).
+        setChoice(apvts, "phaseMode", 0);
+
+        // Drive the REAL parameter path through APVTS, not dynProc.setBandParams
+        // directly: processBlock() re-pushes the smoothed APVTS band freq/gain/q
+        // into all DynEQ processors every block, so a direct setBandParams call
+        // would be clobbered. The dynamic band shares band0Freq/Gain/Q with the
+        // static band; dragging those IS the drag gesture under test.
+        setBool(apvts, "dynamicEQEnabled", true);
+        setBool(apvts, "band0Enabled", true);
+        setChoice(apvts, "band0Type", 2);                                   // Peak
+        setChoice(apvts, "band0DynMode", DynamicEQProcessor::DynamicMode_Compress);
+        setFloat(apvts, "band0Threshold", -30.0f);
+        setFloat(apvts, "band0Ratio", 6.0f);
+        setFloat(apvts, "band0Range", 18.0f);
+        setFloat(apvts, "band0Knee", 3.0f);
+        setFloat(apvts, "band0Attack", 2.0f);
+        setFloat(apvts, "band0Release", 60.0f);
+        setFloat(apvts, "band0Freq", 1000.0f);
+        setFloat(apvts, "band0Gain", 8.0f);
+        setFloat(apvts, "band0Q", 2.0f);
+
+        juce::AudioBuffer<float> buf(2, kBlockSize);
+        juce::MidiBuffer midi;
+        int samplePos = 0;
+
+        // AM-modulated carrier near the band so gain reduction keeps moving.
+        const double carrierHz = 1000.0;
+        const double modHz = 6.0;
+        const float baseAmp = 0.5f;
+        const float modDepth = 0.5f;
+
+        auto fillAM = [&](juce::AudioBuffer<float>& b, int offset)
+        {
+            const auto wc = juce::MathConstants<double>::twoPi * carrierHz / kSampleRate;
+            const auto wm = juce::MathConstants<double>::twoPi * modHz / kSampleRate;
+            for (int ch = 0; ch < b.getNumChannels(); ++ch)
+            {
+                auto* d = b.getWritePointer(ch);
+                for (int i = 0; i < b.getNumSamples(); ++i)
+                {
+                    const double n = static_cast<double>(offset + i);
+                    const double env = 1.0 + static_cast<double>(modDepth) * std::sin(wm * n);
+                    d[i] = static_cast<float>(static_cast<double>(baseAmp) * env * std::sin(wc * n));
+                }
+            }
+        };
+
+        // Warm up so envelope/GR reach steady tracking.
+        for (int bk = 0; bk < 60; ++bk)
+        {
+            fillAM(buf, samplePos);
+            proc.processBlock(buf, midi);
+            samplePos += kBlockSize;
+        }
+
+        // Dense freq/Q/gain drag. Frequency stays around the carrier (700..1500)
+        // so the band keeps compressing throughout the gesture.
+        const int dragBlocks = 240; // ~0.64 s of continuous dragging
+        juce::AudioBuffer<float> collected(2, kBlockSize * dragBlocks);
+        for (int bk = 0; bk < dragBlocks; ++bk)
+        {
+            const double tBlock = static_cast<double>(bk) / static_cast<double>(dragBlocks);
+            const double ph = juce::MathConstants<double>::twoPi * tBlock * 4.0; // ~4 sweeps
+
+            setFloat(apvts, "band0Freq",
+                     static_cast<float>(1000.0 * std::pow(2.0, 0.55 * std::sin(ph))));
+            setFloat(apvts, "band0Q",
+                     static_cast<float>(3.0 + 2.0 * std::sin(ph * 1.3 + 0.4)));   // 1 .. 5
+            setFloat(apvts, "band0Gain",
+                     static_cast<float>(8.0 + 4.0 * std::sin(ph * 0.7 + 1.0)));   // 4 .. 12 dB
+
+            fillAM(buf, samplePos);
+            proc.processBlock(buf, midi);
+            for (int ch = 0; ch < 2; ++ch)
+                collected.copyFrom(ch, bk * kBlockSize, buf, ch, 0, kBlockSize);
+            samplePos += kBlockSize;
+        }
+
+        auto metrics = analyzeClicks(collected);
+        expect(!metrics.hasNaN, "NaN in DynEQ band freq drag");
+        expect(!metrics.hasInf, "Inf in DynEQ band freq drag");
+        expect(metrics.clickCount == 0,
+               "Click while dragging an actively-compressing DynEQ band: count="
+               + juce::String(metrics.clickCount)
+               + " maxDelta=" + juce::String(metrics.maxDelta, 4));
+
+        logMessage("  DynEQ band freq drag: maxDelta=" + juce::String(metrics.maxDelta, 4)
+                   + " clicks=" + juce::String(metrics.clickCount)
+                   + " peakAbs=" + juce::String(metrics.peakAbs, 4));
+    }
+
+    //==========================================================================
+    // Oversampled (4x Natural Phase) variant of the DynEQ band drag.
+    //
+    // Routes audio through dynamicEQProcessorHQ, prepared at 4x the host rate.
+    // This is the path that was never exercised by phaseMode-0 tests, and the
+    // one Marco reports crackling. Uses a 256-sample host block (mid range of
+    // Marco's reported 256-512).
+    //==========================================================================
+    void testDynEQBandDragOversampled4x()
+    {
+        beginTest("DynEQ band drag through 4x oversampled HQ path produces no click");
+
+        constexpr int hostBlock = 256;
+
+        AIEqualizerAudioProcessor proc;
+        proc.setPlayConfigDetails(2, 2, kSampleRate, hostBlock);
+        proc.prepareToPlay(kSampleRate, hostBlock);
+        auto& apvts = proc.getAPVTS();
+
+        // Natural Phase → HQ oversampled path; 4x oversampling factor.
+        setChoice(apvts, "phaseMode", 1);          // Natural Phase
+        setChoice(apvts, "oversamplingFactor", 2); // 4x
+
+        setBool(apvts, "dynamicEQEnabled", true);
+        setBool(apvts, "band0Enabled", true);
+        setChoice(apvts, "band0Type", 2);          // Peak
+        setChoice(apvts, "band0DynMode", DynamicEQProcessor::DynamicMode_Compress);
+        setFloat(apvts, "band0Threshold", -30.0f);
+        setFloat(apvts, "band0Ratio", 6.0f);
+        setFloat(apvts, "band0Range", 18.0f);
+        setFloat(apvts, "band0Knee", 3.0f);
+        setFloat(apvts, "band0Attack", 2.0f);
+        setFloat(apvts, "band0Release", 60.0f);
+        setFloat(apvts, "band0Freq", 1000.0f);
+        setFloat(apvts, "band0Gain", 8.0f);
+        setFloat(apvts, "band0Q", 2.0f);
+
+        juce::AudioBuffer<float> buf(2, hostBlock);
+        juce::MidiBuffer midi;
+        int samplePos = 0;
+
+        const double carrierHz = 1000.0;
+        const double modHz = 6.0;
+        const float baseAmp = 0.5f;
+        const float modDepth = 0.5f;
+
+        auto fillAM = [&](juce::AudioBuffer<float>& b, int offset)
+        {
+            const auto wc = juce::MathConstants<double>::twoPi * carrierHz / kSampleRate;
+            const auto wm = juce::MathConstants<double>::twoPi * modHz / kSampleRate;
+            for (int ch = 0; ch < b.getNumChannels(); ++ch)
+            {
+                auto* d = b.getWritePointer(ch);
+                for (int i = 0; i < b.getNumSamples(); ++i)
+                {
+                    const double n = static_cast<double>(offset + i);
+                    const double env = 1.0 + static_cast<double>(modDepth) * std::sin(wm * n);
+                    d[i] = static_cast<float>(static_cast<double>(baseAmp) * env * std::sin(wc * n));
+                }
+            }
+        };
+
+        // Warm up: settle the phase-mode/oversampling crossfades and the
+        // envelope tracker before measuring.
+        for (int bk = 0; bk < 80; ++bk)
+        {
+            fillAM(buf, samplePos);
+            proc.processBlock(buf, midi);
+            samplePos += hostBlock;
+        }
+
+        const int dragBlocks = 240;
+        juce::AudioBuffer<float> collected(2, hostBlock * dragBlocks);
+        for (int bk = 0; bk < dragBlocks; ++bk)
+        {
+            const double tBlock = static_cast<double>(bk) / static_cast<double>(dragBlocks);
+            const double ph = juce::MathConstants<double>::twoPi * tBlock * 4.0;
+
+            setFloat(apvts, "band0Freq",
+                     static_cast<float>(1000.0 * std::pow(2.0, 0.55 * std::sin(ph))));
+            setFloat(apvts, "band0Q",
+                     static_cast<float>(3.0 + 2.0 * std::sin(ph * 1.3 + 0.4)));
+            setFloat(apvts, "band0Gain",
+                     static_cast<float>(8.0 + 4.0 * std::sin(ph * 0.7 + 1.0)));
+
+            fillAM(buf, samplePos);
+            proc.processBlock(buf, midi);
+            for (int ch = 0; ch < 2; ++ch)
+                collected.copyFrom(ch, bk * hostBlock, buf, ch, 0, hostBlock);
+            samplePos += hostBlock;
+        }
+
+        auto metrics = analyzeClicks(collected);
+        expect(!metrics.hasNaN, "NaN in 4x oversampled DynEQ band drag");
+        expect(!metrics.hasInf, "Inf in 4x oversampled DynEQ band drag");
+        expect(metrics.clickCount == 0,
+               "Click while dragging actively-compressing DynEQ band at 4x OS: count="
+               + juce::String(metrics.clickCount)
+               + " maxDelta=" + juce::String(metrics.maxDelta, 4));
+
+        logMessage("  DynEQ band drag @4x OS: maxDelta=" + juce::String(metrics.maxDelta, 4)
                    + " clicks=" + juce::String(metrics.clickCount)
                    + " peakAbs=" + juce::String(metrics.peakAbs, 4));
     }
