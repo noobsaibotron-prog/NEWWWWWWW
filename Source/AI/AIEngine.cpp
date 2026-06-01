@@ -2437,6 +2437,22 @@ void AIEngine::detectProblemsWithML()
     std::lock_guard<std::mutex> lock(correctionsWriteMutex);
     pendingCorrections.clear();
 
+    // Commit 4B — ML spectral existence check (reality check, external to the model).
+    // The model asserts e.g. Resonance@c=0.95 even on a flat spectrum where no peak
+    // exists. Before accepting each mapped correction we verify it against the
+    // published dB spectrum using the existing thread-safe helpers. Constants are
+    // INDEPENDENT of sensitivity (same invariant as 4A / the heuristic gate).
+    // NOTE: planned ~2.0, lowered to 1.0 after empirical re-measure. The resonance's
+    // own skirt inflates the local window's mean/variance, crushing a genuine +20dB
+    // Res@800 down to z21~=1.9 (min 0.66) — overlapping clean (max ~3.08). At 2.0 the
+    // true Res@800 was lost at sens 0.2/0.8; 1.0 restores it while keeping clean 0/9
+    // at the cell level. (A prominence-based discriminator separates far more cleanly;
+    // flagged to Marco/Codex as a hardening follow-up.)
+    constexpr float kZResonance   = 1.0f;  // local z-score a snapped peak must clear
+    constexpr float kBandExcessDb = 3.0f;  // dB the problem band must exceed its reference
+    constexpr float kBoomLo       = 30.0f; // LowEndBoom has no thresholds range — local span
+    constexpr float kBoomHi       = 100.0f;
+
     for (const auto& mlDet : mlDetections)
     {
         Correction c;
@@ -2477,6 +2493,72 @@ void AIEngine::detectProblemsWithML()
             continue;
 
         c.frequency = mlDet.frequency;
+
+        //----------------------------------------------------------------------
+        // Commit 4B: validate this correction against the REAL spectrum before
+        // accepting it. Drop (continue) if the asserted problem has no spectral
+        // support. Done here, before Q/bandwidth/filter/description are derived,
+        // so a snapped Resonance frequency propagates to all of them.
+        //----------------------------------------------------------------------
+        {
+            bool keep = true;
+            switch (c.type)
+            {
+                case ProblemType::Resonance:
+                {
+                    // Peak-snap FIRST: the ML frequency is biased low (a true
+                    // Resonance@800 emerges at ML ~602). findPeakInRange only
+                    // LOCATES the window max — it never reports "no peak" — so the
+                    // real veto is the local z-score, not peak existence. The
+                    // bounded ~+-1 octave window keeps the candidate near the ML
+                    // prediction so a far-off unrelated peak can't rescue an FP.
+                    const float lo = juce::jmax(20.0f, c.frequency * 0.5f);
+                    const float hi = juce::jmin(static_cast<float>(currentSampleRate) * 0.5f,
+                                                c.frequency * 2.0f);
+                    const float actualPeak = findPeakInRange(lo, hi);
+                    if (actualPeak <= 0.0f)
+                    {
+                        keep = false;
+                    }
+                    else
+                    {
+                        const float z = computeZScoreAtFrequency(actualPeak, 21);
+                        if (z < kZResonance)
+                            keep = false;             // flat spectrum: window max is no local outlier
+                        else
+                            c.frequency = actualPeak; // snap (also fixes 602->800 localization bias)
+                    }
+                    break;
+                }
+                case ProblemType::Muddiness:
+                    // band 150..400 vs broad 100..10000 reference (heuristic-consistent)
+                    keep = (calculateBandEnergy(thresholds.muddinessLow, thresholds.muddinessHigh)
+                            - calculateBandEnergy(100.0f, 10000.0f)) >= kBandExcessDb;
+                    break;
+                case ProblemType::Boxyness:
+                    // band 300..800 vs broad 100..8000 reference
+                    keep = (calculateBandEnergy(thresholds.boxyLow, thresholds.boxyHigh)
+                            - calculateBandEnergy(100.0f, 8000.0f)) >= kBandExcessDb;
+                    break;
+                case ProblemType::Sibilance:
+                    // band 5000..10000 vs 2000..5000 reference
+                    keep = (calculateBandEnergy(thresholds.sibilanceLow, thresholds.sibilanceHigh)
+                            - calculateBandEnergy(2000.0f, 5000.0f)) >= kBandExcessDb;
+                    break;
+                case ProblemType::LowEndBoom:
+                    // band 30..100 vs 100..5000 reference
+                    keep = (calculateBandEnergy(kBoomLo, kBoomHi)
+                            - calculateBandEnergy(100.0f, 5000.0f)) >= kBandExcessDb;
+                    break;
+                default:
+                    // Harshness / ThinSound / DullSound: no validated rule yet and
+                    // not part of the measured clean floor — leave conservative.
+                    break;
+            }
+            if (! keep)
+                continue;
+        }
+
         c.suggestedGain = mlDet.suggestedGain;
         c.suggestedQ = mlDet.suggestedQ;
         if (c.suggestedQ <= 0.0f)
