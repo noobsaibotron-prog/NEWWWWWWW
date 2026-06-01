@@ -966,8 +966,13 @@ void AIEngine::detectResonances(float threshold)
             }
         }
         
-        // REMOVED: if (!isLocalMax) continue; - SHOW EVEN IF NOT PERFECT LOCAL MAX
-        
+        // Enforce local-maximum: a resonance must actually be a peak. This gate
+        // was previously disabled ("SHOW EVEN IF NOT PERFECT LOCAL MAX"), which
+        // turned every noise ripple into a candidate and drove the resonance
+        // spray / clean-signal false positives. Re-enabled.
+        if (!isLocalMax)
+            continue;
+
         int windowSize = getAdaptiveWindowSize(freq);
         int halfWindow = windowSize / 2;
         
@@ -1069,10 +1074,12 @@ void AIEngine::detectResonances(float threshold)
             peak.bandwidth,
             peak.peakHeight);
         
-        // Severity based on peak height and persistence (MINIMUM 0.3 to ensure visibility)
+        // Severity based on peak height and persistence. The previous forced
+        // floor of 0.3 ("ensure visibility") made weak peaks look as severe as
+        // real ones; removed so severity reflects the actual measurement.
         float heightSeverity = juce::jlimit(0.0f, 1.0f, peak.peakHeight / 10.0f);
         float persistSeverity = juce::jlimit(0.0f, 0.3f, static_cast<float>(peak.frameCount) * 0.1f);
-        c.severity = juce::jmax(0.3f, juce::jmin(1.0f, heightSeverity + persistSeverity));  // MIN 0.3 (higher!)
+        c.severity = juce::jlimit(0.0f, 1.0f, heightSeverity + persistSeverity);
         
         // Confidence based on peak prominence, level, persistence, and temporal analysis (MINIMUM 0.4)
         float levelConfidence = juce::jlimit(0.0f, 1.0f, (peak.magnitude + 60.0f) / 50.0f);
@@ -1116,12 +1123,14 @@ void AIEngine::detectResonances(float threshold)
         // Add z-score contribution
         float zBoost = juce::jlimit(0.0f, 1.0f, (zScore - 2.0f) / 3.0f);  // z>2 -> boost
         
-        c.confidence = juce::jmax(0.4f,
-            juce::jmin(1.0f,
+        // Previously floored at 0.4 ("ensure visibility"), which made the
+        // downstream confidence gate meaningless — every emitted resonance
+        // passed by construction. Removed so confidence is a real discriminator.
+        c.confidence = juce::jlimit(0.0f, 1.0f,
                 levelConfidence * 0.25f +
                 heightConfidence * 0.35f +
                 persistConfidence * 0.25f +
-                zBoost * 0.15f));  // MIN 0.4 (higher!)
+                zBoost * 0.15f);
         
         // Skip if harmonic (legitimate, not a problem) unless very high confidence
         if (isHarmonic && c.confidence < 0.6f)
