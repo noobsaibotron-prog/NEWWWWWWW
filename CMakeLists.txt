@@ -1029,6 +1029,7 @@ if(HAVE_JUCE)
         Source/Utils/Logger.cpp
         # Test file and shared runner entry-point
         Source/Tests/AIEngineTest.cpp
+        Source/Tests/AIBackendSweepTest.cpp
         Source/Tests/TestMain.cpp
     )
     target_compile_features(AIEqualizerPro_AI_Tests PRIVATE cxx_std_20)
