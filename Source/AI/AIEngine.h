@@ -68,7 +68,19 @@ public:
         MLOnly,
         HeuristicOnly
     };
-    
+
+    /** Runtime status of the ML detection path, resolved in prepare().
+        Lets callers/UI know whether ML is actually carrying detection or the
+        engine has silently fallen back to the heuristic path (e.g. shipped
+        ml_weights.bin missing or corrupt). */
+    enum class MLBackendStatus
+    {
+        NotInitialized,   // prepare() not yet run
+        Active,           // weights loaded — ML path is live
+        WeightsMissing,   // ml_weights.bin not found next to the binary → heuristic fallback
+        LoadFailed        // file present but loadWeights() failed → heuristic fallback
+    };
+
     enum class DetectedGenre
     {
         Unknown,
@@ -304,6 +316,27 @@ public:
     void setDetectionBackendMode(DetectionBackendMode m) { detectionBackendMode.store(static_cast<int>(m), std::memory_order_relaxed); }
     DetectionBackendMode getDetectionBackendMode() const { return static_cast<DetectionBackendMode>(detectionBackendMode.load(std::memory_order_relaxed)); }
 
+    /** Runtime status of the ML backend after prepare(). Use this to surface a
+        clear "ML unavailable, using heuristics" indication instead of silently
+        degrading. NOTE: reflects whether weights loaded, NOT the per-frame
+        backend-mode choice (HeuristicOnly can be selected while ML is Active). */
+    MLBackendStatus getMLBackendStatus() const noexcept
+    {
+        return static_cast<MLBackendStatus>(mlBackendStatus.load(std::memory_order_relaxed));
+    }
+
+    static juce::String getMLBackendStatusName(MLBackendStatus s)
+    {
+        switch (s)
+        {
+            case MLBackendStatus::NotInitialized: return "NotInitialized";
+            case MLBackendStatus::Active:         return "Active";
+            case MLBackendStatus::WeightsMissing: return "WeightsMissing";
+            case MLBackendStatus::LoadFailed:     return "LoadFailed";
+        }
+        return "Unknown";
+    }
+
     //==============================================================================
     // Test-only hooks — deterministic ML testing & diagnostic instrumentation
 
@@ -316,8 +349,10 @@ public:
         if (mlEngine.loadWeights(weightFile))
         {
             useMLDetection = true;
+            mlBackendStatus.store(static_cast<int>(MLBackendStatus::Active), std::memory_order_relaxed);
             return true;
         }
+        mlBackendStatus.store(static_cast<int>(MLBackendStatus::LoadFailed), std::memory_order_relaxed);
         return false;
     }
 
@@ -659,6 +694,9 @@ private:
     // ML detection auto-enabled when ml_weights.bin is found in prepare().
     // Falls back to heuristic detectProblems() if weights are missing or corrupt.
     std::atomic<bool> useMLDetection { false };
+
+    // Resolved ML backend status (see MLBackendStatus). Set in prepare()/test hooks.
+    std::atomic<int> mlBackendStatus { static_cast<int>(MLBackendStatus::NotInitialized) };
 
     // Detection backend mode (default Hybrid for shipping)
     std::atomic<int> detectionBackendMode { static_cast<int>(DetectionBackendMode::Hybrid) };

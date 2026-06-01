@@ -116,14 +116,32 @@ void AIEngine::prepare(double sampleRate, int /*samplesPerBlock*/)
             if (mlEngine.loadWeights(mlModelPath))
             {
                 useMLDetection = true;
+                mlBackendStatus.store(static_cast<int>(MLBackendStatus::Active), std::memory_order_relaxed);
                 AIEQ_LOG_INFO("ML model loaded: " + mlModelPath.getFullPathName());
             }
             else
             {
+                mlBackendStatus.store(static_cast<int>(MLBackendStatus::LoadFailed), std::memory_order_relaxed);
                 AIEQ_LOG_WARNING("Failed to load ML model: " + mlModelPath.getFullPathName()
-                                 + " - using heuristic fallback.");
+                                 + " - using heuristic fallback. ML/Hybrid backend modes will run "
+                                   "the heuristic path until valid weights are present.");
             }
         }
+        else
+        {
+            // Previously this was a SILENT no-op: with no weights next to the
+            // binary, useMLDetection stayed false and ML/Hybrid silently became
+            // heuristic with no warning. Make the degradation explicit.
+            mlBackendStatus.store(static_cast<int>(MLBackendStatus::WeightsMissing), std::memory_order_relaxed);
+            AIEQ_LOG_WARNING("ML weights not found at " + mlModelPath.getFullPathName()
+                             + " - ML/Hybrid backend modes will run the heuristic path. "
+                               "Ship models/ml_weights.bin next to the binary to enable ML detection.");
+        }
+    }
+    else
+    {
+        // Weights were force-loaded before prepare() (e.g. test hook); reflect that.
+        mlBackendStatus.store(static_cast<int>(MLBackendStatus::Active), std::memory_order_relaxed);
     }
 
     // Attempt to load TFLite model if enabled and not already loaded
