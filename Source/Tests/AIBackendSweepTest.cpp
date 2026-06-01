@@ -329,6 +329,149 @@ public:
         expect(totalExpectedFound > 0,
                "Pipeline detected NONE of the injected problems across the entire sweep "
                "— the detection path is silent, which is a real regression.");
+
+        // ====================================================================
+        // ROBUSTNESS — multi-seed false-positive / recall under noise variation
+        // ====================================================================
+        // The matrix above reads the FINAL cell output for ONE noise realisation
+        // per cell. That hid a frame-level fragility once before (Codex): a veto
+        // can pass today's seed yet go noisy the moment the noise realisation
+        // changes. This section sweeps MANY independent seeds and measures, on the
+        // ML-bearing backends:
+        //   - Clean FINAL false-positive rate  (does the floor return under noise?)
+        //   - Clean FRAME-LEVEL false-positive rate (transient flicker the UI would show)
+        //   - Resonance recall                 (does the prominence veto keep true peaks?)
+        beginTest("Robustness: multi-seed FP rate + Resonance recall under noise");
+
+        const Stimulus& resStim   = stimuli[0]; // Resonance@800
+        const Stimulus& cleanStim = stimuli[3]; // Clean control
+        expect(resStim.expected   == AIEngine::ProblemType::Resonance, "stimulus[0] is not Resonance");
+        expect(cleanStim.expected == AIEngine::ProblemType::None,      "stimulus[3] is not Clean");
+
+        const BackendOpt mlBackends[] = {
+            { AIEngine::DetectionBackendMode::MLOnly, "ML       " },
+            { AIEngine::DetectionBackendMode::Hybrid, "Hybrid   " },
+        };
+        constexpr int   kSeeds = 64;
+        constexpr float kSens  = 0.5f;
+
+        int cleanFinalFP_ML = 0, cleanFinalFP_Hy = 0; // final-output FP, split by backend
+        int cleanTrialsPer  = 0;                       // trials per backend (== kSeeds)
+        int cleanFrameFP = 0, cleanFrames = 0;         // frame-level FP (both backends)
+        int resFound     = 0, resTrials   = 0;         // Resonance recall (both backends)
+        juce::String fpSamples;                        // a few example FP rows for the log
+
+        // Run one cell: feed 16 noisy frames, optionally tally per-frame FP, return final output.
+        auto runCell = [&](const Stimulus& stim, AIEngine::DetectionBackendMode mode,
+                           uint32_t seed, bool trackFrames, int& frameFPaccum, int& frameAccum)
+        {
+            AIEngine ai;
+            ai.prepare(kSampleRate, 512);
+            ai.setEnabled(true);
+            ai.setSourceProfile(AIEngine::SourceProfile::Generic);
+            ai.setDetectionBackendMode(mode);
+            ai.setSensitivity(kSens);
+            if (mode != AIEngine::DetectionBackendMode::HeuristicOnly)
+            {
+                if (mlWeightsFile.existsAsFile())
+                    ai.setCustomMLWeightsPathForTests(mlWeightsFile);
+                ai.forceMLDetectionEnabledForTests(true);
+            }
+            std::mt19937 rng(seed);
+            for (int frame = 0; frame < 16; ++frame)
+            {
+                auto noisy = stim.base;
+                addNoise(noisy, rng, 2.0f);
+                ai.analyzeSpectrum(noisy, true);
+                if (trackFrames)
+                {
+                    ++frameAccum;
+                    if (! ai.getPendingCorrections().empty())
+                        ++frameFPaccum;
+                }
+            }
+            return ai.getPendingCorrections();
+        };
+
+        for (const auto& be : mlBackends)
+        {
+            const bool isHybrid = (be.mode == AIEngine::DetectionBackendMode::Hybrid);
+            for (int seed = 0; seed < kSeeds; ++seed)
+            {
+                // Clean — final + frame-level false positives
+                {
+                    const uint32_t s = static_cast<uint32_t>(
+                        juce::String("cleanRobust" + juce::String(seed)).hashCode());
+                    auto pend = runCell(cleanStim, be.mode, s, true, cleanFrameFP, cleanFrames);
+                    if (! pend.empty())
+                    {
+                        if (isHybrid) ++cleanFinalFP_Hy; else ++cleanFinalFP_ML;
+                        if (fpSamples.length() < 400)
+                        {
+                            juce::String d;
+                            for (const auto& c : pend)
+                                d += juce::String(shortType(c.type)) + "@" + juce::String((int) c.frequency)
+                                   + " c=" + juce::String(c.confidence, 2) + " ";
+                            fpSamples += "      " + be.name.trim() + " seed=" + juce::String(seed)
+                                       + " : " + d + "\n";
+                        }
+                    }
+                }
+                // Resonance — recall (true-positive retention)
+                {
+                    const uint32_t s = static_cast<uint32_t>(
+                        juce::String("resRobust" + juce::String(seed)).hashCode());
+                    int dummyA = 0, dummyB = 0;
+                    auto pend = runCell(resStim, be.mode, s, false, dummyA, dummyB);
+                    ++resTrials;
+                    bool found = false;
+                    for (const auto& c : pend)
+                        if (c.type == AIEngine::ProblemType::Resonance)
+                            found = true;
+                    if (found)
+                        ++resFound;
+                }
+            }
+            cleanTrialsPer = kSeeds; // same per backend
+        }
+
+        const float cleanRateML  = cleanTrialsPer > 0 ? 100.0f * (float) cleanFinalFP_ML / (float) cleanTrialsPer : 0.0f;
+        const float cleanRateHy  = cleanTrialsPer > 0 ? 100.0f * (float) cleanFinalFP_Hy / (float) cleanTrialsPer : 0.0f;
+        const float cleanFrameRate = cleanFrames > 0 ? 100.0f * (float) cleanFrameFP / (float) cleanFrames : 0.0f;
+        const float resRecall      = resTrials   > 0 ? 100.0f * (float) resFound     / (float) resTrials   : 0.0f;
+
+        logMessage("");
+        logMessage("  --- Robustness over " + juce::String(kSeeds) + " seeds per backend (sens 0.5) ---");
+        logMessage("  Clean FINAL FP rate  MLOnly : " + juce::String(cleanFinalFP_ML) + "/" + juce::String(cleanTrialsPer)
+                   + " (" + juce::String(cleanRateML, 1) + "%)");
+        logMessage("  Clean FINAL FP rate  Hybrid : " + juce::String(cleanFinalFP_Hy) + "/" + juce::String(cleanTrialsPer)
+                   + " (" + juce::String(cleanRateHy, 1) + "%)   [Hybrid adds the heuristic resonance supplement]");
+        logMessage("  Clean FRAME-LEVEL FP rate   : " + juce::String(cleanFrameFP) + "/" + juce::String(cleanFrames)
+                   + " (" + juce::String(cleanFrameRate, 1) + "%)  (both backends)");
+        logMessage("  Resonance recall            : " + juce::String(resFound) + "/" + juce::String(resTrials)
+                   + " (" + juce::String(resRecall, 1) + "%)  (both backends)");
+        if (fpSamples.isNotEmpty())
+        {
+            logMessage("  Residual clean-FP samples (for triage):");
+            logMessage(fpSamples.trimEnd());
+        }
+
+        // ── Regression gates ──
+        // The ML floor used to fire on EVERY clean frame (100%). After 4A/4B/4C the
+        // MLOnly path must be essentially clean across noise realisations, and the
+        // prominence veto must keep the genuine +20 dB resonance. The Hybrid gate is
+        // deliberately looser: it still carries the heuristic resonance supplement
+        // (c~=0.45, right at the Commit-3 gate), whose tightening is a separate,
+        // already-scoped follow-up (Hybrid supplement-only). These thresholds guard
+        // against the floor RETURNING; the logged rates above are the live signal.
+        expect(cleanRateML <= 5.0f,
+               "MLOnly clean false-positive rate regressed above 5% — the ML floor / band-excess is back.");
+        expect(cleanFrameRate <= 25.0f,
+               "Clean frame-level false-positive rate regressed above 25% — transient floor flicker.");
+        expect(cleanRateHy <= 20.0f,
+               "Hybrid clean false-positive rate regressed above 20% — heuristic supplement too loose.");
+        expect(resRecall >= 85.0f,
+               "Resonance recall fell below 85% — the prominence veto is too aggressive.");
     }
 };
 
