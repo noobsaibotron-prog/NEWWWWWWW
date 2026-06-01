@@ -2442,13 +2442,15 @@ void AIEngine::detectProblemsWithML()
     // exists. Before accepting each mapped correction we verify it against the
     // published dB spectrum using the existing thread-safe helpers. Constants are
     // INDEPENDENT of sensitivity (same invariant as 4A / the heuristic gate).
-    // NOTE: planned ~2.0, lowered to 1.0 after empirical re-measure. The resonance's
-    // own skirt inflates the local window's mean/variance, crushing a genuine +20dB
-    // Res@800 down to z21~=1.9 (min 0.66) — overlapping clean (max ~3.08). At 2.0 the
-    // true Res@800 was lost at sens 0.2/0.8; 1.0 restores it while keeping clean 0/9
-    // at the cell level. (A prominence-based discriminator separates far more cleanly;
-    // flagged to Marco/Codex as a hardening follow-up.)
-    constexpr float kZResonance   = 1.0f;  // local z-score a snapped peak must clear
+    // Commit 4C — Resonance veto is PEAK PROMINENCE, not z-score. Empirically the
+    // z-score on the snapped peak does NOT separate: the resonance's own skirt inflates
+    // the local window mean/variance, crushing a genuine +20dB Res@800 to z21~=1.9
+    // (min 0.66) which overlaps clean (max ~3.08). Prominence (narrow-band peak level
+    // minus a +-1 octave local band, no stddev division) separates cleanly:
+    //   real Res@800 prominence 11.99..19.20 dB   vs   clean <=10.06 dB.
+    // This is the peak-local twin of the band-excess used for the broad classes, so the
+    // whole reality-check stays homogeneous: peak-like -> prominence, broad -> band-excess.
+    constexpr float kResonanceProminenceDb = 11.0f; // peak vs +-1 octave local floor
     constexpr float kBandExcessDb = 3.0f;  // dB the problem band must exceed its reference
     constexpr float kBoomLo       = 30.0f; // LowEndBoom has no thresholds range — local span
     constexpr float kBoomHi       = 100.0f;
@@ -2509,9 +2511,9 @@ void AIEngine::detectProblemsWithML()
                     // Peak-snap FIRST: the ML frequency is biased low (a true
                     // Resonance@800 emerges at ML ~602). findPeakInRange only
                     // LOCATES the window max — it never reports "no peak" — so the
-                    // real veto is the local z-score, not peak existence. The
-                    // bounded ~+-1 octave window keeps the candidate near the ML
-                    // prediction so a far-off unrelated peak can't rescue an FP.
+                    // real veto is PROMINENCE, not peak existence. The bounded ~+-1
+                    // octave window keeps the candidate near the ML prediction so a
+                    // far-off unrelated peak can't rescue an FP.
                     const float lo = juce::jmax(20.0f, c.frequency * 0.5f);
                     const float hi = juce::jmin(static_cast<float>(currentSampleRate) * 0.5f,
                                                 c.frequency * 2.0f);
@@ -2522,9 +2524,14 @@ void AIEngine::detectProblemsWithML()
                     }
                     else
                     {
-                        const float z = computeZScoreAtFrequency(actualPeak, 21);
-                        if (z < kZResonance)
-                            keep = false;             // flat spectrum: window max is no local outlier
+                        // Prominence = narrow-band level at the peak minus the local
+                        // +-1 octave band mean. A genuine narrow resonance towers over
+                        // its surroundings; a flat/clean window max does not.
+                        const float prominence =
+                              calculateBandEnergy(actualPeak * 0.975f, actualPeak * 1.025f)
+                            - calculateBandEnergy(actualPeak * 0.5f,   actualPeak * 2.0f);
+                        if (prominence < kResonanceProminenceDb)
+                            keep = false;             // flat spectrum: window max is no real peak
                         else
                             c.frequency = actualPeak; // snap (also fixes 602->800 localization bias)
                     }
