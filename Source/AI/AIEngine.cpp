@@ -1137,7 +1137,25 @@ void AIEngine::detectResonances(float threshold)
         {
             continue;  // Skip harmonic peaks unless very high confidence
         }
-        
+
+        // Confidence gate. Now that confidence is a real measurement (the 0.4
+        // floor was removed in the surgical heuristic fix), a fixed gate cleanly
+        // separates genuine resonances from noise ripples. Empirically (AI-Sweep
+        // matrix): a true injected resonance scores c≈0.56-0.57, while noise/clean
+        // ripples top out at c≈0.39-0.46. A gate at 0.45 removes the resonance
+        // "spray" and the clean-signal false positives while keeping the real peak.
+        //
+        // CRITICAL: this MUST gate before push_back — the UI reads
+        // getPendingCorrections() directly, not the filtered helper, so a
+        // downstream filter would not affect what the user sees.
+        //
+        // The gate is INTENTIONALLY independent of sensitivity: sensitivity tunes
+        // which real peaks are flagged, but must never re-open the floodgates on a
+        // flat/noisy spectrum (the invariant that keeps "clean = no problem" true).
+        constexpr float kHeuristicConfidenceGate = 0.45f;
+        if (c.confidence < kHeuristicConfidenceGate)
+            continue;
+
         // Detailed description with bandwidth info
         juce::String bandName = getBandName(peak.frequency);
         c.description = juce::String::formatted(
