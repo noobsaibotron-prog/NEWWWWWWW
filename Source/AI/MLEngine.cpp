@@ -237,16 +237,42 @@ std::vector<MLEngine::ProblemDetection> MLEngine::detectProblems(
     // Generate detections for problems above threshold
     //--------------------------------------------------------------------------
     float sensitivityScale = 1.0f - (sensitivity - 0.5f) * 0.6f; // Lower = more sensitive
-    
+
+    // Commit 4A — ML decision-rule tightening (floor suppression).
+    // These constants are INDEPENDENT of sensitivity: sensitivity tunes which real
+    // problems surface, it must never re-open the false-positive floodgates.
+    //  - kMlMargin: how far above threshold a class must sit to be accepted. The bare
+    //    threshold lets near-threshold co-fires through on a flat spectrum.
+    //  - kMlTopK:   hard cap on simultaneous detections (defensive belt-and-suspenders
+    //    on top of the rank<=2 gate below).
+    constexpr float kMlMargin = 0.10f; // per-class margin above threshold (tunable per class later)
+    constexpr size_t kMlTopK   = 2;    // max simultaneous detections
+
+    // Rank classes by RAW probability (before thresholding). A class qualifies only
+    // if it is in the top-2 by raw probability. NOTE: deliberately NO dominance gap —
+    // on a real Mud@250 stimulus Res and Mud are near-tied (~0.98 each) and a gap gate
+    // would kill a true positive. Plain rank<=2 is the rule.
+    std::array<int, numProblemTypes> rankOrder {};
+    for (int i = 0; i < numProblemTypes; ++i)
+        rankOrder[static_cast<size_t>(i)] = i;
+    std::sort(rankOrder.begin(), rankOrder.end(),
+              [&problemProbs](int a, int b) {
+                  return problemProbs[static_cast<size_t>(a)] > problemProbs[static_cast<size_t>(b)];
+              });
+    std::array<bool, numProblemTypes> inTopRank {};
+    for (size_t r = 0; r < rankOrder.size() && r < kMlTopK; ++r)
+        inTopRank[static_cast<size_t>(rankOrder[r])] = true;
+
     for (int i = 0; i < numProblemTypes; ++i)
     {
         float prob = problemProbs[static_cast<size_t>(i)];
         float threshold = baseThresholds[static_cast<size_t>(i)] * sensitivityScale;
-        
+
         // Adjust threshold based on context (genre)
         threshold = adjustThresholdForContext(threshold, static_cast<ProblemType>(i));
-        
-        if (prob > threshold)
+
+        // Accept only if: above threshold AND clears the margin AND is a top-rank class.
+        if (prob > threshold && (prob - threshold) >= kMlMargin && inTopRank[static_cast<size_t>(i)])
         {
             ProblemDetection det;
             det.type = static_cast<ProblemType>(i);
@@ -282,7 +308,12 @@ std::vector<MLEngine::ProblemDetection> MLEngine::detectProblems(
               [](const ProblemDetection& a, const ProblemDetection& b) {
                   return a.severity > b.severity;
               });
-    
+
+    // Commit 4A — top-K cap (defensive). With rank<=2 already applied above this is
+    // nearly redundant; kept as a belt-and-suspenders guard against future drift.
+    if (detections.size() > kMlTopK)
+        detections.resize(kMlTopK);
+
     return detections;
 }
 
