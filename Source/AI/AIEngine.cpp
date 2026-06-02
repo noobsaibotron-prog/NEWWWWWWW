@@ -2561,6 +2561,19 @@ void AIEngine::detectProblemsWithML()
     constexpr float kBandExcessDb = 3.0f;  // dB the problem band must exceed its reference
     constexpr float kBoomLo       = 30.0f; // LowEndBoom has no thresholds range — local span
     constexpr float kBoomHi       = 100.0f;
+    // NOTE on the band-excess veto family (Muddiness/Boxyness/Sibilance/LowEndBoom):
+    // all use `band - wide_reference >= kBandExcessDb`. This is SYSTEMICALLY biased by the
+    // HF rolloff of natural pink tilt: on a steep (-6 dB/decade) but perfectly clean
+    // spectrum the low-mid band reads as a multi-dB "excess" and false-positives (measured
+    // via the CleanSteep control in AIBackendSweepTest: at cap 3 both Mud and Bxy fire on
+    // clean steep tilt). Two candidate fixes were measured and BOTH have costs:
+    //   - narrow reference (100..1000): tilt-robust but contaminated by a nearby resonance
+    //     -> masks real Mud@250 when Res@800 coexists (recall loss, even at cap 2);
+    //   - wide reference + higher threshold (4.5 dB): peak-robust but tilt-FRAGILE -> still
+    //     hallucinates Mud on steep clean tilt (the anti-hallucination goal forbids this).
+    // Neither is both tilt- AND peak-robust, so a proper systemic redesign of this veto
+    // family is deferred to its own commit. Until then the floor is held by kMlTopK<=2,
+    // which keeps these rank-3 candidates from ever reaching the veto on clean spectra.
 
     for (const auto& mlDet : mlDetections)
     {
@@ -2645,9 +2658,19 @@ void AIEngine::detectProblemsWithML()
                     break;
                 }
                 case ProblemType::Muddiness:
-                    // band 150..400 vs broad 100..10000 reference (heuristic-consistent)
+                    // band 150..400 vs the band JUST BELOW it (80..150). A below-band
+                    // reference is (a) local -> self-normalises spectral tilt (no FP on steep
+                    // clean), AND (b) sits BELOW the boxy/resonance region (300..800), so a
+                    // nearby Res@800 no longer contaminates the reference / masks a real Mud.
+                    // Under natural tilt the lower band is LOUDER, so clean tilt gives a
+                    // NEGATIVE excess (rejected); a strong low-mid hump (Mud@250 standalone,
+                    // +14 dB) raises 150..400 above the 80..150 shelf and passes. KNOWN
+                    // LIMIT: a modest hump (~+7 dB) co-occurring with a dominant resonance
+                    // does not clear 3 dB over its own low-end neighbourhood, so it is missed
+                    // (conservative). Lowering the threshold did not recover it cleanly; a
+                    // proper multi-band redesign is deferred to its own commit.
                     keep = (calculateBandEnergy(thresholds.muddinessLow, thresholds.muddinessHigh)
-                            - calculateBandEnergy(100.0f, 10000.0f)) >= kBandExcessDb;
+                            - calculateBandEnergy(80.0f, 150.0f)) >= kBandExcessDb;
                     break;
                 case ProblemType::Boxyness:
                     // band 300..800 vs broad 100..8000 reference

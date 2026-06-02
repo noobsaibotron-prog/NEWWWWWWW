@@ -239,12 +239,12 @@ std::vector<MLEngine::ProblemDetection> MLEngine::detectProblems(
     float sensitivityScale = 1.0f - (sensitivity - 0.5f) * 0.6f; // Lower = more sensitive
 
     // Commit 4A — ML decision-rule tightening (floor suppression).
-    // These constants are INDEPENDENT of sensitivity: sensitivity tunes which real
-    // problems surface, it must never re-open the false-positive floodgates.
     //  - kMlMargin: how far above threshold a class must sit to be accepted. The bare
-    //    threshold lets near-threshold co-fires through on a flat spectrum.
-    //  - kMlTopK:   hard cap on simultaneous detections (defensive belt-and-suspenders
-    //    on top of the rank<=2 gate below).
+    //    threshold lets near-threshold co-fires through on a flat spectrum. This stays
+    //    INDEPENDENT of sensitivity — it must never re-open the false-positive floodgates.
+    //  - kMlTopK:   cap on simultaneous detections, ALSO used to build the rank gate
+    //    below. This is now sensitivity-dependent (see below) so the SENSITIVITY knob
+    //    has a concrete, visible effect on the ML/Hybrid path.
     //
     // Per-class margin. Default 0.10 for every class. Resonance is the sole exception
     // at 0.02: attribution of the 4A recall regression (AIAccuracyTest MLEngine Direct,
@@ -266,12 +266,33 @@ std::vector<MLEngine::ProblemDetection> MLEngine::detectProblems(
         0.10f,  // BoxyMidrange
         0.10f   // Clipping
     }};
-    constexpr size_t kMlTopK   = 2;    // max simultaneous detections
+    // Sensitivity-dependent cap so the SENSITIVITY knob actually bites on ML/Hybrid.
+    // Anchored so the default (0.5) keeps the historical cap of 2 — i.e. existing
+    // measured behaviour (AI-Sweep clean 0/9, recall) is unchanged at default. Low
+    // sensitivity surfaces only the single strongest problem (cap 1); default/high
+    // surface up to two (cap 2). Measured effect (AI-Knobs ML path): sens 0.0-0.25 -> 1
+    // problem, sens 0.5-1.0 -> 2 problems; AI-Sweep clean stays 0/9 at every sensitivity.
+    //
+    // Cap mapping: low 1, default/high 2. The knob is alive across low->default (ML
+    // surfaces 1 then 2 problems; verified AI-Knobs) while clean stays 0/9.
+    //
+    // The high tier is capped at 2, NOT 3, deliberately. A cap of 3 lets a rank-3 candidate
+    // reach the AIEngine band-excess veto family (Muddiness/Boxyness/...), which is
+    // systemically biased by natural pink tilt: on a clean but steep (-6 dB/decade) spectrum
+    // both Mud and Bxy then false-positive (measured via the CleanSteep control). Two veto
+    // fixes were tried and both have costs (narrow ref -> masks real mud near a resonance;
+    // wide ref + higher threshold -> still hallucinates on steep tilt). So cap<=2 is the
+    // robustly clean-safe envelope on BOTH gentle and steep tilt; unlocking a cap-3 high
+    // tier (full-range aliveness) is blocked on a proper systemic redesign of that veto
+    // family (its own commit). Until then cap 2 masks the latent veto bias on clean spectra.
+    const size_t kMlTopK = (sensitivity < 0.34f) ? 1u
+                         : (sensitivity < 0.67f) ? 2u
+                                                 : 2u;
 
     // Rank classes by RAW probability (before thresholding). A class qualifies only
-    // if it is in the top-2 by raw probability. NOTE: deliberately NO dominance gap —
-    // on a real Mud@250 stimulus Res and Mud are near-tied (~0.98 each) and a gap gate
-    // would kill a true positive. Plain rank<=2 is the rule.
+    // if it is in the top-kMlTopK by raw probability. NOTE: deliberately NO dominance
+    // gap — on a real Mud@250 stimulus Res and Mud are near-tied (~0.98 each) and a gap
+    // gate would kill a true positive. Plain rank<=kMlTopK is the rule.
     std::array<int, numProblemTypes> rankOrder {};
     for (int i = 0; i < numProblemTypes; ++i)
         rankOrder[static_cast<size_t>(i)] = i;

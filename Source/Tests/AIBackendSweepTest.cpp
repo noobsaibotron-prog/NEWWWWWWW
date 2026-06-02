@@ -100,6 +100,21 @@ void applyPinkTilt(std::vector<float>& spec)
     }
 }
 
+// Steeper pink tilt (~ -6 dB/decade) — still NATURAL, NOT a problem. Common on real
+// bass-heavy material. Used to probe whether a Muddiness veto that relies on an
+// absolute band-excess threshold (Approach B) hallucinates low-mid "mud" purely from a
+// steeper-but-clean spectral slope. A self-normalising / local reference (Approach A)
+// should stay clean here regardless of slope.
+void applySteepTilt(std::vector<float>& spec)
+{
+    const float binHz = static_cast<float>(kSampleRate) / kFFTSize;
+    for (int i = 0; i < kNumBins; ++i)
+    {
+        const float f = juce::jmax(20.0f, static_cast<float>(i) * binHz);
+        spec[static_cast<size_t>(i)] += -6.0f * std::log10(f / 100.0f); // ~ -6 dB/decade
+    }
+}
+
 std::vector<Stimulus> buildStimuli()
 {
     std::vector<Stimulus> s;
@@ -133,6 +148,15 @@ std::vector<Stimulus> buildStimuli()
         auto spec = makeFlat();
         applyPinkTilt(spec);
         s.push_back({ "Clean(control)", AIEngine::ProblemType::None, std::move(spec) });
+    }
+
+    // 5) Clean control with STEEPER tilt (-6 dB/decade) — still no injected problem.
+    //    Appended AFTER index 3 so the robustness section's stimuli[3] stays the gentle
+    //    clean. This is the A-vs-B decider: a tilt-fragile veto will false-positive here.
+    {
+        auto spec = makeFlat();
+        applySteepTilt(spec);
+        s.push_back({ "CleanSteep(control)", AIEngine::ProblemType::None, std::move(spec) });
     }
 
     return s;
