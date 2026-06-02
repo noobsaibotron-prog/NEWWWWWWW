@@ -1084,6 +1084,7 @@ if(HAVE_JUCE)
         Source/Tests/AIThresholdCalibrationTest.cpp
         Source/Tests/AntiPopRegressionTest.cpp
         Source/Tests/FreqDragClickTest.cpp
+        Source/Tests/SensitivityKnobLiveTest.cpp
         Source/Tests/TestMain.cpp
     )
     target_compile_features(AIEqualizerPro_IntegrationTests PRIVATE cxx_std_20)
