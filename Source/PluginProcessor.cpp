@@ -45,6 +45,14 @@ AIEqualizerAudioProcessor::AIEqualizerAudioProcessor()
     apvts.addParameterListener("phaseMode", this);
     apvts.addParameterListener("msMode", this);
     apvts.addParameterListener("oversamplingFactor", this);
+    // AI knobs that are applied to the engine ONLY inside updateEQFromParameters()
+    // (setSensitivity/setStrength at ~3349/3354). Without listeners, moving these
+    // knobs never set parametersNeedUpdate, so updateEQFromParameters() was not called
+    // during steady playback and the new value was never pushed to the AI engine -
+    // the Sensitivity knob appeared "dead" (amber bars / AI panel did not update live).
+    // (aiEnabled is read live every block at ~1380, so it does not need a listener.)
+    apvts.addParameterListener("aiSensitivity", this);
+    apvts.addParameterListener("aiStrength", this);
     // Listen to band parameters to trigger IR regeneration for linear-phase mode
     for (int i = 0; i < maxBands; ++i)
     {
