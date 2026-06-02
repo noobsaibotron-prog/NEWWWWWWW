@@ -245,7 +245,27 @@ std::vector<MLEngine::ProblemDetection> MLEngine::detectProblems(
     //    threshold lets near-threshold co-fires through on a flat spectrum.
     //  - kMlTopK:   hard cap on simultaneous detections (defensive belt-and-suspenders
     //    on top of the rank<=2 gate below).
-    constexpr float kMlMargin = 0.10f; // per-class margin above threshold (tunable per class later)
+    //
+    // Per-class margin. Default 0.10 for every class. Resonance is the sole exception
+    // at 0.02: attribution of the 4A recall regression (AIAccuracyTest MLEngine Direct,
+    // Resonance recall 40%->20%) showed the 0.10 margin was the *sole* cause — it killed
+    // two genuine weak resonances at prob 0.238 and 0.221 (threshold 0.20), neither of
+    // which rank<=2 nor top-K would have dropped. A 0.02 margin is the tight minimum that
+    // recovers both (0.221-0.20=0.021 >= 0.02) without widening the door: on clean stimuli
+    // Resonance prob never exceeds ~0.094 (well below the 0.20 threshold), so the base
+    // threshold alone already separates clean here, and the AIEngine 4B/4C prominence veto
+    // remains the backstop in the full pipeline. 0.02 (not 0) avoids introducing slack
+    // that isn't needed. All other classes keep 0.10 to hold the floor shut.
+    constexpr std::array<float, numProblemTypes> kMlMargin {{
+        0.02f,  // Resonance     — tight, recovers 4A's collateral recall loss
+        0.10f,  // Harshness
+        0.10f,  // Muddiness
+        0.10f,  // Sibilance
+        0.10f,  // Boominess
+        0.10f,  // Thinness
+        0.10f,  // BoxyMidrange
+        0.10f   // Clipping
+    }};
     constexpr size_t kMlTopK   = 2;    // max simultaneous detections
 
     // Rank classes by RAW probability (before thresholding). A class qualifies only
@@ -271,8 +291,8 @@ std::vector<MLEngine::ProblemDetection> MLEngine::detectProblems(
         // Adjust threshold based on context (genre)
         threshold = adjustThresholdForContext(threshold, static_cast<ProblemType>(i));
 
-        // Accept only if: above threshold AND clears the margin AND is a top-rank class.
-        if (prob > threshold && (prob - threshold) >= kMlMargin && inTopRank[static_cast<size_t>(i)])
+        // Accept only if: above threshold AND clears the per-class margin AND is a top-rank class.
+        if (prob > threshold && (prob - threshold) >= kMlMargin[static_cast<size_t>(i)] && inTopRank[static_cast<size_t>(i)])
         {
             ProblemDetection det;
             det.type = static_cast<ProblemType>(i);
