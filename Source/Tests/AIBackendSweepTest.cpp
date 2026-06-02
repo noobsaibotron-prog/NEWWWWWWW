@@ -476,3 +476,144 @@ public:
 };
 
 static AIBackendSweepTest sAIBackendSweepTest;
+
+
+// =============================================================================
+// KNOB EFFECT PROOF (Marco's request: "certezza assoluta" that tweaking the
+// SENSITIVITY and CORRECTION knobs changes something concrete).
+//
+// This test does NOT deduce from the source — it MEASURES:
+//   PART 1  SENSITIVITY → number of detected problems + their gains/confidence.
+//   PART 2  CORRECTION (aiStrength) → the gain actually applied to a correction.
+// Both knobs are swept; the tables are printed and a hard assertion FAILS the
+// build if a knob ever stops affecting the output (a permanent wiring guard).
+//
+// Honest nuance baked into the assertions: the heuristic path responds to
+// sensitivity continuously (thresholds + gain + confidence all scale), so we
+// hard-assert it changes. The ML path's accept gates (per-class margin, rank<=2,
+// top-K) are INTENTIONALLY sensitivity-independent to keep the clean floor shut,
+// so ML is logged as evidence but not hard-gated.
+// =============================================================================
+class AIKnobEffectTest : public juce::UnitTest
+{
+public:
+    AIKnobEffectTest()
+        : juce::UnitTest("AI Knob Effect — sensitivity & correction proof", "AI-Knobs") {}
+
+    // Stimulus carrying several REAL problems so sensitivity has something to
+    // modulate: a strong +18 dB resonance (always found) plus weaker mud/harsh
+    // humps sitting near the detection threshold.
+    static std::vector<float> makeMultiProblemStim()
+    {
+        auto spec = makeFlat();
+        applyPinkTilt(spec);
+        addPeakDb(spec,  800.0f, 18.0f, 0.04f);  // strong resonance — always detected
+        addPeakDb(spec,  250.0f,  7.0f, 0.30f);  // moderate muddiness — near threshold
+        addPeakDb(spec, 4000.0f,  6.0f, 0.20f);  // moderate harshness — near threshold
+        return spec;
+    }
+
+    struct Response { int count = 0; float sumAbsGain = 0.0f; float sumConf = 0.0f; };
+
+    static Response runCell(const std::vector<float>& base,
+                            AIEngine::DetectionBackendMode mode,
+                            float sens,
+                            const juce::File& mlWeights)
+    {
+        AIEngine ai;
+        ai.prepare(kSampleRate, 512);
+        ai.setEnabled(true);
+        ai.setSourceProfile(AIEngine::SourceProfile::Generic);
+        ai.setDetectionBackendMode(mode);
+        ai.setSensitivity(sens);
+
+        if (mode != AIEngine::DetectionBackendMode::HeuristicOnly)
+        {
+            if (mlWeights.existsAsFile())
+                ai.setCustomMLWeightsPathForTests(mlWeights);
+            ai.forceMLDetectionEnabledForTests(true);
+        }
+
+        // force=true → bypasses temporal persistence, fully deterministic.
+        std::mt19937 rng(1234u);
+        for (int f = 0; f < 16; ++f)
+        {
+            auto noisy = base;
+            addNoise(noisy, rng, 1.0f);
+            ai.analyzeSpectrum(noisy, true);
+        }
+
+        Response r;
+        for (const auto& c : ai.getPendingCorrections())
+        {
+            ++r.count;
+            r.sumAbsGain += std::abs(c.suggestedGain);
+            r.sumConf    += c.confidence;
+        }
+        return r;
+    }
+
+    void runTest() override
+    {
+        const juce::File mlWeights =
+            juce::File(__FILE__).getParentDirectory().getParentDirectory().getParentDirectory()
+                .getChildFile("Resources/Models/ml_weights.bin");
+
+        const auto stim = makeMultiProblemStim();
+
+        // ---- PART 1a: SENSITIVITY on the heuristic path (hard-asserted) ------
+        beginTest("SENSITIVITY changes detection output — Heuristic path");
+        logMessage("  sens | #problems | sum|gain|dB | sum conf");
+        logMessage("  -----+-----------+------------+---------");
+        Response loH, hiH;
+        bool firstH = true;
+        for (float s = 0.0f; s <= 1.0001f; s += 0.25f)
+        {
+            const auto r = runCell(stim, AIEngine::DetectionBackendMode::HeuristicOnly, s, mlWeights);
+            logMessage("  " + juce::String(s, 2) + " |     " + juce::String(r.count)
+                       + "     |   " + juce::String(r.sumAbsGain, 2)
+                       + "   |  " + juce::String(r.sumConf, 2));
+            if (firstH) { loH = r; firstH = false; }
+            hiH = r;
+        }
+        const bool heurChanged = (loH.count != hiH.count)
+                              || std::abs(loH.sumAbsGain - hiH.sumAbsGain) > 0.01f
+                              || std::abs(loH.sumConf    - hiH.sumConf)    > 0.01f;
+        expect(heurChanged,
+               "Sensitivity 0.0 vs 1.0 gave an IDENTICAL heuristic result — the knob is inert.");
+
+        // ---- PART 1b: SENSITIVITY on the ML path (logged evidence) -----------
+        beginTest("SENSITIVITY effect on ML path (evidence; ML accept-gates are sensitivity-independent by design)");
+        logMessage("  ML weights: " + juce::String(mlWeights.existsAsFile() ? "FOUND" : "MISSING"));
+        logMessage("  sens | #problems | sum|gain|dB | sum conf");
+        logMessage("  -----+-----------+------------+---------");
+        for (float s = 0.0f; s <= 1.0001f; s += 0.25f)
+        {
+            const auto r = runCell(stim, AIEngine::DetectionBackendMode::MLOnly, s, mlWeights);
+            logMessage("  " + juce::String(s, 2) + " |     " + juce::String(r.count)
+                       + "     |   " + juce::String(r.sumAbsGain, 2)
+                       + "   |  " + juce::String(r.sumConf, 2));
+        }
+
+        // ---- PART 2: CORRECTION (aiStrength) scales the applied gain ----------
+        beginTest("CORRECTION knob scales applied gain exactly: gain = suggested * strength");
+        AIEngine ai;
+        ai.prepare(kSampleRate, 512);
+        AIEngine::Correction c;
+        c.type          = AIEngine::ProblemType::Resonance;
+        c.frequency     = 800.0f;
+        c.suggestedGain = -6.0f;
+        logMessage("  strength | applied gain (dB)   [suggested = -6.00 dB]");
+        logMessage("  ---------+------------------");
+        for (float st : { 0.0f, 0.25f, 0.5f, 0.75f, 1.0f })
+        {
+            ai.setStrength(st);
+            const auto scaled = ai.getScaledCorrection(c);
+            logMessage("    " + juce::String(st, 2) + "   |   " + juce::String(scaled.suggestedGain, 3));
+            expectWithinAbsoluteError(scaled.suggestedGain, c.suggestedGain * st, 1.0e-4f,
+                "CORRECTION knob did not scale the gain linearly — aiStrength is not wired to the output.");
+        }
+    }
+};
+
+static AIKnobEffectTest sAIKnobEffectTest;
