@@ -36,6 +36,7 @@ public:
         testFilteredSortOrder();
         testFlatSpectrumStability();
         testResonanceTrigger();
+        testTemporalPersistence();
         testNewAnalysisFlag();
         testAnalysisHistory();
         testStaticUtilities();
@@ -446,6 +447,51 @@ private:
             expect (c.frequency >= 20.0f && c.frequency <= nyquist,
                     "Every correction frequency must be in [20 Hz, Nyquist]");
         }
+    }
+
+    //--------------------------------------------------------------------------
+    // Temporal persistence (hysteresis) on the LIVE path (force=false).
+    // Contract: a sustained problem is surfaced and stays stable; a stale problem
+    // ages out once the audio is clean for a full window; a single-frame transient
+    // amid clean frames is suppressed (it never reaches the persistence fraction).
+    void testTemporalPersistence()
+    {
+        beginTest ("Temporal persistence keeps stable problems and suppresses transients (live path)");
+
+        AIEngine engine;
+        engine.prepare (kSampleRate, kBlockSize);
+        engine.setEnabled (true);          // live path requires the engine enabled
+        engine.setSensitivity (1.0f);
+
+        const int  resonanceBin = frequencyToBin (1000.0f);
+        const auto peak = makePeakedSpectrum (resonanceBin, -10.0f, -60.0f, /*halfWidthBins=*/1);
+        const auto flat = makeFlatSpectrum (-60.0f);
+
+        // Live feed: force=false so the engine's rate-limiter + persistence run.
+        auto feedLive = [&engine] (const std::vector<float>& s, int n)
+        {
+            for (int i = 0; i < n; ++i)
+                engine.analyzeSpectrum (s, /*force=*/false);
+        };
+
+        // 1) Sustained resonance over many frames → must be detected and persisted.
+        feedLive (peak, 40);
+        const bool stableDetected = ! engine.getPendingCorrections().empty();
+        expect (stableDetected,
+                "A sustained resonance must surface through the live persistence layer");
+
+        // 2) Clean audio for a full window → the stale resonance must age out.
+        feedLive (flat, 40);
+        expect (engine.getPendingCorrections().empty(),
+                "After a clean window, a problem that has vanished must disappear from the list");
+
+        // 3) A short transient (<< persistence fraction of the window) amid clean
+        //    frames must NOT surface. 4 peak frames yield at most 2 analyses out of
+        //    an 8-frame window (<=25% < 60% gate), so the candidate is dropped.
+        feedLive (flat, 18);
+        feedLive (peak, 4);
+        expect (engine.getPendingCorrections().empty(),
+                "A single-frame transient must be suppressed by temporal persistence");
     }
 
     //--------------------------------------------------------------------------

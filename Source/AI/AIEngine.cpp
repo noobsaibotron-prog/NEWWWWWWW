@@ -271,6 +271,17 @@ void AIEngine::analyzeSpectrum(const std::vector<float>& spectrum, bool force)
     {
         detectProblems();
     }
+
+    // Temporal persistence (hysteresis): stabilise the LIVE problem list so it
+    // stops flickering frame-to-frame. The capture/freeze path (force == true)
+    // analyses a single window-averaged spectrum once, so it is already stable
+    // and must surface its full result immediately — bypass persistence there
+    // and reset the live history so the two paths never contaminate each other.
+    if (force)
+        resetDetectionHistory();
+    else
+        applyTemporalPersistence();
+
     detectGenre();
     
     // Save to history
@@ -671,6 +682,7 @@ void AIEngine::clearCorrections()
 {
     std::lock_guard<std::mutex> lock(correctionsWriteMutex);
     pendingCorrections.clear();
+    detectionHistory.clear();  // drop temporal-persistence window too
     for (auto& buf : approvedCorrectionBuffers)
         buf.clear();
 
@@ -877,8 +889,103 @@ void AIEngine::detectProblems()
                       return a.severity > b.severity;  // Tie-break by severity
                   return priorityA > priorityB;
               });
-    
+
     // No hard limit - let filtering/merging handle it
+}
+
+//==============================================================================
+// Temporal persistence (hysteresis) — see AIEngine.h for rationale.
+//
+// A problem is surfaced to the user only if a matching detection (same type,
+// frequency within a quarter-octave) is present in at least kPersistenceFraction
+// of the last kHistoryLen live analyses. Transient single-frame detections on
+// non-stationary audio (the "flicker" that made FIX ALL non-deterministic) are
+// dropped; surviving problems get their frequency / severity / confidence / gain
+// averaged across the window, which also de-jitters their displayed values.
+namespace
+{
+    constexpr std::size_t kHistoryLen          = 8;     // ~0.8s at ~10 analyses/s
+    constexpr float       kPersistenceFraction = 0.6f;  // present in >=60% of window
+    constexpr float       kFreqMatchOctaves    = 0.25f; // quarter-octave match tolerance
+
+    inline bool sameProblem (const AIEngine::Correction& a, const AIEngine::Correction& b)
+    {
+        if (a.type != b.type)
+            return false;
+        if (a.frequency <= 0.0f || b.frequency <= 0.0f)
+            return false;
+        return std::abs (std::log2 (a.frequency / b.frequency)) <= kFreqMatchOctaves;
+    }
+}
+
+void AIEngine::resetDetectionHistory()
+{
+    std::lock_guard<std::mutex> lock(correctionsWriteMutex);
+    detectionHistory.clear();
+}
+
+void AIEngine::applyTemporalPersistence()
+{
+    std::lock_guard<std::mutex> lock(correctionsWriteMutex);
+
+    // Push a copy of THIS frame's raw detection into the ring before gating,
+    // so the history reflects raw per-frame detections (never the gated output).
+    detectionHistory.push_back(pendingCorrections);
+    while (detectionHistory.size() > kHistoryLen)
+        detectionHistory.pop_front();
+
+    const std::size_t n = detectionHistory.size();
+    if (n == 0)
+        return;
+
+    // Candidates come from the most recent frame (we never invent a problem the
+    // current spectrum does not show); each is kept only if temporally stable.
+    const auto latest = detectionHistory.back();  // copy: we overwrite pendingCorrections below
+    std::vector<Correction> stable;
+    stable.reserve(latest.size());
+
+    for (const auto& cand : latest)
+    {
+        int    hits     = 0;
+        float  fSum     = 0.0f, sevSum = 0.0f, confSum = 0.0f, gainSum = 0.0f;
+
+        for (const auto& frame : detectionHistory)
+        {
+            for (const auto& d : frame)
+            {
+                if (sameProblem(d, cand))
+                {
+                    ++hits;                       // count this frame once
+                    fSum    += d.frequency;
+                    sevSum  += d.severity;
+                    confSum += d.confidence;
+                    gainSum += d.suggestedGain;
+                    break;
+                }
+            }
+        }
+
+        const float frac = static_cast<float>(hits) / static_cast<float>(n);
+        if (frac < kPersistenceFraction)
+            continue;  // transient → drop
+
+        // De-duplicate: a stabilised problem of the same type/freq already kept.
+        bool dup = false;
+        for (const auto& s : stable)
+            if (sameProblem(s, cand)) { dup = true; break; }
+        if (dup)
+            continue;
+
+        Correction s   = cand;
+        const float inv = 1.0f / static_cast<float>(hits);
+        s.frequency     = fSum    * inv;   // averaged → stable, de-jittered value
+        s.severity      = sevSum  * inv;
+        s.confidence    = confSum * inv;
+        s.suggestedGain = gainSum * inv;
+        stable.push_back(s);
+    }
+
+    pendingCorrections.swap(stable);
 }
 
 void AIEngine::detectResonances(float threshold)

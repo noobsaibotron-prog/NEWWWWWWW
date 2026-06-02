@@ -12,6 +12,7 @@
 #include <mutex>
 #include <shared_mutex>
 #include <array>
+#include <deque>
 #include <memory>
 
 //==============================================================================
@@ -637,7 +638,18 @@ private:
     mutable std::mutex spectrumMutex;  // Only for internal updateSpectrumHistory access
     
     std::vector<Correction> pendingCorrections;
-    
+
+    // --- Temporal persistence (hysteresis) for live detection -----------------
+    // The live analysis path overwrites pendingCorrections every analysis frame
+    // from non-stationary audio, so problems flicker frame-to-frame. We keep a
+    // short ring of the last N raw detections and only surface a problem that is
+    // present in a sufficient fraction of them — a "ferrea" rule: a problem is
+    // real only if it is temporally stable. Touched ONLY on the AI analysis
+    // thread (single-threaded), so no extra lock beyond correctionsWriteMutex.
+    std::deque<std::vector<Correction>> detectionHistory;
+    void applyTemporalPersistence();
+    void resetDetectionHistory();
+
     // Filter state for dynamic EQ processing (biquad Direct Form II Transposed)
     struct FilterState
     {
