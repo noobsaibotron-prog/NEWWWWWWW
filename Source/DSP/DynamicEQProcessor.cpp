@@ -412,8 +412,9 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
                 if (channels > 1)
                     outRPtr[sample] = outR;
                 
+                const float outMag = std::max(std::abs(outL), std::abs(outR));
                 state.meterOutputLevel.store(
-                    juce::Decibels::gainToDecibels(std::max(std::abs(outL), std::abs(outR))),
+                    outMag > 1e-10f ? juce::Decibels::gainToDecibels(outMag) : -100.0f,
                     std::memory_order_relaxed);
             }
         }
@@ -477,8 +478,8 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
         
         if (totalGainLinear < 0.999f)
         {
-            // Safety clamp to avoid extreme boosts
-            const float makeupGain = juce::jlimit(0.25f, 4.0f, 1.0f / totalGainLinear);
+            const float safeGain = std::max(totalGainLinear, 1e-6f);
+            const float makeupGain = juce::jlimit(0.25f, 4.0f, 1.0f / safeGain);
             buffer.applyGain(makeupGain);
         }
     }
