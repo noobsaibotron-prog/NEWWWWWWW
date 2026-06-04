@@ -722,7 +722,13 @@ private:
     juce::WaitableEvent aiSpectrumEvent;
     std::thread aiAnalysisThread;
     std::atomic<bool> stopAIAnalysis { false };
-    
+    // Set from the message thread (parameterChanged) when an AI knob moves while
+    // no audio frames are flowing (transport stopped). Consumed by
+    // aiAnalysisThreadFunc via exchange(false) to force ONE re-analysis of the
+    // last spectrum. Declared after the thread members above is irrelevant: the
+    // thread is always explicitly joined in the destructor before teardown.
+    std::atomic<bool> aiPendingReanalysis { false };
+
     // IR builder thread function (runs in background)
     void irBuilderThreadFunc();
     

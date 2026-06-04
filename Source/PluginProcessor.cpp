@@ -463,6 +463,23 @@ void AIEqualizerAudioProcessor::aiAnalysisThreadFunc()
         // Try to pop without blocking
         if (!aiSpectrumQueue.tryPop(frame))
         {
+            // (A) Transport-stop re-analysis: an AI knob (sensitivity/strength)
+            // moved while no frames are arriving. Force ONE re-detection of the
+            // LAST spectrum we analyzed. force=true bypasses the every-3rd-frame
+            // rate limiter AND the temporal-persistence hysteresis (which would
+            // otherwise swallow the change) and resets detection history so the
+            // full new result surfaces immediately. `spectrum` persists across
+            // iterations and holds the last popped frame.
+            if (aiPendingReanalysis.exchange(false, std::memory_order_acq_rel))
+            {
+                if (!spectrum.empty())
+                {
+                    aiEngine.analyzeSpectrum(spectrum, /*force=*/true);
+                    aiProblemsChanged.store(true, std::memory_order_release);
+                }
+                continue; // re-check the queue immediately
+            }
+
             // Wait briefly to avoid busy-wait; wake on signal
             aiSpectrumEvent.wait(5);
             continue;
@@ -2904,6 +2921,26 @@ void AIEqualizerAudioProcessor::parameterChanged(const juce::String& parameterID
                 pendingReset.store(true, std::memory_order_release);
             }
         }
+    }
+    else if (parameterID == "aiSensitivity" || parameterID == "aiStrength")
+    {
+        // (B) Push the new value to the AI engine NOW, from the message thread.
+        // setSensitivity/setStrength are plain atomic stores (safe off the audio
+        // thread). updateEQFromParameters() also pushes it, but ONLY inside
+        // processBlock; when transport is stopped processBlock never runs, so
+        // without this direct push the AI thread would re-analyze with the stale
+        // value. During playback this just stores the same value twice (idempotent).
+        if (parameterID == "aiSensitivity")
+            aiEngine.setSensitivity(newValue);
+        else
+            aiEngine.setStrength(newValue);
+
+        // (A-arm) Ask the AI thread to force ONE re-analysis of the last spectrum,
+        // so the amber bars / AI panel update even though no new audio frame will
+        // arrive (transport stopped). release pairs with the thread's acquire
+        // exchange and also publishes the setSensitivity store above.
+        aiPendingReanalysis.store(true, std::memory_order_release);
+        aiSpectrumEvent.signal();
     }
 
     // Band changes always dirty the visible EQ/analyzer curve, but only Linear Phase
