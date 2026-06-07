@@ -4190,6 +4190,13 @@ void AIEqualizerAudioProcessor::applyAICorrections()
             state.gain = scaled.suggestedGain;
             state.q = scaled.suggestedQ;
             state.type = static_cast<int>(aiFilterTypeToProcessorType(scaled.suggestedFilter));
+            // AI cuts default to a steeper, more effective slope than 12 dB/oct.
+            // Slope is inert for non-cut types (the DSP ignores it unless LowCut/
+            // HighCut), so only override it for cuts. The only AI cut today is a
+            // sub-50Hz LowCut from LowEndBoom — 24 dB/oct removes sub rumble cleanly.
+            if (state.type == static_cast<int>(ParametricEQProcessor::LowCut)
+                || state.type == static_cast<int>(ParametricEQProcessor::HighCut))
+                state.slope = 1; // index 1 = 24 dB/oct
             state.enabled = true;
             state.solo = false;
 
@@ -4296,6 +4303,10 @@ void AIEqualizerAudioProcessor::applySingleCorrection(const AIEngine::Correction
         state.gain = scaled.suggestedGain;
         state.q = scaled.suggestedQ;
         state.type = static_cast<int>(aiFilterTypeToProcessorType(scaled.suggestedFilter));
+        // AI cuts get a steeper 24 dB/oct slope (inert for non-cut types). See applyAICorrections.
+        if (state.type == static_cast<int>(ParametricEQProcessor::LowCut)
+            || state.type == static_cast<int>(ParametricEQProcessor::HighCut))
+            state.slope = 1; // index 1 = 24 dB/oct
         state.enabled = true;
         state.solo = false;
 
