@@ -1055,7 +1055,11 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     previousIRIndex.store(0, std::memory_order_relaxed);
 
     // Start OSC parameter server (deferred from constructor to avoid crash during plugin scan)
-    if (oscParamServer && !oscParamServer->isRunning())
+    // OSC remote control is OPT-IN (off by default): set the environment variable
+    // AIEQ_ENABLE_OSC to open the UDP listener. Previously the socket+thread were
+    // always running unused (and exposed a parser/teardown attack surface).
+    if (oscParamServer && !oscParamServer->isRunning()
+        && std::getenv("AIEQ_ENABLE_OSC") != nullptr)
         oscParamServer->start();
 
     // Prime band smoothers

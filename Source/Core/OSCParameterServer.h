@@ -27,6 +27,8 @@ public:
 
     ~OSCParameterServer()
     {
+        if (alive)
+            alive->store(false); // queued callAsync lambdas will now no-op
         stop();
     }
 
@@ -201,6 +203,8 @@ private:
 
         if (address == "/aieq/get" && !args.empty())
         {
+            if (! std::holds_alternative<juce::String>(args[0]))
+                return; // malformed type-tag: ignore instead of throwing (kills the thread)
             auto paramID = std::get<juce::String>(args[0]);
             if (auto* p = apvtsRef.getRawParameterValue(paramID))
             {
@@ -216,12 +220,18 @@ private:
 
         if (address == "/aieq/set" && args.size() >= 2)
         {
+            if (! std::holds_alternative<juce::String>(args[0])
+                || ! std::holds_alternative<float>(args[1]))
+                return;
             auto paramID = std::get<juce::String>(args[0]);
             float normVal = std::get<float>(args[1]);
             if (auto* param = apvtsRef.getParameter(paramID))
             {
-                // Use MessageManager to call on message thread (safe for gesture)
-                juce::MessageManager::callAsync([param, normVal]() {
+                // Marshal to the message thread (gesture must run there). Capture the
+                // liveness flag so a late run after processor teardown is a no-op.
+                auto guard = alive;
+                juce::MessageManager::callAsync([param, normVal, guard]() {
+                    if (! guard->load()) return;
                     param->beginChangeGesture();
                     param->setValueNotifyingHost(normVal);
                     param->endChangeGesture();
@@ -232,12 +242,17 @@ private:
 
         if (address == "/aieq/set/denorm" && args.size() >= 2)
         {
+            if (! std::holds_alternative<juce::String>(args[0])
+                || ! std::holds_alternative<float>(args[1]))
+                return;
             auto paramID = std::get<juce::String>(args[0]);
             float realVal = std::get<float>(args[1]);
             if (auto* param = apvtsRef.getParameter(paramID))
             {
                 float normVal = param->convertTo0to1(realVal);
-                juce::MessageManager::callAsync([param, normVal]() {
+                auto guard = alive;
+                juce::MessageManager::callAsync([param, normVal, guard]() {
+                    if (! guard->load()) return;
                     param->beginChangeGesture();
                     param->setValueNotifyingHost(normVal);
                     param->endChangeGesture();
@@ -294,4 +309,9 @@ private:
     std::unique_ptr<juce::DatagramSocket> socket;
     std::unique_ptr<std::thread> serverThread;
     std::atomic<bool> running { false };
+
+    // Liveness flag shared with queued callAsync lambdas. Set false when this
+    // server (a processor member) is destroyed, so a pending parameter-set that
+    // runs after teardown skips the now-dangling RangedAudioParameter pointer.
+    std::shared_ptr<std::atomic<bool>> alive { std::make_shared<std::atomic<bool>>(true) };
 };
