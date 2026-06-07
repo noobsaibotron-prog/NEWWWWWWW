@@ -1051,6 +1051,7 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
 
     // Pre-allocate silent spectrum buffer for processBlock fallback
     silentSpectrumBuffer.assign(aiSpectrumBins, -80.0f);
+    aiSpectrumScratch.assign(aiSpectrumBins, -80.0f); // pre-allocated target for the audio-thread seqlock copy
     previousIRIndex.store(0, std::memory_order_relaxed);
 
     // Start OSC parameter server (deferred from constructor to avoid crash during plugin scan)
@@ -1734,10 +1735,13 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         // Update source profile
         aiEngine.setSourceProfile(static_cast<AIEngine::SourceProfile>(juce::jlimit(0, 6, sourceProfileIndex)));
 
-        const auto& spectrum = spectrumAnalyzer.getSmoothedSpectrum();
-        if (!spectrum.empty())
+        // C2 fix: copy the published spectrum with an audio-thread-safe seqlock
+        // instead of holding a by-reference snapshot that the GUI's processFFT()
+        // rewrites at ~60 Hz (torn/stale read -> corrupt AI input when editor open).
+        const int copiedBins = spectrumAnalyzer.copySmoothedSpectrumInto(aiSpectrumScratch);
+        if (copiedBins > 0)
         {
-            enqueueAISpectrum(spectrum);
+            enqueueAISpectrum(aiSpectrumScratch);
         }
         else
         {

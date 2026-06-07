@@ -54,6 +54,14 @@ public:
     const std::vector<float>& getSmoothedSpectrum() const { return getSpectrumDB(); }
     const std::vector<float>& getRawSpectrum() const { return getSpectrum(); }
     const std::vector<float>& getPeakHoldSpectrum() const { return getPeakHold(); }
+
+    // Audio-thread-safe snapshot of the published smoothed dB spectrum.
+    // Copies into `dst` (pre-sized by the caller) using a seqlock retry so a
+    // concurrent GUI processFFT() buffer flip cannot produce a torn read — unlike
+    // the by-reference getters above, which are not safe to hold across an audio
+    // read while the editor is open. Returns the number of bins copied. RT-safe:
+    // bounded retries, no allocation when `dst` is already sized.
+    int copySmoothedSpectrumInto(std::vector<float>& dst) const noexcept;
     
     float getMagnitudeForFrequency(float frequency) const;
     int getBinForFrequency(float frequency) const;

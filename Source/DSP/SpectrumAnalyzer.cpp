@@ -377,6 +377,31 @@ const std::vector<float>& SpectrumAnalyzer::getSpectrumDB() const
     return state.spectrumDBBuffers[activeBufferIndex.load()];
 }
 
+int SpectrumAnalyzer::copySmoothedSpectrumInto(std::vector<float>& dst) const noexcept
+{
+    // Seqlock-style snapshot. processFFT() (GUI thread) writes the inactive
+    // dB buffer then publishes it via activeBufferIndex; activeStateIndex changes
+    // only on a resolution switch. Copy the currently-active buffer, then re-read
+    // BOTH indices: if neither moved during the copy, the snapshot is coherent.
+    int n = 0;
+    for (int attempt = 0; attempt < 8; ++attempt)
+    {
+        const int s  = activeStateIndex.load(std::memory_order_acquire);
+        const int b1 = activeBufferIndex.load(std::memory_order_acquire);
+        const auto& src = fftStates[s].spectrumDBBuffers[b1];
+
+        n = static_cast<int>(std::min(dst.size(), src.size()));
+        if (n > 0)
+            std::copy_n(src.begin(), n, dst.begin());
+
+        const int b2 = activeBufferIndex.load(std::memory_order_acquire);
+        const int s2 = activeStateIndex.load(std::memory_order_acquire);
+        if (b1 == b2 && s == s2)
+            break; // no concurrent flip → coherent copy
+    }
+    return n; // bounded retries: worst case (pathologically fast writer) returns last copy
+}
+
 const std::vector<float>& SpectrumAnalyzer::getPeakHold() const
 {
     const auto& state = getActiveState();

@@ -718,6 +718,7 @@ private:
     static constexpr size_t aiSpectrumQueueCapacity = 8;
     using AISpectrumFrame = std::array<float, aiSpectrumBins>;
     std::vector<float> silentSpectrumBuffer;  // Pre-allocated silent spectrum for processBlock fallback
+    std::vector<float> aiSpectrumScratch;     // Pre-allocated audio-thread target for the seqlock spectrum copy (C2 race fix)
     AIEQCore::SPSCQueue<AISpectrumFrame, aiSpectrumQueueCapacity> aiSpectrumQueue;
     juce::WaitableEvent aiSpectrumEvent;
     std::thread aiAnalysisThread;
