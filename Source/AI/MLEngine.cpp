@@ -273,21 +273,12 @@ std::vector<MLEngine::ProblemDetection> MLEngine::detectProblems(
     // surface up to two (cap 2). Measured effect (AI-Knobs ML path): sens 0.0-0.25 -> 1
     // problem, sens 0.5-1.0 -> 2 problems; AI-Sweep clean stays 0/9 at every sensitivity.
     //
-    // Cap mapping: low 1, default/high 2. The knob is alive across low->default (ML
-    // surfaces 1 then 2 problems; verified AI-Knobs) while clean stays 0/9.
-    //
-    // The high tier is capped at 2, NOT 3, deliberately. A cap of 3 lets a rank-3 candidate
-    // reach the AIEngine band-excess veto family (Muddiness/Boxyness/...), which is
-    // systemically biased by natural pink tilt: on a clean but steep (-6 dB/decade) spectrum
-    // both Mud and Bxy then false-positive (measured via the CleanSteep control). Two veto
-    // fixes were tried and both have costs (narrow ref -> masks real mud near a resonance;
-    // wide ref + higher threshold -> still hallucinates on steep tilt). So cap<=2 is the
-    // robustly clean-safe envelope on BOTH gentle and steep tilt; unlocking a cap-3 high
-    // tier (full-range aliveness) is blocked on a proper systemic redesign of that veto
-    // family (its own commit). Until then cap 2 masks the latent veto bias on clean spectra.
+    // Cap mapping: low 1, default 2, high 3. Boxyness and LowEndBoom now pass
+    // through tilt-robust log-trend vetoes in AIEngine, so allowing rank 3 at
+    // high sensitivity no longer reopens the CleanSteep/CleanBass clean floor.
     const size_t kMlTopK = (sensitivity < 0.34f) ? 1u
                          : (sensitivity < 0.67f) ? 2u
-                                                 : 2u;
+                                                 : 3u;
    #if JUCE_UNIT_TESTS
     const size_t effectiveMlTopK = topKOverrideForTests > 0
         ? static_cast<size_t>(juce::jlimit(1, numProblemTypes, topKOverrideForTests))
