@@ -790,13 +790,17 @@ AIEngine::Correction::FilterType AIEngine::selectOptimalFilterType(
     {
         case ProblemType::Resonance:
         {
-            // Risonanza molto stretta (Q > 8): Notch chirurgico
-            // Risonanza stretta (Q > 4): Peak stretto
-            // Risonanza larga: Peak normale
-            if (q > 8.0f && peakHeight > 8.0f)
-                return Correction::FilterType::Notch;
+            // A musical resonance cut should be a bell (Peak): it removes only the
+            // measured excess and is reversible. A Notch fully rejects the band and
+            // is reserved for genuinely pathological spikes (mains hum, feedback,
+            // a single ringing line). The previous gate (q>8 && peakHeight>8) fired
+            // far too often — a Q of 8 is a normal-ish bell — so Notch was chosen
+            // for ordinary resonances. Default to Peak; only pick Notch for an
+            // EXTREMELY narrow AND tall spike.
+            if (q > 14.0f && peakHeight > 14.0f)
+                return Correction::FilterType::Notch; // surgical only
             else
-                return Correction::FilterType::Peak;
+                return Correction::FilterType::Peak;   // musical default
         }
         
         case ProblemType::Muddiness:
