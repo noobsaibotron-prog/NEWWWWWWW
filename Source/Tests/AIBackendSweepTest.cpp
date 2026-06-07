@@ -130,6 +130,18 @@ void applySteepTilt(std::vector<float>& spec)
     }
 }
 
+// Monotonic, clean, bass-heavy tilt. This is intentionally NOT a local boom:
+// a tilt-robust LowEndBoom veto should model it as slope, not as an excess.
+void applyCleanBassTilt(std::vector<float>& spec)
+{
+    const float binHz = static_cast<float>(kSampleRate) / kFFTSize;
+    for (int i = 0; i < kNumBins; ++i)
+    {
+        const float f = juce::jmax(20.0f, static_cast<float>(i) * binHz);
+        spec[static_cast<size_t>(i)] += -9.0f * std::log10(f / 100.0f);
+    }
+}
+
 std::vector<Stimulus> buildStimuli()
 {
     std::vector<Stimulus> s;
@@ -222,6 +234,209 @@ const char* shortType(AIEngine::ProblemType t)
         case AIEngine::ProblemType::DullSound:  return "Dull";
     }
     return "?";
+}
+
+float medianOfValues(std::vector<float> values)
+{
+    if (values.empty())
+        return 0.0f;
+
+    std::sort(values.begin(), values.end());
+    const size_t mid = values.size() / 2;
+    if ((values.size() & 1u) != 0)
+        return values[mid];
+
+    return 0.5f * (values[mid - 1] + values[mid]);
+}
+
+float linearBinAverageDb(const std::vector<float>& spec, float loHz, float hiHz)
+{
+    const float binHz = static_cast<float>(kSampleRate) / kFFTSize;
+    const int loBin = juce::jlimit(0, kNumBins - 1, static_cast<int>(std::floor(loHz / binHz)));
+    const int hiBin = juce::jlimit(0, kNumBins - 1, static_cast<int>(std::ceil(hiHz / binHz)));
+
+    float sum = 0.0f;
+    int count = 0;
+    for (int bin = loBin; bin <= hiBin; ++bin)
+    {
+        const float value = spec[static_cast<size_t>(bin)];
+        if (value > -100.0f)
+        {
+            sum += value;
+            ++count;
+        }
+    }
+
+    return count > 0 ? sum / static_cast<float>(count) : -100.0f;
+}
+
+std::vector<std::pair<float, float>> logBucketLevels(const std::vector<float>& spec,
+                                                     float loHz,
+                                                     float hiHz,
+                                                     int buckets)
+{
+    std::vector<std::pair<float, float>> levels;
+    if (loHz <= 0.0f || hiHz <= loHz || buckets <= 0)
+        return levels;
+
+    const float logLo = std::log10(loHz);
+    const float logHi = std::log10(hiHz);
+    for (int b = 0; b < buckets; ++b)
+    {
+        const float t0 = static_cast<float>(b) / static_cast<float>(buckets);
+        const float t1 = static_cast<float>(b + 1) / static_cast<float>(buckets);
+        const float bucketLo = std::pow(10.0f, logLo + (logHi - logLo) * t0);
+        const float bucketHi = std::pow(10.0f, logLo + (logHi - logLo) * t1);
+        const float center = std::sqrt(bucketLo * bucketHi);
+
+        std::vector<float> values;
+        const float binHz = static_cast<float>(kSampleRate) / kFFTSize;
+        const int loBin = juce::jlimit(1, kNumBins - 1, static_cast<int>(std::floor(bucketLo / binHz)));
+        const int hiBin = juce::jlimit(1, kNumBins - 1, static_cast<int>(std::ceil(bucketHi / binHz)));
+        values.reserve(static_cast<size_t>(juce::jmax(0, hiBin - loBin + 1)));
+
+        for (int bin = loBin; bin <= hiBin; ++bin)
+        {
+            const float f = static_cast<float>(bin) * binHz;
+            if (f >= bucketLo && f <= bucketHi)
+                values.push_back(spec[static_cast<size_t>(bin)]);
+        }
+
+        if (! values.empty())
+            levels.push_back({ center, medianOfValues(std::move(values)) });
+    }
+
+    return levels;
+}
+
+struct BroadBandMetric
+{
+    float legacyExcessDb = 0.0f;
+    float trendExcessDb = 0.0f;
+    float problemLevelDb = 0.0f;
+    float trendBaselineDb = 0.0f;
+};
+
+struct BroadBandAggregate
+{
+    float legacyExcessDb = 0.0f;
+    float trendExcessDb = 0.0f;
+    float problemLevelDb = 0.0f;
+    float trendBaselineDb = 0.0f;
+    float trendStableRatio = 0.0f;
+};
+
+BroadBandMetric computeBroadBandMetric(const std::vector<float>& spec,
+                                       float problemLo,
+                                       float problemHi,
+                                       std::initializer_list<std::pair<float, float>> referenceBands,
+                                       float legacyRefLo,
+                                       float legacyRefHi)
+{
+    BroadBandMetric result;
+
+    const auto problemBuckets = logBucketLevels(spec, problemLo, problemHi, 10);
+    std::vector<float> problemLevels;
+    problemLevels.reserve(problemBuckets.size());
+    for (const auto& bucket : problemBuckets)
+        problemLevels.push_back(bucket.second);
+
+    result.problemLevelDb = medianOfValues(std::move(problemLevels));
+    result.legacyExcessDb = linearBinAverageDb(spec, problemLo, problemHi)
+                          - linearBinAverageDb(spec, legacyRefLo, legacyRefHi);
+
+    std::vector<std::pair<float, float>> refs;
+    for (const auto& ref : referenceBands)
+    {
+        auto levels = logBucketLevels(spec, ref.first, ref.second, 8);
+        refs.insert(refs.end(), levels.begin(), levels.end());
+    }
+
+    if (refs.size() < 2)
+    {
+        result.trendBaselineDb = result.problemLevelDb;
+        result.trendExcessDb = 0.0f;
+        return result;
+    }
+
+    double n = 0.0, sumX = 0.0, sumY = 0.0, sumXX = 0.0, sumXY = 0.0;
+    for (const auto& ref : refs)
+    {
+        const double x = std::log10(static_cast<double>(juce::jmax(1.0f, ref.first)));
+        const double y = static_cast<double>(ref.second);
+        n += 1.0;
+        sumX += x;
+        sumY += y;
+        sumXX += x * x;
+        sumXY += x * y;
+    }
+
+    const double denom = n * sumXX - sumX * sumX;
+    if (std::abs(denom) < 1e-9)
+    {
+        std::vector<float> refLevels;
+        refLevels.reserve(refs.size());
+        for (const auto& ref : refs)
+            refLevels.push_back(ref.second);
+        result.trendBaselineDb = medianOfValues(std::move(refLevels));
+    }
+    else
+    {
+        const double slope = (n * sumXY - sumX * sumY) / denom;
+        const double intercept = (sumY - slope * sumX) / n;
+        const float problemCenter = std::sqrt(problemLo * problemHi);
+        result.trendBaselineDb = static_cast<float>(slope * std::log10(problemCenter) + intercept);
+    }
+
+    result.trendExcessDb = result.problemLevelDb - result.trendBaselineDb;
+    return result;
+}
+
+BroadBandAggregate runBroadBandMetric(const std::vector<float>& base,
+                                      float problemLo,
+                                      float problemHi,
+                                      std::initializer_list<std::pair<float, float>> referenceBands,
+                                      float legacyRefLo,
+                                      float legacyRefHi,
+                                      const juce::String& seedKey)
+{
+    std::mt19937 rng(static_cast<uint32_t>(seedKey.hashCode()));
+    std::vector<float> legacy;
+    std::vector<float> trend;
+    std::vector<float> problem;
+    std::vector<float> baseline;
+    int stable = 0;
+
+    for (int frame = 0; frame < 16; ++frame)
+    {
+        auto noisy = base;
+        addNoise(noisy, rng, 2.0f);
+        const auto metric = computeBroadBandMetric(noisy, problemLo, problemHi, referenceBands, legacyRefLo, legacyRefHi);
+        legacy.push_back(metric.legacyExcessDb);
+        trend.push_back(metric.trendExcessDb);
+        problem.push_back(metric.problemLevelDb);
+        baseline.push_back(metric.trendBaselineDb);
+        if (metric.trendExcessDb >= 3.0f)
+            ++stable;
+    }
+
+    BroadBandAggregate result;
+    result.legacyExcessDb = medianOfValues(std::move(legacy));
+    result.trendExcessDb = medianOfValues(std::move(trend));
+    result.problemLevelDb = medianOfValues(std::move(problem));
+    result.trendBaselineDb = medianOfValues(std::move(baseline));
+    result.trendStableRatio = static_cast<float>(stable) / 16.0f;
+    return result;
+}
+
+juce::String formatBroadBand(const BroadBandAggregate& metric)
+{
+    return juce::String::formatted("legacy=%.2f trend=%.2f stable=%.2f problem=%.2f baseline=%.2f",
+                                   metric.legacyExcessDb,
+                                   metric.trendExcessDb,
+                                   metric.trendStableRatio,
+                                   metric.problemLevelDb,
+                                   metric.trendBaselineDb);
 }
 
 } // anonymous namespace
@@ -392,6 +607,92 @@ public:
         expect(totalExpectedFound > 0,
                "Pipeline detected NONE of the injected problems across the entire sweep "
                "— the detection path is silent, which is a real regression.");
+
+        // ====================================================================
+        // CAP-3 GUARD — test-only proof that the tilt-robust band-excess veto keeps
+        // clean tilted material clean even when rank-3 ML candidates are allowed
+        // through. Production remains cap 1/2/2 until the separate cap-unlock commit.
+        // ====================================================================
+        beginTest("Cap-3 test-only CleanSteep/BassTilt floor after tilt-robust veto");
+
+        const Stimulus* cleanSteepStim = nullptr;
+        for (const auto& stim : stimuli)
+        {
+            if (stim.name == "CleanSteep(control)")
+            {
+                cleanSteepStim = &stim;
+                break;
+            }
+        }
+        expect(cleanSteepStim != nullptr, "CleanSteep stimulus not found");
+
+        struct Cap3Result
+        {
+            std::vector<AIEngine::Correction> corrections;
+        };
+
+        auto runCap3Cell = [&](const std::vector<float>& base,
+                               AIEngine::DetectionBackendMode mode,
+                               const juce::String& seedKey) -> Cap3Result
+        {
+            Cap3Result result;
+
+            AIEngine ai;
+            ai.prepare(kSampleRate, 512);
+            ai.setEnabled(true);
+            ai.setSourceProfile(AIEngine::SourceProfile::Generic);
+            ai.setDetectionBackendMode(mode);
+            ai.setSensitivity(0.8f);
+
+            if (mlWeightsFile.existsAsFile())
+                ai.setCustomMLWeightsPathForTests(mlWeightsFile);
+            ai.forceMLDetectionEnabledForTests(true);
+            ai.getMLEngineForTest().setTopKOverrideForTests(3);
+
+            std::mt19937 frameRng(static_cast<uint32_t>(seedKey.hashCode()));
+            for (int frame = 0; frame < 16; ++frame)
+            {
+                auto noisy = base;
+                addNoise(noisy, frameRng, 2.0f);
+                ai.analyzeSpectrum(noisy, true);
+            }
+
+            result.corrections = ai.getPendingCorrections();
+            return result;
+        };
+
+        auto formatCorrections = [](const std::vector<AIEngine::Correction>& corrections) {
+            juce::String s;
+            for (const auto& c : corrections)
+            {
+                if (s.isNotEmpty())
+                    s << " ";
+                s << shortType(c.type) << "@" << juce::String(static_cast<int>(c.frequency))
+                  << " c=" << juce::String(c.confidence, 2);
+            }
+            return s.isNotEmpty() ? s : "(none)";
+        };
+
+        auto cleanBassTilt = makeFlat();
+        applyCleanBassTilt(cleanBassTilt);
+
+        const auto cap3Ml = cleanSteepStim != nullptr
+            ? runCap3Cell(cleanSteepStim->base, AIEngine::DetectionBackendMode::MLOnly, "Cap3CleanSteepML")
+            : Cap3Result {};
+        const auto cap3Hybrid = cleanSteepStim != nullptr
+            ? runCap3Cell(cleanSteepStim->base, AIEngine::DetectionBackendMode::Hybrid, "Cap3CleanSteepHybrid")
+            : Cap3Result {};
+        const auto cap3BassMl = runCap3Cell(cleanBassTilt, AIEngine::DetectionBackendMode::MLOnly, "Cap3CleanBassTiltML");
+        const auto cap3BassHybrid = runCap3Cell(cleanBassTilt, AIEngine::DetectionBackendMode::Hybrid, "Cap3CleanBassTiltHybrid");
+
+        logMessage("  cap3 MLOnly CleanSteep : " + formatCorrections(cap3Ml.corrections));
+        logMessage("  cap3 Hybrid CleanSteep : " + formatCorrections(cap3Hybrid.corrections));
+        logMessage("  cap3 MLOnly CleanBass  : " + formatCorrections(cap3BassMl.corrections));
+        logMessage("  cap3 Hybrid CleanBass  : " + formatCorrections(cap3BassHybrid.corrections));
+
+        expect(cap3Ml.corrections.empty() && cap3Hybrid.corrections.empty()
+               && cap3BassMl.corrections.empty() && cap3BassHybrid.corrections.empty(),
+               "Forcing cap=3 reopened a false positive on clean tilted material.");
 
         // ====================================================================
         // ROBUSTNESS — multi-seed false-positive / recall under noise variation
@@ -1172,6 +1473,79 @@ public:
                    "True 12k resonance on steep tilt should survive the HF octave-salience gate.");
             expect(rCorr == nullptr,
                    "Clean-steep 14.3k ripple should not pass the HF octave-salience gate.");
+        }
+
+        beginTest("Ticket #2 offline log-trend band-excess diagnostics for Boxy/Boom");
+
+        {
+            auto cleanSteep = makeFlat();
+            applySteepTilt(cleanSteep);
+
+            auto cleanBassTilt = makeFlat();
+            applyCleanBassTilt(cleanBassTilt);
+
+            auto boxy500 = makeFlat();
+            applySteepTilt(boxy500);
+            addPeakDb(boxy500, 500.0f, 12.0f, 0.35f);
+
+            auto boxy500Res800 = boxy500;
+            addPeakDb(boxy500Res800, 800.0f, 20.0f, 0.04f);
+
+            auto boom60 = makeFlat();
+            applySteepTilt(boom60);
+            addPeakDb(boom60, 60.0f, 12.0f, 0.50f);
+
+            const auto boxyClean = runBroadBandMetric(
+                cleanSteep, 300.0f, 800.0f,
+                { { 150.0f, 280.0f }, { 850.0f, 1600.0f } },
+                100.0f, 8000.0f,
+                "Ticket2_Boxy_CleanSteep");
+            const auto boxyTrue = runBroadBandMetric(
+                boxy500, 300.0f, 800.0f,
+                { { 150.0f, 280.0f }, { 850.0f, 1600.0f } },
+                100.0f, 8000.0f,
+                "Ticket2_Boxy_True500");
+            const auto boxyUnderRes = runBroadBandMetric(
+                boxy500Res800, 300.0f, 800.0f,
+                { { 150.0f, 280.0f }, { 850.0f, 1600.0f } },
+                100.0f, 8000.0f,
+                "Ticket2_Boxy_True500_Res800");
+
+            const auto boomCleanSteep = runBroadBandMetric(
+                cleanSteep, 30.0f, 100.0f,
+                { { 100.0f, 500.0f } },
+                100.0f, 5000.0f,
+                "Ticket2_Boom_CleanSteep");
+            const auto boomCleanBass = runBroadBandMetric(
+                cleanBassTilt, 30.0f, 100.0f,
+                { { 100.0f, 500.0f } },
+                100.0f, 5000.0f,
+                "Ticket2_Boom_CleanBassTilt");
+            const auto boomTrue = runBroadBandMetric(
+                boom60, 30.0f, 100.0f,
+                { { 100.0f, 500.0f } },
+                100.0f, 5000.0f,
+                "Ticket2_Boom_True60");
+
+            logMessage("  Boxy CleanSteep       : " + formatBroadBand(boxyClean));
+            logMessage("  Boxy@500 SteepTilt    : " + formatBroadBand(boxyTrue));
+            logMessage("  Boxy@500 + Res@800    : " + formatBroadBand(boxyUnderRes));
+            logMessage("  Boom CleanSteep       : " + formatBroadBand(boomCleanSteep));
+            logMessage("  Boom CleanBassTilt    : " + formatBroadBand(boomCleanBass));
+            logMessage("  Boom@60 SteepTilt     : " + formatBroadBand(boomTrue));
+
+            expect(boxyClean.trendExcessDb < 3.0f,
+                   "Boxy log-trend metric still false-positives on CleanSteep.");
+            expect(boxyTrue.trendExcessDb >= 3.0f,
+                   "Boxy log-trend metric misses Boxy@500 on steep tilt.");
+            expect(boxyUnderRes.trendExcessDb >= 3.0f,
+                   "Boxy log-trend metric is masked by nearby Res@800.");
+            expect(boomCleanSteep.trendExcessDb < 3.0f,
+                   "Boom log-trend metric still false-positives on CleanSteep.");
+            expect(boomCleanBass.trendExcessDb < 3.0f,
+                   "Boom log-trend metric still false-positives on clean bass-heavy tilt.");
+            expect(boomTrue.trendExcessDb >= 3.0f,
+                   "Boom log-trend metric misses Boom@60 on steep tilt.");
         }
 
         beginTest("HF steep-tilt path across sensitivities (candidate gate vs later gates)");

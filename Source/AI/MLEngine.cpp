@@ -288,6 +288,13 @@ std::vector<MLEngine::ProblemDetection> MLEngine::detectProblems(
     const size_t kMlTopK = (sensitivity < 0.34f) ? 1u
                          : (sensitivity < 0.67f) ? 2u
                                                  : 2u;
+   #if JUCE_UNIT_TESTS
+    const size_t effectiveMlTopK = topKOverrideForTests > 0
+        ? static_cast<size_t>(juce::jlimit(1, numProblemTypes, topKOverrideForTests))
+        : kMlTopK;
+   #else
+    const size_t effectiveMlTopK = kMlTopK;
+   #endif
 
     // Rank classes by RAW probability (before thresholding). A class qualifies only
     // if it is in the top-kMlTopK by raw probability. NOTE: deliberately NO dominance
@@ -301,7 +308,7 @@ std::vector<MLEngine::ProblemDetection> MLEngine::detectProblems(
                   return problemProbs[static_cast<size_t>(a)] > problemProbs[static_cast<size_t>(b)];
               });
     std::array<bool, numProblemTypes> inTopRank {};
-    for (size_t r = 0; r < rankOrder.size() && r < kMlTopK; ++r)
+    for (size_t r = 0; r < rankOrder.size() && r < effectiveMlTopK; ++r)
         inTopRank[static_cast<size_t>(rankOrder[r])] = true;
 
     for (int i = 0; i < numProblemTypes; ++i)
@@ -352,8 +359,8 @@ std::vector<MLEngine::ProblemDetection> MLEngine::detectProblems(
 
     // Commit 4A — top-K cap (defensive). With rank<=2 already applied above this is
     // nearly redundant; kept as a belt-and-suspenders guard against future drift.
-    if (detections.size() > kMlTopK)
-        detections.resize(kMlTopK);
+    if (detections.size() > effectiveMlTopK)
+        detections.resize(effectiveMlTopK);
 
     return detections;
 }
@@ -1215,4 +1222,3 @@ juce::String MLEngine::getGenreName(GenreType type)
         default:                  return "Unknown";
     }
 }
-

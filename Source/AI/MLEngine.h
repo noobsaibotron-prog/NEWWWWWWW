@@ -140,6 +140,11 @@ public:
     /** Read-only access to base thresholds (for diagnostic/test instrumentation). */
     const std::array<float, numProblemTypes>& getBaseThresholds() const { return baseThresholds; }
 
+   #if JUCE_UNIT_TESTS
+    void setTopKOverrideForTests(int topK) { topKOverrideForTests = topK; }
+    void clearTopKOverrideForTests() { topKOverrideForTests = 0; }
+   #endif
+
     //==========================================================================
     // Utility
     static juce::String getProblemName(ProblemType type);
@@ -230,6 +235,10 @@ private:
     // State
     float sensitivity = 0.5f;
     GenreType currentContext = GenreType::Unknown;
+
+   #if JUCE_UNIT_TESTS
+    int topKOverrideForTests = 0;
+   #endif
     
     // Pre-computed mel filterbank
     std::vector<std::vector<float>> melFilterbank;
@@ -251,4 +260,3 @@ private:
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MLEngine)
 };
-

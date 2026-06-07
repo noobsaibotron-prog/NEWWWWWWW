@@ -2873,9 +2873,116 @@ void AIEngine::detectProblemsWithML()
     //     -> masks real Mud@250 when Res@800 coexists (recall loss, even at cap 2);
     //   - wide reference + higher threshold (4.5 dB): peak-robust but tilt-FRAGILE -> still
     //     hallucinates Mud on steep clean tilt (the anti-hallucination goal forbids this).
-    // Neither is both tilt- AND peak-robust, so a proper systemic redesign of this veto
-    // family is deferred to its own commit. Until then the floor is held by kMlTopK<=2,
-    // which keeps these rank-3 candidates from ever reaching the veto on clean spectra.
+    // Ticket #2: Boxyness and LowEndBoom now use a local log-frequency trend baseline
+    // instead of a wide linear-bin average. This preserves the original 3 dB existence
+    // rule but makes the measurement tilt-invariant: a monotonic dark/bass-heavy slope
+    // predicts a matching baseline at the problem-band centre, while a true local hump
+    // rises above it. Muddiness keeps its previously validated below-band reference;
+    // Sibilance keeps its local HF reference until a separate measurement says otherwise.
+    auto medianOfValues = [](std::vector<float> values) -> float
+    {
+        if (values.empty())
+            return -100.0f;
+
+        std::sort(values.begin(), values.end());
+        const size_t mid = values.size() / 2;
+        if ((values.size() & 1u) != 0)
+            return values[mid];
+
+        return 0.5f * (values[mid - 1] + values[mid]);
+    };
+
+    auto logBucketLevels = [&](float loHz, float hiHz, int buckets)
+    {
+        std::vector<std::pair<float, float>> levels;
+        if (loHz <= 0.0f || hiHz <= loHz || buckets <= 0)
+            return levels;
+
+        const float logLo = std::log10(loHz);
+        const float logHi = std::log10(hiHz);
+        const float binHz = static_cast<float>(currentSampleRate) / static_cast<float>(fftSize);
+
+        for (int bucket = 0; bucket < buckets; ++bucket)
+        {
+            const float t0 = static_cast<float>(bucket) / static_cast<float>(buckets);
+            const float t1 = static_cast<float>(bucket + 1) / static_cast<float>(buckets);
+            const float bucketLo = std::pow(10.0f, logLo + (logHi - logLo) * t0);
+            const float bucketHi = std::pow(10.0f, logLo + (logHi - logLo) * t1);
+            const float center = std::sqrt(bucketLo * bucketHi);
+
+            const int loBin = juce::jlimit(1, numBins - 1, static_cast<int>(std::floor(bucketLo / binHz)));
+            const int hiBin = juce::jlimit(1, numBins - 1, static_cast<int>(std::ceil(bucketHi / binHz)));
+
+            std::vector<float> values;
+            values.reserve(static_cast<size_t>(juce::jmax(0, hiBin - loBin + 1)));
+            for (int bin = loBin; bin <= hiBin && bin < static_cast<int>(scratchTemp.size()); ++bin)
+            {
+                const float f = binToFrequency(bin);
+                if (f >= bucketLo && f <= bucketHi)
+                    values.push_back(scratchTemp[static_cast<size_t>(bin)]);
+            }
+
+            if (! values.empty())
+                levels.push_back({ center, medianOfValues(std::move(values)) });
+        }
+
+        return levels;
+    };
+
+    auto computeTrendBandExcess = [&](float problemLo,
+                                      float problemHi,
+                                      std::initializer_list<std::pair<float, float>> referenceBands)
+    {
+        const auto problemBuckets = logBucketLevels(problemLo, problemHi, 10);
+        std::vector<float> problemLevels;
+        problemLevels.reserve(problemBuckets.size());
+        for (const auto& bucket : problemBuckets)
+            problemLevels.push_back(bucket.second);
+
+        const float problemLevelDb = medianOfValues(std::move(problemLevels));
+
+        std::vector<std::pair<float, float>> refs;
+        for (const auto& ref : referenceBands)
+        {
+            auto levels = logBucketLevels(ref.first, ref.second, 8);
+            refs.insert(refs.end(), levels.begin(), levels.end());
+        }
+
+        if (refs.size() < 2)
+            return 0.0f;
+
+        double n = 0.0, sumX = 0.0, sumY = 0.0, sumXX = 0.0, sumXY = 0.0;
+        for (const auto& ref : refs)
+        {
+            const double x = std::log10(static_cast<double>(juce::jmax(1.0f, ref.first)));
+            const double y = static_cast<double>(ref.second);
+            n += 1.0;
+            sumX += x;
+            sumY += y;
+            sumXX += x * x;
+            sumXY += x * y;
+        }
+
+        float trendBaselineDb = 0.0f;
+        const double denom = n * sumXX - sumX * sumX;
+        if (std::abs(denom) < 1e-9)
+        {
+            std::vector<float> refLevels;
+            refLevels.reserve(refs.size());
+            for (const auto& ref : refs)
+                refLevels.push_back(ref.second);
+            trendBaselineDb = medianOfValues(std::move(refLevels));
+        }
+        else
+        {
+            const double slope = (n * sumXY - sumX * sumY) / denom;
+            const double intercept = (sumY - slope * sumX) / n;
+            const float problemCenter = std::sqrt(problemLo * problemHi);
+            trendBaselineDb = static_cast<float>(slope * std::log10(problemCenter) + intercept);
+        }
+
+        return problemLevelDb - trendBaselineDb;
+    };
 
     for (const auto& mlDet : mlDetections)
     {
@@ -2975,9 +3082,8 @@ void AIEngine::detectProblemsWithML()
                             - calculateBandEnergy(80.0f, 150.0f)) >= kBandExcessDb;
                     break;
                 case ProblemType::Boxyness:
-                    // band 300..800 vs broad 100..8000 reference
-                    keep = (calculateBandEnergy(thresholds.boxyLow, thresholds.boxyHigh)
-                            - calculateBandEnergy(100.0f, 8000.0f)) >= kBandExcessDb;
+                    keep = computeTrendBandExcess(thresholds.boxyLow, thresholds.boxyHigh,
+                                                   { { 150.0f, 280.0f }, { 850.0f, 1600.0f } }) >= kBandExcessDb;
                     break;
                 case ProblemType::Sibilance:
                     // band 5000..10000 vs 2000..5000 reference
@@ -2985,9 +3091,8 @@ void AIEngine::detectProblemsWithML()
                             - calculateBandEnergy(2000.0f, 5000.0f)) >= kBandExcessDb;
                     break;
                 case ProblemType::LowEndBoom:
-                    // band 30..100 vs 100..5000 reference
-                    keep = (calculateBandEnergy(kBoomLo, kBoomHi)
-                            - calculateBandEnergy(100.0f, 5000.0f)) >= kBandExcessDb;
+                    keep = computeTrendBandExcess(kBoomLo, kBoomHi,
+                                                   { { 100.0f, 500.0f } }) >= kBandExcessDb;
                     break;
                 default:
                     // Harshness / ThinSound / DullSound: no validated rule yet and
