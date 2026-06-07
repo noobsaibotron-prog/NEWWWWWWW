@@ -882,7 +882,17 @@ void AIEngine::detectProblems()
     detectLowEndBoom();
     detectThinSound();
     detectDullSound();
-    
+
+    // Shelf filters render their "Q" as corner resonance: a bell-derived Q (which
+    // the broad-band detectors may set as high as ~2.5-4) overshoots into a
+    // "peaky shelf" with a bump/dip at the corner instead of a smooth tonal tilt.
+    // Cap shelves to a clean Butterworth slope (Q<=0.71); bells/cuts keep their Q.
+    for (auto& sc : pendingCorrections)
+        if (sc.suggestedFilter == Correction::FilterType::LowShelf
+            || sc.suggestedFilter == Correction::FilterType::HighShelf)
+            sc.suggestedQ = std::min(sc.suggestedQ, 0.71f);
+
+
     // Test problem is already added, so we always have at least one problem
     
     // Sort by priority (severity * confidence, highest first)
@@ -2995,6 +3005,10 @@ void AIEngine::detectProblemsWithML()
         float bandwidth = c.suggestedQ > 0.0f ? c.frequency / c.suggestedQ : 0.0f;
         float peakHeight = std::abs(c.suggestedGain);
         c.suggestedFilter = selectOptimalFilterType(c.type, c.frequency, bandwidth, peakHeight);
+        // Shelves render Q as corner resonance; cap to a clean Butterworth slope.
+        if (c.suggestedFilter == Correction::FilterType::LowShelf
+            || c.suggestedFilter == Correction::FilterType::HighShelf)
+            c.suggestedQ = std::min(c.suggestedQ, 0.71f);
         const int typeIndex = static_cast<int>(mlDet.type);
         const float nnConf = (typeIndex >= 0 && typeIndex < MLEngine::numProblemTypes) ? nnConfidence[static_cast<size_t>(typeIndex)] : 1.0f;
         c.severity = mlDet.severity * nnConf;
