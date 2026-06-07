@@ -877,12 +877,32 @@ public:
         return spec;
     }
 
-    struct Response { int count = 0; float sumAbsGain = 0.0f; float sumConf = 0.0f; };
+    // Strong multi-problem witness for the ML top-K cap. The model emits three
+    // validated corrections here (Res, Mud, Bxy); sensitivity should expose them
+    // as 1/2/3 via the cap, not by loosening thresholds.
+    static std::vector<float> makeMlCapWitnessStim()
+    {
+        auto spec = makeFlat();
+        applyPinkTilt(spec);
+        addPeakDb(spec, 800.0f, 18.0f, 0.04f);  // Resonance
+        addPeakDb(spec, 250.0f, 12.0f, 0.30f);  // Muddiness
+        addPeakDb(spec, 500.0f, 14.0f, 0.35f);  // Boxyness
+        return spec;
+    }
+
+    struct Response
+    {
+        int count = 0;
+        float sumAbsGain = 0.0f;
+        float sumConf = 0.0f;
+        juce::String details;
+    };
 
     static Response runCell(const std::vector<float>& base,
                             AIEngine::DetectionBackendMode mode,
                             float sens,
-                            const juce::File& mlWeights)
+                            const juce::File& mlWeights,
+                            int topKOverride = 0)
     {
         AIEngine ai;
         ai.prepare(kSampleRate, 512);
@@ -896,6 +916,8 @@ public:
             if (mlWeights.existsAsFile())
                 ai.setCustomMLWeightsPathForTests(mlWeights);
             ai.forceMLDetectionEnabledForTests(true);
+            if (topKOverride > 0)
+                ai.getMLEngineForTest().setTopKOverrideForTests(topKOverride);
         }
 
         // force=true → bypasses temporal persistence, fully deterministic.
@@ -913,6 +935,10 @@ public:
             ++r.count;
             r.sumAbsGain += std::abs(c.suggestedGain);
             r.sumConf    += c.confidence;
+            if (r.details.isNotEmpty())
+                r.details << " ";
+            r.details << shortType(c.type) << "@" << juce::String(static_cast<int>(c.frequency))
+                      << " c=" << juce::String(c.confidence, 2);
         }
         return r;
     }
@@ -958,6 +984,23 @@ public:
                        + "     |   " + juce::String(r.sumAbsGain, 2)
                        + "   |  " + juce::String(r.sumConf, 2));
         }
+
+        beginTest("ML cap-3 is exercised on a validated multi-problem witness");
+        const auto capWitness = makeMlCapWitnessStim();
+        const auto capLo          = runCell(capWitness, AIEngine::DetectionBackendMode::MLOnly, 0.0f, mlWeights);
+        const auto capDefault     = runCell(capWitness, AIEngine::DetectionBackendMode::MLOnly, 0.5f, mlWeights);
+        const auto capHiForcedTwo = runCell(capWitness, AIEngine::DetectionBackendMode::MLOnly, 1.0f, mlWeights, 2);
+        const auto capHi          = runCell(capWitness, AIEngine::DetectionBackendMode::MLOnly, 1.0f, mlWeights);
+
+        logMessage("  mode          | #problems | details");
+        logMessage("  --------------+-----------+------------------------------");
+        logMessage("  sens 0.00     |     " + juce::String(capLo.count)          + "     | " + capLo.details);
+        logMessage("  sens 0.50     |     " + juce::String(capDefault.count)     + "     | " + capDefault.details);
+        logMessage("  sens 1.00 k=2 |     " + juce::String(capHiForcedTwo.count) + "     | " + capHiForcedTwo.details);
+        logMessage("  sens 1.00 k=3 |     " + juce::String(capHi.count)          + "     | " + capHi.details);
+
+        expect(capLo.count == 1 && capHi.count == 3 && capHiForcedTwo.count < capHi.count,
+               "ML cap-3 should expose validated corrections that cap-2 suppresses.");
 
         // ---- PART 2: CORRECTION (aiStrength) scales the applied gain ----------
         beginTest("CORRECTION knob scales applied gain exactly: gain = suggested * strength");
