@@ -377,6 +377,69 @@ public:
         return lastMLThresholds;
     }
 
+   #if JUCE_UNIT_TESTS
+    struct ResonanceDebugCandidate
+    {
+        float frequency = 0.0f;
+        float magnitude = 0.0f;
+        float peakHeight = 0.0f;
+        float prominenceDb = 0.0f;
+    };
+
+    struct ResonanceDebugPeakEval
+    {
+        float frequency = 0.0f;
+        float magnitude = 0.0f;
+        float peakHeight = 0.0f;
+        float prominenceDb = 0.0f;
+        int frameCount = 0;
+        float stability = 0.0f;
+        float consistency = 0.0f;
+        float zScore = 0.0f;
+        float confidence = 0.0f;
+        bool passedEarlyGate = false;
+        bool passedConfidenceGate = false;
+    };
+
+    struct ResonanceDebugProbe
+    {
+        float targetFrequency = 0.0f;
+        float sampledFrequency = 0.0f;
+        float magnitude = 0.0f;
+        float peakHeight = 0.0f;
+        float prominenceDb = 0.0f;
+        bool localMax = false;
+        bool passedCandidateGate = false;
+    };
+
+    struct ResonanceDebugSnapshot
+    {
+        float outerThreshold = 0.0f;
+        float outerSensitivityFactor = 0.0f;
+        float adaptiveSensitivityMultiplier = 0.0f;
+        float adaptedThreshold = 0.0f;
+        float innerSensitivityFactor = 0.0f;
+        float effectiveThreshold = 0.0f;
+        int rawCandidateCount = 0;
+        int persistentCount = 0;
+        bool persistentCapHit = false;
+        std::vector<ResonanceDebugCandidate> rawCandidates;
+        std::vector<ResonanceDebugProbe> probes;
+        std::vector<ResonanceDebugPeakEval> evaluatedPeaks;
+        std::vector<Correction> emittedCorrections;
+    };
+
+    const ResonanceDebugSnapshot& getLastResonanceDebugSnapshotForTests() const noexcept
+    {
+        return lastResonanceDebugForTests;
+    }
+
+    void setResonanceDebugProbeFrequenciesForTests(const std::vector<float>& freqs)
+    {
+        resonanceDebugProbeFreqsForTests = freqs;
+    }
+   #endif
+
 private:
     void detectProblems();
     void detectResonances(float threshold);
@@ -473,9 +536,11 @@ private:
         int bin = 0;
         float frequency = 0.0f;
         float magnitude = -100.0f;
-        float peakHeight = 0.0f;       // dB above surroundings
+        float peakHeight = 0.0f;       // dB above surroundings (plain mean)
+        float prominenceDb = 0.0f;     // dB above the local DETRENDED tilt (tilt-invariant)
         float bandwidth = 0.0f;        // Hz at -3dB points
         float calculatedQ = 1.0f;      // Calculated from bandwidth
+        bool octaveSalienceGate = false; // HF candidate passed the octave-median salience gate
         int frameCount = 0;            // How many frames this peak has been detected
         
         // Advanced temporal analysis
@@ -720,6 +785,10 @@ private:
     mutable std::mutex mlAuditMutex;
     std::array<float, MLEngine::numProblemTypes> lastMLRawProbabilities {};
     std::array<float, MLEngine::numProblemTypes> lastMLThresholds {};
+   #if JUCE_UNIT_TESTS
+    ResonanceDebugSnapshot lastResonanceDebugForTests {};
+    std::vector<float> resonanceDebugProbeFreqsForTests;
+   #endif
 
     /** Unified decision: should this analysis frame use the ML path?
         Accounts for: backend mode, useMLDetection, forceMLDetectionForTests. */

@@ -4,12 +4,14 @@
  * EMPIRICAL VERIFICATION of the AI detection subsystem (Marco's request).
  *
  * Goal: instead of *deducing* detection behaviour from the source, MEASURE it.
- * We inject three synthetic spectra with a single, known problem each:
+ * We inject synthetic spectra with a single, known problem each:
  *
  *     - Resonance  @  800 Hz   (narrow Gaussian peak)
  *     - Sibilance  @ 7000 Hz   (HF excess)
  *     - Muddiness  @  250 Hz   (low-mid buildup)
  *     - Clean                  (flat + noise, no problem — false-positive control)
+ *     - Resonance @ 800/6k/12k on STEEP tilt (HF recall on the same background
+ *       that triggers the CleanSteep false-positive)
  *
  * Each stimulus is run through ALL THREE detection backends:
  *
@@ -35,6 +37,7 @@
 #include <vector>
 #include <array>
 #include <random>
+#include <algorithm>
 
 #include "../AI/AIEngine.h"
 
@@ -78,6 +81,18 @@ void addPeakDb(std::vector<float>& spec, float freqHz, float peakDb, float sigma
     {
         const float freq = static_cast<float>(i) * binHz;
         const float d    = (freq - freqHz) / sigmaHz;
+        spec[static_cast<size_t>(i)] += peakDb * std::exp(-0.5f * d * d);
+    }
+}
+
+void addPeakDbWithSigmaHz(std::vector<float>& spec, float freqHz, float peakDb, float sigmaHz)
+{
+    const float binHz = static_cast<float>(kSampleRate) / kFFTSize;
+    sigmaHz = juce::jmax(binHz, sigmaHz);
+    for (int i = 0; i < kNumBins; ++i)
+    {
+        const float freq = static_cast<float>(i) * binHz;
+        const float d = (freq - freqHz) / sigmaHz;
         spec[static_cast<size_t>(i)] += peakDb * std::exp(-0.5f * d * d);
     }
 }
@@ -159,6 +174,30 @@ std::vector<Stimulus> buildStimuli()
         s.push_back({ "CleanSteep(control)", AIEngine::ProblemType::None, std::move(spec) });
     }
 
+    // 6) True resonance on the SAME steep tilt background — low/mid anchor.
+    {
+        auto spec = makeFlat();
+        applySteepTilt(spec);
+        addPeakDb(spec, 800.0f, 20.0f, 0.04f);
+        s.push_back({ "Resonance@800Hz on SteepTilt", AIEngine::ProblemType::Resonance, std::move(spec) });
+    }
+
+    // 7) True HF resonance on the SAME steep tilt background — recall probe.
+    {
+        auto spec = makeFlat();
+        applySteepTilt(spec);
+        addPeakDb(spec, 6000.0f, 20.0f, 0.02f);
+        s.push_back({ "Resonance@6kHz on SteepTilt", AIEngine::ProblemType::Resonance, std::move(spec) });
+    }
+
+    // 8) Very-HF resonance on the SAME steep tilt background — hardest case.
+    {
+        auto spec = makeFlat();
+        applySteepTilt(spec);
+        addPeakDb(spec, 12000.0f, 20.0f, 0.02f);
+        s.push_back({ "Resonance@12kHz on SteepTilt", AIEngine::ProblemType::Resonance, std::move(spec) });
+    }
+
     return s;
 }
 
@@ -199,7 +238,7 @@ public:
 
     void runTest() override
     {
-        beginTest("Detection matrix: 4 stimuli x 3 backends x 3 sensitivities");
+        beginTest("Detection matrix: base stimuli + steep-tilt resonance recall probes");
 
         // Resolve the shipped ML weights from the source tree (test binary has no
         // models/ folder of its own). __FILE__ → Source/Tests/ → repo root.
@@ -641,3 +680,623 @@ public:
 };
 
 static AIKnobEffectTest sAIKnobEffectTest;
+
+// =============================================================================
+// Ticket #3 diagnostic — same stimulus helpers, same heuristic replay, but with
+// test-only resonance debug snapshots captured from the REAL detector.
+// =============================================================================
+class AITicket3ResonanceInversionDiagnostic : public juce::UnitTest
+{
+public:
+    AITicket3ResonanceInversionDiagnostic()
+        : juce::UnitTest("AI Ticket #3 — resonance inversion diagnostic", "AI-Diag") {}
+
+    struct FrameTrace
+    {
+        AIEngine::ResonanceDebugSnapshot dbg;
+        std::vector<AIEngine::Correction> corrections;
+    };
+
+    template <typename Item, typename FreqFn>
+    static const Item* findNearestByRatio(const std::vector<Item>& items,
+                                          float targetHz,
+                                          float maxRatioDelta,
+                                          FreqFn getFreq)
+    {
+        const Item* best = nullptr;
+        float bestDelta = std::numeric_limits<float>::max();
+        for (const auto& item : items)
+        {
+            const float f = getFreq(item);
+            if (f <= 0.0f)
+                continue;
+            const float ratio = f / targetHz;
+            const float delta = std::abs(std::log(ratio));
+            if (ratio > (1.0f - maxRatioDelta) && ratio < (1.0f + maxRatioDelta) && delta < bestDelta)
+            {
+                best = &item;
+                bestDelta = delta;
+            }
+        }
+        return best;
+    }
+
+    static std::vector<FrameTrace> runHeuristicCleanSteep(float sens)
+    {
+        AIEngine ai;
+        ai.prepare(kSampleRate, 512);
+        ai.setEnabled(true);
+        ai.setSourceProfile(AIEngine::SourceProfile::Generic);
+        ai.setDetectionBackendMode(AIEngine::DetectionBackendMode::HeuristicOnly);
+        ai.setSensitivity(sens);
+
+        auto base = makeFlat();
+        applySteepTilt(base);
+
+        std::mt19937 frameRng(static_cast<uint32_t>(
+            juce::String("CleanSteep(control)" + juce::String(sens, 1)).hashCode()));
+        std::vector<FrameTrace> frames;
+        frames.reserve(16);
+
+        for (int f = 0; f < 16; ++f)
+        {
+            auto noisy = base;
+            addNoise(noisy, frameRng, 2.0f);
+            ai.analyzeSpectrum(noisy, true);
+            frames.push_back({ ai.getLastResonanceDebugSnapshotForTests(), ai.getPendingCorrections() });
+        }
+
+        return frames;
+    }
+
+    static std::vector<FrameTrace> runHeuristicStimulus(const std::vector<float>& base,
+                                                        float sens,
+                                                        const juce::String& seedKey,
+                                                        std::initializer_list<float> probeFreqs = {})
+    {
+        AIEngine ai;
+        ai.prepare(kSampleRate, 512);
+        ai.setEnabled(true);
+        ai.setSourceProfile(AIEngine::SourceProfile::Generic);
+        ai.setDetectionBackendMode(AIEngine::DetectionBackendMode::HeuristicOnly);
+        ai.setSensitivity(sens);
+        ai.setResonanceDebugProbeFrequenciesForTests(std::vector<float>(probeFreqs));
+
+        std::mt19937 frameRng(static_cast<uint32_t>(seedKey.hashCode()));
+        std::vector<FrameTrace> frames;
+        frames.reserve(16);
+
+        for (int f = 0; f < 16; ++f)
+        {
+            auto noisy = base;
+            addNoise(noisy, frameRng, 2.0f);
+            ai.analyzeSpectrum(noisy, true);
+            frames.push_back({ ai.getLastResonanceDebugSnapshotForTests(), ai.getPendingCorrections() });
+        }
+
+        return frames;
+    }
+
+    static juce::String formatCorrection(const AIEngine::Correction* c)
+    {
+        if (c == nullptr)
+            return "none";
+        return juce::String::formatted("%s@%.0f g=%.1f c=%.2f",
+                                       shortType(c->type),
+                                       c->frequency,
+                                       c->suggestedGain,
+                                       c->confidence);
+    }
+
+    static juce::String formatRaw(const AIEngine::ResonanceDebugCandidate* c)
+    {
+        if (c == nullptr)
+            return "none";
+        return juce::String::formatted("%.0fHz h=%.2f p=%.2f",
+                                       c->frequency,
+                                       c->peakHeight,
+                                       c->prominenceDb);
+    }
+
+    static juce::String formatEval(const AIEngine::ResonanceDebugPeakEval* e)
+    {
+        if (e == nullptr)
+            return "none";
+        return juce::String::formatted("%.0fHz h=%.2f p=%.2f frames=%d z=%.2f conf=%.2f early=%s confGate=%s",
+                                       e->frequency,
+                                       e->peakHeight,
+                                       e->prominenceDb,
+                                       e->frameCount,
+                                       e->zScore,
+                                       e->confidence,
+                                       e->passedEarlyGate ? "yes" : "no",
+                                       e->passedConfidenceGate ? "yes" : "no");
+    }
+
+    static juce::String formatProbe(const AIEngine::ResonanceDebugProbe* p)
+    {
+        if (p == nullptr)
+            return "none";
+        return juce::String::formatted("target=%.0f sampled=%.0f mag=%.2f h=%.2f p=%.2f localMax=%s cand=%s",
+                                       p->targetFrequency,
+                                       p->sampledFrequency,
+                                       p->magnitude,
+                                       p->peakHeight,
+                                       p->prominenceDb,
+                                       p->localMax ? "yes" : "no",
+                                       p->passedCandidateGate ? "yes" : "no");
+    }
+
+    static int countFramesWithTargetCorrection(const std::vector<FrameTrace>& frames, float targetHz)
+    {
+        int hits = 0;
+        for (const auto& frame : frames)
+        {
+            if (findNearestByRatio(frame.corrections, targetHz, 0.12f,
+                                   [](const AIEngine::Correction& c) { return c.frequency; }) != nullptr)
+            {
+                ++hits;
+            }
+        }
+        return hits;
+    }
+
+    struct OfflineFrameMetric
+    {
+        float bandExcessDb = 0.0f;
+        float peakProminenceDb = 0.0f;
+        float widthHz = 0.0f;
+    };
+
+    struct OfflineAggregate
+    {
+        float bandExcessDb = 0.0f;
+        float peakProminenceDb = 0.0f;
+        float widthHz = 0.0f;
+        float stableRatio = 0.0f;
+        float peakStableRatio = 0.0f;
+        float softPeakStableRatio = 0.0f;
+    };
+
+    static float medianOf(std::vector<float> values)
+    {
+        if (values.empty())
+            return 0.0f;
+        std::sort(values.begin(), values.end());
+        const size_t mid = values.size() / 2;
+        if ((values.size() & 1u) != 0)
+            return values[mid];
+        return 0.5f * (values[mid - 1] + values[mid]);
+    }
+
+    static OfflineFrameMetric computeOfflineMetric(const std::vector<float>& spec, float targetHz)
+    {
+        constexpr float kBandHalfOctaves = 0.04f;
+        constexpr float kContextHalfOctaves = 0.25f;
+        constexpr float kContextExcludeHalfOctaves = 0.08f;
+        const float binHz = static_cast<float>(kSampleRate) / kFFTSize;
+
+        const float bandLo = targetHz * std::pow(2.0f, -kBandHalfOctaves);
+        const float bandHi = targetHz * std::pow(2.0f,  kBandHalfOctaves);
+        const float contextLo = targetHz * std::pow(2.0f, -kContextHalfOctaves);
+        const float contextHi = targetHz * std::pow(2.0f,  kContextHalfOctaves);
+        const float excludeLo = targetHz * std::pow(2.0f, -kContextExcludeHalfOctaves);
+        const float excludeHi = targetHz * std::pow(2.0f,  kContextExcludeHalfOctaves);
+
+        std::vector<float> band;
+        std::vector<float> context;
+        band.reserve(64);
+        context.reserve(512);
+
+        int peakBin = -1;
+        float peak = -1000.0f;
+
+        for (int i = 1; i < static_cast<int>(spec.size()); ++i)
+        {
+            const float f = static_cast<float>(i) * binHz;
+            const float v = spec[static_cast<size_t>(i)];
+
+            if (f >= bandLo && f <= bandHi)
+            {
+                band.push_back(v);
+                if (v > peak)
+                {
+                    peak = v;
+                    peakBin = i;
+                }
+            }
+
+            if (f >= contextLo && f <= contextHi && (f < excludeLo || f > excludeHi))
+                context.push_back(v);
+        }
+
+        const float bandMedian = medianOf(std::move(band));
+        const float contextMedian = medianOf(std::move(context));
+
+        OfflineFrameMetric result;
+        result.bandExcessDb = bandMedian - contextMedian;
+        result.peakProminenceDb = peak - contextMedian;
+
+        if (peakBin >= 0 && result.peakProminenceDb > 0.0f)
+        {
+            const float halfHeight = contextMedian + 0.5f * result.peakProminenceDb;
+            int left = peakBin;
+            int right = peakBin;
+            while (left > 1 && spec[static_cast<size_t>(left - 1)] >= halfHeight)
+                --left;
+            while (right + 1 < static_cast<int>(spec.size()) && spec[static_cast<size_t>(right + 1)] >= halfHeight)
+                ++right;
+            result.widthHz = static_cast<float>(right - left + 1) * binHz;
+        }
+
+        return result;
+    }
+
+    static OfflineAggregate runOfflineMetric(const std::vector<float>& base, float targetHz, const juce::String& seedKey)
+    {
+        std::mt19937 rng(static_cast<uint32_t>(seedKey.hashCode()));
+        std::vector<float> bandExcess;
+        std::vector<float> peakProm;
+        std::vector<float> widths;
+        int stable = 0;
+        int peakStable = 0;
+        int softPeakStable = 0;
+
+        for (int frame = 0; frame < 16; ++frame)
+        {
+            auto noisy = base;
+            addNoise(noisy, rng, 2.0f);
+            const auto metric = computeOfflineMetric(noisy, targetHz);
+            bandExcess.push_back(metric.bandExcessDb);
+            peakProm.push_back(metric.peakProminenceDb);
+            widths.push_back(metric.widthHz);
+            if (metric.bandExcessDb >= 3.0f)
+                ++stable;
+            if (metric.peakProminenceDb >= 8.0f)
+                ++peakStable;
+            if (metric.peakProminenceDb >= 5.5f)
+                ++softPeakStable;
+        }
+
+        OfflineAggregate result;
+        result.bandExcessDb = medianOf(std::move(bandExcess));
+        result.peakProminenceDb = medianOf(std::move(peakProm));
+        result.widthHz = medianOf(std::move(widths));
+        result.stableRatio = static_cast<float>(stable) / 16.0f;
+        result.peakStableRatio = static_cast<float>(peakStable) / 16.0f;
+        result.softPeakStableRatio = static_cast<float>(softPeakStable) / 16.0f;
+        return result;
+    }
+
+    static juce::String formatOffline(const OfflineAggregate& m)
+    {
+        return juce::String::formatted("band=%.2f peak=%.2f width=%.0fHz stable=%.2f peakStable=%.2f softStable=%.2f",
+                                       m.bandExcessDb,
+                                       m.peakProminenceDb,
+                                       m.widthHz,
+                                       m.stableRatio,
+                                       m.peakStableRatio,
+                                       m.softPeakStableRatio);
+    }
+
+    static bool compositeOfflinePass(const OfflineAggregate& m)
+    {
+        const bool broadBand = m.bandExcessDb >= 3.0f && m.stableRatio >= 0.75f;
+        const bool narrowStable = m.peakProminenceDb >= 5.5f
+                                  && m.softPeakStableRatio >= 0.75f
+                                  && m.widthHz >= 15.0f;
+        return broadBand || narrowStable;
+    }
+
+    void runTest() override
+    {
+        beginTest("CleanSteep low-sensitivity resonance FP is resolved");
+
+        const auto low  = runHeuristicCleanSteep(0.2f);
+        const auto mid  = runHeuristicCleanSteep(0.5f);
+        const auto high = runHeuristicCleanSteep(0.8f);
+
+        expectEquals(static_cast<int>(low.back().corrections.size()), 0,
+                     "Sensitivity 0.2 should now remain clean on CleanSteep.");
+        expectEquals(static_cast<int>(mid.back().corrections.size()), 0,
+                     "Sensitivity 0.5 should remain clean on CleanSteep.");
+        expectEquals(static_cast<int>(high.back().corrections.size()), 0,
+                     "Sensitivity 0.8 should remain clean on CleanSteep.");
+
+        beginTest("Log resonance candidate/persistence/confidence path across sensitivities");
+
+        for (float sens : { 0.20f, 0.35f, 0.50f, 0.80f })
+        {
+            const auto frames = runHeuristicCleanSteep(sens);
+            const auto& last = frames.back();
+
+            int maxRaw = 0;
+            int maxPersistent = 0;
+            int capHitFrames = 0;
+            for (const auto& frame : frames)
+            {
+                maxRaw = juce::jmax(maxRaw, frame.dbg.rawCandidateCount);
+                maxPersistent = juce::jmax(maxPersistent, frame.dbg.persistentCount);
+                if (frame.dbg.persistentCapHit)
+                    ++capHitFrames;
+            }
+
+            logMessage("------------------------------------------------------------");
+            logMessage("sens=" + juce::String(sens, 2)
+                       + " outer=" + juce::String(last.dbg.outerThreshold, 3)
+                       + " outerFactor=" + juce::String(last.dbg.outerSensitivityFactor, 3)
+                       + " adaptSens=" + juce::String(last.dbg.adaptiveSensitivityMultiplier, 3)
+                       + " adapted=" + juce::String(last.dbg.adaptedThreshold, 3)
+                       + " inner=" + juce::String(last.dbg.innerSensitivityFactor, 3)
+                       + " effective=" + juce::String(last.dbg.effectiveThreshold, 3));
+            logMessage("  raw max=" + juce::String(maxRaw)
+                       + " persistent max=" + juce::String(maxPersistent)
+                       + " cap-hit frames=" + juce::String(capHitFrames));
+            logMessage("  final corrections:");
+            if (last.corrections.empty())
+            {
+                logMessage("    (none)");
+            }
+            else
+            {
+                for (const auto& c : last.corrections)
+                    logMessage("    " + formatCorrection(&c));
+            }
+
+            logMessage("  frames with final correction near 5890Hz  = "
+                       + juce::String(countFramesWithTargetCorrection(frames, 5890.0f)));
+            logMessage("  frames with final correction near 14373Hz = "
+                       + juce::String(countFramesWithTargetCorrection(frames, 14373.0f)));
+
+            const auto* raw5890 = findNearestByRatio(last.dbg.rawCandidates, 5890.0f, 0.12f,
+                                                     [](const AIEngine::ResonanceDebugCandidate& c) { return c.frequency; });
+            const auto* raw14373 = findNearestByRatio(last.dbg.rawCandidates, 14373.0f, 0.12f,
+                                                      [](const AIEngine::ResonanceDebugCandidate& c) { return c.frequency; });
+            const auto* eval5890 = findNearestByRatio(last.dbg.evaluatedPeaks, 5890.0f, 0.12f,
+                                                      [](const AIEngine::ResonanceDebugPeakEval& e) { return e.frequency; });
+            const auto* eval14373 = findNearestByRatio(last.dbg.evaluatedPeaks, 14373.0f, 0.12f,
+                                                       [](const AIEngine::ResonanceDebugPeakEval& e) { return e.frequency; });
+            const auto* corr5890 = findNearestByRatio(last.corrections, 5890.0f, 0.12f,
+                                                      [](const AIEngine::Correction& c) { return c.frequency; });
+            const auto* corr14373 = findNearestByRatio(last.corrections, 14373.0f, 0.12f,
+                                                       [](const AIEngine::Correction& c) { return c.frequency; });
+
+            logMessage("  nearest raw  5890   : " + formatRaw(raw5890));
+            logMessage("  nearest eval 5890   : " + formatEval(eval5890));
+            logMessage("  nearest corr 5890   : " + formatCorrection(corr5890));
+            logMessage("  nearest raw  14373  : " + formatRaw(raw14373));
+            logMessage("  nearest eval 14373  : " + formatEval(eval14373));
+            logMessage("  nearest corr 14373  : " + formatCorrection(corr14373));
+
+            if (!last.dbg.rawCandidates.empty())
+            {
+                juce::String line = "  top raw candidates: ";
+                const int limit = juce::jmin(8, static_cast<int>(last.dbg.rawCandidates.size()));
+                for (int i = 0; i < limit; ++i)
+                {
+                    if (i > 0) line << " | ";
+                    line << formatRaw(&last.dbg.rawCandidates[static_cast<size_t>(i)]);
+                }
+                logMessage(line);
+            }
+
+            if (!last.dbg.evaluatedPeaks.empty())
+            {
+                juce::String line = "  evaluated peaks: ";
+                const int limit = juce::jmin(8, static_cast<int>(last.dbg.evaluatedPeaks.size()));
+                for (int i = 0; i < limit; ++i)
+                {
+                    if (i > 0) line << " | ";
+                    line << formatEval(&last.dbg.evaluatedPeaks[static_cast<size_t>(i)]);
+                }
+                logMessage(line);
+            }
+        }
+
+        beginTest("HF resonance recall at low sensitivity on flat vs pink vs steep backgrounds");
+
+        auto makeTiltedRes = [](float freqHz, int tiltMode) {
+            auto spec = makeFlat();
+            if (tiltMode == 1)
+                applyPinkTilt(spec);
+            else if (tiltMode == 2)
+                applySteepTilt(spec);
+            addPeakDb(spec, freqHz, 20.0f, 0.02f);
+            return spec;
+        };
+
+        for (float targetHz : { 6000.0f, 12000.0f })
+        {
+            for (const auto& bg : { std::pair<const char*, int>{ "flat", 0 },
+                                    std::pair<const char*, int>{ "pink", 1 },
+                                    std::pair<const char*, int>{ "steep", 2 } })
+            {
+                const auto frames = runHeuristicStimulus(
+                    makeTiltedRes(targetHz, bg.second),
+                    0.2f,
+                    juce::String::formatted("HFRes_%.0f_%s_0.2", targetHz, bg.first),
+                    { targetHz });
+                const auto& last = frames.back();
+                const auto* probe = findNearestByRatio(last.dbg.probes, targetHz, 0.12f,
+                                                       [](const AIEngine::ResonanceDebugProbe& p) { return p.targetFrequency; });
+                const auto* raw = findNearestByRatio(last.dbg.rawCandidates, targetHz, 0.12f,
+                                                     [](const AIEngine::ResonanceDebugCandidate& c) { return c.frequency; });
+                const auto* eval = findNearestByRatio(last.dbg.evaluatedPeaks, targetHz, 0.12f,
+                                                      [](const AIEngine::ResonanceDebugPeakEval& e) { return e.frequency; });
+                const auto* corr = findNearestByRatio(last.corrections, targetHz, 0.12f,
+                                                      [](const AIEngine::Correction& c) { return c.frequency; });
+
+                logMessage("HF recall sens=0.2  target=" + juce::String(targetHz, 0)
+                           + "Hz bg=" + bg.first);
+                logMessage("  probe: " + formatProbe(probe));
+                logMessage("  raw  : " + formatRaw(raw));
+                logMessage("  eval : " + formatEval(eval));
+                logMessage("  corr : " + formatCorrection(corr));
+            }
+        }
+
+        beginTest("Compare true 12k resonance vs 14.3k CleanSteep ripple at low sensitivity");
+
+        {
+            auto steep12k = makeFlat();
+            applySteepTilt(steep12k);
+            addPeakDb(steep12k, 12000.0f, 20.0f, 0.02f);
+
+            const auto true12k = runHeuristicStimulus(steep12k, 0.2f, "True12kSteep_0.2", { 12000.0f });
+            const auto ripple14k = runHeuristicStimulus([&]() {
+                auto spec = makeFlat();
+                applySteepTilt(spec);
+                return spec;
+            }(), 0.2f, "CleanSteep(control)0.2", { 14373.0f });
+
+            const auto& tLast = true12k.back();
+            const auto& rLast = ripple14k.back();
+
+            const auto* tProbe = findNearestByRatio(tLast.dbg.probes, 12000.0f, 0.12f,
+                                                    [](const AIEngine::ResonanceDebugProbe& p) { return p.targetFrequency; });
+            const auto* rProbe = findNearestByRatio(rLast.dbg.probes, 14373.0f, 0.12f,
+                                                    [](const AIEngine::ResonanceDebugProbe& p) { return p.targetFrequency; });
+            const auto* tCorr = findNearestByRatio(tLast.corrections, 12000.0f, 0.12f,
+                                                   [](const AIEngine::Correction& c) { return c.frequency; });
+            const auto* rCorr = findNearestByRatio(rLast.corrections, 14373.0f, 0.12f,
+                                                   [](const AIEngine::Correction& c) { return c.frequency; });
+
+            logMessage("true 12k on steep:");
+            logMessage("  probe: " + formatProbe(tProbe));
+            logMessage("  corr : " + formatCorrection(tCorr));
+            logMessage("clean-steep ripple near 14.3k:");
+            logMessage("  probe: " + formatProbe(rProbe));
+            logMessage("  corr : " + formatCorrection(rCorr));
+
+            expect(tCorr != nullptr,
+                   "True 12k resonance on steep tilt should survive the HF octave-salience gate.");
+            expect(rCorr == nullptr,
+                   "Clean-steep 14.3k ripple should not pass the HF octave-salience gate.");
+        }
+
+        beginTest("HF steep-tilt path across sensitivities (candidate gate vs later gates)");
+
+        for (float targetHz : { 6000.0f, 12000.0f })
+        {
+            auto steepRes = makeFlat();
+            applySteepTilt(steepRes);
+            addPeakDb(steepRes, targetHz, 20.0f, 0.02f);
+
+            for (float sens : { 0.20f, 0.50f, 0.80f })
+            {
+                const auto frames = runHeuristicStimulus(
+                    steepRes,
+                    sens,
+                    juce::String::formatted("HFSteep_%.0f_%.1f", targetHz, sens),
+                    { targetHz });
+                const auto& last = frames.back();
+                const auto* probe = findNearestByRatio(last.dbg.probes, targetHz, 0.12f,
+                                                       [](const AIEngine::ResonanceDebugProbe& p) { return p.targetFrequency; });
+                const auto* raw = findNearestByRatio(last.dbg.rawCandidates, targetHz, 0.12f,
+                                                     [](const AIEngine::ResonanceDebugCandidate& c) { return c.frequency; });
+                const auto* eval = findNearestByRatio(last.dbg.evaluatedPeaks, targetHz, 0.12f,
+                                                      [](const AIEngine::ResonanceDebugPeakEval& e) { return e.frequency; });
+                const auto* corr = findNearestByRatio(last.corrections, targetHz, 0.12f,
+                                                      [](const AIEngine::Correction& c) { return c.frequency; });
+
+                logMessage("HF steep path target=" + juce::String(targetHz, 0)
+                           + "Hz sens=" + juce::String(sens, 2)
+                           + " effective=" + juce::String(last.dbg.effectiveThreshold, 3));
+                logMessage("  probe: " + formatProbe(probe));
+                logMessage("  raw  : " + formatRaw(raw));
+                logMessage("  eval : " + formatEval(eval));
+                logMessage("  corr : " + formatCorrection(corr));
+            }
+        }
+
+        beginTest("Offline salience candidates: true 12k resonance vs clean 14.3k ripple");
+
+        for (const auto& bg : { std::pair<const char*, int>{ "flat", 0 },
+                                std::pair<const char*, int>{ "pink", 1 },
+                                std::pair<const char*, int>{ "steep", 2 } })
+        {
+            auto true12k = makeFlat();
+            auto clean14k = makeFlat();
+            if (bg.second == 1)
+            {
+                applyPinkTilt(true12k);
+                applyPinkTilt(clean14k);
+            }
+            else if (bg.second == 2)
+            {
+                applySteepTilt(true12k);
+                applySteepTilt(clean14k);
+            }
+
+            addPeakDb(true12k, 12000.0f, 20.0f, 0.02f);
+
+            const juce::String seed = juce::String("OfflineSalience_") + bg.first;
+            const auto trueMetric = runOfflineMetric(true12k, 12000.0f, seed);
+            const auto rippleMetric = runOfflineMetric(clean14k, 14373.0f, seed);
+            const float margin = trueMetric.bandExcessDb - rippleMetric.bandExcessDb;
+            const bool alive = margin >= 1.5f;
+
+            logMessage("offline bg=" + juce::String(bg.first)
+                       + " true12=[" + formatOffline(trueMetric) + "]"
+                       + " ripple14=[" + formatOffline(rippleMetric) + "]"
+                       + " bandMargin=" + juce::String(margin, 2)
+                       + " alive=" + juce::String(alive ? "yes" : "no"));
+        }
+
+        beginTest("Offline salience candidates: narrow-Q HF resonances vs clean 14.3k ripple");
+
+        for (const auto& bg : { std::pair<const char*, int>{ "flat", 0 },
+                                std::pair<const char*, int>{ "pink", 1 },
+                                std::pair<const char*, int>{ "steep", 2 } })
+        {
+            auto clean14k = makeFlat();
+            if (bg.second == 1)
+                applyPinkTilt(clean14k);
+            else if (bg.second == 2)
+                applySteepTilt(clean14k);
+
+            const juce::String seed = juce::String("OfflineNarrow_") + bg.first;
+            const auto rippleMetric = runOfflineMetric(clean14k, 14373.0f, seed);
+
+            for (float targetHz : { 6000.0f, 12000.0f })
+            {
+                for (float fwhmHz : { 40.0f, 80.0f })
+                {
+                    for (float peakDb : { 20.0f, 6.0f })
+                    {
+                        auto narrow = makeFlat();
+                        if (bg.second == 1)
+                            applyPinkTilt(narrow);
+                        else if (bg.second == 2)
+                            applySteepTilt(narrow);
+
+                        const float sigmaHz = fwhmHz / 2.355f;
+                        addPeakDbWithSigmaHz(narrow, targetHz, peakDb, sigmaHz);
+
+                        const auto metric = runOfflineMetric(
+                            narrow,
+                            targetHz,
+                            juce::String::formatted("OfflineNarrow_%.0f_%.0f_%.0f_%s", targetHz, fwhmHz, peakDb, bg.first));
+                        const float bandMargin = metric.bandExcessDb - rippleMetric.bandExcessDb;
+                        const float peakMargin = metric.peakProminenceDb - rippleMetric.peakProminenceDb;
+                        const bool bandAlive = bandMargin >= 1.5f;
+                        const bool compositeAlive = compositeOfflinePass(metric) && !compositeOfflinePass(rippleMetric);
+
+                        logMessage("narrow bg=" + juce::String(bg.first)
+                                   + " target=" + juce::String(targetHz, 0)
+                                   + "Hz fwhm=" + juce::String(fwhmHz, 0)
+                                   + " peakDb=" + juce::String(peakDb, 0)
+                                   + " true=[" + formatOffline(metric) + "]"
+                                   + " ripple14=[" + formatOffline(rippleMetric) + "]"
+                                   + " bandMargin=" + juce::String(bandMargin, 2)
+                                   + " peakMargin=" + juce::String(peakMargin, 2)
+                                   + " bandAlive=" + juce::String(bandAlive ? "yes" : "no")
+                                   + " compositeAlive=" + juce::String(compositeAlive ? "yes" : "no"));
+                    }
+                }
+            }
+        }
+    }
+};
+
+static AITicket3ResonanceInversionDiagnostic sAITicket3ResonanceInversionDiagnostic;

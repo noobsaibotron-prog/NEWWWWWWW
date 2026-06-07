@@ -1,4 +1,5 @@
 #include "AIEngine.h"
+#include <array>
 #include <cmath>
 #include <map>
 #include <algorithm>
@@ -990,13 +991,28 @@ void AIEngine::applyTemporalPersistence()
 
 void AIEngine::detectResonances(float threshold)
 {
+   #if JUCE_UNIT_TESTS
+    ResonanceDebugSnapshot resonanceDebug;
+    resonanceDebug.outerThreshold = threshold;
+    resonanceDebug.outerSensitivityFactor = 1.0f - (sensitivity * 0.5f);
+    resonanceDebug.adaptiveSensitivityMultiplier = getSensitivityMultiplier();
+    for (float targetFreq : resonanceDebugProbeFreqsForTests)
+        resonanceDebug.probes.push_back({ targetFreq });
+    lastResonanceDebugForTests = {};
+   #endif
+
     // Get spectrum copy (with lock, but release quickly)
     // LOCK-FREE: Read spectrum from triple-buffer
     const auto snapshot = readSpectrumSnapshot();
     
     // Early exit if spectrum version is 0 (never written)
     if (snapshot.version == 0)
+    {
+       #if JUCE_UNIT_TESTS
+        lastResonanceDebugForTests = resonanceDebug;
+       #endif
         return;
+    }
     
     // Convert array to vector for compatibility with existing code
     // Reuse scratch buffer to avoid per-call allocations
@@ -1016,6 +1032,9 @@ void AIEngine::detectResonances(float threshold)
     
     // Calculate adaptive threshold based on signal level
     float adaptedThreshold = calculateAdaptiveThreshold(threshold);
+   #if JUCE_UNIT_TESTS
+    resonanceDebug.adaptedThreshold = adaptedThreshold;
+   #endif
     
     // Multi-scale window sizes for comprehensive detection
     const std::vector<int> windowSizes = {7, 11, 15, 21};
@@ -1027,6 +1046,108 @@ void AIEngine::detectResonances(float threshold)
         if (freq < 1500.0f) return 11;     // Mids
         if (freq < 5000.0f) return 9;      // Upper-mids
         return 7;                           // Highs: narrow window
+    };
+
+    struct HFOctaveSalience
+    {
+        float bandExcessDb = 0.0f;
+        float peakProminenceDb = 0.0f;
+        float widthHz = 0.0f;
+        bool valid = false;
+    };
+
+    auto medianOf = [](auto& values, int count) -> float
+    {
+        if (count <= 0)
+            return -100.0f;
+
+        auto begin = values.begin();
+        auto end = begin + count;
+        std::sort(begin, end);
+
+        const int mid = count / 2;
+        if ((count & 1) != 0)
+            return values[static_cast<size_t>(mid)];
+
+        return 0.5f * (values[static_cast<size_t>(mid - 1)] + values[static_cast<size_t>(mid)]);
+    };
+
+    auto computeHFOctaveSalience = [&](int peakBin, float targetFreq) -> HFOctaveSalience
+    {
+        constexpr float kBandHalfOctaves = 0.04f;
+        constexpr float kContextHalfOctaves = 0.25f;
+        constexpr float kContextExcludeHalfOctaves = 0.08f;
+        constexpr int kMaxBandBins = 192;
+        constexpr int kMaxContextBins = 768;
+
+        HFOctaveSalience result;
+        if (peakBin <= 0 || peakBin >= spectrumSize || targetFreq <= 0.0f)
+            return result;
+
+        const float bandLo = targetFreq * std::pow(2.0f, -kBandHalfOctaves);
+        const float bandHi = targetFreq * std::pow(2.0f,  kBandHalfOctaves);
+        const float contextLo = targetFreq * std::pow(2.0f, -kContextHalfOctaves);
+        const float contextHi = targetFreq * std::pow(2.0f,  kContextHalfOctaves);
+        const float excludeLo = targetFreq * std::pow(2.0f, -kContextExcludeHalfOctaves);
+        const float excludeHi = targetFreq * std::pow(2.0f,  kContextExcludeHalfOctaves);
+
+        std::array<float, kMaxBandBins> band {};
+        std::array<float, kMaxContextBins> context {};
+        int bandCount = 0;
+        int contextCount = 0;
+        int octavePeakBin = -1;
+        float octavePeak = -1000.0f;
+
+        for (int bin = 1; bin < spectrumSize; ++bin)
+        {
+            const float f = binToFrequency(bin);
+            const float value = smoothedSpectrum[static_cast<size_t>(bin)];
+
+            if (f >= bandLo && f <= bandHi)
+            {
+                if (bandCount < kMaxBandBins)
+                    band[static_cast<size_t>(bandCount++)] = value;
+
+                if (value > octavePeak)
+                {
+                    octavePeak = value;
+                    octavePeakBin = bin;
+                }
+            }
+
+            if (f >= contextLo && f <= contextHi && (f < excludeLo || f > excludeHi))
+            {
+                if (contextCount < kMaxContextBins)
+                    context[static_cast<size_t>(contextCount++)] = value;
+            }
+        }
+
+        if (bandCount <= 0 || contextCount < 4 || octavePeakBin < 0)
+            return result;
+
+        const float bandMedian = medianOf(band, bandCount);
+        const float contextMedian = medianOf(context, contextCount);
+        result.bandExcessDb = bandMedian - contextMedian;
+        result.peakProminenceDb = octavePeak - contextMedian;
+
+        if (result.peakProminenceDb > 0.0f)
+        {
+            const float halfHeight = contextMedian + 0.5f * result.peakProminenceDb;
+            int left = octavePeakBin;
+            int right = octavePeakBin;
+
+            while (left > 1 && smoothedSpectrum[static_cast<size_t>(left - 1)] >= halfHeight)
+                --left;
+
+            while (right + 1 < spectrumSize && smoothedSpectrum[static_cast<size_t>(right + 1)] >= halfHeight)
+                ++right;
+
+            const float binHz = static_cast<float>(currentSampleRate) / static_cast<float>(fftSize);
+            result.widthHz = static_cast<float>(right - left + 1) * binHz;
+        }
+
+        result.valid = true;
+        return result;
     };
     
     // Parabolic interpolation for precise frequency estimation
@@ -1077,8 +1198,26 @@ void AIEngine::detectResonances(float threshold)
         // was previously disabled ("SHOW EVEN IF NOT PERFECT LOCAL MAX"), which
         // turned every noise ripple into a candidate and drove the resonance
         // spray / clean-signal false positives. Re-enabled.
+       #if JUCE_UNIT_TESTS
+        bool isProbeBin = false;
+        for (const auto& probe : resonanceDebug.probes)
+        {
+            if (probe.targetFrequency <= 0.0f)
+                continue;
+
+            const float ratio = freq / probe.targetFrequency;
+            if (ratio > 0.88f && ratio < 1.12f)
+            {
+                isProbeBin = true;
+                break;
+            }
+        }
+        if (!isLocalMax && !isProbeBin)
+            continue;
+       #else
         if (!isLocalMax)
             continue;
+       #endif
 
         int windowSize = getAdaptiveWindowSize(freq);
         int halfWindow = windowSize / 2;
@@ -1088,8 +1227,15 @@ void AIEngine::detectResonances(float threshold)
         int endBin = juce::jmin(spectrumSize - 1, i + halfWindow);
         
         // Calculate weighted average of surrounding bins (excluding center region)
+        // AND a least-squares trend line (dB vs log10 freq) over the SAME bins.
+        // The plain mean is dragged off on a steeply tilted spectrum because the bin
+        // window is symmetric in BINS but asymmetric in OCTAVES (especially at HF),
+        // which inflates peakHeight and manufactures false resonances on clean-but-dark
+        // material. The detrended prominence below is tilt-invariant: pure tilt -> ~0,
+        // a real peak -> sticks out above the local trend.
         float surroundSum = 0.0f;
         float weightSum = 0.0f;
+        double olsN = 0.0, sumX = 0.0, sumY = 0.0, sumXX = 0.0, sumXY = 0.0;
         for (int j = startBin; j <= endBin; ++j)
         {
             if (std::abs(j - i) >= 2)  // Exclude center ±1 bins
@@ -1098,12 +1244,31 @@ void AIEngine::detectResonances(float threshold)
                 weight = juce::jmax(0.3f, weight);  // Minimum weight
                 surroundSum += smoothedSpectrum[j] * weight;
                 weightSum += weight;
+
+                const double x = std::log10(static_cast<double>(juce::jmax(1.0f, binToFrequency(j))));
+                const double y = static_cast<double>(smoothedSpectrum[j]);
+                olsN += 1.0; sumX += x; sumY += y; sumXX += x * x; sumXY += x * y;
             }
         }
-        
+
         if (weightSum < 0.1f) continue;
         float surroundAvg = surroundSum / weightSum;
-        float peakHeight = centerMag - surroundAvg;
+        float peakHeight = centerMag - surroundAvg;   // legacy: kept for severity / persist sort
+
+        // Detrended prominence (tilt-invariant). Falls back to peakHeight when the
+        // local fit is degenerate (too few bins / no spread in log-freq).
+        float prominenceDb = peakHeight;
+        {
+            const double denom = olsN * sumXX - sumX * sumX;
+            if (olsN >= 3.0 && std::abs(denom) > 1e-9)
+            {
+                const double slope = (olsN * sumXY - sumX * sumY) / denom;
+                const double intercept = (sumY - slope * sumX) / olsN;
+                const double xc = std::log10(static_cast<double>(juce::jmax(1.0f, freq)));
+                const double trendAtCenter = slope * xc + intercept;
+                prominenceDb = centerMag - static_cast<float>(trendAtCenter);
+            }
+        }
         
         // Multi-level sensitivity response
         // Creates a more nuanced sensitivity curve with three zones
@@ -1125,26 +1290,102 @@ void AIEngine::detectResonances(float threshold)
         }
         
         float effectiveThreshold = adaptedThreshold * sensitivityFactor;
+        float minPeakHeight = 3.0f;
+        bool passedCandidateGate = prominenceDb > minPeakHeight && prominenceDb > effectiveThreshold;
+        float candidateHeightDb = peakHeight;
+        float candidateProminenceDb = prominenceDb;
+        float candidateBandwidth = 0.0f;
+        bool octaveSalienceGate = false;
+
+        if (freq >= 5000.0f)
+        {
+            const auto hfSalience = computeHFOctaveSalience(i, freq);
+            const bool hfBroadBand = hfSalience.valid
+                                     && hfSalience.bandExcessDb >= minPeakHeight
+                                     && hfSalience.bandExcessDb >= effectiveThreshold;
+            const bool hfNarrowPeak = hfSalience.valid
+                                      && hfSalience.peakProminenceDb >= 5.5f
+                                      && hfSalience.peakProminenceDb >= effectiveThreshold
+                                      && hfSalience.widthHz >= 15.0f;
+
+            passedCandidateGate = hfBroadBand || hfNarrowPeak;
+            octaveSalienceGate = passedCandidateGate;
+
+            if (passedCandidateGate)
+            {
+                float hfProminenceDb = 0.0f;
+                if (hfBroadBand)
+                    hfProminenceDb = std::max(hfProminenceDb, hfSalience.bandExcessDb);
+                if (hfNarrowPeak)
+                    hfProminenceDb = std::max(hfProminenceDb, hfSalience.peakProminenceDb);
+
+                candidateHeightDb = std::max(candidateHeightDb, hfProminenceDb);
+                candidateProminenceDb = std::max(candidateProminenceDb, hfProminenceDb);
+                candidateBandwidth = hfSalience.widthHz;
+            }
+        }
+       #if JUCE_UNIT_TESTS
+        resonanceDebug.innerSensitivityFactor = sensitivityFactor;
+        resonanceDebug.effectiveThreshold = effectiveThreshold;
+        for (auto& probe : resonanceDebug.probes)
+        {
+            if (probe.targetFrequency <= 0.0f)
+                continue;
+
+            const float ratio = freq / probe.targetFrequency;
+            if (ratio <= 0.88f || ratio >= 1.12f)
+                continue;
+
+            const float delta = std::abs(std::log(ratio));
+            const float currentDelta = (probe.sampledFrequency > 0.0f)
+                ? std::abs(std::log(probe.sampledFrequency / probe.targetFrequency))
+                : std::numeric_limits<float>::max();
+            if (delta < currentDelta)
+            {
+                probe.sampledFrequency = freq;
+                probe.magnitude = centerMag;
+                probe.peakHeight = candidateHeightDb;
+                probe.prominenceDb = candidateProminenceDb;
+                probe.localMax = isLocalMax;
+                probe.passedCandidateGate = isLocalMax && passedCandidateGate;
+            }
+        }
+       #endif
+        if (!isLocalMax)
+            continue;
         
         // Only detect genuine peaks: must exceed threshold AND be a meaningful resonance.
         // 0.5dB was generating constant false positives on any non-flat material.
         // 3dB is a perceptually meaningful threshold (just-noticeable difference for peaks).
-        float minPeakHeight = 3.0f;
-        if (peakHeight > minPeakHeight && peakHeight > effectiveThreshold)
+        // Gate on the TILT-INVARIANT prominence, not the tilt-biased plain peakHeight.
+        if (passedCandidateGate)
         {
             PeakCandidate peak;
             peak.bin = i;
             peak.frequency = parabolicInterpolation(i);
             peak.magnitude = centerMag;
-            peak.peakHeight = peakHeight;
-            peak.bandwidth = calculateBandwidth(i);
+            peak.peakHeight = candidateHeightDb;
+            peak.prominenceDb = candidateProminenceDb;
+            peak.bandwidth = candidateBandwidth > 0.0f ? candidateBandwidth : calculateBandwidth(i);
             peak.calculatedQ = bandwidthToQ(peak.frequency, peak.bandwidth);
+            peak.octaveSalienceGate = octaveSalienceGate;
             detectedPeaks.push_back(peak);
+           #if JUCE_UNIT_TESTS
+            resonanceDebug.rawCandidates.push_back({ peak.frequency, peak.magnitude, peak.peakHeight, peak.prominenceDb });
+           #endif
         }
     }
+
+   #if JUCE_UNIT_TESTS
+    resonanceDebug.rawCandidateCount = static_cast<int>(resonanceDebug.rawCandidates.size());
+   #endif
     
     // Update persistent peaks for temporal stability
     updatePersistentPeaks(detectedPeaks);
+   #if JUCE_UNIT_TESTS
+    resonanceDebug.persistentCount = static_cast<int>(persistentPeaks.size());
+    resonanceDebug.persistentCapHit = persistentPeaks.size() >= 16;
+   #endif
     
     // Create corrections from persistent peaks (ALWAYS show if detected, no frame requirement)
     for (const auto& peak : persistentPeaks)
@@ -1154,11 +1395,31 @@ void AIEngine::detectResonances(float threshold)
         float zScore = computeZScore(smoothedSpectrum, peakBin, 21);
         bool temporalConsensus = hasTemporalConsensus(peak, 3, 2.5f);
         bool contextNormal = isContextuallyNormal(ProblemType::Resonance, peak.frequency);
+       #if JUCE_UNIT_TESTS
+        ResonanceDebugPeakEval eval;
+        eval.frequency = peak.frequency;
+        eval.magnitude = peak.magnitude;
+        eval.peakHeight = peak.peakHeight;
+        eval.prominenceDb = peak.prominenceDb;
+        eval.frameCount = peak.frameCount;
+        eval.stability = peak.stability;
+        eval.consistency = peak.consistency;
+        eval.zScore = zScore;
+       #endif
         
         // Reject if not an outlier AND not temporally consistent; or if whitelisted content
-        if ((zScore < 2.2f && !temporalConsensus) ||
+        if ((zScore < 2.2f && !temporalConsensus && !peak.octaveSalienceGate) ||
             (contextNormal && zScore < 3.0f))
+        {
+           #if JUCE_UNIT_TESTS
+            eval.passedEarlyGate = false;
+            resonanceDebug.evaluatedPeaks.push_back(eval);
+           #endif
             continue;
+        }
+       #if JUCE_UNIT_TESTS
+        eval.passedEarlyGate = true;
+       #endif
         
         // Create correction
         Correction c;
@@ -1190,7 +1451,7 @@ void AIEngine::detectResonances(float threshold)
         
         // Confidence based on peak prominence, level, persistence, and temporal analysis (MINIMUM 0.4)
         float levelConfidence = juce::jlimit(0.0f, 1.0f, (peak.magnitude + 60.0f) / 50.0f);
-        float heightConfidence = juce::jlimit(0.0f, 1.0f, peak.peakHeight / 8.0f);
+        float heightConfidence = juce::jlimit(0.0f, 1.0f, peak.prominenceDb / 8.0f);
         float persistConfidence = juce::jlimit(0.0f, 0.2f, static_cast<float>(peak.frameCount) * 0.05f);
         
         // Boost confidence based on temporal stability and consistency
@@ -1238,10 +1499,17 @@ void AIEngine::detectResonances(float threshold)
                 heightConfidence * 0.35f +
                 persistConfidence * 0.25f +
                 zBoost * 0.15f);
+       #if JUCE_UNIT_TESTS
+        eval.confidence = c.confidence;
+       #endif
         
         // Skip if harmonic (legitimate, not a problem) unless very high confidence
         if (isHarmonic && c.confidence < 0.6f)
         {
+           #if JUCE_UNIT_TESTS
+            eval.passedConfidenceGate = false;
+            resonanceDebug.evaluatedPeaks.push_back(eval);
+           #endif
             continue;  // Skip harmonic peaks unless very high confidence
         }
 
@@ -1261,7 +1529,18 @@ void AIEngine::detectResonances(float threshold)
         // flat/noisy spectrum (the invariant that keeps "clean = no problem" true).
         constexpr float kHeuristicConfidenceGate = 0.45f;
         if (c.confidence < kHeuristicConfidenceGate)
+        {
+           #if JUCE_UNIT_TESTS
+            eval.passedConfidenceGate = false;
+            resonanceDebug.evaluatedPeaks.push_back(eval);
+           #endif
             continue;
+        }
+
+       #if JUCE_UNIT_TESTS
+        eval.passedConfidenceGate = true;
+        resonanceDebug.evaluatedPeaks.push_back(eval);
+       #endif
 
         // Detailed description with bandwidth info
         juce::String bandName = getBandName(peak.frequency);
@@ -1275,9 +1554,16 @@ void AIEngine::detectResonances(float threshold)
             c.suggestedQ,
             peak.bandwidth,
             peak.peakHeight);
-        
+
         pendingCorrections.push_back(c);
+       #if JUCE_UNIT_TESTS
+        resonanceDebug.emittedCorrections.push_back(c);
+       #endif
     }
+
+   #if JUCE_UNIT_TESTS
+    lastResonanceDebugForTests = std::move(resonanceDebug);
+   #endif
 }
 
 void AIEngine::detectHarshness(float threshold)
@@ -2404,8 +2690,10 @@ void AIEngine::updatePersistentPeaks(const std::vector<PeakCandidate>& newPeaks)
                 // Update existing peak
                 existing.magnitude = newPeak.magnitude;
                 existing.peakHeight = (existing.peakHeight + newPeak.peakHeight) * 0.5f;  // Smooth
+                existing.prominenceDb = (existing.prominenceDb + newPeak.prominenceDb) * 0.5f;  // Smooth
                 existing.bandwidth = (existing.bandwidth + newPeak.bandwidth) * 0.5f;
                 existing.calculatedQ = newPeak.calculatedQ;
+                existing.octaveSalienceGate = existing.octaveSalienceGate || newPeak.octaveSalienceGate;
                 existing.frameCount++;
                 
                 // Update magnitude history for temporal analysis
