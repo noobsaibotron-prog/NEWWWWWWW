@@ -518,6 +518,13 @@ AIEqualizerAudioProcessor::~AIEqualizerAudioProcessor()
         aiAnalysisThread.join();
     }
 
+    // captureAnalysisThread has no stop flag (the capture analysis is a bounded
+    // one-shot). It must still be joined: a joinable std::thread destroyed at
+    // member teardown calls std::terminate. The thread's callAsync is weakThis-
+    // guarded, so a late completion after teardown is safe.
+    if (captureAnalysisThread.joinable())
+        captureAnalysisThread.join();
+
     // Remove parameter listeners
     apvts.removeParameterListener("phaseMode", this);
     apvts.removeParameterListener("msMode", this);
@@ -4013,6 +4020,14 @@ bool AIEqualizerAudioProcessor::analyzeCapturedAudioSnapshot()
     if (mm != nullptr && mm->isThisTheMessageThread())
     {
         juce::WeakReference<AIEqualizerAudioProcessor> weakThis(this);
+
+        // A previous capture-analysis thread may have finished (captureAnalysisInFlight
+        // already cleared in finish()) yet still be joinable; assigning over a joinable
+        // std::thread calls std::terminate. Join it first — it has already returned (or
+        // is just finishing its async post), so this returns promptly.
+        if (captureAnalysisThread.joinable())
+            captureAnalysisThread.join();
+
         captureAnalysisThread = std::thread([this, weakThis, finish]() mutable
         {
                         const bool ok = runCapturedAudioAnalysis();
