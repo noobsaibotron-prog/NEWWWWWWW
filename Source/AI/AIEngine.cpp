@@ -2877,7 +2877,9 @@ void AIEngine::detectProblemsWithML()
     // instead of a wide linear-bin average. This preserves the original 3 dB existence
     // rule but makes the measurement tilt-invariant: a monotonic dark/bass-heavy slope
     // predicts a matching baseline at the problem-band centre, while a true local hump
-    // rises above it. Muddiness keeps its previously validated below-band reference;
+    // rises above it. Follow-up #2 migrates Muddiness to the same trend helper using
+    // measured Mud-B references (80..140 + 900..1600), which recover modest mud under
+    // Res@800 without false-mudding CleanSteep, CleanBassTilt, or Res@800-only controls.
     // Sibilance keeps its local HF reference until a separate measurement says otherwise.
     auto medianOfValues = [](std::vector<float> values) -> float
     {
@@ -3067,19 +3069,13 @@ void AIEngine::detectProblemsWithML()
                     break;
                 }
                 case ProblemType::Muddiness:
-                    // band 150..400 vs the band JUST BELOW it (80..150). A below-band
-                    // reference is (a) local -> self-normalises spectral tilt (no FP on steep
-                    // clean), AND (b) sits BELOW the boxy/resonance region (300..800), so a
-                    // nearby Res@800 no longer contaminates the reference / masks a real Mud.
-                    // Under natural tilt the lower band is LOUDER, so clean tilt gives a
-                    // NEGATIVE excess (rejected); a strong low-mid hump (Mud@250 standalone,
-                    // +14 dB) raises 150..400 above the 80..150 shelf and passes. KNOWN
-                    // LIMIT: a modest hump (~+7 dB) co-occurring with a dominant resonance
-                    // does not clear 3 dB over its own low-end neighbourhood, so it is missed
-                    // (conservative). Lowering the threshold did not recover it cleanly; a
-                    // proper multi-band redesign is deferred to its own commit.
-                    keep = (calculateBandEnergy(thresholds.muddinessLow, thresholds.muddinessHigh)
-                            - calculateBandEnergy(80.0f, 150.0f)) >= kBandExcessDb;
+                    // Measured Mud-B trend reference: below the low-mid shelf plus a high
+                    // skip band above the boxy/resonance region. The below-only legacy veto
+                    // was too local and missed modest Mud@250 when a dominant Res@800
+                    // coexisted; 900..1600 keeps the slope fit wide without letting the
+                    // 800 Hz resonance contaminate the baseline.
+                    keep = computeTrendBandExcess(thresholds.muddinessLow, thresholds.muddinessHigh,
+                                                   { { 80.0f, 140.0f }, { 900.0f, 1600.0f } }) >= kBandExcessDb;
                     break;
                 case ProblemType::Boxyness:
                     keep = computeTrendBandExcess(thresholds.boxyLow, thresholds.boxyHigh,

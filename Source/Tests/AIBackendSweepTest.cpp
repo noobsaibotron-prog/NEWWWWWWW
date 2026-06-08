@@ -890,6 +890,17 @@ public:
         return spec;
     }
 
+    // Regression witness for the Muddiness trend veto: a modest low-mid hump
+    // that the old below-only 80..150 reference rejected when Res@800 was present.
+    static std::vector<float> makeModestMudUnderResStim()
+    {
+        auto spec = makeFlat();
+        applyPinkTilt(spec);
+        addPeakDb(spec, 800.0f, 18.0f, 0.04f);  // dominant Resonance
+        addPeakDb(spec, 250.0f, 7.0f, 0.30f);   // modest Muddiness
+        return spec;
+    }
+
     struct Response
     {
         int count = 0;
@@ -1001,6 +1012,21 @@ public:
 
         expect(capLo.count == 1 && capHi.count == 3 && capHiForcedTwo.count < capHi.count,
                "ML cap-3 should expose validated corrections that cap-2 suppresses.");
+
+        beginTest("Muddiness trend veto recovers modest mud under resonance");
+        const auto modestMud = makeModestMudUnderResStim();
+        const auto mudLo  = runCell(modestMud, AIEngine::DetectionBackendMode::MLOnly, 0.0f, mlWeights);
+        const auto mudMid = runCell(modestMud, AIEngine::DetectionBackendMode::MLOnly, 0.5f, mlWeights);
+        const auto mudHi  = runCell(modestMud, AIEngine::DetectionBackendMode::MLOnly, 1.0f, mlWeights);
+
+        logMessage("  sens | #problems | details");
+        logMessage("  -----+-----------+------------------------------");
+        logMessage("  0.00 |     " + juce::String(mudLo.count)  + "     | " + mudLo.details);
+        logMessage("  0.50 |     " + juce::String(mudMid.count) + "     | " + mudMid.details);
+        logMessage("  1.00 |     " + juce::String(mudHi.count)  + "     | " + mudHi.details);
+
+        expect(mudHi.count > mudLo.count && mudHi.details.contains("Mud@"),
+               "High-sensitivity ML should recover Muddiness on modest mud under Res@800.");
 
         // ---- PART 2: CORRECTION (aiStrength) scales the applied gain ----------
         beginTest("CORRECTION knob scales applied gain exactly: gain = suggested * strength");
