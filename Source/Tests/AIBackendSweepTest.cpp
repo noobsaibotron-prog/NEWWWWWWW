@@ -1591,6 +1591,73 @@ public:
                    "Boom log-trend metric misses Boom@60 on steep tilt.");
         }
 
+        // Follow-up #2: is the Muddiness veto worth migrating to the trend helper to
+        // recover modest mud-under-resonance? DIAGNOSTIC ONLY — no production change.
+        // legacy = current veto band(150..400)-band(80..150). trendA = below-only
+        // log-trend (Codex first choice). trendB = below + high-skip (wider, steadier
+        // slope). trendC = below + near-upper (expected to be CONTAMINATED by Res@800).
+        // Decision gate (read the table): use a variant only if clean controls
+        // trend<1.5 AND stable~0, AND mud+7+Res trend>=3.5 AND stable~1.
+        beginTest("Follow-up #2 offline log-trend diagnostics for Muddiness");
+
+        {
+            auto cleanSteep = makeFlat();
+            applySteepTilt(cleanSteep);
+
+            auto cleanBassTilt = makeFlat();
+            applyCleanBassTilt(cleanBassTilt);
+
+            auto mudStrong = makeFlat();           // strong standalone mud (must pass)
+            applySteepTilt(mudStrong);
+            addPeakDb(mudStrong, 250.0f, 12.0f, 0.30f);
+
+            auto mud7 = makeFlat();                // modest mud, no resonance
+            applySteepTilt(mud7);
+            addPeakDb(mud7, 250.0f, 7.0f, 0.30f);
+
+            auto mud7Res800 = mud7;                // THE TARGET: modest mud under dominant resonance
+            addPeakDb(mud7Res800, 800.0f, 18.0f, 0.04f);
+
+            auto res800Only = makeFlat();          // anti-false-mud control: pure resonance
+            applySteepTilt(res800Only);
+            addPeakDb(res800Only, 800.0f, 18.0f, 0.04f);
+
+            // legacy ref = the CURRENT veto's below-band 80..150 for ALL variants.
+            auto runA = [&](const std::vector<float>& s, const char* key) {
+                return runBroadBandMetric(s, 150.0f, 400.0f, { { 80.0f, 150.0f } }, 80.0f, 150.0f, key);
+            };
+            auto runB = [&](const std::vector<float>& s, const char* key) {
+                return runBroadBandMetric(s, 150.0f, 400.0f, { { 80.0f, 140.0f }, { 900.0f, 1600.0f } }, 80.0f, 150.0f, key);
+            };
+            auto runC = [&](const std::vector<float>& s, const char* key) {
+                return runBroadBandMetric(s, 150.0f, 400.0f, { { 80.0f, 140.0f }, { 500.0f, 650.0f } }, 80.0f, 150.0f, key);
+            };
+
+            logMessage("  -- Muddiness: legacy(band150-400 - band80-150) vs trend A/B/C --");
+            logMessage("  Mud CleanSteep    A: " + formatBroadBand(runA(cleanSteep,    "Mud_CleanSteep_A")));
+            logMessage("  Mud CleanSteep    B: " + formatBroadBand(runB(cleanSteep,    "Mud_CleanSteep_B")));
+            logMessage("  Mud CleanSteep    C: " + formatBroadBand(runC(cleanSteep,    "Mud_CleanSteep_C")));
+            logMessage("  Mud CleanBassTilt A: " + formatBroadBand(runA(cleanBassTilt, "Mud_CleanBass_A")));
+            logMessage("  Mud CleanBassTilt B: " + formatBroadBand(runB(cleanBassTilt, "Mud_CleanBass_B")));
+            logMessage("  Mud@250 +12 std   A: " + formatBroadBand(runA(mudStrong,     "Mud_Strong_A")));
+            logMessage("  Mud@250 +12 std   B: " + formatBroadBand(runB(mudStrong,     "Mud_Strong_B")));
+            logMessage("  Mud@250 +7        A: " + formatBroadBand(runA(mud7,          "Mud_7_A")));
+            logMessage("  Mud@250 +7        B: " + formatBroadBand(runB(mud7,          "Mud_7_B")));
+            logMessage("  Mud@250 +7 +Res   A: " + formatBroadBand(runA(mud7Res800,    "Mud_7_Res_A")));
+            logMessage("  Mud@250 +7 +Res   B: " + formatBroadBand(runB(mud7Res800,    "Mud_7_Res_B")));
+            logMessage("  Mud@250 +7 +Res   C: " + formatBroadBand(runC(mud7Res800,    "Mud_7_Res_C")));
+            logMessage("  Res@800 only      A: " + formatBroadBand(runA(res800Only,    "Mud_ResOnly_A")));
+            logMessage("  Res@800 only      B: " + formatBroadBand(runB(res800Only,    "Mud_ResOnly_B")));
+            logMessage("  Res@800 only      C: " + formatBroadBand(runC(res800Only,    "Mud_ResOnly_C")));
+
+            // Confirm the documented known limit on the legacy metric (why mud is missed
+            // today). This is the only assertion: the diagnostic itself stays green so the
+            // human checkpoint reads the trend table before any production wiring.
+            const auto mud7ResLegacy = runA(mud7Res800, "Mud_7_Res_legacycheck");
+            expect(mud7ResLegacy.legacyExcessDb < 3.0f,
+                   "Expected the legacy Muddiness veto to (still) miss modest mud under resonance.");
+        }
+
         beginTest("HF steep-tilt path across sensitivities (candidate gate vs later gates)");
 
         for (float targetHz : { 6000.0f, 12000.0f })
