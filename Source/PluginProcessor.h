@@ -732,14 +732,25 @@ private:
     std::atomic<bool> aiPendingReanalysis { false };
 
     // P2 (Roadmap v1): AI-owned perceptual front-end — DIAGNOSTICS-ONLY wiring.
-    // The AI thread drains preEqSpectrumFifo (single consumer; the audio thread
-    // is the single producer via pushStereoMix) and feeds the front-end. NO
-    // detector consumes rawDb/bandDb yet; only the diagnostic counters below
-    // are published. aiFrontEndReady gates the drain across prepareToPlay
-    // re-preparation (front-end buffers are reallocated on the message thread).
+    // The AI thread drains aiFrontEndFifo — a DEDICATED SPSC fifo (audio thread
+    // producer, AI thread the ONLY consumer). It must NOT read
+    // preEqSpectrumFifo/postEqSpectrumFifo: those are owned by the GUI
+    // NewSpectrumPipeline (PluginEditor), and LockFreeAudioFIFO is strictly
+    // one-writer/one-reader (P2C2 originally read preEq and broke that contract
+    // whenever the editor was open — fixed in P2C2.1).
+    // NO detector consumes rawDb/bandDb yet; only diagnostic counters publish.
+    //
+    // Re-preparation handshake: prepareToPlay sets aiFrontEndReady=false, then
+    // WAITS for aiFrontEndDrainBusy to clear before reallocating (an atomic flag
+    // alone cannot stop a drain already in flight). Both flags use seq_cst (the
+    // ready/busy pair needs a Dekker-style total order; cold path, cost moot).
+    // The audio-thread push side is safe by the JUCE host contract
+    // (prepareToPlay is never concurrent with processBlock).
     PerceptualFrontEnd aiFrontEnd;
+    LockFreeAudioFIFO<float> aiFrontEndFifo;         // dedicated: audio -> AI thread
     std::vector<float> aiFrontEndScratch;            // AI-thread pull buffer
     std::atomic<bool> aiFrontEndReady { false };
+    std::atomic<bool> aiFrontEndDrainBusy { false };
     std::atomic<juce::int64> aiFrontEndFrames { 0 };
     std::atomic<double> aiFrontEndMeanNs { 0.0 };
     std::atomic<juce::int64> aiFrontEndMaxNs { 0 };

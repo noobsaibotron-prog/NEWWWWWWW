@@ -471,24 +471,31 @@ void AIEqualizerAudioProcessor::aiAnalysisThreadFunc()
 
     while (!stopAIAnalysis.load())
     {
-        // P2 (diagnostics-only): drain the pre-EQ audio FIFO into the AI-owned
-        // front-end. Editor-independent by construction (no GUI involvement).
-        // NO detector consumes the produced frames yet — only the diagnostic
-        // counters are published. Bounded: FIFO cap 32768 / scratch 4096 -> <=8
-        // pulls per pass.
-        if (aiFrontEndReady.load(std::memory_order_acquire))
+        // P2 (diagnostics-only): drain the DEDICATED front-end FIFO (never the
+        // GUI-owned preEq/postEq fifos — SPSC, one reader each). NO detector
+        // consumes the produced frames yet. Bounded: cap 32768 / scratch 4096
+        // -> <=8 pulls per pass.
+        // Handshake with prepareToPlay: announce busy, RE-check ready (prepare
+        // may have closed the gate between our first check and the announce);
+        // prepare waits on busy before reallocating. seq_cst on both flags.
+        if (aiFrontEndReady.load())
         {
-            size_t pulled = 0;
-            while ((pulled = preEqSpectrumFifo.pullAudioBlock(aiFrontEndScratch.data(),
-                                                              aiFrontEndScratch.size())) > 0)
+            aiFrontEndDrainBusy.store(true);
+            if (aiFrontEndReady.load())
             {
-                aiFrontEnd.pushMono(aiFrontEndScratch.data(), static_cast<int>(pulled), nullptr);
-                if (stopAIAnalysis.load())
-                    break;
+                size_t pulled = 0;
+                while ((pulled = aiFrontEndFifo.pullAudioBlock(aiFrontEndScratch.data(),
+                                                               aiFrontEndScratch.size())) > 0)
+                {
+                    aiFrontEnd.pushMono(aiFrontEndScratch.data(), static_cast<int>(pulled), nullptr);
+                    if (stopAIAnalysis.load())
+                        break;
+                }
+                aiFrontEndFrames.store(aiFrontEnd.framesProcessed(), std::memory_order_relaxed);
+                aiFrontEndMeanNs.store(aiFrontEnd.meanFrameNs(), std::memory_order_relaxed);
+                aiFrontEndMaxNs.store(aiFrontEnd.maxFrameNs(), std::memory_order_relaxed);
             }
-            aiFrontEndFrames.store(aiFrontEnd.framesProcessed(), std::memory_order_relaxed);
-            aiFrontEndMeanNs.store(aiFrontEnd.meanFrameNs(), std::memory_order_relaxed);
-            aiFrontEndMaxNs.store(aiFrontEnd.maxFrameNs(), std::memory_order_relaxed);
+            aiFrontEndDrainBusy.store(false);
         }
 
         // Try to pop without blocking
@@ -968,17 +975,24 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     postEQAnalyzer.prepare(sampleRate, samplesPerBlock);
 
     // Metrological pipeline FIFOs: 32768 samples (~680ms at 48kHz)
-    // P2 front-end (diagnostics-only): gate the AI-thread drain while buffers
-    // are (re)allocated here on the message thread, then re-open it.
-    aiFrontEndReady.store(false, std::memory_order_release);
+    // P2 front-end (diagnostics-only): close the gate, then WAIT for any drain
+    // pass already in flight on the AI thread before reallocating (the flag
+    // alone cannot interrupt a running pullAudioBlock/pushMono). Bounded wait:
+    // a drain pass is microseconds; 200 ms is a generous ceiling.
+    aiFrontEndReady.store(false);
+    for (int i = 0; i < 200 && aiFrontEndDrainBusy.load(); ++i)
+        juce::Thread::sleep(1);
+    jassert(!aiFrontEndDrainBusy.load());
+
     preEqSpectrumFifo.prepare(32768);
     postEqSpectrumFifo.prepare(32768);
+    aiFrontEndFifo.prepare(32768);   // dedicated SPSC: audio producer, AI consumer
     aiFrontEnd.prepare(sampleRate);
     aiFrontEndScratch.assign(4096, 0.0f);
     aiFrontEndFrames.store(0, std::memory_order_relaxed);
     aiFrontEndMeanNs.store(0.0, std::memory_order_relaxed);
     aiFrontEndMaxNs.store(0, std::memory_order_relaxed);
-    aiFrontEndReady.store(true, std::memory_order_release);
+    aiFrontEndReady.store(true);
     eqProcessor.prepare(sampleRate, samplesPerBlock, getTotalNumInputChannels());
     dynamicEQProcessor.prepare(sampleRate, samplesPerBlock, getTotalNumInputChannels());
 
@@ -1759,7 +1773,8 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
 
     // Feed pre-EQ spectrum analyzer (lock-free, FFT deferred to GUI)
     spectrumAnalyzer.pushSamples(buffer);
-    preEqSpectrumFifo.pushStereoMix(buffer);  // metrological pipeline FIFO
+    preEqSpectrumFifo.pushStereoMix(buffer);  // metrological pipeline FIFO (GUI consumer)
+    aiFrontEndFifo.pushStereoMix(buffer);     // P2 front-end FIFO (AI-thread consumer)
     spectrumDataReady.store(true, std::memory_order_release);
 
     // Checkpoint 1 — pre-EQ (after param update / spectrum capture, before EQ processing)
