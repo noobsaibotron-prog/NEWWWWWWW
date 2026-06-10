@@ -153,12 +153,13 @@ void MLEngine::initialize()
                              .getSiblingFile("ml_weights.bin")))
         {
             // Observability (P0): make the random fallback explicit. In the plugin
-            // this is the NORMAL pre-load state — AIEngine loads the packaged
-            // models/ml_weights.bin right after and logs "ML model loaded". If no
-            // later load succeeds, the engine stays on RANDOM weights and ML
-            // detection quality is meaningless — this WARN is the only trace.
-            AIEQ_LOG_WARNING("MLEngine: no valid ml_weights.bin next to the application file - "
-                             "using RANDOM weights until packaged/custom weights are loaded.");
+            // this is the NORMAL pre-load state — AIEngine::prepare loads the
+            // packaged models/ml_weights.bin right after and logs "ML model loaded".
+            // If no later load succeeds, the engine stays on RANDOM weights and ML
+            // detection quality is meaningless — this log is the only trace.
+            AIEQ_LOG_WARNING("MLEngine: initializing temporary random weights; "
+                             "packaged weights are normally loaded next by AIEngine::prepare. "
+                             "If no 'ML model loaded' line follows, ML is running on random weights.");
             initializeRandomWeights();
         }
 
@@ -1052,6 +1053,14 @@ float MLEngine::findPeakInRange(const std::vector<float>& spectrum, double sampl
 //==============================================================================
 bool MLEngine::loadWeights(const juce::File& modelFile)
 {
+    // Observability metadata reflects the LAST loadWeights call: reset up front
+    // so a failed load can never leave stale "loaded" metadata from a previous
+    // successful load (the witness would lie).
+    weightsLoadedFromFile = false;
+    loadedWeightsPath.clear();
+    loadedWeightsBytes = 0;
+    loadedWeightsChecksum.clear();
+
     if (!modelFile.existsAsFile())
         return false;
     

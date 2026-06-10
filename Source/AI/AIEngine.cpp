@@ -119,7 +119,7 @@ void AIEngine::prepare(double sampleRate, int /*samplesPerBlock*/)
                 useMLDetection = true;
                 mlBackendStatus.store(static_cast<int>(MLBackendStatus::Active), std::memory_order_relaxed);
                 AIEQ_LOG_INFO("ML model loaded: " + mlEngine.getLoadedWeightsPath()
-                              + " (" + juce::String(mlEngine.getLoadedWeightsBytes()) + " bytes, md5 "
+                              + " (" + juce::String(mlEngine.getLoadedWeightsBytes()) + " bytes, fnv64 "
                               + mlEngine.getLoadedWeightsChecksum() + ")");
             }
             else

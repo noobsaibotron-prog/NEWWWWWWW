@@ -1846,9 +1846,9 @@ public:
         ai.forceMLDetectionEnabledForTests(true);
 
         auto& ml = ai.getMLEngineForTest();
-        logMessage("  weights path: " + ml.getLoadedWeightsPath());
-        logMessage("  weights size: " + juce::String(ml.getLoadedWeightsBytes()) + " bytes");
-        logMessage("  weights md5 : " + ml.getLoadedWeightsChecksum());
+        logMessage("  weights path : " + ml.getLoadedWeightsPath());
+        logMessage("  weights size : " + juce::String(ml.getLoadedWeightsBytes()) + " bytes");
+        logMessage("  weights fnv64: " + ml.getLoadedWeightsChecksum());
         expect(ml.areWeightsLoadedFromFile(),
                "MLEngine reports random weights after a successful load - the fallback "
                "would be silent in production.");
