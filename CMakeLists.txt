@@ -1030,10 +1030,14 @@ if(HAVE_JUCE)
         # SpectrumAnalyzer is TEST-ONLY here: the AI-Corpus mirror-equivalence
         # gate compares the offline pipeline against the real analyzer.
         Source/DSP/SpectrumAnalyzer.cpp
+        # P2 front-end: diagnostics-only for now — compiled in the TEST target
+        # only, not in the plugin, until the gated wiring commit.
+        Source/AI/PerceptualFrontEnd.cpp
         # Test file and shared runner entry-point
         Source/Tests/AIEngineTest.cpp
         Source/Tests/AIBackendSweepTest.cpp
         Source/Tests/AICorpusTest.cpp
+        Source/Tests/AIFrontEndTest.cpp
         Source/Tests/TestMain.cpp
     )
     target_compile_features(AIEqualizerPro_AI_Tests PRIVATE cxx_std_20)

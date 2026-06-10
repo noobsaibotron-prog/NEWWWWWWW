@@ -71,7 +71,7 @@ A regression on a previously-PASS corpus row is a hard failure of the harness
 | Dynamic resonance recall | not yet measured (fixtures in P3) | ≥90% | soothe2 (its core) |
 | Balance direction accuracy | not yet measured (P5) | ≥90% | Gullfoss |
 | Verified-fix rate | not yet measured (P6) | ≥85% | nobody — differentiator |
-| AI-thread CPU | negligible (witness lands in P2) | ≤1.5% core, max ≤5 ms/frame | — |
+| AI-thread CPU (front-end, AI-Front witness) | mean 0.038 ms / max 0.091 ms per frame (~0.09% core @23 fps, P2 Commit 1, module not yet wired) | ≤1.5% core, max ≤5 ms/frame | — |
 
 Commercial claims ("beats X at Y") are permitted ONLY after the corresponding
 proxy family is green in this scorecard.
