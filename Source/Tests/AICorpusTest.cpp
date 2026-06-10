@@ -1,16 +1,20 @@
 /**
- * AICorpusTest — Roadmap v1, P1 Commit 1 (category "AI-Corpus").
+ * AICorpusTest — Roadmap v1, P1 (category "AI-Corpus").
  *
- * Foundations of the real-audio evaluation harness:
+ * BASELINE-EMITTING harness over real rendered audio — not a final quality gate:
  *   1. proves the OfflineAnalysisPipeline mirror matches the REAL
  *      SpectrumAnalyzer within ±0.1 dB (so corpus results predict in-plugin
  *      behavior at the representation level);
- *   2. extends the clean-floor invariant to rendered audio fixtures: clips
- *      labeled clean must produce ZERO final detections at sensitivity ≤ 0.5;
+ *   2. emits the corpus baseline scorecard (clip × backend × sensitivity, with
+ *      LIVE semantics). Clips marked known_fail in the manifest are MEASURED
+ *      gaps of the current detector (logged as KNOWN_FAIL, never asserted);
+ *      hard assertions fire only for infrastructure failures and for clips the
+ *      detector is already expected to handle;
  *   3. proves the whole audio→spectrum→detection chain is deterministic.
  *
- * The scorecard baseline emission is the NEXT commit (P1 Commit 2) — this file
- * deliberately asserts only the three gates above.
+ * The human-readable baseline + promotion criteria live in docs/AI_SCORECARD.md.
+ * known_fail is recorded technical debt, not a masked pass: each entry carries
+ * its reason and a roadmap pillar that is expected to fix it.
  *
  * Fixtures: TestAssets/ai_corpus (rendered by tools/make_fixtures.py, labels in
  * manifest.json). The directory is passed in via the AIEQ_CORPUS_DIR define.
@@ -303,6 +307,9 @@ public:
         // ============================================================
         beginTest("Corpus detection is deterministic across two identical runs");
 
+        // NOTE: with a single labeled clip this covers the whole labeled set; when
+        // more labeled clips are added, generalize to iterate every labeled clip
+        // (cheap: same runClipThroughEngine twice per clip).
         expect(!labeledClipFrames.empty(), "No labeled clip available for the determinism gate.");
         if (!labeledClipFrames.empty())
         {

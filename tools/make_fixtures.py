@@ -140,6 +140,7 @@ def main():
     }
     with open(os.path.join(OUT_DIR, "manifest.json"), "w") as f:
         json.dump(manifest, f, indent=2)
+        f.write("\n")
     print(f"Wrote 3 fixtures + manifest.json into {os.path.abspath(OUT_DIR)}")
 
 
