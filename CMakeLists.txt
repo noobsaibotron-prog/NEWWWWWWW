@@ -1027,9 +1027,13 @@ if(HAVE_JUCE)
         Source/AI/SemanticEQEngine.cpp
         Source/AI/UserLearning.cpp
         Source/Utils/Logger.cpp
+        # SpectrumAnalyzer is TEST-ONLY here: the AI-Corpus mirror-equivalence
+        # gate compares the offline pipeline against the real analyzer.
+        Source/DSP/SpectrumAnalyzer.cpp
         # Test file and shared runner entry-point
         Source/Tests/AIEngineTest.cpp
         Source/Tests/AIBackendSweepTest.cpp
+        Source/Tests/AICorpusTest.cpp
         Source/Tests/TestMain.cpp
     )
     target_compile_features(AIEqualizerPro_AI_Tests PRIVATE cxx_std_20)
@@ -1040,16 +1044,19 @@ if(HAVE_JUCE)
         JucePlugin_Build_VST3=0
         JucePlugin_Build_AU=0
         JucePlugin_Build_Standalone=0
+        AIEQ_CORPUS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/TestAssets/ai_corpus"
     )
     target_include_directories(AIEqualizerPro_AI_Tests PRIVATE
         Source
         Source/AI
         Source/Core
         Source/Utils
+        Source/DSP
     )
     target_link_libraries(AIEqualizerPro_AI_Tests PRIVATE
         juce::juce_core
         juce::juce_audio_basics
+        juce::juce_audio_formats   # WAV corpus fixtures (AI-Corpus, test-only)
         juce::juce_audio_processors
         juce::juce_dsp
     )

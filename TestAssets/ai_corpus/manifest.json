@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "sample_rate": 48000,
+  "clips": [
+    {
+      "file": "res3200_pink.wav",
+      "source": "synthesized: pink noise + steady 3.2 kHz sine",
+      "split": "eval",
+      "expected": "Resonance",
+      "known_fail": true,
+      "known_fail_reason": "P1-GAP-001: live path misses the true 3.2 kHz resonance. ML raw probabilities are high (Res~0.997) but over-fire on 4 classes and the decision rule + AIEngine reality-check vetoes flatten everything on real audio. Baseline gap for P2/P4.",
+      "problems": [
+        {
+          "type": "Resonance",
+          "f0": 3200.0,
+          "tolerance_cents": 400,
+          "mode": "static",
+          "severity": "strong"
+        }
+      ]
+    },
+    {
+      "file": "clean_pink.wav",
+      "source": "synthesized: pink noise",
+      "split": "eval",
+      "expected": "None",
+      "known_fail": false,
+      "problems": []
+    },
+    {
+      "file": "clean_dark_tilt.wav",
+      "source": "synthesized: low-passed pink (dark tilt)",
+      "split": "eval",
+      "expected": "None",
+      "known_fail": true,
+      "known_fail_reason": "P1-GAP-002: Hybrid at sens 0.2 emits one heuristic resonance near 8.6 kHz (c~0.47) on clean dark material - same HF/tilt fragility family as the known heuristic low-sens FP. Baseline gap.",
+      "problems": []
+    }
+  ]
+}
