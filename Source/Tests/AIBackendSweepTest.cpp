@@ -1810,3 +1810,82 @@ public:
 };
 
 static AITicket3ResonanceInversionDiagnostic sAITicket3ResonanceInversionDiagnostic;
+
+// =============================================================================
+// P0 (Roadmap v1) — observability witnesses. No production behavior change:
+// (1) the raw-probability audit hook must carry the CURRENT inference's sigmoid
+//     outputs (it was a self-assignment no-op before the P0 fix);
+// (2) the exact weights in use must be witnessable (path + size + md5), so a
+//     silent random-weights fallback can never masquerade as a trained model.
+// =============================================================================
+class AIP0AuditWitnessTest : public juce::UnitTest
+{
+public:
+    AIP0AuditWitnessTest()
+        : juce::UnitTest("AI P0 — ML audit & weights witness", "AI-Diag") {}
+
+    void runTest() override
+    {
+        const juce::File mlWeights =
+            juce::File(__FILE__).getParentDirectory().getParentDirectory().getParentDirectory()
+                .getChildFile("Resources/Models/ml_weights.bin");
+
+        beginTest("Weights-loaded witness: path + size + checksum");
+
+        AIEngine ai;
+        ai.prepare(kSampleRate, 512);
+        ai.setEnabled(true);
+        ai.setSourceProfile(AIEngine::SourceProfile::Generic);
+        ai.setDetectionBackendMode(AIEngine::DetectionBackendMode::MLOnly);
+        ai.setSensitivity(0.5f);
+
+        expect(mlWeights.existsAsFile(),
+               "Shipped ml_weights.bin missing from the source tree (Resources/Models).");
+        const bool loaded = ai.setCustomMLWeightsPathForTests(mlWeights);
+        expect(loaded, "loadWeights() failed on the shipped ml_weights.bin.");
+        ai.forceMLDetectionEnabledForTests(true);
+
+        auto& ml = ai.getMLEngineForTest();
+        logMessage("  weights path: " + ml.getLoadedWeightsPath());
+        logMessage("  weights size: " + juce::String(ml.getLoadedWeightsBytes()) + " bytes");
+        logMessage("  weights md5 : " + ml.getLoadedWeightsChecksum());
+        expect(ml.areWeightsLoadedFromFile(),
+               "MLEngine reports random weights after a successful load - the fallback "
+               "would be silent in production.");
+        expect(ml.getLoadedWeightsBytes() > 0 && ml.getLoadedWeightsChecksum().isNotEmpty(),
+               "Weights metadata witness is empty.");
+
+        beginTest("Raw-probability audit: distinct stimuli yield distinct, non-zero raws");
+
+        // Two clearly different spectra: a narrow resonance vs a low-mid mud hump.
+        auto stimA = makeFlat();
+        addPeakDb(stimA, 800.0f, 18.0f, 0.04f);
+        auto stimB = makeFlat();
+        addPeakDb(stimB, 250.0f, 14.0f, 0.25f);
+
+        ai.analyzeSpectrum(stimA, true);
+        const auto rawsA = ai.getLastMLRawProbabilitiesForTests();
+        ai.analyzeSpectrum(stimB, true);
+        const auto rawsB = ai.getLastMLRawProbabilitiesForTests();
+
+        float maxAbsA = 0.0f, maxDiff = 0.0f;
+        juce::String rowA, rowB;
+        for (size_t i = 0; i < rawsA.size(); ++i)
+        {
+            maxAbsA = std::max(maxAbsA, std::abs(rawsA[i]));
+            maxDiff = std::max(maxDiff, std::abs(rawsA[i] - rawsB[i]));
+            rowA += juce::String(rawsA[i], 3) + " ";
+            rowB += juce::String(rawsB[i], 3) + " ";
+        }
+        logMessage("  raws(Res@800): " + rowA);
+        logMessage("  raws(Mud@250): " + rowB);
+
+        expect(maxAbsA > 0.0f,
+               "Raw probabilities are all zero - the audit hook is not wired to the inference.");
+        expect(maxDiff > 0.01f,
+               "Two distinct stimuli produced identical raw probabilities - the audit "
+               "snapshot is stale (pre-P0 self-assignment bug).");
+    }
+};
+
+static AIP0AuditWitnessTest sAIP0AuditWitnessTest;

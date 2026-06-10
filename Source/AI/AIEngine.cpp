@@ -118,7 +118,9 @@ void AIEngine::prepare(double sampleRate, int /*samplesPerBlock*/)
             {
                 useMLDetection = true;
                 mlBackendStatus.store(static_cast<int>(MLBackendStatus::Active), std::memory_order_relaxed);
-                AIEQ_LOG_INFO("ML model loaded: " + mlModelPath.getFullPathName());
+                AIEQ_LOG_INFO("ML model loaded: " + mlEngine.getLoadedWeightsPath()
+                              + " (" + juce::String(mlEngine.getLoadedWeightsBytes()) + " bytes, md5 "
+                              + mlEngine.getLoadedWeightsChecksum() + ")");
             }
             else
             {
@@ -2810,15 +2812,17 @@ void AIEngine::detectProblemsWithML()
     const float sens = sensitivity.load(std::memory_order_relaxed);
     mlEngine.setSensitivity(sens);
 
-    // ── Store audit snapshot of base thresholds (for test instrumentation) ──
+    // ── Effective thresholds for the audit snapshot (test instrumentation) ──
+    // NOTE: the snapshot itself is stored AFTER detectProblems() below, together
+    // with the raw probabilities of THAT inference. The previous code stored it
+    // here passing lastMLRawProbabilities to itself (self-assignment), so the
+    // raw-probability audit hook never carried fresh data.
+    std::array<float, MLEngine::numProblemTypes> effectiveThresholds {};
     {
         const auto& base = mlEngine.getBaseThresholds();
         float sensitivityScale = 1.0f - (sens - 0.5f) * 0.6f;
-        std::array<float, MLEngine::numProblemTypes> effectiveThresholds {};
         for (int i = 0; i < MLEngine::numProblemTypes; ++i)
             effectiveThresholds[static_cast<size_t>(i)] = base[static_cast<size_t>(i)] * sensitivityScale;
-        // Raw probs will be overwritten after detectProblems returns — store thresholds now
-        storeMLAuditSnapshot(lastMLRawProbabilities, effectiveThresholds);
     }
 
     // Optional: run TFLite NN to modulate confidence if available
@@ -2839,8 +2843,12 @@ void AIEngine::detectProblemsWithML()
         }
     }
 
-    // Run ML detection on LINEAR MAGNITUDE spectrum
-    auto mlDetections = mlEngine.detectProblems(linearSpectrum, currentSampleRate);
+    // Run ML detection on LINEAR MAGNITUDE spectrum. The optional out-param
+    // captures the raw sigmoid outputs of THIS inference (no second forward pass).
+    std::array<float, MLEngine::numProblemTypes> rawProbsThisInference {};
+    auto mlDetections = mlEngine.detectProblems(linearSpectrum, currentSampleRate,
+                                                &rawProbsThisInference);
+    storeMLAuditSnapshot(rawProbsThisInference, effectiveThresholds);
 
     // Convert ML detections to AIEngine corrections
     std::lock_guard<std::mutex> lock(correctionsWriteMutex);

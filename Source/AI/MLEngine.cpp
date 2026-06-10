@@ -152,6 +152,13 @@ void MLEngine::initialize()
         if (!loadWeights(juce::File::getSpecialLocation(juce::File::currentApplicationFile)
                              .getSiblingFile("ml_weights.bin")))
         {
+            // Observability (P0): make the random fallback explicit. In the plugin
+            // this is the NORMAL pre-load state — AIEngine loads the packaged
+            // models/ml_weights.bin right after and logs "ML model loaded". If no
+            // later load succeeds, the engine stays on RANDOM weights and ML
+            // detection quality is meaningless — this WARN is the only trace.
+            AIEQ_LOG_WARNING("MLEngine: no valid ml_weights.bin next to the application file - "
+                             "using RANDOM weights until packaged/custom weights are loaded.");
             initializeRandomWeights();
         }
 
@@ -197,12 +204,17 @@ void MLEngine::initializeRandomWeights()
 
 //==============================================================================
 std::vector<MLEngine::ProblemDetection> MLEngine::detectProblems(
-    const std::vector<float>& spectrum, double sampleRate)
+    const std::vector<float>& spectrum, double sampleRate,
+    std::array<float, numProblemTypes>* rawProbabilitiesOut)
 {
     initialize();
 
     std::vector<ProblemDetection> detections;
-    
+
+    // Defined audit content even on early returns (no inference ran -> zeros).
+    if (rawProbabilitiesOut != nullptr)
+        rawProbabilitiesOut->fill(0.0f);
+
     if (spectrum.empty())
         return detections;
     
@@ -223,7 +235,16 @@ std::vector<MLEngine::ProblemDetection> MLEngine::detectProblems(
     
     auto problemProbs = problemNet_fc3->forward(h2);
     problemProbs = applySigmoid(problemProbs);
-    
+
+    // Audit copy of THIS inference's raw sigmoid outputs (pre threshold/margin/
+    // rank). Same forward pass — no extra inference cost.
+    if (rawProbabilitiesOut != nullptr)
+    {
+        const size_t n = std::min(problemProbs.size(), rawProbabilitiesOut->size());
+        std::copy_n(problemProbs.begin(), n, rawProbabilitiesOut->begin());
+    }
+
+
     //--------------------------------------------------------------------------
     // Frequency Localization Network Forward Pass
     //--------------------------------------------------------------------------
@@ -1120,7 +1141,29 @@ bool MLEngine::loadWeights(const juce::File& modelFile)
         freqNet_fc1->setBias(fb1);
         freqNet_fc2->setWeights(fw2);
         freqNet_fc2->setBias(fb2);
-        
+
+        // Observability (P0): record what was loaded (path + size + checksum) so
+        // logs and tests can witness the EXACT weights in use. FNV-1a over the
+        // file bytes — no extra dependency (juce_cryptography is not linked in
+        // every target). One extra read of a ~97KB file at load time only.
+        weightsLoadedFromFile = true;
+        loadedWeightsPath = modelFile.getFullPathName();
+        loadedWeightsBytes = modelFile.getSize();
+        {
+            juce::MemoryBlock contents;
+            if (modelFile.loadFileAsData(contents))
+            {
+                juce::uint64 h = 1469598103934665603ULL; // FNV-1a 64-bit offset basis
+                const auto* bytes = static_cast<const juce::uint8*>(contents.getData());
+                for (size_t i = 0; i < contents.getSize(); ++i)
+                {
+                    h ^= bytes[i];
+                    h *= 1099511628211ULL; // FNV-1a prime
+                }
+                loadedWeightsChecksum = juce::String::toHexString(static_cast<juce::int64>(h));
+            }
+        }
+
         return true;
     }
     catch (...)

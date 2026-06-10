@@ -89,8 +89,13 @@ public:
     
     //==========================================================================
     // Main inference methods
+    // rawProbabilitiesOut (optional): receives the raw sigmoid outputs of THIS
+    // inference, before threshold/margin/rank filtering. Audit/observability
+    // only — passing nullptr (default) keeps every existing caller unchanged
+    // and adds zero work. Avoids a second forward pass for diagnostics.
     std::vector<ProblemDetection> detectProblems(const std::vector<float>& spectrum,
-                                                  double sampleRate);
+                                                  double sampleRate,
+                                                  std::array<float, numProblemTypes>* rawProbabilitiesOut = nullptr);
 
     /** Forward pass only — returns raw sigmoid probabilities for all 8 classes,
         without any threshold filtering. Used for threshold calibration. */
@@ -104,6 +109,14 @@ public:
     bool loadWeights(const juce::File& modelFile);
     bool saveWeights(const juce::File& modelFile) const;
     void initializeRandomWeights(); // For training
+
+    // Observability of the last SUCCESSFUL loadWeights() (audit/log/tests only;
+    // does not change search order or fallback behavior). Empty/0/false when the
+    // engine is still on random-initialized weights.
+    bool areWeightsLoadedFromFile() const { return weightsLoadedFromFile; }
+    juce::String getLoadedWeightsPath() const { return loadedWeightsPath; }
+    juce::int64 getLoadedWeightsBytes() const { return loadedWeightsBytes; }
+    juce::String getLoadedWeightsChecksum() const { return loadedWeightsChecksum; }
     
     //==========================================================================
     // Basic training / fine-tuning
@@ -151,6 +164,12 @@ public:
     static juce::String getGenreName(GenreType type);
 
 private:
+    // Metadata of the last successful loadWeights() — observability only.
+    bool weightsLoadedFromFile = false;
+    juce::String loadedWeightsPath;
+    juce::int64 loadedWeightsBytes = 0;
+    juce::String loadedWeightsChecksum;
+
     //==========================================================================
     // Simple Dense Layer
     class DenseLayer
