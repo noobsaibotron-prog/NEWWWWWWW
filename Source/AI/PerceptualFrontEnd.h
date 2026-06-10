@@ -96,4 +96,5 @@ private:
 
     // CPU witness.
     juce::int64 frameCount = 0, totalNs = 0, maxNs = 0;
+    bool isPrepared = false; // pushMono is a guarded no-op until prepare() runs
 };

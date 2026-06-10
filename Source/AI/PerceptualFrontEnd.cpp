@@ -15,6 +15,7 @@ void PerceptualFrontEnd::prepare(double sampleRate)
 
     buildBandTables();
     work.bandDb.assign(bandCentersHz.size(), kMinDb);
+    isPrepared = true;
     reset();
 }
 
@@ -96,11 +97,26 @@ void PerceptualFrontEnd::buildBandTables()
 void PerceptualFrontEnd::pushMono(const float* samples, int numSamples,
                                   const std::function<void(const Frame&)>& onFrame)
 {
+    // prepare() is mandatory: without it `pending` is empty and the loop below
+    // could spin forever (take == 0, consumed never advances). Hard no-op + assert.
+    if (!isPrepared || pending.empty() || samples == nullptr || numSamples <= 0)
+    {
+        jassert(isPrepared && "PerceptualFrontEnd::pushMono called before prepare()");
+        return;
+    }
+
     int consumed = 0;
     while (consumed < numSamples)
     {
         const int space = static_cast<int>(pending.size()) - pendingCount;
         const int take  = juce::jmin(space, numSamples - consumed);
+        if (take <= 0)
+        {
+            // Defensive: accumulation buffer full and no frame produced — cannot
+            // happen with the sizes set in prepare(), but never spin.
+            jassertfalse;
+            return;
+        }
         std::copy(samples + consumed, samples + consumed + take,
                   pending.begin() + pendingCount);
         pendingCount += take;

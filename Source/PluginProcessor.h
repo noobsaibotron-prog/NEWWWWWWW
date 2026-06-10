@@ -51,6 +51,7 @@
 #include "DSP/LinearPhaseProcessor.h"
 #include "Core/OSCParameterServer.h"
 #include "AI/AIEngine.h"
+#include "AI/PerceptualFrontEnd.h"
 #include "AI/ReferenceMatcher.h"
 #include "AI/UserLearning.h"
 #include "AI/SemanticEQEngine.h"
@@ -729,6 +730,38 @@ private:
     // last spectrum. Declared after the thread members above is irrelevant: the
     // thread is always explicitly joined in the destructor before teardown.
     std::atomic<bool> aiPendingReanalysis { false };
+
+    // P2 (Roadmap v1): AI-owned perceptual front-end — DIAGNOSTICS-ONLY wiring.
+    // The AI thread drains preEqSpectrumFifo (single consumer; the audio thread
+    // is the single producer via pushStereoMix) and feeds the front-end. NO
+    // detector consumes rawDb/bandDb yet; only the diagnostic counters below
+    // are published. aiFrontEndReady gates the drain across prepareToPlay
+    // re-preparation (front-end buffers are reallocated on the message thread).
+    PerceptualFrontEnd aiFrontEnd;
+    std::vector<float> aiFrontEndScratch;            // AI-thread pull buffer
+    std::atomic<bool> aiFrontEndReady { false };
+    std::atomic<juce::int64> aiFrontEndFrames { 0 };
+    std::atomic<double> aiFrontEndMeanNs { 0.0 };
+    std::atomic<juce::int64> aiFrontEndMaxNs { 0 };
+
+public:
+    struct FrontEndDiagnostics
+    {
+        juce::int64 frames = 0;
+        double meanMs = 0.0;
+        double maxMs = 0.0;
+    };
+    /** Observability of the diagnostics-only front-end (no detection impact).
+        DELIBERATELY out-of-line (defined in PluginProcessor.cpp): test targets
+        compile this header with JUCE_UNIT_TESTS=1 while the plugin SharedCode
+        does not, and AIEngine/MLEngine contain test-gated DATA members — so the
+        object layout of everything declared AFTER `aiEngine` differs between
+        the two worlds. An inline body in a test TU would read garbage offsets
+        (measured: frames ~= nanoseconds-since-start). Out-of-line, the body is
+        compiled once in SharedCode with the true layout. The underlying
+        macro-gated-data landmine is tracked as a separate ticket. */
+    [[nodiscard]] FrontEndDiagnostics getAIFrontEndDiagnostics() const noexcept;
+private:
 
     // IR builder thread function (runs in background)
     void irBuilderThreadFunc();

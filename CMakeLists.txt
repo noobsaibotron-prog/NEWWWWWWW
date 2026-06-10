@@ -583,6 +583,8 @@ set(PLUGIN_SOURCES
     Source/AI/AIEngine.cpp
     Source/AI/AIEngine.h
     Source/AI/AIEngine_Advanced.cpp
+    Source/AI/PerceptualFrontEnd.cpp
+    Source/AI/PerceptualFrontEnd.h
     Source/AI/ReferenceMatcher.cpp
     Source/AI/ReferenceMatcher.h
     Source/AI/UserLearning.cpp
@@ -1030,8 +1032,8 @@ if(HAVE_JUCE)
         # SpectrumAnalyzer is TEST-ONLY here: the AI-Corpus mirror-equivalence
         # gate compares the offline pipeline against the real analyzer.
         Source/DSP/SpectrumAnalyzer.cpp
-        # P2 front-end: diagnostics-only for now — compiled in the TEST target
-        # only, not in the plugin, until the gated wiring commit.
+        # P2 front-end (also compiled into the plugin since the P2C2 wiring commit;
+        # kept here because this target does not link the plugin sources).
         Source/AI/PerceptualFrontEnd.cpp
         # Test file and shared runner entry-point
         Source/Tests/AIEngineTest.cpp
@@ -1097,6 +1099,7 @@ if(HAVE_JUCE)
         Source/Tests/FreqDragClickTest.cpp
         Source/Tests/SensitivityKnobLiveTest.cpp
         Source/Tests/AISensitivityTransportStopTest.cpp
+        Source/Tests/AIFrontEndWiringTest.cpp
         Source/Tests/TestMain.cpp
     )
     target_compile_features(AIEqualizerPro_IntegrationTests PRIVATE cxx_std_20)

@@ -450,6 +450,17 @@ void AIEqualizerAudioProcessor::irBuilderThreadFunc()
 //==============================================================================
 // AI Analysis Thread Function (runs off the audio thread)
 //==============================================================================
+AIEqualizerAudioProcessor::FrontEndDiagnostics
+AIEqualizerAudioProcessor::getAIFrontEndDiagnostics() const noexcept
+{
+    // Out-of-line on purpose — see the header note (test/plugin layout divergence).
+    FrontEndDiagnostics d;
+    d.frames = aiFrontEndFrames.load(std::memory_order_relaxed);
+    d.meanMs = aiFrontEndMeanNs.load(std::memory_order_relaxed) / 1.0e6;
+    d.maxMs  = static_cast<double>(aiFrontEndMaxNs.load(std::memory_order_relaxed)) / 1.0e6;
+    return d;
+}
+
 void AIEqualizerAudioProcessor::aiAnalysisThreadFunc()
 {
     try
@@ -460,6 +471,26 @@ void AIEqualizerAudioProcessor::aiAnalysisThreadFunc()
 
     while (!stopAIAnalysis.load())
     {
+        // P2 (diagnostics-only): drain the pre-EQ audio FIFO into the AI-owned
+        // front-end. Editor-independent by construction (no GUI involvement).
+        // NO detector consumes the produced frames yet — only the diagnostic
+        // counters are published. Bounded: FIFO cap 32768 / scratch 4096 -> <=8
+        // pulls per pass.
+        if (aiFrontEndReady.load(std::memory_order_acquire))
+        {
+            size_t pulled = 0;
+            while ((pulled = preEqSpectrumFifo.pullAudioBlock(aiFrontEndScratch.data(),
+                                                              aiFrontEndScratch.size())) > 0)
+            {
+                aiFrontEnd.pushMono(aiFrontEndScratch.data(), static_cast<int>(pulled), nullptr);
+                if (stopAIAnalysis.load())
+                    break;
+            }
+            aiFrontEndFrames.store(aiFrontEnd.framesProcessed(), std::memory_order_relaxed);
+            aiFrontEndMeanNs.store(aiFrontEnd.meanFrameNs(), std::memory_order_relaxed);
+            aiFrontEndMaxNs.store(aiFrontEnd.maxFrameNs(), std::memory_order_relaxed);
+        }
+
         // Try to pop without blocking
         if (!aiSpectrumQueue.tryPop(frame))
         {
@@ -937,8 +968,17 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     postEQAnalyzer.prepare(sampleRate, samplesPerBlock);
 
     // Metrological pipeline FIFOs: 32768 samples (~680ms at 48kHz)
+    // P2 front-end (diagnostics-only): gate the AI-thread drain while buffers
+    // are (re)allocated here on the message thread, then re-open it.
+    aiFrontEndReady.store(false, std::memory_order_release);
     preEqSpectrumFifo.prepare(32768);
     postEqSpectrumFifo.prepare(32768);
+    aiFrontEnd.prepare(sampleRate);
+    aiFrontEndScratch.assign(4096, 0.0f);
+    aiFrontEndFrames.store(0, std::memory_order_relaxed);
+    aiFrontEndMeanNs.store(0.0, std::memory_order_relaxed);
+    aiFrontEndMaxNs.store(0, std::memory_order_relaxed);
+    aiFrontEndReady.store(true, std::memory_order_release);
     eqProcessor.prepare(sampleRate, samplesPerBlock, getTotalNumInputChannels());
     dynamicEQProcessor.prepare(sampleRate, samplesPerBlock, getTotalNumInputChannels());
 

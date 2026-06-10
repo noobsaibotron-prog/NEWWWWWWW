@@ -48,6 +48,7 @@ Emitted by AI-Corpus at the baseline commit:
 | **P1-GAP-001** | True 3.2 kHz resonance MISSED in the live path: ML at every sensitivity, Hybrid at 0.5. ML raw probabilities over-fire (~1.0 on 4 classes — model trained on 64 synthetic Gaussians) and the decision rule + AIEngine reality-check vetoes flatten everything on real audio. **Bonus finding:** Hybrid PASSES at sens 0.2 but fails at 0.5 — a real-audio sensitivity inversion (heuristic candidate spray at higher sens saturates/competes in the persistence layer; same family as the Ticket #3 inversion). | AI-Corpus baseline; AI-Diag raws witness | P2 (perceptual front-end) + P4 (ML retraining on corpus) |
 | **P1-GAP-002** | Clean dark-tilt material emits one heuristic `Res@8.6 kHz c=0.47` (Hybrid, sens 0.2). Same HF/tilt fragility family as the known low-sens heuristic FP. Survives temporal persistence (it is stable, not flicker). | AI-Corpus baseline | P2 front-end (octave-stable HF salience for the heuristic path) |
 | **P1-QUIRK-001** | `SpectrumAnalyzer::prepare()` does not recompute the attack/release smoothing coefficients: at 48 kHz the live pipeline runs 44100-derived coeffs (at 96 kHz the discrepancy doubles). Discovered because the "correct" mirror deviated 1.59 dB from reality; the mirror now replicates the quirk (documented in `OfflineAnalysisPipeline.h`). | mirror-equivalence bring-up | Separate gated production fix (changes the live spectrum → must re-run floors + corpus) |
+| **P2-HAZARD-001** | Test-macro-gated DATA members (`#if JUCE_UNIT_TESTS` in `AIEngine.h`/`MLEngine.h`) make the object layout differ between the plugin SharedCode (no macro) and test TUs (macro=1). Any header-INLINE accessor to processor members declared after `aiEngine` read from an integration test returns garbage (measured: frames ≈ ns-since-start in the P2C2 bring-up). Mitigated case-by-case with out-of-line accessors; pre-existing inline accessors survive only because they touch members declared before `aiEngine`. | P2C2 bring-up (wiring witness) | Dedicated hygiene ticket: make gated data unconditional (tiny size cost) or move test hooks out of object layout |
 
 ## 4. Promotion criteria — known_fail → PASS
 
@@ -71,7 +72,7 @@ A regression on a previously-PASS corpus row is a hard failure of the harness
 | Dynamic resonance recall | not yet measured (fixtures in P3) | ≥90% | soothe2 (its core) |
 | Balance direction accuracy | not yet measured (P5) | ≥90% | Gullfoss |
 | Verified-fix rate | not yet measured (P6) | ≥85% | nobody — differentiator |
-| AI-thread CPU (front-end, AI-Front witness) | mean 0.038 ms / max 0.091 ms per frame (~0.09% core @23 fps, P2 Commit 1, module not yet wired) | ≤1.5% core, max ≤5 ms/frame | — |
+| AI-thread CPU (front-end) | **in-vivo (P2C2, real AI thread): mean 0.027 ms / max 0.039 ms per frame** (~0.06% core @23 fps); offline witness (P2C1): 0.038/0.091 ms | ≤1.5% core, max ≤5 ms/frame | — |
 
 Commercial claims ("beats X at Y") are permitted ONLY after the corresponding
 proxy family is green in this scorecard.
