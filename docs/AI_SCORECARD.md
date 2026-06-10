@@ -75,3 +75,29 @@ A regression on a previously-PASS corpus row is a hard failure of the harness
 
 Commercial claims ("beats X at Y") are permitted ONLY after the corresponding
 proxy family is green in this scorecard.
+
+---
+
+## 6. Known-good checkpoints (restore points)
+
+| Tag | Certified state | Date | What is green |
+|---|---|---|---|
+| `checkpoint/p2c1` | P2 Commit 1 (`00ed7c44`) + this docs-only checkpoint commit | 2026-06-10 | Synthetic floor 0/18; multi-seed ML 0% / Hybrid 6.2% / frame 4.2%; resonance recall 100%; mirror equivalence 0.00000 dB; corpus baseline recorded; AI-Front witnesses (front-end CPU 0.038 ms/frame); full AI suite 1,391,262/0. PerceptualFrontEnd is diagnostics-only (NOT wired into production). |
+
+**Restore procedure** (on the working branch, e.g. after a regression):
+
+```bash
+# ⚠️ reset --hard is DESTRUCTIVE. ALWAYS protect the dirty worktree first:
+git stash push -u -m "pre-restore $(date +%Y%m%d-%H%M)"
+
+git reset --hard checkpoint/p2c1
+
+# Re-certify the restored state before resuming work:
+cmake --build build-mac --target AIEqualizerPro_AI_Tests -j8
+build-mac/Release/bin/AIEqualizerPro_AI_Tests --category=AI-Sweep   # floor 0/18
+build-mac/Release/bin/AIEqualizerPro_AI_Tests                       # full suite green
+```
+
+Parked (unreviewed, do not lose): branch `parked/aiaccuracytest-db-fixtures`
+holds the prior-session AIAccuracyTest dB-domain fixtures (also in `stash@{0}`;
+the branch is the durable pointer).
