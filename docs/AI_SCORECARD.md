@@ -87,6 +87,7 @@ proxy family is green in this scorecard.
 | Tag | Certified state | Date | What is green |
 |---|---|---|---|
 | `checkpoint/p2c1` | P2 Commit 1 (`00ed7c44`) + this docs-only checkpoint commit | 2026-06-10 | Synthetic floor 0/18; multi-seed ML 0% / Hybrid 6.2% / frame 4.2%; resonance recall 100%; mirror equivalence 0.00000 dB; corpus baseline recorded; AI-Front witnesses (front-end CPU 0.038 ms/frame); full AI suite 1,391,262/0. PerceptualFrontEnd is diagnostics-only (NOT wired into production). |
+| `checkpoint/p2-complete` | Pillar P2 complete (`e99728cf` P2C3.1) + this docs-only checkpoint commit | 2026-06-11 | Everything in `p2c1` PLUS: front-end wired into the AI thread on a dedicated SPSC fifo (editor-open isolation witnessed 102,400/102,400 + 49/48 frames), re-prepare handshake, LF 8192 fusion (45/60 Hz separated 13.94 dB), equal-loudness salience, flux/onset stream, honest combined CPU witness (0.057 ms/main-frame). Still diagnostics-only: NO detector consumes the front-end. Floors unchanged; full AI suite 1,391,262/0; Integration = only the 3 pre-existing BlockSize failures. |
 
 **Restore procedure** (on the working branch, e.g. after a regression):
 
