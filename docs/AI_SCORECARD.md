@@ -95,7 +95,8 @@ proxy family is green in this scorecard.
 # ⚠️ reset --hard is DESTRUCTIVE. ALWAYS protect the dirty worktree first:
 git stash push -u -m "pre-restore $(date +%Y%m%d-%H%M)"
 
-git reset --hard checkpoint/p2c1
+# reset to the MOST RECENT certified checkpoint in the table above, e.g.:
+git reset --hard checkpoint/p2-complete
 
 # Re-certify the restored state before resuming work:
 cmake --build build-mac --target AIEqualizerPro_AI_Tests -j8
@@ -106,3 +107,33 @@ build-mac/Release/bin/AIEqualizerPro_AI_Tests                       # full suite
 Parked (unreviewed, do not lose): branch `parked/aiaccuracytest-db-fixtures`
 holds the prior-session AIAccuracyTest dB-domain fixtures (also in `stash@{0}`;
 the branch is the durable pointer).
+
+---
+
+## 7. Gap ledger vs market (honest assessment — UPDATE AT EVERY PILLAR CLOSE)
+
+Rules: competitor info is as-of the assessor's knowledge cutoff; OUR numbers are
+measured in this repo (cite the witness). Status values: CLOSED / AHEAD /
+PARTIAL / OPEN. No status may improve without a measured witness behind it.
+
+**Last updated: P2 complete (`checkpoint/p2-complete`, 2026-06-12). Overall
+honest standing: ~6.5/10 vs 2026 leaders (was 6.0 at the integral review;
++0.5 from AI fixes + stability + foundations — foundations are not yet
+user-audible).**
+
+| # | Axis | Status @P2 | Our evidence | Market reference | Closes at |
+|---|---|---|---|---|---|
+| 1 | Detection precision (clean FP) | **CLOSED / arguably AHEAD** | floor 0/18, multi-seed ML 0% / Hybrid 6.2%, tilt-robust veto family, permanent regression harness (1 residual KNOWN_FAIL: heuristic HF on real dark tilt @0.2) | assistants err little because they suggest little; nobody publishes numbers | — (hold forever) |
+| 2 | Recall on REAL audio | **OPEN — most urgent** | P1-GAP-001: true 3.2 kHz resonance missed (ML all sens, Hybrid 0.5) + sensitivity inversion, measured on corpus | smart:EQ 4 learns robustly from real audio | P3 stats (lateral) + P4 retraining |
+| 3 | Dynamic/intermittent problems | **OPEN — biggest perceived gap** | recall 0% on pulsed fixtures (before-witness pending in P3C2) | soothe2's core capability | P3 |
+| 4 | ML brain quality | **OPEN — fundamental** | 24K-param MLP trained on 64 synthetic Gaussians; raws over-fire ~1.0 on 4 classes; precision survives only via AIEngine vetoes (P0 witness) | sonible: models trained on thousands of real mixes | P4 (gated on feature-contract freeze) |
+| 5 | Perceptual decisions | **PARTIAL — foundations ready, unused** | front-end delivers salience/LF-fusion (13.94 dB witness)/flux at 0.057 ms/frame, but NO detector consumes it (by discipline) | Gullfoss/smart:EQ decide on perceptual representations | P2 consumer migrations + P3/P5 |
+| 6 | Tonal balance / target curves | **OPEN — nothing built** | n/a | Gullfoss core, smart:EQ profiles | P5 |
+| 7 | Auto source-awareness | **OPEN** | genre classifier runs, result consumed by nothing | smart:EQ profiles + learning | P5 |
+| 8 | Verify-loop (apply→re-measure) | **OPEN — our differentiator** | postEq path exists (GUI-owned; needs dedicated fifo, see P2C2.1 lesson) | nobody ships this | P6 |
+| 9 | EQ engine math (outside AI roadmap) | **OPEN — behind Pro-Q** | C3: 24/48 dB/oct cuts stack identical-Q biquads (non-Butterworth: droop, shifted corner); LP decent not pristine; DynEQ coupled ballistics + 0.5 dB stepped gain (S3) | FabFilter Pro-Q 4 is the reference | dedicated engine tickets (C3 first) |
+| 10 | Suggestion UX | **OPEN — undervalued** | fixes are take-it-or-leave-it (no tweak-before-apply, no per-suggestion audition); 3 overlapping GUI panels, 2 dead | smart:EQ/Neutron audition + tweak workflows | dedicated UX ticket |
+
+Summary: axis 1 is green and defended by the harness; ZERO of the five
+user-visible capability gaps (2,3,6,7,8) is closed yet — P0–P2 built the
+instrument and the eyes; the visible-capability race starts at P3.
