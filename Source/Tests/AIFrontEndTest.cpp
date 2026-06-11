@@ -242,13 +242,19 @@ public:
         const int n10 = static_cast<int>(kSr * 10.0);
         const auto mono10 = makeTestSignal(n10, 778);
         fe10.pushMono(mono10.data(), n10, nullptr);
-        const double meanMs = fe10.meanFrameNs() / 1.0e6;
+        const double mainMs = fe10.mainMeanFrameNs() / 1.0e6;
+        const double lfMs   = fe10.lfMeanFrameNs() / 1.0e6;
+        const double combMs = fe10.meanFrameNs() / 1.0e6; // (main+LF) / mainFrames
         const double maxMs  = static_cast<double>(fe10.maxFrameNs()) / 1.0e6;
-        logMessage("  frames=" + juce::String(static_cast<int>(fe10.framesProcessed()))
-                   + "  mean=" + juce::String(meanMs, 3) + " ms/frame"
-                   + "  max=" + juce::String(maxMs, 3) + " ms/frame");
+        logMessage("  main frames=" + juce::String(static_cast<int>(fe10.framesProcessed()))
+                   + " (mean " + juce::String(mainMs, 3) + " ms)"
+                   + "  LF frames=" + juce::String(static_cast<int>(fe10.lfFramesProcessed()))
+                   + " (mean " + juce::String(lfMs, 3) + " ms)");
+        logMessage("  COMBINED amortized per main frame = " + juce::String(combMs, 3)
+                   + " ms   max single work unit = " + juce::String(maxMs, 3) + " ms");
         expect(fe10.framesProcessed() > 200, "Too few frames for a meaningful CPU witness.");
-        expect(meanMs < 5.0, "Front-end mean frame cost exceeds the 5 ms budget.");
+        expect(fe10.lfFramesProcessed() > 100, "LF path produced too few frames - not measured.");
+        expect(combMs < 5.0, "Front-end COMBINED amortized cost exceeds the 5 ms budget.");
     }
 };
 

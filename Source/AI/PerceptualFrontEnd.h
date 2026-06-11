@@ -3,11 +3,14 @@
 /**
  * PerceptualFrontEnd — Roadmap v1, P2: the AI-owned analysis front-end.
  *
- * P2 Commit 1 status: DIAGNOSTICS-ONLY. This module is compiled into the AI
- * test target only and is NOT instantiated anywhere in production. No detector
- * consumes its output yet. Wiring into the AI thread (draining
- * preEqSpectrumFifo) and any detector migration are separate, gated commits —
- * see docs/AI_SCORECARD.md and the anti-accidental-migration guard in the plan.
+ * Status (P2C3.1): WIRED into the AI thread since P2C2 (the thread drains the
+ * dedicated aiFrontEndFifo and feeds this module), still DIAGNOSTICS-ONLY:
+ * no detector consumes rawDb/bandDb/bandDbFused/salienceDb/fluxDb — only the
+ * diagnostic counters are published. bandDbFused uses the LATEST LF (8192)
+ * frame, which is NOT time-aligned with the current main frame (it can lead or
+ * lag by up to one LF hop depending on chunking): the alignment contract must
+ * be formalized before any real detector consumer. Any consumer migration is a
+ * separate, gated commit — see docs/AI_SCORECARD.md.
  *
  * What it produces per hop (fftSize/2 = 2048 samples):
  *   - rawDb:  2049 UNSMOOTHED dB bins. Same FFT/window/normalization/clamp as
@@ -54,9 +57,13 @@ public:
         std::vector<float> bandDb;      // numBands(), log-band energies (4096 path)
         // P2C3 — perceptual extensions (diagnostics-only, no detector consumes them):
         std::vector<float> bandDbFused; // bandDb, but LF bands (< kLfCutoverHz) come
-                                        // from the latest 8192-point spectrum (better
+                                        // from the LATEST 8192-point spectrum (better
                                         // LF resolution: ~5.86 Hz/bin vs 11.7). Equals
                                         // bandDb until the first LF frame is ready.
+                                        // NOT time-aligned with this main frame (may
+                                        // lead/lag up to one LF hop) — fine for band
+                                        // STATISTICS, must be formalized before any
+                                        // detector consumes it.
         std::vector<float> salienceDb;  // bandDbFused + equal-loudness weight (fixed
                                         // ISO-226-like curve, ~75 phon, anchor table
                                         // interpolated in log-f; approximation for
@@ -86,13 +93,33 @@ public:
     /** Equal-loudness weight (dB) applied to band `band` in salienceDb (test witness). */
     float loudnessWeightDb(int band) const { return bandLoudnessWeightDb[static_cast<size_t>(band)]; }
 
-    // CPU witness accessors (per processed frame, nanoseconds).
+    // CPU witness accessors.
+    // meanFrameNs() = COMBINED front-end CPU cost AMORTIZED OVER MAIN FRAMES:
+    //   (mainTotalNs + lfTotalNs) / mainFrameCount.
+    // NOTE the cadences differ (main: one frame / 2048 samples; LF: one frame /
+    // 4096 samples), so this is NOT the cost of one physical frame — it is the
+    // right metric for the front-end CPU BUDGET per main-frame tick.
+    // maxFrameNs() = max single work unit of EITHER path (indicative only; it
+    // does not represent a push that produces both in one call).
+    // (P2C3 originally timed only the main path while claiming "incl. LF" —
+    // fixed in P2C3.1.) Per-path detail below for the witnesses.
     juce::int64 framesProcessed() const noexcept { return frameCount; }
     double meanFrameNs() const noexcept
     {
+        return frameCount > 0
+            ? static_cast<double>(totalNs + lfTotalNs) / static_cast<double>(frameCount) : 0.0;
+    }
+    juce::int64 maxFrameNs() const noexcept { return std::max(maxNs, lfMaxNs); }
+
+    juce::int64 lfFramesProcessed() const noexcept { return lfFrameCount; }
+    double mainMeanFrameNs() const noexcept
+    {
         return frameCount > 0 ? static_cast<double>(totalNs) / static_cast<double>(frameCount) : 0.0;
     }
-    juce::int64 maxFrameNs() const noexcept { return maxNs; }
+    double lfMeanFrameNs() const noexcept
+    {
+        return lfFrameCount > 0 ? static_cast<double>(lfTotalNs) / static_cast<double>(lfFrameCount) : 0.0;
+    }
 
 private:
     void processOneFrame(const std::function<void(const Frame&)>& onFrame);
@@ -144,7 +171,8 @@ private:
     std::vector<float> prevRawDb;          // previous main frame, for flux
     bool hasPrevRaw = false;
 
-    // CPU witness.
+    // CPU witness (main path + LF path, separate accumulators).
     juce::int64 frameCount = 0, totalNs = 0, maxNs = 0;
+    juce::int64 lfFrameCount = 0, lfTotalNs = 0, lfMaxNs = 0;
     bool isPrepared = false; // pushMono is a guarded no-op until prepare() runs
 };

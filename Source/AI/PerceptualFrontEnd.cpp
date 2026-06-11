@@ -48,6 +48,9 @@ void PerceptualFrontEnd::reset()
     frameCount = 0;
     totalNs = 0;
     maxNs = 0;
+    lfFrameCount = 0;
+    lfTotalNs = 0;
+    lfMaxNs = 0;
 }
 
 float PerceptualFrontEnd::interpLoudnessWeightDb(float hz)
@@ -264,6 +267,8 @@ void PerceptualFrontEnd::pushLfMono(const float* samples, int numSamples)
 
 void PerceptualFrontEnd::processOneLfFrame()
 {
+    const auto t0 = juce::Time::getHighResolutionTicks();
+
     if (!lfPrimed)
     {
         std::copy(lfPending.begin(), lfPending.begin() + kLfFftSize, lfFftData.begin());
@@ -303,6 +308,12 @@ void PerceptualFrontEnd::processOneLfFrame()
         lfBandDb[b] = acc / lfBandWeightSum[b];
     }
     lfHasFrame = true;
+
+    const auto t1 = juce::Time::getHighResolutionTicks();
+    const auto ns = juce::int64(juce::Time::highResolutionTicksToSeconds(t1 - t0) * 1.0e9);
+    ++lfFrameCount;
+    lfTotalNs += ns;
+    lfMaxNs = std::max(lfMaxNs, ns);
 }
 
 std::vector<PerceptualFrontEnd::Frame> PerceptualFrontEnd::analyzeAll(const float* samples,
