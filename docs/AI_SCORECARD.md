@@ -72,7 +72,9 @@ A regression on a previously-PASS corpus row is a hard failure of the harness
 | Dynamic resonance recall | not yet measured (fixtures in P3) | ≥90% | soothe2 (its core) |
 | Balance direction accuracy | not yet measured (P5) | ≥90% | Gullfoss |
 | Verified-fix rate | not yet measured (P6) | ≥85% | nobody — differentiator |
-| AI-thread CPU (front-end) | **in-vivo (P2C2.1, real AI thread, dedicated FIFO): mean ~0.027–0.029 ms / max ~0.04–0.06 ms per frame** (~0.06% core @23 fps); offline witness (P2C1): 0.038/0.091 ms | ≤1.5% core, max ≤5 ms/frame | — |
+| AI-thread CPU (front-end) | **in-vivo (P2C3, incl. LF 8192 path + flux + salience): mean ~0.032 ms / max ~0.04–0.05 ms per frame** (~0.07% core @23 fps) | ≤1.5% core, max ≤5 ms/frame | — |
+| LF resolution (P2C3 headline witness) | 45 Hz + 60 Hz sines: 4096-band profile is an indistinguishable smear; **fused (8192) profile separates them with 13.94 dB peak-to-dip** | separable ≥3 dB | smart:EQ LF detail |
+| Onset stream (P2C3) | spectral flux: transient frame peak **41.2 dB** vs steady median **0.000 dB**, localization ±1 frame | peak ≫ steady | soothe2 dynamics prerequisite |
 | Front-end isolation (editor-open witness, P2C2.1) | GUI consumer drained **102,400/102,400** preEq samples concurrently AND the front-end still produced **49/~48** expected frames — readers isolated by the dedicated `aiFrontEndFifo` (the P2C2 SPSC violation is fixed) | both consumers always whole | — |
 
 Commercial claims ("beats X at Y") are permitted ONLY after the corresponding

@@ -111,6 +111,130 @@ public:
                "1 kHz sine did not land in the nearest 12/oct band.");
 
         // ----------------------------------------------------------------
+        beginTest("P2C3 headline: 45 Hz and 60 Hz resonances separable in the FUSED bands");
+        // At 11.7 Hz/bin (4096) the two sines land on near-adjacent bins and smear;
+        // the 8192 LF path (5.86 Hz/bin) must resolve them as two distinct band
+        // maxima with a dip between. This was the impossible-today witness.
+        {
+            const int n2 = static_cast<int>(kSr * 4.0);
+            juce::Random rng2(555);
+            std::vector<float> lfSig(static_cast<size_t>(n2));
+            for (int i = 0; i < n2; ++i)
+            {
+                const double t = i / kSr;
+                lfSig[static_cast<size_t>(i)] =
+                      0.30f * std::sin(2.0 * juce::MathConstants<double>::pi * 45.0 * t)
+                    + 0.30f * std::sin(2.0 * juce::MathConstants<double>::pi * 60.0 * t)
+                    + 0.01f * (rng2.nextFloat() * 2.0f - 1.0f);
+            }
+            PerceptualFrontEnd feLf;
+            feLf.prepare(kSr);
+            const auto fr = feLf.analyzeAll(lfSig.data(), n2);
+            expect(!fr.empty() && fr.back().lfValid, "No LF-fused frame produced.");
+            const auto& f = fr.back();
+
+            // Inspect bands around 35..80 Hz.
+            int b45 = -1, b60 = -1;
+            for (int b = 0; b < feLf.numBands(); ++b)
+            {
+                if (std::abs(std::log2(feLf.bandCenterHz(b) / 45.0f)) < 1.0f / 24.0f) b45 = b;
+                if (std::abs(std::log2(feLf.bandCenterHz(b) / 60.0f)) < 1.0f / 24.0f) b60 = b;
+            }
+            expect(b45 >= 0 && b60 >= 0 && b60 > b45 + 1, "Band grid misses 45/60 Hz centers.");
+            juce::String prof4096, profFused;
+            for (int b = juce::jmax(0, b45 - 3); b <= b60 + 3 && b < feLf.numBands(); ++b)
+            {
+                prof4096  += juce::String(f.bandDb[static_cast<size_t>(b)], 1) + " ";
+                profFused += juce::String(f.bandDbFused[static_cast<size_t>(b)], 1) + " ";
+            }
+            logMessage("  bands " + juce::String(b45 - 3) + ".." + juce::String(b60 + 3)
+                       + "  4096: " + prof4096);
+            logMessage("  bands " + juce::String(b45 - 3) + ".." + juce::String(b60 + 3)
+                       + "  fused: " + profFused);
+
+            // Witness: both peaks present and a genuine dip between them (fused).
+            float dipMin = 1.0e9f;
+            for (int b = b45 + 1; b < b60; ++b)
+                dipMin = std::min(dipMin, f.bandDbFused[static_cast<size_t>(b)]);
+            const float peak45 = f.bandDbFused[static_cast<size_t>(b45)];
+            const float peak60 = f.bandDbFused[static_cast<size_t>(b60)];
+            const float sep = std::min(peak45, peak60) - dipMin;
+            logMessage("  fused separation (min peak - dip) = " + juce::String(sep, 2) + " dB");
+            expect(sep >= 3.0f,
+                   "45/60 Hz not separable in the fused LF representation (sep="
+                   + juce::String(sep, 2) + " dB).");
+        }
+
+        // ----------------------------------------------------------------
+        beginTest("P2C3: equal-loudness salience weighting sanity");
+        {
+            PerceptualFrontEnd feW;
+            feW.prepare(kSr);
+            int b1k = 0, b50 = 0, b3k = 0;
+            for (int b = 0; b < feW.numBands(); ++b)
+            {
+                if (std::abs(std::log2(feW.bandCenterHz(b) / 1000.0f)) <
+                    std::abs(std::log2(feW.bandCenterHz(b1k) / 1000.0f))) b1k = b;
+                if (std::abs(std::log2(feW.bandCenterHz(b) / 50.0f)) <
+                    std::abs(std::log2(feW.bandCenterHz(b50) / 50.0f)))  b50 = b;
+                if (std::abs(std::log2(feW.bandCenterHz(b) / 3000.0f)) <
+                    std::abs(std::log2(feW.bandCenterHz(b3k) / 3000.0f))) b3k = b;
+            }
+            logMessage("  weight(50 Hz)=" + juce::String(feW.loudnessWeightDb(b50), 1)
+                       + "  weight(1 kHz)=" + juce::String(feW.loudnessWeightDb(b1k), 1)
+                       + "  weight(3 kHz)=" + juce::String(feW.loudnessWeightDb(b3k), 1));
+            expect(std::abs(feW.loudnessWeightDb(b1k)) <= 0.5f, "1 kHz weight should be ~0 dB.");
+            expect(feW.loudnessWeightDb(b50) < feW.loudnessWeightDb(b1k) - 5.0f,
+                   "50 Hz should be strongly de-weighted vs 1 kHz.");
+            expect(feW.loudnessWeightDb(b3k) > feW.loudnessWeightDb(b1k),
+                   "3 kHz should be slightly up-weighted vs 1 kHz (ear sensitivity).");
+        }
+
+        // ----------------------------------------------------------------
+        beginTest("P2C3: spectral flux spikes at a transient and stays low on steady tone");
+        {
+            const int n3 = static_cast<int>(kSr * 3.0);
+            juce::Random rng3(666);
+            std::vector<float> sig3(static_cast<size_t>(n3));
+            const int burstStart = static_cast<int>(kSr * 2.0); // t = 2 s
+            const int burstLen = 2048;
+            for (int i = 0; i < n3; ++i)
+            {
+                const double t = i / kSr;
+                float s = 0.25f * static_cast<float>(
+                    std::sin(2.0 * juce::MathConstants<double>::pi * 1000.0 * t));
+                if (i >= burstStart && i < burstStart + burstLen)
+                    s += 0.5f * (rng3.nextFloat() * 2.0f - 1.0f);
+                sig3[static_cast<size_t>(i)] = s;
+            }
+            PerceptualFrontEnd feF;
+            feF.prepare(kSr);
+            const auto fr3 = feF.analyzeAll(sig3.data(), n3);
+            expect(static_cast<int>(fr3.size()) > 50, "Too few frames for the flux witness.");
+
+            int argmax = 1; // skip frame 0 (no flux reference)
+            for (int f2 = 2; f2 < static_cast<int>(fr3.size()); ++f2)
+                if (fr3[static_cast<size_t>(f2)].fluxDb > fr3[static_cast<size_t>(argmax)].fluxDb)
+                    argmax = f2;
+            // Expected frame index containing the burst start.
+            const int expectedFrame = (burstStart - 4096) / 2048 + 1;
+            // Median flux on clearly-steady frames (before the burst region).
+            std::vector<float> steady;
+            for (int f2 = 2; f2 < expectedFrame - 2; ++f2)
+                steady.push_back(fr3[static_cast<size_t>(f2)].fluxDb);
+            std::sort(steady.begin(), steady.end());
+            const float steadyMedian = steady[steady.size() / 2];
+            logMessage("  flux argmax frame=" + juce::String(argmax)
+                       + " (expected ~" + juce::String(expectedFrame) + ")"
+                       + "  peak=" + juce::String(fr3[static_cast<size_t>(argmax)].fluxDb, 2)
+                       + " dB  steady median=" + juce::String(steadyMedian, 3) + " dB");
+            expect(std::abs(argmax - expectedFrame) <= 1,
+                   "Flux peak not at the transient frame.");
+            expect(fr3[static_cast<size_t>(argmax)].fluxDb > steadyMedian * 5.0f + 1.0f,
+                   "Flux peak not clearly above the steady floor.");
+        }
+
+        // ----------------------------------------------------------------
         beginTest("CPU witness: per-frame cost within budget");
         // Fresh run over 10 s so the counters cover a realistic stretch.
         PerceptualFrontEnd fe10;
