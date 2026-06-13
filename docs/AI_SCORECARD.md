@@ -132,8 +132,45 @@ user-audible).**
 | 7 | Auto source-awareness | **OPEN** | genre classifier runs, result consumed by nothing | smart:EQ profiles + learning | P5 |
 | 8 | Verify-loop (apply→re-measure) | **OPEN — our differentiator** | postEq path exists (GUI-owned; needs dedicated fifo, see P2C2.1 lesson) | nobody ships this | P6 |
 | 9 | EQ engine math (outside AI roadmap) | **OPEN — behind Pro-Q** | C3: 24/48 dB/oct cuts stack identical-Q biquads (non-Butterworth: droop, shifted corner); LP decent not pristine; DynEQ coupled ballistics + 0.5 dB stepped gain (S3) | FabFilter Pro-Q 4 is the reference | dedicated engine tickets (C3 first) |
-| 10 | Suggestion UX | **OPEN — undervalued** | fixes are take-it-or-leave-it (no tweak-before-apply, no per-suggestion audition); 3 overlapping GUI panels, 2 dead | smart:EQ/Neutron audition + tweak workflows | dedicated UX ticket |
+| 10 | Suggestion UX | **OPEN — undervalued** | fixes are take-it-or-leave-it (no tweak-before-apply, no per-suggestion audition). NOTE: the earlier "3 panels, 2 dead" was imprecise — panels are tab-switched / on-demand; the real dead UI code is in §8 | smart:EQ/Neutron audition + tweak workflows | dedicated UX ticket |
 
 Summary: axis 1 is green and defended by the harness; ZERO of the five
 user-visible capability gaps (2,3,6,7,8) is closed yet — P0–P2 built the
 instrument and the eyes; the visible-capability race starts at P3.
+
+---
+
+## 8. GUI gap ledger vs market (from the GUI deep-dive, 2026-06-13)
+
+Read in full: PluginEditor.cpp, AdvancedSpectrumDisplay.h (3436 lines),
+NewSpectrumPipeline.h, ModernLookAndFeel.h. Sampled (not line-by-line):
+AIProblemPanel (1131), SemanticControlPanel (683), DynamicEQPanel (670),
+BandControlPanel (590). Reference set: FabFilter Pro-Q 4, soothe2, sonible
+smart:EQ 4, Soundtheory Gullfoss, TDR Nova.
+
+**What is genuinely competitive (verified in code):** interaction model is
+Pro-Q-grade — drag node freq/gain, Shift=Q, Alt-click delete, double-click
+create, mouse-wheel, right-click per-band menu, spectrum-grab (click detected
+peak → band), draggable tilt widget, per-band solo. Pre/Post EQ overlay correct.
+Custom premium aesthetic (Inter 4-weight embedded, amber palette, brushed-metal
+noise, grid cache). AI Problem Panel with FIX ALL (Pro-Q has no suggestion list).
+
+| ID | GUI gap | Status | Evidence (file:line) | Market reference | Fix |
+|---|---|---|---|---|---|
+| **GUI-1** | ~805 lines of DEAD OpenGL spectrum path | OPEN — hygiene/weight | `renderOpenGL()` is a no-op (PluginEditor.cpp:291); GL context attached only for compositing; `GLSpectrumComponent.h` (433) + `OpenGLSpectrumRenderer.h` (372) + `GLSpectrumHelper` lifecycle run for nothing | — | remove dead path |
+| **GUI-2** | No UI scaling / retina / fullscreen | OPEN — biggest perceived gap | no `setScaleFactor`/global-scale anywhere; window fixed-DPI 1200×810, resize 1100×740→1800×1200 only | ALL 2026 leaders offer UI scaling + fullscreen | add scale control |
+| **GUI-3** | Two coexisting spectrum systems + ~3 dB mismatch | OPEN | primary per-pixel `NewSpectrumPipeline` (75% overlap) injects into a legacy 512-bin software path in `AdvancedSpectrumDisplay`; calibration sign error (N5) → views disagree ~3 dB | single coherent analyzer | unify on per-pixel pipeline, fix sign |
+| **GUI-4** | Dead "MULTI-TRACK" unmasking toggle | OPEN | AIControlPanel.h:60 exposes the toggle; `MultiTrackUnmasking` has empty stubs → button does nothing | Pro-Q4/soothe2 masking display | wire or remove |
+| **GUI-5** | Hidden orphan components | OPEN — hygiene | `resized()` permanently `setVisible(false)` on bandViewport, bandToggles, captureWaveform (PluginEditor.cpp:1459+) | — | remove leftovers |
+| **GUI-6** | No masking/collision OVERLAY on the spectrum | OPEN — high value | detection exists but is shown only as a list, never as a spectral overlay | soothe2 core visual language; Pro-Q4 collision | new overlay (synergy with P3) |
+| **GUI-7** | No audition / tweak-before-apply of a suggestion | OPEN | Fix-All path applies directly; no per-suggestion listen or pre-apply edit | smart:EQ/soothe/Neutron | UX ticket (= axis 10) |
+| **GUI-8** | No EQ/curve match | OPEN | absent | Pro-Q4, Ozone, smart:EQ | feature ticket |
+
+Performance (already logged elsewhere): peak-hold inverted decay; per-sample
+meter atomic store; 60 Hz spectrum timer + 30/10 Hz panel timers.
+
+**GUI honest standing:** interaction & aesthetics are competitive; the plugin
+reads "below leaders" mainly for **no scaling (GUI-2)**, **no masking overlay
+(GUI-6)**, **no audition (GUI-7)**, plus dead-code drag (GUI-1/3/4/5). Suggested
+GUI order: GUI-2 → GUI-1+GUI-3 (unify spectrum, kill GL) → GUI-4+GUI-5 (hygiene)
+→ GUI-6 (masking overlay, synergic with P3) → GUI-7.
