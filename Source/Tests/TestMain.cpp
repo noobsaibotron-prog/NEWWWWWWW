@@ -71,18 +71,37 @@ public:
         }
         else if (opts.runAll)
         {
-            std::cout << "Running all registered tests..." << std::endl;
+            // Exhaustive: EVERYTHING including the KnownDebt quarantine. May be
+            // red while documented debt is still real — that is expected.
+            std::cout << "Running ALL registered tests (incl. KnownDebt)..." << std::endl;
             juce::UnitTestRunner runner;
             runner.runAllTests();
             accumulateResults(runner, summary, opts.verbose);
         }
         else
         {
-            const juce::StringArray projectCategories { "DSP", "Regression", "Integration" };
-            std::cout << "Running project test categories: "
-                      << projectCategories.joinIntoString(", ") << std::endl;
+            // N1 FIX (honest gates): the no-arg run executes EVERY registered
+            // category EXCEPT "KnownDebt". Rationale:
+            //  - The old default ran only {DSP, Regression, Integration},
+            //    silently skipping every AI-* category + Perceptual/Performance/
+            //    ClickTests/Meta. The default-run count must mean "all BLOCKING
+            //    tests in this binary", never a hidden subset.
+            //  - "KnownDebt" is the documented, non-blocking quarantine for
+            //    pre-existing failures (test-harness layout hazards, synthetic-
+            //    fixture realism, real ML/DSP debt). It is excluded here so the
+            //    default gate is green-with-known-debt, and run explicitly via
+            //    `--category=KnownDebt`. `--all` still runs EVERYTHING including
+            //    KnownDebt (exhaustive, may be red while debt is real).
+            juce::StringArray categories;
+            for (auto* t : juce::UnitTest::getAllTests())
+                if (t != nullptr && t->getCategory() != "KnownDebt")
+                    categories.addIfNotAlreadyThere(t->getCategory());
+            categories.sort(true);
 
-            for (const auto& category : projectCategories)
+            std::cout << "Running all registered categories except KnownDebt: "
+                      << categories.joinIntoString(", ") << std::endl;
+
+            for (const auto& category : categories)
             {
                 juce::UnitTestRunner runner;
                 runner.runTestsInCategory(category);
