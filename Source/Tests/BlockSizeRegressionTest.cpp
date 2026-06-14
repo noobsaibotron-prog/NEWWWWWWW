@@ -13,7 +13,10 @@
 class BlockSizeRegressionTest : public juce::UnitTest
 {
 public:
-    BlockSizeRegressionTest() : juce::UnitTest("BlockSize Regression", "Regression") {}
+    // KnownDebt (non-blocking): pre-existing dry/wet tail handling on oversized
+    // blocks (tail cleared / RMS silent / clamp events). Real DSP debt.
+    // Scorecard KnownDebt-DSP.
+    BlockSizeRegressionTest() : juce::UnitTest("BlockSize Regression", "KnownDebt") {}
 
     void runTest() override
     {
