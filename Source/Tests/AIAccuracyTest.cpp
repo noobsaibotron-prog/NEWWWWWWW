@@ -914,12 +914,16 @@ public:
         logMessage("  RETRAINED: Types passing F1 >= " + juce::String(kMinF1 * 100.0f, 0) + "%: "
                    + juce::String(passCount) + "/" + juce::String(numTypes));
 
-        // Save retrained weights if improvement is significant
+        // Save retrained weights if improvement is significant.
+        // HERMETICITY (H4): write to the TEMP dir, never into the source tree.
+        // The previous target (Resources/Models/ml_weights_retrained.bin) made
+        // this unit test mutate a tracked, ship-adjacent binary on every run
+        // (polluting git status, non-deterministic). The artifact is for manual
+        // inspection only — never tracked.
         if (avgF1 > 0.20f)  // better than baseline 15.6%
         {
-            auto modelFile = juce::File(__FILE__).getParentDirectory()
-                                 .getParentDirectory().getParentDirectory()
-                                 .getChildFile("Resources/Models/ml_weights_retrained.bin");
+            auto modelFile = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                                 .getChildFile("aieq_ml_weights_retrained.bin");
             bool saved = ml.saveWeights(modelFile);
             logMessage("  Retrained weights saved: " + juce::String(saved ? "YES" : "NO")
                        + " → " + modelFile.getFullPathName());
