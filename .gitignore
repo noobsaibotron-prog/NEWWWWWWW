@@ -1,5 +1,6 @@
 # Build directories
 build/
+build-mac/
 build_vs2022/
 build_nmake/
 build_torch/
@@ -8,6 +9,11 @@ out/
 bin/
 lib/
 archive/
+
+# Stale duplicate project tree + its archive (untracked 2026-06-15, see
+# docs/DEBT_REMEDIATION_PLAN.md H1/H2) — divergent copy, zero build references.
+AIEQ-mac/
+AIEQ-mac.zip
 
 # Backups & snapshots
 BACKUPS/
