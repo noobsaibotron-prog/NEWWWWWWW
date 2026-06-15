@@ -417,7 +417,11 @@ private:
         procEmpty.prepare(kDefaultSampleRate, kDefaultBlockSize, kDefaultChannels);
         juce::AudioBuffer<float> emptyBuffer;
         procEmpty.process(emptyBuffer);
-        expect(true);
+        // H5: assert the real contract — process() on an empty buffer is a no-op
+        // that neither crashes nor reallocates the buffer (was expect(true), a
+        // tautology that tested nothing).
+        expect(emptyBuffer.getNumSamples() == 0, "process() must not resize an empty buffer");
+        expect(emptyBuffer.getNumChannels() == 0, "process() must not add channels to an empty buffer");
 
         beginTest("Handles mono signal");
         ParametricEQProcessor procMono;
