@@ -217,4 +217,4 @@ desktop.ini
 cleanup_project.ps1
 fix_*.ps1
 test_*.bat
-*_test.bat
+*_test.batbuild-aitest/
