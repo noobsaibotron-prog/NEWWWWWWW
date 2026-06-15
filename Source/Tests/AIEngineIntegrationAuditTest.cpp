@@ -170,10 +170,6 @@ juce::File findModelFile()
     auto f = srcDir.getChildFile("Resources/Models/ml_weights.bin");
     if (f.existsAsFile()) return f;
 
-    // Fallback: try retrained weights
-    f = srcDir.getChildFile("Resources/Models/ml_weights_retrained.bin");
-    if (f.existsAsFile()) return f;
-
     return {};
 }
 

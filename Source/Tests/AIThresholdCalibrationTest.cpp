@@ -194,8 +194,6 @@ juce::File findModelFile()
                     .getParentDirectory().getParentDirectory();
     auto f = root.getChildFile("Resources/Models/ml_weights.bin");
     if (f.existsAsFile()) return f;
-    f = root.getChildFile("Resources/Models/ml_weights_retrained.bin");
-    if (f.existsAsFile()) return f;
     return {};
 }
 
