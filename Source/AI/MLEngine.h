@@ -255,10 +255,15 @@ private:
     float sensitivity = 0.5f;
     GenreType currentContext = GenreType::Unknown;
 
-   #if JUCE_UNIT_TESTS
+    // Test-only override of the top-K cap. UNCONDITIONAL (not #if JUCE_UNIT_TESTS)
+    // ON PURPOSE: gating it as a DATA member shifted the object layout of every
+    // member below it (baseThresholds, problemFreqRanges, ...) between the plugin
+    // SharedCode (macro OFF) and test TUs (macro ON). That corrupted inline
+    // accessors such as getBaseThresholds() when read from the IntegrationTests
+    // binary — P2-HAZARD-001 (a 0.20 threshold read as 0.30, Boxyness as 100.0).
+    // Cost in production: one unused int. The read/write code paths stay gated.
     int topKOverrideForTests = 0;
-   #endif
-    
+
     // Pre-computed mel filterbank
     std::vector<std::vector<float>> melFilterbank;
     int melNumBands = 64;
