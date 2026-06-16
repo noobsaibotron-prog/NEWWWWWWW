@@ -19,74 +19,6 @@
 #include <atomic>
 #include <vector>
 
-class CaptureWaveformView : public juce::Component
-{
-public:
-    void setData(const std::vector<float>& samples, double sr, bool recording)
-    {
-        sampleRate = sr;
-        isRecording = recording;
-        
-        display.clear();
-        if (!samples.empty())
-        {
-            const size_t targetPoints = 512;
-            const size_t step = std::max<size_t>(1, samples.size() / targetPoints);
-            display.reserve(std::min<size_t>(targetPoints, samples.size()));
-            
-            for (size_t i = 0; i < samples.size(); i += step)
-                display.push_back(juce::jlimit(-1.0f, 1.0f, samples[i]));
-        }
-        
-        repaint();
-    }
-    
-    void paint(juce::Graphics& g) override
-    {
-        auto area = getLocalBounds().toFloat();
-        
-        g.setColour(ModernLookAndFeel::Colors::bgLight.withAlpha(0.25f));
-        g.fillRoundedRectangle(area, 4.0f);
-        
-        g.setColour(ModernLookAndFeel::Colors::bgLighter);
-        g.drawRoundedRectangle(area.reduced(0.5f), 4.0f, 1.0f);
-        
-        // Midline
-        g.setColour(ModernLookAndFeel::Colors::bgLighter.withAlpha(0.45f));
-        g.drawHorizontalLine((int)area.getCentreY(), area.getX() + 4.0f, area.getRight() - 4.0f);
-        
-        if (display.empty())
-        {
-            g.setColour(ModernLookAndFeel::Colors::textMuted);
-            g.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
-            g.drawText(isRecording ? "Recording..." : "Waiting for capture",
-                       area.toNearestInt(), juce::Justification::centred);
-            return;
-        }
-        
-        const float width = area.getWidth();
-        const float height = area.getHeight() * 0.8f;
-        const float xStep = width / std::max<int>(1, (int)display.size() - 1);
-        const float midY = area.getCentreY();
-        
-        juce::Path p;
-        p.startNewSubPath(area.getX(), midY - display[0] * height * 0.5f);
-        for (size_t i = 1; i < display.size(); ++i)
-        {
-            const float x = area.getX() + (float)i * xStep;
-            const float y = midY - display[i] * height * 0.5f;
-            p.lineTo(x, y);
-        }
-        
-        g.setColour(ModernLookAndFeel::Colors::accentBlue.withAlpha(0.9f)); // spectrum capture history line
-        g.strokePath(p, juce::PathStrokeType(1.5f));
-    }
-private:
-    std::vector<float> display;
-    double sampleRate = 44100.0;
-    bool isRecording = false;
-};
-
 //==============================================================================
 /**
  * AI Equalizer Pro - TDR Nova Style GUI
@@ -178,7 +110,6 @@ private:
     juce::Slider captureLenSlider;
     juce::Label captureLenLabel;
     juce::Label captureStatusLabel;
-    std::unique_ptr<CaptureWaveformView> captureWaveform;
 
     // Number of bands control
     juce::Label numBandsLabel;

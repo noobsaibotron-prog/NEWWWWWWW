@@ -690,10 +690,6 @@ void AIEqualizerAudioProcessorEditor::createControlPanel()
     captureStatusLabel.setMinimumHorizontalScale(0.7f);
     addAndMakeVisible(captureStatusLabel);
     captureStatusLabel.setVisible(false);
-    
-    captureWaveform = std::make_unique<CaptureWaveformView>();
-    addAndMakeVisible(*captureWaveform);
-    captureWaveform->setVisible(false);
 
     // Number of active bands selector (1-24)
     numBandsLabel.setText("BANDS", juce::dontSendNotification);
@@ -1430,7 +1426,6 @@ void AIEqualizerAudioProcessorEditor::resized()
     bandViewport->setVisible(false);
     dynamicEQMasterPanel->setVisible(false);
     for (auto& t : bandToggles) if (t) t->setVisible(false);
-    captureWaveform->setVisible(false);
 
     // === SPECTRUM (everything remaining — FULL WIDTH) ===
     bounds.reduce(4, 4);
@@ -1641,29 +1636,6 @@ void AIEqualizerAudioProcessorEditor::timerCallback()
             stopCaptureBtn.setEnabled(false);
             startCaptureBtn.setEnabled(true);
         }
-    }
-    
-    // Update capture waveform preview
-    {
-        const bool recording = processor.isCapturing();
-        const bool captureSafe = processor.isCaptureBufferSafeToRead();
-        const auto& lastCapture = processor.getCapturedAudioMono();
-        std::vector<float> preview;
-        if (recording)
-            processor.getManualCapturePreview(preview, 512);
-        static const std::vector<float> emptyCapture;
-        const std::vector<float>* source = nullptr;
-        if (recording)
-            source = &preview;
-        else if (captureSafe)
-            source = &lastCapture;
-        else
-            source = &emptyCapture;
-        
-        if (captureWaveform)
-            captureWaveform->setData(*source,
-                                     processor.getCapturedSampleRate(),
-                                     recording);
     }
     
     // Sync auto-capture toggle
