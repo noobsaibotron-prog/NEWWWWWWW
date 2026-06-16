@@ -389,6 +389,127 @@ struct ClassMetrics
     }
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// P4-D2 — HELD-OUT realistic fixture generator (distinct from the training set).
+//
+// The generate*Tests() helpers above are deliberately TRAINING-LIKE: flat linear
+// baseline + linear Gaussian peaks, mirroring MLEngine::buildSyntheticSpectrum().
+// Measuring recall on them flatters the model (it has seen this shape). P4-D2
+// instead builds fixtures the training generator NEVER produced:
+//   • a pink/steep spectral tilt background (−3..−6 dB/decade, referenced @100 Hz)
+//     — the natural slope of real program material, which training lacked (flat);
+//   • dB-domain Gaussian humps (or a subtractive low-shelf for Thinness) at
+//     randomized centre/height/width within each class's range;
+//   • mild dB noise.
+// These are exactly the SHAPES validated by AIBackendSweepTest (applyPinkTilt /
+// addPeakDb), so the realism is not invented here — only the per-class wiring is.
+//
+// Level regime is matched ON PURPOSE: baseline −26 dB == linear 0.05, the same
+// absolute energy the model trained on (extractMelBands' dB mapping is ABSOLUTE,
+// gainToDecibels/−100, so an out-of-regime level would make the probe degenerate
+// rather than a fair generalization test). We hold out the SHAPE — the actual
+// generalization variable — not the loudness.
+//
+// Built in dB, returned as LINEAR magnitude so the ML path consumes it directly
+// and the AIEngine path re-derives the exact dB via linearToDb() (round-trip id).
+// ─────────────────────────────────────────────────────────────────────────────
+namespace heldout
+{
+    constexpr float kBaselineDb  = -26.0f;   // == linear 0.05 (training energy regime)
+    constexpr int   kVariations  = 12;       // fixtures per class
+
+    enum class HClass { Resonance, Harshness, Muddiness, Sibilance, Boominess, Boxyness, Thinness };
+
+    inline float dbToLinearMag(float db) { return std::pow(10.0f, db / 20.0f); }
+
+    // Natural pink/steep tilt in dB (slope is NEGATIVE dB per decade, ref @100 Hz).
+    inline void addPinkTiltDb(std::vector<float>& specDb, float slopePerDecade)
+    {
+        const float binHz = static_cast<float>(kSampleRate) / kFFTSize;
+        for (int i = 0; i < kNumBins; ++i)
+        {
+            const float f = juce::jmax(20.0f, static_cast<float>(i) * binHz);
+            specDb[static_cast<size_t>(i)] += slopePerDecade * std::log10(f / 100.0f);
+        }
+    }
+
+    // Additive dB Gaussian hump (same shape as AIBackendSweepTest::addPeakDb).
+    inline void addGaussianPeakDb(std::vector<float>& specDb, float freqHz, float peakDb, float sigmaFactor)
+    {
+        const float binHz   = static_cast<float>(kSampleRate) / kFFTSize;
+        const float sigmaHz = juce::jmax(30.0f, freqHz * sigmaFactor);
+        for (int i = 0; i < kNumBins; ++i)
+        {
+            const float f = static_cast<float>(i) * binHz;
+            const float d = (f - freqHz) / sigmaHz;
+            specDb[static_cast<size_t>(i)] += peakDb * std::exp(-0.5f * d * d);
+        }
+    }
+
+    // Subtractive low-shelf below cutoff (Thinness = lack of lows). Full depth well
+    // below the cutoff, ramping to 0 over ~1 octave up to it.
+    inline void addLowShelfCutDb(std::vector<float>& specDb, float cutoffHz, float depthDb)
+    {
+        const float binHz = static_cast<float>(kSampleRate) / kFFTSize;
+        for (int i = 0; i < kNumBins; ++i)
+        {
+            const float f = static_cast<float>(i) * binHz;
+            if (f < cutoffHz)
+            {
+                const float oct = std::log2(juce::jmax(1.0f, cutoffHz) / juce::jmax(20.0f, f));
+                specDb[static_cast<size_t>(i)] -= depthDb * juce::jmin(1.0f, oct);
+            }
+        }
+    }
+
+    inline void addNoiseDb(std::vector<float>& specDb, std::mt19937& rng, float sigmaDb = 1.0f)
+    {
+        std::normal_distribution<float> n(0.0f, sigmaDb);
+        for (auto& v : specDb)
+            v += n(rng);
+    }
+
+    inline std::vector<float> toLinear(const std::vector<float>& specDb)
+    {
+        std::vector<float> lin(specDb.size());
+        for (size_t i = 0; i < specDb.size(); ++i)
+            lin[i] = dbToLinearMag(juce::jlimit(-120.0f, 12.0f, specDb[i]));
+        return lin;
+    }
+
+    // Returns a LINEAR-magnitude fixture for one class variation.
+    inline std::vector<float> make(HClass c, std::mt19937& rng)
+    {
+        auto U = [&rng](float a, float b) { return std::uniform_real_distribution<float>(a, b)(rng); };
+
+        std::vector<float> db(static_cast<size_t>(kNumBins), kBaselineDb);
+        addPinkTiltDb(db, U(-6.0f, -3.0f));   // gentle..steep, both NATURAL (not a problem)
+
+        switch (c)
+        {
+            case HClass::Resonance: addGaussianPeakDb(db, U(250.0f, 4000.0f), U(14.0f, 20.0f), 0.04f); break; // narrow
+            case HClass::Harshness: addGaussianPeakDb(db, U(2500.0f, 5000.0f), U(10.0f, 16.0f), 0.12f); break;
+            case HClass::Muddiness: addGaussianPeakDb(db, U(180.0f, 400.0f),  U(10.0f, 14.0f), 0.25f); break; // broad
+            case HClass::Sibilance: addGaussianPeakDb(db, U(5500.0f, 8500.0f), U(12.0f, 16.0f), 0.18f); break;
+            case HClass::Boominess: addGaussianPeakDb(db, U(45.0f, 110.0f),   U(12.0f, 18.0f), 0.30f); break;
+            case HClass::Boxyness:  addGaussianPeakDb(db, U(350.0f, 750.0f),  U(8.0f, 12.0f),  0.20f); break;
+            case HClass::Thinness:  addLowShelfCutDb(db, U(150.0f, 300.0f),   U(8.0f, 14.0f));         break; // subtractive
+        }
+
+        addNoiseDb(db, rng, 1.0f);
+        return toLinear(db);
+    }
+
+    // Clean control: pink/steep tilt + noise, NO injected problem.
+    inline std::vector<float> makeClean(std::mt19937& rng)
+    {
+        std::vector<float> db(static_cast<size_t>(kNumBins), kBaselineDb);
+        addPinkTiltDb(db, std::uniform_real_distribution<float>(-6.0f, -3.0f)(rng));
+        addNoiseDb(db, rng, 1.0f);
+        return toLinear(db);
+    }
+} // namespace heldout
+
 } // anonymous namespace
 
 
@@ -1049,7 +1170,159 @@ public:
     }
 };
 
+// =============================================================================
+// P4-D2 — HELD-OUT realistic recall across all THREE levels (DIAGNOSTIC).
+//
+// P4-D1 disentangled oracle-vs-rule on TRAINING-LIKE fixtures. P4-D2 answers the
+// honest question: how does the SHIPPED model generalize to realistic, pink-tilted
+// material it never saw in training, measured end-to-end through the production
+// pipeline? Three levels, per class, on held-out fixtures (see namespace heldout):
+//   L1 oracle   — pure MLEngine raw prob > base threshold (no margin, no top-K)
+//   L2 rule     — pure MLEngine::detectProblems (margin + top-K)
+//   L3 pipeline — full AIEngine::analyzeSpectrum → getPendingCorrections, forced
+//                 onto the ML path with the SAME shipped weights, INCLUDING the
+//                 production reality-check vetoes AND AIEngine's internal spectrum
+//                 normalization.
+//
+// Hard assertion ONLY on the one structurally-guaranteed invariant: L2 ⊆ L1 (the
+// runtime rule is a strict subset of the raw oracle — same model, same input, the
+// rule can only remove). L3 is REPORTED, never asserted against L2: it runs the
+// model on AIEngine's INTERNALLY-NORMALIZED spectrum (not the raw fixture L2 sees),
+// so it is NOT a mathematical subset of L2 — the delta L2→L3 mixes the cost of
+// normalization AND the reality-check vetoes, and that mix is itself the finding.
+//
+// Measurement-only: model, weights and thresholds are untouched. Now unblocked by
+// the P2-HAZARD-001 resolution (AIEngine + its test hooks are safe in this binary).
+// =============================================================================
+class AIAccuracyTest_HeldOut : public juce::UnitTest
+{
+public:
+    AIAccuracyTest_HeldOut()
+        : juce::UnitTest("AI Accuracy — Held-out realistic recall L1/L2/L3 (P4-D2 diagnostic)", "AI-Diag") {}
+
+    void runTest() override
+    {
+        beginTest("Held-out pink-tilt fixtures: oracle vs rule vs pipeline (shipped model)");
+
+        const juce::File modelFile = juce::File(__FILE__).getParentDirectory()
+            .getParentDirectory().getParentDirectory()
+            .getChildFile("Resources/Models/ml_weights.bin");
+        expect(modelFile.existsAsFile(), "shipped ml_weights.bin not found");
+
+        constexpr float kSens = 0.5f;                 // sensitivityScale = 1.0 on both paths
+
+        // L1/L2 — standalone MLEngine on the RAW linear fixture.
+        MLEngine ml;
+        ml.initialize();
+        expect(ml.loadWeights(modelFile), "loadWeights failed on shipped model (ML)");
+        ml.setSensitivity(kSens);
+        const auto baseThr = ml.getBaseThresholds();
+
+        // L3 — full AIEngine pipeline FORCED onto the ML path with the SAME weights.
+        AIEngine ai;
+        ai.prepare(kSampleRate, 512);
+        ai.setEnabled(true);
+        ai.setSensitivity(kSens);
+        ai.setSourceProfile(AIEngine::SourceProfile::Generic);
+        ai.forceMLDetectionEnabledForTests(true);
+        expect(ai.setCustomMLWeightsPathForTests(modelFile), "loadWeights failed on shipped model (AIEngine)");
+
+        struct Group {
+            heldout::HClass        hc;
+            MLEngine::ProblemType  mlt;
+            AIEngine::ProblemType  ait;
+            const char*            name;
+        };
+        const Group groups[] = {
+            { heldout::HClass::Resonance, MLEngine::ProblemType::Resonance,    AIEngine::ProblemType::Resonance,  "Resonance" },
+            { heldout::HClass::Harshness, MLEngine::ProblemType::Harshness,    AIEngine::ProblemType::Harshness,  "Harshness" },
+            { heldout::HClass::Muddiness, MLEngine::ProblemType::Muddiness,    AIEngine::ProblemType::Muddiness,  "Muddiness" },
+            { heldout::HClass::Sibilance, MLEngine::ProblemType::Sibilance,    AIEngine::ProblemType::Sibilance,  "Sibilance" },
+            { heldout::HClass::Boominess, MLEngine::ProblemType::Boominess,    AIEngine::ProblemType::LowEndBoom, "Boominess" },
+            { heldout::HClass::Boxyness,  MLEngine::ProblemType::BoxyMidrange, AIEngine::ProblemType::Boxyness,   "Boxyness" },
+            { heldout::HClass::Thinness,  MLEngine::ProblemType::Thinness,     AIEngine::ProblemType::ThinSound,  "Thinness" },
+        };
+
+        logMessage("");
+        logMessage("  HELD-OUT realistic eval — pink/steep tilt, baseline -26 dB, NOT the training generator");
+        logMessage("  (raw counts out of " + juce::String(heldout::kVariations)
+                   + "; o-r = oracle-rule (rule cost); r-p = rule-pipe, mixes AIEngine"
+                   + " normalization + vetoes and may be < 0 since L3 is NOT a subset of L2)");
+        logMessage("  class      | L1 oracle | L2 rule | L3 pipe |  o-r  |  r-p");
+        logMessage("  -----------+-----------+---------+---------+-------+------");
+
+        std::mt19937 rng(1234);   // held-out seed (training uses 42 elsewhere)
+        for (const auto& g : groups)
+        {
+            const int   mlIdx = static_cast<int>(g.mlt);
+            const float thr   = baseThr[static_cast<size_t>(mlIdx)];
+            int oracle = 0, rule = 0, pipe = 0;
+
+            for (int v = 0; v < heldout::kVariations; ++v)
+            {
+                const auto lin = heldout::make(g.hc, rng);
+
+                const auto raws = ml.forwardRawProbabilities(lin, kSampleRate);
+                if (raws[static_cast<size_t>(mlIdx)] > thr) ++oracle;                      // L1
+
+                const auto dets = ml.detectProblems(lin, kSampleRate);
+                for (const auto& d : dets) if (d.type == g.mlt) { ++rule; break; }         // L2
+
+                ai.analyzeSpectrum(linearToDb(lin), true);                                  // L3 (force: single-window)
+                const auto pend = ai.getPendingCorrections();
+                for (const auto& c : pend) if (c.type == g.ait) { ++pipe; break; }         // L3
+            }
+
+            const int n = heldout::kVariations;
+            auto frac = [n](int x){ return (juce::String(x) + "/" + juce::String(n)); };
+            auto sgn  = [](int d){ return (d > 0 ? "+" : "") + juce::String(d); };
+            logMessage("  " + juce::String(g.name).paddedRight(' ', 11)
+                       + "|   " + frac(oracle).paddedLeft(' ', 6)
+                       + "  | " + frac(rule).paddedLeft(' ', 6)
+                       + "  | " + frac(pipe).paddedLeft(' ', 6)
+                       + "  | " + sgn(oracle - rule).paddedLeft(' ', 4)
+                       + "  | " + sgn(rule - pipe).paddedLeft(' ', 4));
+
+            // ONLY structural invariant: the runtime rule is a strict subset of the
+            // raw oracle (same model, same input). L3 is reported, not asserted.
+            expect(rule <= oracle,
+                   juce::String(g.name) + ": rule recall (" + juce::String(rule)
+                   + ") exceeds oracle recall (" + juce::String(oracle)
+                   + ") — impossible unless the harness is wrong.");
+        }
+
+        // Clean control — FALSE POSITIVES on held-out clean tilt across all 3 levels.
+        // Reported for completeness; NOT asserted (AI-Sweep's 0/18 floor is the
+        // authoritative anti-hallucination gate). Counts any class firing on clean.
+        {
+            std::mt19937 cleanRng(9001);
+            int l1fp = 0, l2fp = 0, l3fp = 0;
+            const int cleanN = heldout::kVariations;
+            for (int v = 0; v < cleanN; ++v)
+            {
+                const auto lin = heldout::makeClean(cleanRng);
+
+                const auto raws = ml.forwardRawProbabilities(lin, kSampleRate);
+                for (int k = 0; k < MLEngine::numProblemTypes; ++k)
+                    if (raws[static_cast<size_t>(k)] > baseThr[static_cast<size_t>(k)]) { ++l1fp; break; }
+
+                if (!ml.detectProblems(lin, kSampleRate).empty()) ++l2fp;
+
+                ai.analyzeSpectrum(linearToDb(lin), true);
+                if (!ai.getPendingCorrections().empty()) ++l3fp;
+            }
+            auto cf = [cleanN](int x){ return (juce::String(x) + "/" + juce::String(cleanN)); };
+            logMessage("  -----------+-----------+---------+---------+-------+------");
+            logMessage("  clean FP   |   " + cf(l1fp).paddedLeft(' ', 6)
+                       + "  | " + cf(l2fp).paddedLeft(' ', 6)
+                       + "  | " + cf(l3fp).paddedLeft(' ', 6)
+                       + "   (held-out clean tilt; reported, AI-Sweep 0/18 is authoritative)");
+        }
+    }
+};
+
 static AIAccuracyTest_MLEngine   sAIAccuracyTestML;
 static AIAccuracyTest_AIEngine   sAIAccuracyTestAI;
 static AIAccuracyTest_Retrain    sAIAccuracyTestRetrain;
 static AIAccuracyTest_ThreeLevel sAIAccuracyTestThreeLevel;
+static AIAccuracyTest_HeldOut    sAIAccuracyTestHeldOut;
