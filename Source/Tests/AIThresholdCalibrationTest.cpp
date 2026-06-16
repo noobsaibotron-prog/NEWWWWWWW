@@ -434,10 +434,9 @@ class AIThresholdCalibration_PipelineValidation : public juce::UnitTest
 {
 public:
     AIThresholdCalibration_PipelineValidation()
-        // KnownDebt (non-blocking): P2-HAZARD-001 — "ML detection not active"
-        // after a successful weights load (inline-hook/layout). Scorecard
-        // KnownDebt-TestHarness. The "Per-Class Sweep" class stays blocking.
-        : juce::UnitTest("AI Threshold Calibration — Pipeline Validation", "KnownDebt") {}
+        // PROMOTED from KnownDebt: P2-HAZARD-001 (AIEngine half) fixed — the load
+        // now reflects in isUsingMLDetection() (object layout matches).
+        : juce::UnitTest("AI Threshold Calibration — Pipeline Validation", "AI-Calibration") {}
 
     void runTest() override
     {

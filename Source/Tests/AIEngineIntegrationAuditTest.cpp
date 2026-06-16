@@ -190,11 +190,10 @@ class AIEngineIntegrationAudit_Diagnostics : public juce::UnitTest
 {
 public:
     AIEngineIntegrationAudit_Diagnostics()
-        // KnownDebt (non-blocking): P2-HAZARD-001. setCustomMLWeightsPathForTests()
-        // returns SUCCESS but isUsingMLDetection() reads FALSE then throws — inline
-        // test hooks read a divergent object layout (JUCE_UNIT_TESTS data members).
-        // Scorecard KnownDebt-TestHarness; fix = de-macro the gated data.
-        : juce::UnitTest("AI Integration Audit — Pipeline Diagnostics", "KnownDebt") {}
+        // PROMOTED from KnownDebt: P2-HAZARD-001 (AIEngine half) fixed — the gated
+        // debug data members are now unconditional, so the object layout matches
+        // between SharedCode and test TUs and the inline hooks read correctly.
+        : juce::UnitTest("AI Integration Audit — Pipeline Diagnostics", "AI-Integration") {}
 
     void runTest() override
     {
@@ -377,9 +376,8 @@ class AIEngineIntegrationAudit_Comparison : public juce::UnitTest
 {
 public:
     AIEngineIntegrationAudit_Comparison()
-        // KnownDebt (non-blocking): P2-HAZARD-001 (same inline-hook/layout issue
-        // as Pipeline Diagnostics). Scorecard KnownDebt-TestHarness.
-        : juce::UnitTest("AI Integration Audit — Direct vs Pipeline", "KnownDebt") {}
+        // PROMOTED from KnownDebt: P2-HAZARD-001 (AIEngine half) fixed.
+        : juce::UnitTest("AI Integration Audit — Direct vs Pipeline", "AI-Integration") {}
 
     void runTest() override
     {
