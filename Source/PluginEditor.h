@@ -6,7 +6,6 @@
 #include "PluginProcessor.h"
 #include "GUI/ModernLookAndFeel.h"
 #include "GUI/AdvancedSpectrumDisplay.h"
-#include "GUI/AIControlPanel.h"
 #include "GUI/EQBandControl.h"
 #include "GUI/AIProblemPanel.h"
 #include "GUI/BandControlPanel.h"

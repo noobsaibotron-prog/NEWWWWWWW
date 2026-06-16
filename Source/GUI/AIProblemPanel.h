@@ -125,18 +125,21 @@ public:
                                       "Shows how many problems were detected"));
         addAndMakeVisible(statusLabel);
         
-        // Multi-Track Unmasking toggle
-        unmaskingBtn.setButtonText("UNMASKING");
-        unmaskingBtn.setColour(juce::TextButton::buttonColourId, ModernLookAndFeel::Colors::bgLight);
-        unmaskingBtn.setColour(juce::TextButton::textColourOffId, ModernLookAndFeel::Colors::textSecondary);
-        unmaskingBtn.setTooltip("Enable Multi-Track Unmasking: Analyze frequency masking between tracks");
-        unmaskingBtn.onClick = [this]() {
-            bool newState = !processor.getAIEngine().isMultiTrackUnmaskingEnabled();
-            processor.getAIEngine().setMultiTrackUnmaskingEnabled(newState);
-            updateUnmaskingButton(newState);
-        };
-        addAndMakeVisible(unmaskingBtn);
-        
+        // Multi-Track Unmasking toggle — shown only if the feature is enabled (GUI-4).
+        if (kMultiTrackUIEnabled)
+        {
+            unmaskingBtn.setButtonText("UNMASKING");
+            unmaskingBtn.setColour(juce::TextButton::buttonColourId, ModernLookAndFeel::Colors::bgLight);
+            unmaskingBtn.setColour(juce::TextButton::textColourOffId, ModernLookAndFeel::Colors::textSecondary);
+            unmaskingBtn.setTooltip("Enable Multi-Track Unmasking: Analyze frequency masking between tracks");
+            unmaskingBtn.onClick = [this]() {
+                bool newState = !processor.getAIEngine().isMultiTrackUnmaskingEnabled();
+                processor.getAIEngine().setMultiTrackUnmaskingEnabled(newState);
+                updateUnmaskingButton(newState);
+            };
+            addAndMakeVisible(unmaskingBtn);
+        }
+
         startTimerHz(10);
     }
     
@@ -172,11 +175,12 @@ public:
         profileLabel.setVisible(false);
         statusLabel.setVisible(false);
 
-        // Single title row: title left, genre centre, unmasking right (18px)
+        // Single title row: title + genre (+ unmasking only if enabled) (18px)
         auto titleRow = bounds.removeFromTop(18);
         if (rtl)
         {
-            unmaskingBtn.setBounds(titleRow.removeFromLeft(80).reduced(1));
+            if (kMultiTrackUIEnabled)
+                unmaskingBtn.setBounds(titleRow.removeFromLeft(80).reduced(1));
             genreLabel.setBounds(titleRow.removeFromLeft(titleRow.getWidth() - 90));
             titleLabel.setBounds(titleRow);
             titleLabel.setJustificationType(juce::Justification::centredRight);
@@ -185,8 +189,15 @@ public:
         else
         {
             titleLabel.setBounds(titleRow.removeFromLeft(90));
-            genreLabel.setBounds(titleRow.removeFromLeft(titleRow.getWidth() - 80));
-            unmaskingBtn.setBounds(titleRow.removeFromRight(80).reduced(1));
+            if (kMultiTrackUIEnabled)
+            {
+                genreLabel.setBounds(titleRow.removeFromLeft(titleRow.getWidth() - 80));
+                unmaskingBtn.setBounds(titleRow.removeFromRight(80).reduced(1));
+            }
+            else
+            {
+                genreLabel.setBounds(titleRow);  // reclaim the freed space
+            }
             titleLabel.setJustificationType(juce::Justification::centredLeft);
             genreLabel.setJustificationType(juce::Justification::centredLeft);
         }
@@ -221,8 +232,9 @@ public:
         profileLabel.setText(tr("Profile:", "Profile:") + " " + AIEngine::getProfileName(ai.getSourceProfile()), 
                             juce::dontSendNotification);
         
-        // Sync unmasking button state
-        updateUnmaskingButton(ai.isMultiTrackUnmaskingEnabled());
+        // Sync unmasking button state (only if the toggle is shown — GUI-4)
+        if (kMultiTrackUIEnabled)
+            updateUnmaskingButton(ai.isMultiTrackUnmaskingEnabled());
         
         bool shouldUpdate = needsUpdate.exchange(false, std::memory_order_acq_rel);
         if (ai.isNewAnalysisAvailable())
@@ -1109,6 +1121,10 @@ private:
     ProblemListBox problemList;
     juce::TextButton autoFixBtn, clearBtn, undoBtn, redoBtn;
     juce::TextButton unmaskingBtn;  // Multi-Track Unmasking toggle
+    // GUI-4: the multi-track unmasking feature is DISABLED (requires multi-instance
+    // host support; MultiTrackUnmasking has no single-instance effect). The toggle
+    // is not shown. Flip to true only when the feature actually works end-to-end.
+    static constexpr bool kMultiTrackUIEnabled = false;
     
     std::vector<AIEngine::Correction> problems;
     std::atomic<bool> needsUpdate { true };

@@ -610,7 +610,6 @@ set(PLUGIN_SOURCES
     Source/GUI/LogScaleMapper.h
     Source/GUI/ModernLookAndFeel.h
     Source/GUI/AdvancedSpectrumDisplay.h
-    Source/GUI/AIControlPanel.h
     Source/GUI/EQBandControl.h
     Source/GUI/AIProblemPanel.h
     Source/GUI/BandControlPanel.h
