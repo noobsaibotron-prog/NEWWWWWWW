@@ -605,9 +605,8 @@ set(PLUGIN_SOURCES
     # Core — lock-free FIFO for spectrum pipeline
     Source/Core/LockFreeAudioFIFO.h
 
-    # GUI — metrological spectrum pipeline (coordinator + OpenGL renderer)
+    # GUI — metrological spectrum pipeline (coordinator)
     Source/GUI/NewSpectrumPipeline.h
-    Source/GUI/GLSpectrumComponent.h
     Source/GUI/LogScaleMapper.h
     Source/GUI/ModernLookAndFeel.h
     Source/GUI/AdvancedSpectrumDisplay.h

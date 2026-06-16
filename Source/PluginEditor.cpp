@@ -8,13 +8,12 @@ AIEqualizerAudioProcessorEditor::AIEqualizerAudioProcessorEditor(AIEqualizerAudi
 {
     setLookAndFeel(&lookAndFeel);
 
-    // Attach OpenGL context to this top-level component.
-    // All child component paint() calls are composited via GPU automatically.
-    // setContinuousRepainting(false): we drive repaints via our own Timer.
-    // setRenderer(this): enables renderOpenGL() for the metrological spectrum pipeline.
+    // Attach OpenGL context to this top-level component for GPU compositing of
+    // all child component paint() calls (setComponentPaintingEnabled). No custom
+    // GL renderer: the spectrum is drawn by the software path. setContinuousRepainting
+    // (false): we drive repaints via our own Timer.
     openGLContext.setComponentPaintingEnabled(true);
     openGLContext.setContinuousRepainting(false);
-    openGLContext.setRenderer(this);
     // 4x MSAA for smooth spectrum lines and anti-aliased fills
     juce::OpenGLPixelFormat fmt;
     fmt.multisamplingLevel = 4;
@@ -57,7 +56,6 @@ AIEqualizerAudioProcessorEditor::AIEqualizerAudioProcessorEditor(AIEqualizerAudi
         resChoice = juce::jlimit(0, 3, static_cast<int>(std::round(resParam->load())));
     const size_t initialFFTOrder = static_cast<size_t>(10 + resChoice);
 
-    glSpectrumHelper = std::make_unique<GLSpectrumHelper>();
     spectrumPipeline = std::make_unique<NewSpectrumPipeline>(
         processor.getPreEqFifo(),
         processor.getPostEqFifo(),
@@ -261,40 +259,13 @@ AIEqualizerAudioProcessorEditor::~AIEqualizerAudioProcessorEditor()
     if (analysisThread && analysisThread->joinable())
         analysisThread->join();
 
-    // Detach GL context BEFORE destroying pipeline objects (cleanupGL is called during detach)
-    openGLContext.setRenderer(nullptr);
+    // Detach GL context BEFORE destroying pipeline objects.
     openGLContext.detach();
 
     // Destroy pipeline after GL context is gone — safe to release heap now
-    glSpectrumHelper.reset();
     spectrumPipeline.reset();
 
     setLookAndFeel(nullptr);
-}
-
-//==============================================================================
-// juce::OpenGLRenderer callbacks — called on the GL thread
-//==============================================================================
-
-void AIEqualizerAudioProcessorEditor::newOpenGLContextCreated()
-{
-    if (glSpectrumHelper)
-        glSpectrumHelper->initGL(openGLContext);
-}
-
-void AIEqualizerAudioProcessorEditor::openGLContextClosing()
-{
-    if (glSpectrumHelper)
-        glSpectrumHelper->cleanupGL(openGLContext);
-}
-
-void AIEqualizerAudioProcessorEditor::renderOpenGL()
-{
-    // GL spectrum disabled: paint() draws an opaque background that covers
-    // anything GL renders underneath. Software path handles the spectrum.
-    // The OpenGL context is still attached for GPU-accelerated component
-    // compositing (setComponentPaintingEnabled=true), just no custom GL drawing.
-    (void) glSpectrumHelper;
 }
 
 //==============================================================================
@@ -1527,9 +1498,8 @@ void AIEqualizerAudioProcessorEditor::timerCallback()
                 spectrumPipeline->getPrePixelDB(),
                 spectrumPipeline->getPostPixelDB());
 
-            // GL spectrum feed disabled — renderOpenGL() is a no-op because
-            // paint() covers GL output with opaque background. Saves ~2-3ms
-            // of vector copy + SpinLock per frame on the message thread.
+            // Spectrum is drawn by the software path; the dead GL renderer was
+            // removed in GUI-1. The GL context stays attached for GPU compositing.
 
             // R[k] = M[k] ∨ D[k]: repaint when new data arrives
             spectrum->repaint();

@@ -17,7 +17,6 @@
 #include "GUI/SemanticControlPanel.h"
 #include "GUI/LevelMeter.h"
 #include "GUI/NewSpectrumPipeline.h"
-#include "GUI/GLSpectrumComponent.h"
 #include <atomic>
 #include <vector>
 
@@ -106,8 +105,7 @@ private:
  * └──────────────────────────────────────────────────────────────────────┘
  */
 class AIEqualizerAudioProcessorEditor : public juce::AudioProcessorEditor,
-                                         public juce::Timer,
-                                         public juce::OpenGLRenderer
+                                         public juce::Timer
 {
 public:
     explicit AIEqualizerAudioProcessorEditor(AIEqualizerAudioProcessor&);
@@ -117,11 +115,6 @@ public:
     void resized() override;
     void timerCallback() override;
     void mouseDoubleClick(const juce::MouseEvent&) override;
-
-    // juce::OpenGLRenderer — called on the GL thread
-    void newOpenGLContextCreated() override;
-    void openGLContextClosing() override;
-    void renderOpenGL() override;
 
 private:
     void createHeader();
@@ -193,8 +186,10 @@ private:
     juce::ComboBox numBandsCombo;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> numBandsAtt;
     
-    // OpenGL context — accelerates all JUCE software rendering via GPU compositing.
-    // setRenderer(this) enables renderOpenGL() for the metrological spectrum pipeline.
+    // OpenGL context — accelerates all JUCE software rendering via GPU compositing
+    // (setComponentPaintingEnabled). No custom GL renderer is attached: the
+    // spectrum is drawn by the software path (the old GL spectrum renderer was
+    // dead code, removed in GUI-1).
     juce::OpenGLContext openGLContext;
 
     // Premium matericità: 256×256 tiled procedural noise texture (generated once).
@@ -204,7 +199,6 @@ private:
 
     // Metrological 5-layer spectrum pipeline (Parseval-correct, IIR ballistics, log LUT)
     std::unique_ptr<NewSpectrumPipeline> spectrumPipeline;
-    std::unique_ptr<GLSpectrumHelper>    glSpectrumHelper;
 
     // APVTS attachment: forwards "analyzerResolution" param changes (menu,
     // preset load, DAW automation) to spectrumPipeline->setFFTOrder() so both
