@@ -948,6 +948,108 @@ public:
 };
 
 
-static AIAccuracyTest_MLEngine  sAIAccuracyTestML;
-static AIAccuracyTest_AIEngine  sAIAccuracyTestAI;
-static AIAccuracyTest_Retrain   sAIAccuracyTestRetrain;
+// =============================================================================
+// P4-D1 — ML recall separation: ORACLE vs RULE (DIAGNOSTIC, measurement-only).
+//
+// Disentangles WHERE the ML loses per-class recall, using the SHIPPED model,
+// unchanged. Two levels (both pure MLEngine, so they run cleanly here):
+//   L1 ML raw ORACLE   — model assigns raw prob > base threshold?
+//                        (threshold only; NO margin, NO top-K rank cap)
+//   L2 ML runtime RULE — MLEngine::detectProblems returns it?
+//                        (threshold + per-class margin + top-K)
+// Delta L1->L2 = the cost of the DECISION RULE (margin/top-K). This answers the
+// core P4 question "does the model not know it, or does the rule reject it?".
+//
+// The third level (L3 AIEngine pipeline + vetoes) is the EXISTING "AI Accuracy —
+// AIEngine Pipeline" test (KnownDebt). It cannot be measured from THIS binary
+// because instantiating AIEngine + its test hooks here trips P2-HAZARD-001 (the
+// JUCE_UNIT_TESTS object-layout divergence — same throw as AI Integration Audit).
+// Once P2-HAZARD-001 is fixed, fold L3 in here. (Independently reconfirmed: an
+// AIEngine path in this binary throws.)
+//
+// Touches no model/weights/thresholds. Hard assertion only on the structural
+// invariant L1 >= L2 (the rule is a SUBSET of the oracle: it can remove, never add).
+// =============================================================================
+class AIAccuracyTest_ThreeLevel : public juce::UnitTest
+{
+public:
+    AIAccuracyTest_ThreeLevel()
+        : juce::UnitTest("AI Accuracy — Oracle vs Rule recall (P4-D1 diagnostic)", "AI-Diag") {}
+
+    void runTest() override
+    {
+        beginTest("Per-class ML recall: raw oracle vs runtime rule (shipped model)");
+
+        const juce::File modelFile = juce::File(__FILE__).getParentDirectory()
+            .getParentDirectory().getParentDirectory()
+            .getChildFile("Resources/Models/ml_weights.bin");
+        expect(modelFile.existsAsFile(), "shipped ml_weights.bin not found");
+
+        constexpr float kSens = 0.5f;                 // sensitivityScale = 1.0
+        MLEngine ml;
+        ml.initialize();
+        const bool loaded = ml.loadWeights(modelFile);
+        expect(loaded, "loadWeights failed on shipped model");
+        ml.setSensitivity(kSens);
+        const auto baseThr = ml.getBaseThresholds();
+
+        struct Group {
+            std::vector<TestCase>(*gen)(std::mt19937&);
+            MLEngine::ProblemType ml;
+            const char* name;
+        };
+        const Group groups[] = {
+            { generateResonanceTests, MLEngine::ProblemType::Resonance,    "Resonance" },
+            { generateHarshnessTests, MLEngine::ProblemType::Harshness,    "Harshness" },
+            { generateMuddinessTests, MLEngine::ProblemType::Muddiness,    "Muddiness" },
+            { generateSibilanceTests, MLEngine::ProblemType::Sibilance,    "Sibilance" },
+            { generateBoominessTests, MLEngine::ProblemType::Boominess,    "Boominess" },
+            { generateThinnessTests,  MLEngine::ProblemType::Thinness,     "Thinness" },
+            { generateBoxyTests,      MLEngine::ProblemType::BoxyMidrange, "Boxyness" },
+        };
+
+        logMessage("  class      | meanRaw | thr  | L1 oracle | L2 rule | rule-cost");
+        logMessage("  -----------+---------+------+-----------+---------+----------");
+
+        std::mt19937 rng(42);
+        for (const auto& g : groups)
+        {
+            const int mlIdx = static_cast<int>(g.ml);
+            const float thr = baseThr[static_cast<size_t>(mlIdx)];
+            auto cases = g.gen(rng);
+            const int n = static_cast<int>(cases.size());
+            int oracle = 0, rule = 0;
+            double rawSum = 0.0;
+
+            for (const auto& tc : cases)
+            {
+                const auto raws = ml.forwardRawProbabilities(tc.spectrum, kSampleRate);
+                const float r = raws[static_cast<size_t>(mlIdx)];
+                rawSum += r;
+                if (r > thr) ++oracle;                                  // L1
+
+                const auto dets = ml.detectProblems(tc.spectrum, kSampleRate);
+                for (const auto& d : dets) if (d.type == g.ml) { ++rule; break; } // L2
+            }
+
+            auto pct = [n](int x){ return n > 0 ? 100.0f * static_cast<float>(x) / static_cast<float>(n) : 0.0f; };
+            logMessage("  " + juce::String(g.name).paddedRight(' ', 11)
+                       + "|  " + juce::String(rawSum / juce::jmax(1, n), 3)
+                       + "  | " + juce::String(thr, 2)
+                       + " |   " + juce::String(pct(oracle), 0) + "%"
+                       + "    |  " + juce::String(pct(rule), 0) + "%"
+                       + "   |  " + juce::String(pct(oracle) - pct(rule), 0) + "%");
+
+            // Structural invariant: the rule is a strict subset of the oracle.
+            expect(rule <= oracle,
+                   juce::String(g.name) + ": rule recall (" + juce::String(rule)
+                   + ") exceeds oracle recall (" + juce::String(oracle)
+                   + ") — impossible unless the harness is wrong.");
+        }
+    }
+};
+
+static AIAccuracyTest_MLEngine   sAIAccuracyTestML;
+static AIAccuracyTest_AIEngine   sAIAccuracyTestAI;
+static AIAccuracyTest_Retrain    sAIAccuracyTestRetrain;
+static AIAccuracyTest_ThreeLevel sAIAccuracyTestThreeLevel;
