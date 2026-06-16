@@ -613,8 +613,6 @@ set(PLUGIN_SOURCES
     Source/GUI/EQBandControl.h
     Source/GUI/AIProblemPanel.h
     Source/GUI/BandControlPanel.h
-    Source/GUI/BandViewport.cpp
-    Source/GUI/BandViewport.h
     Source/GUI/DynamicEQPanel.h
     Source/GUI/SemanticControlPanel.h
 

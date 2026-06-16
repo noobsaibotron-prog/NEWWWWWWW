@@ -1,5 +1,4 @@
 #include "PluginEditor.h"
-#include "GUI/BandViewport.h"
 #include "Utils/Logger.h"
 #include <thread>
 
@@ -177,11 +176,6 @@ AIEqualizerAudioProcessorEditor::AIEqualizerAudioProcessorEditor(AIEqualizerAudi
     optionsBtn.setTooltip("Global options and analyzer settings");
     optionsBtn.onClick = [this]() { showOptionsMenu(); };
     addAndMakeVisible(optionsBtn);
-    
-    // Band viewport (scrollable panels)
-    bandViewport = std::make_unique<BandViewport>(processor.getAPVTS(), AIEqualizerAudioProcessor::maxBands);
-    bandViewport->setNumBands(processor.getNumActiveBands());
-    addAndMakeVisible(*bandViewport);
     
     // Dynamic EQ Panel (per-band controls)
     dynamicEQPanel = std::make_unique<DynamicEQPanel>(processor.getAPVTS(), 0);
@@ -1423,7 +1417,6 @@ void AIEqualizerAudioProcessorEditor::resized()
     }
 
     // Hide unused items
-    bandViewport->setVisible(false);
     dynamicEQMasterPanel->setVisible(false);
     for (auto& t : bandToggles) if (t) t->setVisible(false);
 
@@ -1540,9 +1533,6 @@ void AIEqualizerAudioProcessorEditor::timerCallback()
     if (currentChange != lastParameterChangeCount && (timerTickCount & 1) == 0)
     {
         lastParameterChangeCount = currentChange;
-
-        if (bandViewport)
-            bandViewport->setNumBands(processor.getNumActiveBands());
 
         int activeBands = processor.getNumActiveBands();
         if (activeBands > 0 && selectedBand >= activeBands)

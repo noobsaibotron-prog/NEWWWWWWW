@@ -12,7 +12,6 @@
 #include "GUI/DynamicEQPanel.h"
 #include "GUI/AIBreathingDot.h"
 #include "GUI/PremiumKnob.h"
-#include "GUI/BandViewport.h"
 #include "GUI/SemanticControlPanel.h"
 #include "GUI/LevelMeter.h"
 #include "GUI/NewSpectrumPipeline.h"
@@ -151,7 +150,6 @@ private:
     std::unique_ptr<AdvancedSpectrumDisplay> spectrum;
     std::unique_ptr<AIProblemPanel> aiProblemPanel;
     juce::OwnedArray<EQBandControl> bands;
-    std::unique_ptr<class BandViewport> bandViewport;
     
     // Selected band for detail view
     int selectedBand = 0;
