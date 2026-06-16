@@ -377,7 +377,16 @@ public:
         return lastMLThresholds;
     }
 
-   #if JUCE_UNIT_TESTS
+    // P2-HAZARD-001 (AIEngine half): these resonance-debug TYPES + their two
+    // accessors are UNCONDITIONAL (not #if JUCE_UNIT_TESTS) so that the DATA
+    // members below (lastResonanceDebugForTests, resonanceDebugProbeFreqsForTests)
+    // can also be unconditional — otherwise gating the data shifted the object
+    // layout of every member after it (mlEngine, the dormant-module pointers, the
+    // atomics) between plugin SharedCode (macro off) and test TUs (macro on),
+    // corrupting inline accessors like setCustomMLWeightsPathForTests()/
+    // isUsingMLDetection() read from the IntegrationTests binary (SUCCESS load
+    // but isUsing=FALSE → throw). Cost in production: ~150 unused bytes per
+    // AIEngine; the populate paths stay #if-gated → ZERO behavior change.
     struct ResonanceDebugCandidate
     {
         float frequency = 0.0f;
@@ -438,7 +447,6 @@ public:
     {
         resonanceDebugProbeFreqsForTests = freqs;
     }
-   #endif
 
 private:
     void detectProblems();
@@ -785,10 +793,9 @@ private:
     mutable std::mutex mlAuditMutex;
     std::array<float, MLEngine::numProblemTypes> lastMLRawProbabilities {};
     std::array<float, MLEngine::numProblemTypes> lastMLThresholds {};
-   #if JUCE_UNIT_TESTS
+    // P2-HAZARD-001 fix: unconditional (see the resonance-debug types above).
     ResonanceDebugSnapshot lastResonanceDebugForTests {};
     std::vector<float> resonanceDebugProbeFreqsForTests;
-   #endif
 
     /** Unified decision: should this analysis frame use the ML path?
         Accounts for: backend mode, useMLDetection, forceMLDetectionForTests. */
