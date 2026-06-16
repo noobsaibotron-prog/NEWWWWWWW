@@ -7,7 +7,9 @@
  * SpinLock-protected for thread-safe push (FFT thread) / read (UI thread).
  *
  * Calibration: a full-scale sine (0 dBFS) reads 0.0 dB after the offset.
- * The Hann power-normalization offset is ~4.26 dB.
+ * The calibration offset is +4.773 dB (derived analytically and verified
+ * numerically: invariant across N and fs). Prior to the N5 fix the offset was
+ * SUBTRACTED with the wrong magnitude (-4.26), so a 0 dBFS sine read ~-9 dB.
  */
 
 #include <juce_core/juce_core.h>
@@ -61,14 +63,16 @@ public:
         const juce::SpinLock::ScopedLockType lock (dataLock);
         const auto& target = rawPowerBuffers[writeSlot];
 
-        // Empirical calibration offset for power-normalized Hann window
-        // 10*log10(sum(w^2)/N) for Hann ~ -4.26 dB
-        static constexpr float CALIBRATION_OFFSET_DB = 4.260f;
+        // N5 calibration: with the power-normalized Hann window (sum(w^2)=1) and
+        // PSD = 2|X|^2/(fs*N), a 0 dBFS bin-centered sine has
+        // 10*log10(PSD_peak) + 10*log10(fs) = -4.773 dB. ADD +4.773 to land on
+        // 0.0 dB. (Was -4.260 SUBTRACTED → read ~-9 dB; see SpectrumCalibrationTest.)
+        static constexpr float CALIBRATION_OFFSET_DB = 4.773f;
 
         for (size_t i = 0; i < bins; ++i)
         {
             const float instantDB = 10.0f * std::log10 (std::max (target[i], 1e-15f))
-                                  - CALIBRATION_OFFSET_DB + psdDisplayOffsetDB;
+                                  + CALIBRATION_OFFSET_DB + psdDisplayOffsetDB;
             const float alpha = (instantDB > smoothedDB[i]) ? alphaAttack : alphaRelease;
             smoothedDB[i] = alpha * instantDB + (1.0f - alpha) * smoothedDB[i];
         }
