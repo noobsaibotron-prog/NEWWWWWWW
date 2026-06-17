@@ -438,6 +438,8 @@ namespace heldout
     // Marker: the diagnostic seeds were bumped (heldout_v2) when this freeze landed.
     constexpr float kEvalTiltMinSlope = -6.5f;   // EVAL extrapolation band (steep)
     constexpr float kEvalTiltMaxSlope = -5.0f;   // P4-M2 TRAIN reserved to [-4.5,-1.5]
+    constexpr float kTrainTiltMinSlope = -4.5f;  // TRAIN interpolation band (P4-M2a)
+    constexpr float kTrainTiltMaxSlope = -1.5f;
 
     enum class HClass { Resonance, Harshness, Muddiness, Sibilance, Boominess, Boxyness, Thinness };
 
@@ -521,13 +523,26 @@ namespace heldout
         return toLinear(db);
     }
 
-    // Clean control: pink/steep tilt + noise, NO injected problem.
-    inline std::vector<float> makeClean(std::mt19937& rng)
+    inline std::vector<float> makeCleanWithTiltBand(std::mt19937& rng, float minSlope, float maxSlope)
     {
         std::vector<float> db(static_cast<size_t>(kNumBins), kBaselineDb);
-        addPinkTiltDb(db, std::uniform_real_distribution<float>(kEvalTiltMinSlope, kEvalTiltMaxSlope)(rng));
+        addPinkTiltDb(db, std::uniform_real_distribution<float>(minSlope, maxSlope)(rng));
         addNoiseDb(db, rng, 1.0f);
         return toLinear(db);
+    }
+
+    // Clean control: eval extrapolation band + noise, NO injected problem.
+    inline std::vector<float> makeClean(std::mt19937& rng)
+    {
+        return makeCleanWithTiltBand(rng, kEvalTiltMinSlope, kEvalTiltMaxSlope);
+    }
+
+    // Clean control in the P4-M2a training interpolation band. This is NOT the
+    // held-out score; it distinguishes "model learned the new training regime"
+    // from "model extrapolates to the frozen held-out band."
+    inline std::vector<float> makeCleanTrainBand(std::mt19937& rng)
+    {
+        return makeCleanWithTiltBand(rng, kTrainTiltMinSlope, kTrainTiltMaxSlope);
     }
 } // namespace heldout
 
@@ -1064,12 +1079,112 @@ public:
         // inspection only — never tracked.
         if (avgF1 > 0.20f)  // better than baseline 15.6%
         {
-            auto modelFile = juce::File::getSpecialLocation(juce::File::tempDirectory)
-                                 .getChildFile("aieq_ml_weights_retrained.bin");
+            auto modelFile = juce::File("/tmp").getChildFile("aieq_ml_weights_retrained.bin");
             bool saved = ml.saveWeights(modelFile);
             logMessage("  Retrained weights saved: " + juce::String(saved ? "YES" : "NO")
                        + " → " + modelFile.getFullPathName());
         }
+
+        // ── P4-M2a diagnostic: shipped-vs-candidate on the frozen held-out ruler ──
+        // This is measurement-only. The candidate stays in memory (and optionally /tmp);
+        // Resources/Models/ml_weights.bin remains the shipped baseline until P4-M5.
+        beginTest("P4-M2a diagnostic — shipped vs candidate on frozen held-out L2");
+
+        const juce::File shippedModelFile = juce::File(__FILE__).getParentDirectory()
+            .getParentDirectory().getParentDirectory()
+            .getChildFile("Resources/Models/ml_weights.bin");
+        MLEngine shipped;
+        shipped.initialize();
+        expect(shipped.loadWeights(shippedModelFile), "loadWeights failed on shipped model");
+        shipped.setSensitivity(0.5f);
+        ml.setSensitivity(0.5f);
+
+        struct HeldoutGroup
+        {
+            heldout::HClass hc;
+            MLEngine::ProblemType type;
+            const char* name;
+        };
+        const HeldoutGroup heldoutGroups[] = {
+            { heldout::HClass::Resonance, MLEngine::ProblemType::Resonance,    "Resonance" },
+            { heldout::HClass::Harshness, MLEngine::ProblemType::Harshness,    "Harshness" },
+            { heldout::HClass::Muddiness, MLEngine::ProblemType::Muddiness,    "Muddiness" },
+            { heldout::HClass::Sibilance, MLEngine::ProblemType::Sibilance,    "Sibilance" },
+            { heldout::HClass::Boominess, MLEngine::ProblemType::Boominess,    "Boominess" },
+            { heldout::HClass::Boxyness,  MLEngine::ProblemType::BoxyMidrange, "Boxyness" },
+            { heldout::HClass::Thinness,  MLEngine::ProblemType::Thinness,     "Thinness" },
+        };
+
+        auto countRuleHits = [](MLEngine& model,
+                                const std::vector<std::vector<float>>& fixtures,
+                                MLEngine::ProblemType type)
+        {
+            int hits = 0;
+            for (const auto& lin : fixtures)
+            {
+                for (const auto& det : model.detectProblems(lin, kSampleRate))
+                {
+                    if (det.type == type)
+                    {
+                        ++hits;
+                        break;
+                    }
+                }
+            }
+            return hits;
+        };
+
+        logMessage("");
+        logMessage("  P4-M2a held-out L2 rule — shipped vs candidate (candidate UNSHIPPED)");
+        logMessage("  class      | shipped | candidate | delta");
+        logMessage("  -----------+---------+-----------+------");
+
+        std::mt19937 heldRng(20260617); // same frozen heldout_v2 problem sequence
+        for (const auto& g : heldoutGroups)
+        {
+            std::vector<std::vector<float>> fixtures;
+            fixtures.reserve(static_cast<size_t>(heldout::kVariations));
+            for (int v = 0; v < heldout::kVariations; ++v)
+                fixtures.push_back(heldout::make(g.hc, heldRng));
+
+            const int shippedHits = countRuleHits(shipped, fixtures, g.type);
+            const int candidateHits = countRuleHits(ml, fixtures, g.type);
+            const int delta = candidateHits - shippedHits;
+            logMessage("  " + juce::String(g.name).paddedRight(' ', 11)
+                       + "|  " + juce::String(shippedHits).paddedLeft(' ', 2)
+                       + "/" + juce::String(heldout::kVariations)
+                       + "   |    " + juce::String(candidateHits).paddedLeft(' ', 2)
+                       + "/" + juce::String(heldout::kVariations)
+                       + "    | " + (delta >= 0 ? "+" : "") + juce::String(delta));
+        }
+
+        auto countCleanRuleFp = [](MLEngine& model, bool trainBand)
+        {
+            std::mt19937 cleanRng(trainBand ? 20260619u : 20260618u);
+            int fp = 0;
+            for (int v = 0; v < heldout::kVariations; ++v)
+            {
+                const auto lin = trainBand ? heldout::makeCleanTrainBand(cleanRng)
+                                           : heldout::makeClean(cleanRng);
+                if (!model.detectProblems(lin, kSampleRate).empty())
+                    ++fp;
+            }
+            return fp;
+        };
+
+        const int shippedCleanTrain = countCleanRuleFp(shipped, true);
+        const int candidateCleanTrain = countCleanRuleFp(ml, true);
+        const int shippedCleanHeldout = countCleanRuleFp(shipped, false);
+        const int candidateCleanHeldout = countCleanRuleFp(ml, false);
+        logMessage("  -----------+---------+-----------+------");
+        logMessage("  clean train-band L2   shipped " + juce::String(shippedCleanTrain) + "/"
+                   + juce::String(heldout::kVariations) + " | candidate "
+                   + juce::String(candidateCleanTrain) + "/" + juce::String(heldout::kVariations)
+                   + "  (training tilt band -4.5..-1.5 dB/dec)");
+        logMessage("  clean heldout-band L2 shipped " + juce::String(shippedCleanHeldout) + "/"
+                   + juce::String(heldout::kVariations) + " | candidate "
+                   + juce::String(candidateCleanHeldout) + "/" + juce::String(heldout::kVariations)
+                   + "  (held-out tilt band -6.5..-5.0 dB/dec)");
 
         // Assertions
         expect(avgF1 >= kMinF1,
