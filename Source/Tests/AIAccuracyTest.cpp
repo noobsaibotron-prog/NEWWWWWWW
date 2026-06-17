@@ -1590,9 +1590,180 @@ public:
     }
 };
 
+// =============================================================================
+// P4-M3-diagnostic — WHERE does narrow Resonance die? (measurement-only)
+//
+// Codex authorized this BEFORE choosing any M3 variant: prove the cause, do NOT
+// assume "mel-resolution". Decisive observation from the A/B/C table: on the SAME
+// frozen held-out Resonance fixtures, FLAT-trained shipped = 11/12 but every
+// TILT-trained candidate (M2a 0, A 3, B 3, C 0) loses it. shipped and the
+// candidates receive IDENTICAL mel input (same fixture → same extractMelBands), so
+// mel-smearing affects both equally and CANNOT explain the gap — it is a TRAINING
+// effect in the weights. The open question this answers: does the narrow peak
+// survive the linear→mel transform well enough that a tilt-trained model COULD keep
+// it (→ data/training fix), or does the energy/count normalization dilute it so much
+// that better representation is needed (→ V0.5/V1)?
+//
+// Per the 12 held-out Resonance fixtures it reports:
+//   • linear peak prominence (dB) in 250–4000 Hz
+//   • mel-current  peak-band prominence — replicating extractMelBands' energy/COUNT
+//   • mel-weightSum peak-band prominence — diagnostic energy/Σweight (NOT a runtime
+//     change: computed locally here; the shipped extractMelBands is untouched)
+//   • shipped L1 raw prob (Resonance) + L2 hit   vs   candidate-B L1 raw + L2 hit
+// L1 is the crux (representation-vs-training): identical mel input → any L1 gap is
+// purely weights. KnownDebt (non-blocking). Candidate B loaded from /tmp (else retrained).
+// =============================================================================
+class AIAccuracyTest_M3Diag : public juce::UnitTest
+{
+public:
+    AIAccuracyTest_M3Diag()
+        : juce::UnitTest("AI Accuracy — P4-M3 diagnostic: where Resonance dies (KnownDebt)", "KnownDebt") {}
+
+    // Replicates extractMelBands' band energies (pre dB-inversion). byWeightSum=false
+    // == the SHIPPED normalization (÷ bin count); true == diagnostic ÷ Σweight.
+    static std::vector<float> melEnergies(const std::vector<float>& spectrum, double sr,
+                                          int numBands, bool byWeightSum)
+    {
+        std::vector<float> out(static_cast<size_t>(numBands), 0.0f);
+        if (spectrum.empty()) return out;
+        const int   fftSize = static_cast<int>(spectrum.size()) * 2;
+        const float binHz   = static_cast<float>(sr) / static_cast<float>(fftSize);
+        auto hzToMel = [](float hz){ return 2595.0f * std::log10(1.0f + hz / 700.0f); };
+        auto melToHz = [](float mel){ return 700.0f * (std::pow(10.0f, mel / 2595.0f) - 1.0f); };
+        const float minMel = hzToMel(20.0f);
+        const float maxMel = hzToMel(std::min(20000.0f, static_cast<float>(sr) * 0.5f));
+        const float melStep = (maxMel - minMel) / static_cast<float>(numBands + 1);
+        const int   hi = static_cast<int>(spectrum.size()) - 1;
+        for (int band = 0; band < numBands; ++band)
+        {
+            const int binLow    = juce::jlimit(0, hi, static_cast<int>(melToHz(minMel + band * melStep) / binHz));
+            const int binCenter = juce::jlimit(0, hi, static_cast<int>(melToHz(minMel + (band + 1) * melStep) / binHz));
+            const int binHigh   = juce::jlimit(0, hi, static_cast<int>(melToHz(minMel + (band + 2) * melStep) / binHz));
+            float energy = 0.0f, wsum = 0.0f; int count = 0;
+            for (int bin = binLow; bin <= binHigh; ++bin)
+            {
+                float w = 0.0f;
+                if (bin < binCenter && binCenter > binLow)        w = static_cast<float>(bin - binLow) / static_cast<float>(binCenter - binLow);
+                else if (bin >= binCenter && binHigh > binCenter) w = static_cast<float>(binHigh - bin) / static_cast<float>(binHigh - binCenter);
+                energy += spectrum[static_cast<size_t>(bin)] * w; ++count; wsum += w;
+            }
+            const float denom = byWeightSum ? juce::jmax(1.0e-6f, wsum) : static_cast<float>(juce::jmax(1, count));
+            out[static_cast<size_t>(band)] = energy / denom;
+        }
+        return out;
+    }
+
+    // Prominence (dB) of the strongest value in [loHz,hiHz] vs the median there.
+    static float bandPromDb(const std::vector<float>& vals, double sr, int fftSizeForBinHz,
+                            float loHz, float hiHz)
+    {
+        std::vector<float> inRange;
+        const float binHz = static_cast<float>(sr) / static_cast<float>(fftSizeForBinHz);
+        float peak = 0.0f;
+        for (int i = 0; i < static_cast<int>(vals.size()); ++i)
+        {
+            const float f = static_cast<float>(i) * binHz;
+            if (f >= loHz && f <= hiHz) { inRange.push_back(vals[static_cast<size_t>(i)]); peak = juce::jmax(peak, vals[static_cast<size_t>(i)]); }
+        }
+        if (inRange.size() < 3) return 0.0f;
+        std::sort(inRange.begin(), inRange.end());
+        const float med = juce::jmax(1.0e-9f, inRange[inRange.size() / 2]);
+        return 20.0f * std::log10(juce::jmax(1.0e-9f, peak) / med);
+    }
+    // Same but the "bin spacing" for a mel-band vector is per-band, so map band->Hz via mel.
+    static float melBandPromDb(const std::vector<float>& bands, double sr, float loHz, float hiHz)
+    {
+        auto melToHz = [](float mel){ return 700.0f * (std::pow(10.0f, mel / 2595.0f) - 1.0f); };
+        auto hzToMel = [](float hz){ return 2595.0f * std::log10(1.0f + hz / 700.0f); };
+        const int n = static_cast<int>(bands.size());
+        const float minMel = hzToMel(20.0f), maxMel = hzToMel(std::min(20000.0f, static_cast<float>(sr) * 0.5f));
+        const float melStep = (maxMel - minMel) / static_cast<float>(n + 1);
+        std::vector<float> inRange; float peak = 0.0f;
+        for (int b = 0; b < n; ++b)
+        {
+            const float f = melToHz(minMel + (b + 1) * melStep);
+            if (f >= loHz && f <= hiHz) { inRange.push_back(bands[static_cast<size_t>(b)]); peak = juce::jmax(peak, bands[static_cast<size_t>(b)]); }
+        }
+        if (inRange.size() < 3) return 0.0f;
+        std::sort(inRange.begin(), inRange.end());
+        const float med = juce::jmax(1.0e-9f, inRange[inRange.size() / 2]);
+        return 20.0f * std::log10(juce::jmax(1.0e-9f, peak) / med);
+    }
+
+    void runTest() override
+    {
+        beginTest("P4-M3-diag: shipped vs candidate-B on held-out Resonance + mel transform");
+
+        const juce::File shippedModelFile = juce::File(__FILE__).getParentDirectory()
+            .getParentDirectory().getParentDirectory().getChildFile("Resources/Models/ml_weights.bin");
+        MLEngine shipped; shipped.initialize();
+        expect(shipped.loadWeights(shippedModelFile), "loadWeights failed on shipped model");
+        shipped.setSensitivity(0.5f);
+
+        // Candidate B (relative prominence + weak-bumps): load /tmp, else retrain deterministically.
+        MLEngine candB; candB.initialize();
+        const juce::File bFile("/tmp/aieq_m2a_refine_B.bin");
+        if (! (bFile.existsAsFile() && candB.loadWeights(bFile)))
+        {
+            candB.initializeRandomWeights();
+            auto ds = candB.generateSyntheticDataset(300, kSampleRate, kFFTSize,
+                                                     MLEngine::DatasetOptions{ true, true });
+            candB.trainOnDataset(ds, 300, 0.005f);
+        }
+        candB.setSensitivity(0.5f);
+
+        const auto  baseThr = shipped.getBaseThresholds();
+        const int   resIdx  = static_cast<int>(MLEngine::ProblemType::Resonance);
+        const float thr     = baseThr[static_cast<size_t>(resIdx)];
+
+        // SAME 12 Resonance fixtures as the A/B/C table (group 0, seed 20260617).
+        std::mt19937 rng(20260617);
+        std::vector<std::vector<float>> fx;
+        for (int v = 0; v < heldout::kVariations; ++v)
+            fx.push_back(heldout::make(heldout::HClass::Resonance, rng));
+
+        logMessage("");
+        logMessage("  P4-M3-diag — held-out Resonance (steep tilt). prom in dB; L1 raw vs thr " + juce::String(thr, 2));
+        logMessage("  #  | linP, melCnt, melWsum |  shipL1  shipL2 |  B_L1   B_L2");
+        logMessage("  ---+-----------------------+----------------+--------------");
+        int shipHit = 0, bHit = 0; double shipL1Sum = 0, bL1Sum = 0;
+        for (int v = 0; v < heldout::kVariations; ++v)
+        {
+            const auto& s = fx[static_cast<size_t>(v)];
+            const int fftSizeForBinHz = static_cast<int>(s.size()) * 2;
+            const float linProm  = bandPromDb(s, kSampleRate, fftSizeForBinHz, 250.0f, 4000.0f);
+            const float melCnt   = melBandPromDb(melEnergies(s, kSampleRate, 64, false), kSampleRate, 250.0f, 4000.0f);
+            const float melWsum  = melBandPromDb(melEnergies(s, kSampleRate, 64, true ), kSampleRate, 250.0f, 4000.0f);
+
+            const float sL1 = shipped.forwardRawProbabilities(s, kSampleRate)[static_cast<size_t>(resIdx)];
+            const float bL1 = candB .forwardRawProbabilities(s, kSampleRate)[static_cast<size_t>(resIdx)];
+            bool sL2 = false, bL2 = false;
+            for (const auto& d : shipped.detectProblems(s, kSampleRate)) if (d.type == MLEngine::ProblemType::Resonance) { sL2 = true; break; }
+            for (const auto& d : candB .detectProblems(s, kSampleRate)) if (d.type == MLEngine::ProblemType::Resonance) { bL2 = true; break; }
+            shipHit += sL2 ? 1 : 0; bHit += bL2 ? 1 : 0; shipL1Sum += sL1; bL1Sum += bL1;
+
+            logMessage("  " + juce::String(v).paddedLeft(' ', 2)
+                       + " | " + juce::String(linProm, 1).paddedLeft(' ', 5)
+                       + ", " + juce::String(melCnt, 1).paddedLeft(' ', 5)
+                       + ", " + juce::String(melWsum, 1).paddedLeft(' ', 5)
+                       + " |  " + juce::String(sL1, 2) + "   " + (sL2 ? juce::String("Y") : juce::String("."))
+                       + "    |  " + juce::String(bL1, 2) + "  " + (bL2 ? juce::String("Y") : juce::String(".")));
+        }
+        const int n = heldout::kVariations;
+        logMessage("  ---+-----------------------+----------------+--------------");
+        logMessage("  shipped: L2 " + juce::String(shipHit) + "/" + juce::String(n)
+                   + ", mean L1 " + juce::String(shipL1Sum / n, 3)
+                   + "  |  candidate B: L2 " + juce::String(bHit) + "/" + juce::String(n)
+                   + ", mean L1 " + juce::String(bL1Sum / n, 3));
+        logMessage("  READ: identical mel input to both models → any shipL1>>B_L1 gap is TRAINING, not");
+        logMessage("  representation. melCnt vs melWsum shows if ÷count dilutes the narrow peak vs ÷Σweight.");
+    }
+};
+
 static AIAccuracyTest_MLEngine   sAIAccuracyTestML;
 static AIAccuracyTest_AIEngine   sAIAccuracyTestAI;
 static AIAccuracyTest_Retrain    sAIAccuracyTestRetrain;
 static AIAccuracyTest_ThreeLevel sAIAccuracyTestThreeLevel;
 static AIAccuracyTest_HeldOut    sAIAccuracyTestHeldOut;
 static AIAccuracyTest_M2aRefine  sAIAccuracyTestM2aRefine;
+static AIAccuracyTest_M3Diag     sAIAccuracyTestM3Diag;
