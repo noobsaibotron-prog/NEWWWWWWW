@@ -1990,6 +1990,90 @@ public:
     }
 };
 
+// =============================================================================
+// P4-M3-SHIP — PRODUCT-LEVEL (Hybrid pipeline) recall, B vs shipped, ALL classes.
+//
+// All prior per-class tables were pure-ML L2. This measures what the SHIPPED PRODUCT
+// actually delivers — the full AIEngine pipeline in Hybrid mode (ML + heuristic + DSP
+// vetoes) — for the SHIPPED model vs candidate B, across all 7 classes + clean FP, on
+// the frozen held-out. Decides whether B is product-grade: recovers the broad classes
+// AND keeps the clean-tilt FP at 0, with Resonance being a pre-existing system-wide weak
+// spot (not a B regression). Measurement-only, no retrain (B from /tmp), KnownDebt.
+// =============================================================================
+class AIAccuracyTest_PipelineAllClasses : public juce::UnitTest
+{
+public:
+    AIAccuracyTest_PipelineAllClasses()
+        : juce::UnitTest("AI Accuracy — PRODUCT pipeline B vs shipped, all classes (KnownDebt)", "KnownDebt") {}
+
+    void runTest() override
+    {
+        beginTest("Hybrid pipeline recall + clean FP: shipped vs candidate B, all 7 classes");
+
+        const juce::File shippedModelFile = juce::File(__FILE__).getParentDirectory()
+            .getParentDirectory().getParentDirectory().getChildFile("Resources/Models/ml_weights.bin");
+        juce::File bFile("/tmp/aieq_m2a_refine_B.bin");
+        if (! bFile.existsAsFile())
+        {
+            MLEngine B; B.initialize(); B.initializeRandomWeights();
+            auto ds = B.generateSyntheticDataset(300, kSampleRate, kFFTSize, MLEngine::DatasetOptions{ true, true, 0 });
+            B.trainOnDataset(ds, 300, 0.005f);
+            B.saveWeights(bFile);
+        }
+
+        struct Group { heldout::HClass hc; AIEngine::ProblemType type; const char* name; };
+        const Group groups[] = {
+            { heldout::HClass::Resonance, AIEngine::ProblemType::Resonance,  "Resonance" },
+            { heldout::HClass::Harshness, AIEngine::ProblemType::Harshness,  "Harshness" },
+            { heldout::HClass::Muddiness, AIEngine::ProblemType::Muddiness,  "Muddiness" },
+            { heldout::HClass::Sibilance, AIEngine::ProblemType::Sibilance,  "Sibilance" },
+            { heldout::HClass::Boominess, AIEngine::ProblemType::LowEndBoom, "Boominess" },
+            { heldout::HClass::Boxyness,  AIEngine::ProblemType::Boxyness,   "Boxyness" },
+            { heldout::HClass::Thinness,  AIEngine::ProblemType::ThinSound,  "Thinness" },
+        };
+        constexpr int kNumGroups = 7;
+
+        std::array<std::vector<std::vector<float>>, kNumGroups> held;
+        { std::mt19937 r(20260617); for (int g = 0; g < kNumGroups; ++g) for (int v = 0; v < heldout::kVariations; ++v) held[static_cast<size_t>(g)].push_back(heldout::make(groups[g].hc, r)); }
+        std::vector<std::vector<float>> cleanTrain, cleanHeld;
+        { std::mt19937 r1(20260619), r2(20260618); for (int v = 0; v < heldout::kVariations; ++v) { cleanTrain.push_back(heldout::makeCleanTrainBand(r1)); cleanHeld.push_back(heldout::makeClean(r2)); } }
+
+        auto makeHybrid = [&](const juce::File& w){
+            auto ai = std::make_unique<AIEngine>();
+            ai->prepare(kSampleRate, 512);
+            ai->setEnabled(true);
+            ai->setSensitivity(0.5f);
+            ai->setSourceProfile(AIEngine::SourceProfile::Generic);
+            ai->setDetectionBackendMode(AIEngine::DetectionBackendMode::Hybrid);
+            ai->setCustomMLWeightsPathForTests(w);
+            ai->forceMLDetectionEnabledForTests(true);
+            return ai;
+        };
+        auto hits = [](AIEngine& ai, const std::vector<std::vector<float>>& fx, AIEngine::ProblemType t){
+            int h = 0; for (const auto& lin : fx) { ai.analyzeSpectrum(linearToDb(lin), true); for (const auto& c : ai.getPendingCorrections()) if (c.type == t) { ++h; break; } } return h; };
+        auto fp = [](AIEngine& ai, const std::vector<std::vector<float>>& fx){
+            int f = 0; for (const auto& lin : fx) { ai.analyzeSpectrum(linearToDb(lin), true); if (! ai.getPendingCorrections().empty()) ++f; } return f; };
+        auto frac = [](int x){ return juce::String(x).paddedLeft(' ', 2) + "/" + juce::String(heldout::kVariations); };
+
+        auto shipped = makeHybrid(shippedModelFile);
+        auto B       = makeHybrid(bFile);
+
+        logMessage("");
+        logMessage("  PRODUCT pipeline (Hybrid) recall — held-out extrapolation band, n=" + juce::String(heldout::kVariations));
+        logMessage("  class      | shipped | candidate B");
+        logMessage("  -----------+---------+------------");
+        for (int g = 0; g < kNumGroups; ++g)
+            logMessage("  " + juce::String(groups[g].name).paddedRight(' ', 11)
+                       + "|  " + frac(hits(*shipped, held[static_cast<size_t>(g)], groups[g].type))
+                       + "  |   " + frac(hits(*B, held[static_cast<size_t>(g)], groups[g].type)));
+        logMessage("  -----------+---------+------------");
+        logMessage("  clean train|  " + frac(fp(*shipped, cleanTrain)) + "  |   " + frac(fp(*B, cleanTrain)));
+        logMessage("  clean held |  " + frac(fp(*shipped, cleanHeld )) + "  |   " + frac(fp(*B, cleanHeld )));
+        logMessage("  READ: this is what the PRODUCT delivers (ML+heuristic+vetoes). B is product-grade iff");
+        logMessage("  it recovers broad classes and holds clean FP ~0, with Resonance a pre-existing weak spot.");
+    }
+};
+
 static AIAccuracyTest_MLEngine   sAIAccuracyTestML;
 static AIAccuracyTest_AIEngine   sAIAccuracyTestAI;
 static AIAccuracyTest_Retrain    sAIAccuracyTestRetrain;
@@ -1999,3 +2083,4 @@ static AIAccuracyTest_M2aRefine  sAIAccuracyTestM2aRefine;
 static AIAccuracyTest_M3Diag     sAIAccuracyTestM3Diag;
 static AIAccuracyTest_M2aRefine2 sAIAccuracyTestM2aRefine2;
 static AIAccuracyTest_ResPipeline sAIAccuracyTestResPipeline;
+static AIAccuracyTest_PipelineAllClasses sAIAccuracyTestPipelineAllClasses;
