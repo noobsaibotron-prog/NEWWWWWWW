@@ -302,6 +302,35 @@ public:
                 labeledClipFrames = std::move(frames); // kept for gate 3
         }
 
+        // ── P4-M1: real-audio SANITY roll-up (logging only, NO new hard gate) ──
+        // AI-Corpus is the out-of-distribution real-audio SANITY gate, NOT the primary
+        // per-class metric (that is the FROZEN synthetic held-out — AIAccuracyTest
+        // namespace heldout / P4-D2 heldout_v2). The corpus is tiny today, so this
+        // roll-up states coverage explicitly so the numbers are never over-read.
+        {
+            int nClips = 0, nClean = 0, nLabeled = 0;
+            juce::StringArray coveredClasses;
+            for (const auto& clipVar : *clips)
+            {
+                ++nClips;
+                const auto* probs = clipVar.getProperty("problems", {}).getArray();
+                if (probs == nullptr || probs->isEmpty()) { ++nClean; continue; }
+                ++nLabeled;
+                const auto t = (*probs)[0].getProperty("type", "").toString();
+                if (t.isNotEmpty()) coveredClasses.addIfNotAlreadyThere(t);
+            }
+            logMessage("");
+            logMessage("  AI-Corpus SANITY roll-up (real-audio, out-of-distribution; NOT a per-class metric):");
+            logMessage("    clips=" + juce::String(nClips)
+                       + "  labeled=" + juce::String(nLabeled)
+                       + "  clean=" + juce::String(nClean)
+                       + "  classes covered=" + (coveredClasses.isEmpty()
+                                                 ? juce::String("(none)")
+                                                 : coveredClasses.joinIntoString(",")));
+            logMessage("    role: real-audio sanity only — per-class recall lives in the frozen synthetic");
+            logMessage("    held-out (P4-D2 heldout_v2). Corpus expansion is out of scope for P4-M1.");
+        }
+
         // ============================================================
         // GATE 3 — determinism across two identical runs
         // ============================================================

@@ -396,8 +396,10 @@ struct ClassMetrics
 // baseline + linear Gaussian peaks, mirroring MLEngine::buildSyntheticSpectrum().
 // Measuring recall on them flatters the model (it has seen this shape). P4-D2
 // instead builds fixtures the training generator NEVER produced:
-//   • a pink/steep spectral tilt background (−3..−6 dB/decade, referenced @100 Hz)
-//     — the natural slope of real program material, which training lacked (flat);
+//   • a STEEP spectral tilt background (P4-M1 frozen extrapolation band -6.5..-5.0
+//     dB/decade, referenced @100 Hz) — natural dark/bass-heavy program material,
+//     ONE notch steeper than the band reserved for P4-M2 training (see the FROZEN
+//     DISJOINT EVAL contract in namespace heldout below);
 //   • dB-domain Gaussian humps (or a subtractive low-shelf for Thinness) at
 //     randomized centre/height/width within each class's range;
 //   • mild dB noise.
@@ -417,6 +419,25 @@ namespace heldout
 {
     constexpr float kBaselineDb  = -26.0f;   // == linear 0.05 (training energy regime)
     constexpr int   kVariations  = 12;       // fixtures per class
+
+    // ── P4-M1 FROZEN DISJOINT EVAL — train/eval contract (do NOT violate in P4-M2) ──
+    // This held-out is the PRIMARY per-class model metric. To stay a genuine
+    // generalization probe AFTER P4-M2 teaches the training generator about tilt, the
+    // eval distribution is FROZEN here and declared disjoint from the planned training
+    // distribution BY SHAPE, not merely by seed:
+    //   • TILT SLOPE — EVAL owns the STEEP EXTRAPOLATION band [-6.5,-5.0] dB/decade
+    //     (below). P4-M2 training MUST stay in the gentle-moderate INTERPOLATION band
+    //     [-4.5,-1.5] (>=0.5 dB/dec margin). The model is thus tested one notch steeper
+    //     than anything it trained on.
+    //   • PEAK SHAPE — EVAL uses dB-domain Gaussian humps (addGaussianPeakDb) + the
+    //     subtractive low-shelf below. P4-M2 training MUST use a DIFFERENT shape family
+    //     (e.g. linear-domain peaks / a distinct sigma range), and MUST NOT call/copy
+    //     these heldout builders.
+    //   • FREQ GRID — EVAL owns the per-class centre ranges in make(). P4-M2 training
+    //     centres MUST be offset from them.
+    // Marker: the diagnostic seeds were bumped (heldout_v2) when this freeze landed.
+    constexpr float kEvalTiltMinSlope = -6.5f;   // EVAL extrapolation band (steep)
+    constexpr float kEvalTiltMaxSlope = -5.0f;   // P4-M2 TRAIN reserved to [-4.5,-1.5]
 
     enum class HClass { Resonance, Harshness, Muddiness, Sibilance, Boominess, Boxyness, Thinness };
 
@@ -483,7 +504,7 @@ namespace heldout
         auto U = [&rng](float a, float b) { return std::uniform_real_distribution<float>(a, b)(rng); };
 
         std::vector<float> db(static_cast<size_t>(kNumBins), kBaselineDb);
-        addPinkTiltDb(db, U(-6.0f, -3.0f));   // gentle..steep, both NATURAL (not a problem)
+        addPinkTiltDb(db, U(kEvalTiltMinSlope, kEvalTiltMaxSlope)); // steep extrapolation band, NATURAL
 
         switch (c)
         {
@@ -504,7 +525,7 @@ namespace heldout
     inline std::vector<float> makeClean(std::mt19937& rng)
     {
         std::vector<float> db(static_cast<size_t>(kNumBins), kBaselineDb);
-        addPinkTiltDb(db, std::uniform_real_distribution<float>(-6.0f, -3.0f)(rng));
+        addPinkTiltDb(db, std::uniform_real_distribution<float>(kEvalTiltMinSlope, kEvalTiltMaxSlope)(rng));
         addNoiseDb(db, rng, 1.0f);
         return toLinear(db);
     }
@@ -1244,14 +1265,15 @@ public:
         };
 
         logMessage("");
-        logMessage("  HELD-OUT realistic eval — pink/steep tilt, baseline -26 dB, NOT the training generator");
+        logMessage("  HELD-OUT realistic eval — P4-M1 FROZEN DISJOINT (steep tilt -6.5..-5.0 dB/dec,");
+        logMessage("    extrapolation band; P4-M2 training reserved to -4.5..-1.5; baseline -26 dB)");
         logMessage("  (raw counts out of " + juce::String(heldout::kVariations)
                    + "; o-r = oracle-rule (rule cost); r-p = rule-pipe, mixes AIEngine"
                    + " normalization + vetoes and may be < 0 since L3 is NOT a subset of L2)");
         logMessage("  class      | L1 oracle | L2 rule | L3 pipe |  o-r  |  r-p");
         logMessage("  -----------+-----------+---------+---------+-------+------");
 
-        std::mt19937 rng(1234);   // held-out seed (training uses 42 elsewhere)
+        std::mt19937 rng(20260617);   // heldout_v2 seed (P4-M1 freeze; training uses 42 elsewhere)
         for (const auto& g : groups)
         {
             const int   mlIdx = static_cast<int>(g.mlt);
@@ -1295,7 +1317,7 @@ public:
         // Reported for completeness; NOT asserted (AI-Sweep's 0/18 floor is the
         // authoritative anti-hallucination gate). Counts any class firing on clean.
         {
-            std::mt19937 cleanRng(9001);
+            std::mt19937 cleanRng(20260618);   // heldout_v2 clean seed (P4-M1 freeze)
             int l1fp = 0, l2fp = 0, l3fp = 0;
             const int cleanN = heldout::kVariations;
             for (int v = 0; v < cleanN; ++v)
