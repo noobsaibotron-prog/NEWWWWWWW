@@ -11,9 +11,9 @@ ancorata a `file:linea` o a un test.
 
 **Tribunale della Veridicità — AIEQ Veritas Court**
 **Data:** YYYY-MM-DD
-**Corpus processato:** <es. README.md §"Funzionalità Principali"> / <chat AI del gg/mm>
-**Fonte delle dichiarazioni:** <README | chat | commento codice | commit>
-**Giudice estensore:** <ruolo AI>
+**Corpus processato:** <es. README.md §"Funzionalità Principali"> / <chat del gg/mm> / <commit range>
+**Dichiarante:** <tipo D1–D8 + identificativo concreto, es. "D3 — README.md:5" | "D4 — commit ef67a84" | "D2 — sviluppatore, review del gg/mm">
+**Giudice estensore:** <chi giudica: IA che esegue la skill o revisore umano>
 
 ---
 

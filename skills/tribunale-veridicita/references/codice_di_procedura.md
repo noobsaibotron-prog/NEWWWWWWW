@@ -1,8 +1,9 @@
 # Codice di Procedura del Tribunale della Veridicità
 
-Regole vincolanti per istruire e decidere un processo alle dichiarazioni dell'AI sul codice
-di AI Equalizer Pro. Questo documento governa *come* si arriva al verdetto; la scala dei verdetti
-è in `scala_dei_verdetti.md`.
+Regole vincolanti per istruire e decidere un processo a una dichiarazione sul codice di AI Equalizer
+Pro, **qualunque sia la fonte** (il Dichiarante: AI, sviluppatore umano, README, commit, commento,
+spec, marketing — vedi `tassonomia_dei_dichiaranti.md`). Questo documento governa *come* si arriva al
+verdetto; la scala dei verdetti è in `scala_dei_verdetti.md`.
 
 ---
 
@@ -10,13 +11,17 @@ di AI Equalizer Pro. Questo documento governa *come* si arriva al verdetto; la s
 
 | Ruolo | Funzione | Chi lo interpreta |
 |-------|----------|-------------------|
-| **Cancelleria** | Estrae le entità verificabili dalla dichiarazione, raccoglie e protocolla le prove a `file:linea`. | L'AI giudicante, fase istruttoria |
-| **Pubblico Ministero (Accusa)** | Cerca attivamente di FALSIFICARE la dichiarazione. Il suo dovere è il dubbio. | L'AI giudicante, ruolo accusatorio |
-| **Difesa** | Produce le prove a discarico che confermano la dichiarazione. | L'AI giudicante, ruolo difensivo |
+| **Cancelleria** | Estrae le entità verificabili dalla dichiarazione, raccoglie e protocolla le prove a `file:linea`. | Chi giudica (AI o revisore umano), fase istruttoria |
+| **Pubblico Ministero (Accusa)** | Cerca attivamente di FALSIFICARE la dichiarazione. Il suo dovere è il dubbio. | Chi giudica, ruolo accusatorio |
+| **Difesa** | Produce le prove a discarico che confermano la dichiarazione. | Chi giudica, ruolo difensivo |
 | **Collegio Peritale (CTU)** | Fornisce il parere tecnico vincolante per materia. | Vedi `collegio_peritale.md` |
-| **Giudice / Collegio Giudicante** | Pesa accusa, difesa e perizia; emette il verdetto motivato. | L'AI giudicante, sintesi finale |
+| **Giudice / Collegio Giudicante** | Pesa accusa, difesa e perizia; emette il verdetto motivato. | Chi giudica, sintesi finale |
 
-**Regola di imparzialità (Art. 1):** l'AI che giudica DEVE recitare sia Accusa sia Difesa in modo
+Nota: **chi giudica** può essere un'IA che esegue questa skill *oppure* un revisore umano che ne segue
+la procedura a mano. Il **Dichiarante** (chi ha fatto l'affermazione sotto processo) è una parte diversa
+e distinta da chi giudica.
+
+**Regola di imparzialità (Art. 1):** chi giudica DEVE recitare sia Accusa sia Difesa in modo
 genuino prima di decidere. Una difesa di comodo o un'accusa fittizia vizia la sentenza. In pratica:
 per ogni capo, scrivere almeno una prova a carico e una a discarico (o dichiarare esplicitamente
 che una delle due non è stata trovata, il che è già una prova).

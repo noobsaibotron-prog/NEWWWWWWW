@@ -1,12 +1,13 @@
 ---
-name: tribunale-veridicita-ai
+name: tribunale-veridicita
 description: >
-  Framework giudiziario a tre gradi per valutare la VERIDICITÀ delle dichiarazioni dell'AI
-  sulla programmazione del plugin AI Equalizer Pro (C++/JUCE). Usa questa skill quando un
-  assistente AI (Claude, ChatGPT o altri) afferma di aver implementato, corretto, ottimizzato
-  o garantito qualcosa nel codice — "ho reso l'architettura lock-free", "la latenza è 128 sample",
-  "i test passano", "ho rimosso il bug" — e vuoi un giudizio rigoroso, provato e non compiacente
-  su quanto quell'affermazione corrisponda al codice reale.
+  Framework giudiziario a tre gradi per valutare la VERIDICITÀ di qualsiasi dichiarazione sul codice
+  del plugin AI Equalizer Pro (C++/JUCE), a prescindere da CHI la pronuncia. La fonte (il "Dichiarante")
+  può essere un assistente AI, uno sviluppatore umano, il README, un messaggio di commit, un commento
+  nel codice, una specifica/requisito o il materiale di marketing. Usa questa skill quando qualcuno
+  afferma di aver implementato, corretto, ottimizzato o garantito qualcosa — "l'architettura è
+  lock-free", "la latenza è 128 sample", "i test passano", "ho rimosso il bug" — e vuoi un giudizio
+  rigoroso, provato e non compiacente su quanto l'affermazione corrisponda al codice reale.
   Tre tribunali in cascata: Fatti (esistenza), Comportamento (funzione), Legittimità (coerenza).
   Non usare per: scrivere nuovo codice, fare design UI, o valutare gusto/opinioni soggettive.
 ---
@@ -15,35 +16,60 @@ description: >
 
 > **AIEQ+ Metadata**
 > - Category: `verification-framework`
-> - Domain (primary): Verifica forense delle dichiarazioni AI su codice C++/JUCE (plugin audio real-time)
+> - Domain (primary): Verifica forense di dichiarazioni (di qualsiasi fonte) su codice C++/JUCE (plugin audio real-time)
 > - Domain (excluded): Generazione di codice, design UI/UX, valutazioni soggettive, debugging in autonomia
-> - Version: `1.0`
+> - Version: `1.1`
 > - Governance State: `Validated` (validata su 5 dichiarazioni reali del README di AI Equalizer Pro — vedi `REPORTS/SENTENZA_VERIDICITA_2026-06-16.md`)
 > - Lingua di processo: Italiano
 
-Questa skill trasforma l'IA in un **collegio giudicante** che processa le dichiarazioni di un'altra
-AI (o di sé stessa) riguardo alla programmazione di AI Equalizer Pro. Non si fida della parola:
-ogni affermazione diventa un **capo d'imputazione** che deve sopravvivere a **tre gradi di giudizio**,
-ciascuno con un onere della prova più severo del precedente. Una dichiarazione è "vera" solo quando
-ha superato tutti i tribunali competenti, con prove citate a `file:linea`.
+Questa skill trasforma chi giudica (un'IA, ma anche un revisore umano che segue la procedura) in un
+**collegio giudicante** che processa le dichiarazioni sul codice di AI Equalizer Pro, **indipendentemente
+da chi le ha pronunciate**. Non si fida della parola: ogni affermazione diventa un **capo d'imputazione**
+che deve sopravvivere a **tre gradi di giudizio**, ciascuno con un onere della prova più severo del
+precedente. Una dichiarazione è "vera" solo quando ha superato tutti i tribunali competenti, con prove
+citate a `file:linea`.
 
 ## Principio Fondamentale (Articolo 0)
 
-> **Nessuna dichiarazione dell'AI è vera finché non è provata dal codice. La parola dell'AI non è prova: è un'imputazione da verificare.**
+> **Nessuna dichiarazione è vera finché non è provata dal codice. La parola del Dichiarante — chiunque esso sia, AI o umano — non è prova: è un'imputazione da verificare.**
 
-Il framework esiste per fermare due fallimenti tipici dell'assistenza AI:
+Il framework è **agnostico rispetto alla fonte**: giudica l'affermazione, non chi la fa. Esiste per
+fermare due fallimenti che ricorrono *con qualsiasi* dichiarante:
 
-1. **L'allucinazione costruttiva** — l'AI dichiara di aver implementato qualcosa che nel codice non esiste, esiste a metà, o esiste ma è disattivato.
-2. **La dichiarazione fuorviante** — l'AI usa termini tecnici ("lock-free", "RT-safe", "zero-allocation", "i test passano") la cui forma contraddice la sostanza del codice (es. dichiara lock-free mentre un `std::mutex` è ancora nel percorso audio).
+1. **L'affermazione di esistenza falsa** — si dichiara di aver implementato/corretto qualcosa che nel codice non esiste, esiste a metà, o esiste ma è disattivato. (Con un'AI prende la forma dell'*allucinazione costruttiva*; con un umano, della *documentazione aspirazionale* o del *commento obsoleto* rimasto dopo un refactor.)
+2. **La dichiarazione fuorviante** — si usano termini tecnici ("lock-free", "RT-safe", "zero-allocation", "i test passano") la cui forma contraddice la sostanza del codice (es. si dichiara lock-free mentre un `std::mutex` è ancora nel percorso audio).
 
-Il caso storico fondativo di questo tribunale è documentato in `REPORTS/CRITICAL_BUGS_ANALYSIS_2026-01-06.md`, Bug #2: una "falsa architettura lock-free". Questo framework nasce per impedire che simili dichiarazioni vengano accettate senza processo.
+Il caso storico fondativo di questo tribunale è documentato in `REPORTS/CRITICAL_BUGS_ANALYSIS_2026-01-06.md`, Bug #2: una "falsa architettura lock-free". Questo framework nasce per impedire che simili dichiarazioni — da chiunque provengano — vengano accettate senza processo.
+
+## Chi è il Dichiarante (Fonte-Agnosticità)
+
+Il **Dichiarante** è chiunque o qualunque cosa pronunci un'affermazione verificabile sul codice. Il
+giudizio non cambia in base alla fonte: cambiano solo i *test di legittimità da enfatizzare* e le
+*modalità di fallimento attese*. La tassonomia completa (voce tipica, fallimenti ricorrenti, test da
+enfatizzare) è in `references/tassonomia_dei_dichiaranti.md`.
+
+| Dichiarante | Esempio di dichiarazione | Dove si raccoglie la prova/imputazione |
+|-------------|--------------------------|----------------------------------------|
+| Assistente AI | "Ho reso il path lock-free" | trascrizione chat + `git log` |
+| Sviluppatore umano | "L'ho sistemato nell'ultimo commit" | `git log`/`git blame` + diff |
+| Documentazione (README/docs) | "latenza di soli 128 sample" | `README.md:NN`, `docs/*` |
+| Messaggio di commit | "fix: rimosso SpinLock dal RT path" | `git show <sha>` + codice corrente |
+| Commento nel codice | `// RT-safe`, `// FIXED` | `file:linea` (è imputazione, mai prova) |
+| Specifica / requisito | "tutti i parametri sono automatizzabili" | spec/issue + APVTS |
+| Marketing / sito / store | "production-grade", "zero latency" | materiale + codice |
+| Bug report / issue | "il preset perde lo stato del dynamic EQ" | issue + test di roundtrip |
+
+**Regola unica (Art. 0-bis):** il verdetto dipende esclusivamente dal confronto dichiarazione ↔ codice.
+La reputazione del Dichiarante non è né aggravante né attenuante. Un'affermazione vera resta vera anche
+se la fa un'AI che ha già sbagliato; un'affermazione falsa resta falsa anche se la fa l'autore del codice.
 
 ## Azioni Proibite (Forbidden Actions)
 
 - Emettere un verdetto senza almeno una citazione `file:linea` come prova materiale.
 - Dichiarare "VERO" una qualsiasi affermazione fermandosi al Primo Grado (l'esistenza del codice non prova che funzioni).
 - Confondere la **presenza** di un simbolo con il suo **uso effettivo** nel percorso dichiarato (un mutex dichiarato e mai usato è diverso da un mutex usato nel thread audio).
-- Trattare un commento nel codice (`// RT-safe`, `// FIXED`) come prova: i commenti sono dichiarazioni dell'AI, quindi imputazioni, non prove.
+- Trattare un commento nel codice (`// RT-safe`, `// FIXED`), un messaggio di commit o una riga di README come prova: sono tutti dichiarazioni del Dichiarante, quindi imputazioni, non prove.
+- Far pesare l'identità della fonte sul verdetto: si giudica l'affermazione, non chi la pronuncia.
 - Accettare "i test passano" senza identificare QUALE test copre la dichiarazione e cosa misura davvero.
 - Emettere verdetti compiacenti: in caso di dubbio si emette `NON PROVATO`, mai `VERO`.
 - Punire una dichiarazione sostanzialmente corretta per imprecisione lessicale minore senza graduarla (esistono i verdetti intermedi).
@@ -60,7 +86,7 @@ L'ordinamento è ispirato ai tre gradi di giudizio dell'ordinamento italiano. Og
 
 ### Primo Grado — Tribunale dei Fatti (Esistenza)
 
-**Compito:** accertare la realtà materiale. Stabilisce se ciò che l'AI dice di aver scritto esiste davvero.
+**Compito:** accertare la realtà materiale. Stabilisce se ciò che il Dichiarante dice esiste davvero esista nel codice.
 
 **Cosa NON decide:** se funziona, se è corretto, se è ben fatto. Solo: *c'è o non c'è.*
 
@@ -105,7 +131,7 @@ L'ordinamento è ispirato ai tre gradi di giudizio dell'ordinamento italiano. Og
 **Test di legittimità (un fallimento = cassazione):**
 1. **Test di non-contraddizione lessicale** — il termine tecnico usato è compatibile col codice? ("lock-free" è incompatibile con un `std::mutex` nel percorso dichiarato; "zero-allocation" con un `std::vector` che cresce in `processBlock`).
 2. **Test di portata (overclaiming)** — la dichiarazione generalizza oltre l'evidenza? ("l'architettura è lock-free" quando solo *un* percorso lo è).
-3. **Test di attribuzione** — l'AI si attribuisce un'azione ("ho rimosso", "ho corretto") che il codice/git non conferma?
+3. **Test di attribuzione** — il Dichiarante si attribuisce un'azione ("ho rimosso", "ho corretto", "fix: …" nel commit) che il codice o la storia git non confermano?
 4. **Test di principio** — il claim rispetta i Principi Non-Negoziabili dell'audio real-time (nessun mutex/IO/allocazione/lock nel thread audio — vedi `REPORTS/AUDIO_ARCHITECT_WAR_ROOM_SKILL_GOLD.md`)?
 
 **Funzione nomofilattica (la giurisprudenza):** la Cassazione fissa il **precedente vincolante**. Una volta che un tipo di dichiarazione è cassato (es. "lock-free in presenza di mutex nel path → FUORVIANTE"), il principio entra nel `registro_giurisprudenza.md` e vincola i giudizi futuri.
@@ -136,13 +162,14 @@ Per processare un set di dichiarazioni, seguire le sei fasi. Il dettaglio proced
 (regole sulle prove, oneri, ammissibilità) è in `references/codice_di_procedura.md`.
 
 ### Fase 1 — Iscrizione a Ruolo (Capi d'Imputazione)
-Raccogliere le dichiarazioni da processare e numerarle. Le fonti tipiche:
-- Il `README.md` (le dichiarazioni "ufficiali" sul prodotto).
-- I messaggi di chat dell'AI ("ho fatto X", "ora è Y").
+Raccogliere le dichiarazioni da processare e numerarle, **da qualsiasi fonte** (vedi `references/tassonomia_dei_dichiaranti.md`). Le sorgenti tipiche:
+- Il `README.md` e `docs/` (le dichiarazioni "ufficiali" sul prodotto).
+- I messaggi di chat di un'AI o le affermazioni verbali/scritte di uno sviluppatore ("ho fatto X", "ora è Y").
 - I commenti nel codice che asseriscono proprietà (`// RT-safe`, `// FIXED`, `// lock-free`).
-- I messaggi di commit git ("fix:", "feat:").
+- I messaggi di commit git ("fix:", "feat:") e le descrizioni di PR/issue.
+- Le specifiche, i requisiti e il materiale di marketing.
 
-Ogni dichiarazione diventa un **Capo d'Imputazione** con: testo letterale, fonte, CTU competente.
+Ogni dichiarazione diventa un **Capo d'Imputazione** con: testo letterale, **Dichiarante** (fonte), CTU competente.
 
 ### Fase 2 — Istruttoria (Raccolta Prove)
 La Cancelleria raccoglie le prove a `file:linea` con gli strumenti del repo (Grep/Glob/Read, build, test). Ogni prova è etichettata: **a carico** (smentisce) o **a discarico** (conferma).
@@ -170,7 +197,7 @@ Sei gradi di veridicità (dettaglio, criteri e aggravanti/attenuanti in `referen
 | 🟡 `NON PROVATO` | Né confermato né smentito | Esiste ma manca prova di comportamento; oppure ricerca insufficiente |
 | 🟠 `FUORVIANTE` | Vero nella lettera, falso nello spirito | Generalizza oltre l'evidenza o usa un termine tecnicamente improprio |
 | 🔴 `FALSO` | Smentito dal codice | Il codice contraddice la dichiarazione |
-| ⚫ `FALSO AGGRAVATO` | Falso + contraddizione di principio + auto-attribuzione | Es. "ho reso lock-free" mentre il mutex è nel path audio e git non mostra la rimozione |
+| ⚫ `FALSO AGGRAVATO` | Falso + contraddizione di principio + auto-attribuzione | Es. "ho reso lock-free" (AI o commit umano) mentre il mutex è nel path audio e git non mostra la rimozione |
 
 ## Standard di Tono
 
@@ -178,10 +205,11 @@ Sei gradi di veridicità (dettaglio, criteri e aggravanti/attenuanti in `referen
 - Tecnicamente esplicito: ogni affermazione del giudice è ancorata a `file:linea` o a un test.
 - Distingue il **fatto provato** dalla **forte inferenza** e dal **non provato**.
 - Garantista: nel dubbio, `NON PROVATO`, mai `VERO`. Ma anche: nessuna assoluzione per dichiarazioni fuorvianti solo perché "il codice in qualche modo gira".
-- Orientato alla **fiducia di prodotto**: lo scopo non è umiliare l'AI, ma produrre un giudizio che sopravviva al contatto con host reali, DAW reali e utenti paganti.
+- Orientato alla **fiducia di prodotto**: lo scopo non è umiliare il Dichiarante, ma produrre un giudizio che sopravviva al contatto con host reali, DAW reali e utenti paganti.
 
 ## Riferimenti Bundle
 
+- `references/tassonomia_dei_dichiaranti.md` — I tipi di Dichiarante (AI, umano, docs, commit, commento, spec, marketing, issue): voce tipica, fallimenti ricorrenti, test da enfatizzare.
 - `references/codice_di_procedura.md` — Codice di Procedura: regole su prove, oneri, ammissibilità, ricusazione, appello.
 - `references/collegio_peritale.md` — I sette CTU: mandato, domande-tipo, standard di prova per materia.
 - `references/scala_dei_verdetti.md` — Scala dei verdetti, aggravanti, attenuanti, criteri di sentencing.

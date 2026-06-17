@@ -3,9 +3,9 @@
 **Tribunale della Veridicità — AIEQ Veritas Court**
 **Data:** 2026-06-16
 **Corpus processato:** `README.md` — dichiarazioni di prodotto su AI Equalizer Pro
-**Fonte delle dichiarazioni:** README.md (dichiarazioni "ufficiali" generate con assistenza AI)
+**Dichiarante:** D3 — Documentazione (`README.md`), redatta con assistenza AI
 **Giudice estensore:** Collegio Giudicante del Tribunale della Veridicità
-**Framework applicato:** `skills/tribunale-veridicita-ai/` v1.0
+**Framework applicato:** `skills/tribunale-veridicita/` v1.1
 
 Questa è la sentenza inaugurale che valida il framework su dichiarazioni reali. Cinque capi
 selezionati per coprire l'intera scala dei verdetti.
