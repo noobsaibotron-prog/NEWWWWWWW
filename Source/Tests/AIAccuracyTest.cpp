@@ -1458,8 +1458,141 @@ public:
     }
 };
 
+// =============================================================================
+// P4-M2a-refine — A/B/C candidates vs shipped on the frozen held-out (DIAGNOSTIC).
+//
+// M2a (tilt-invariance, 2d10bfab) fixed the clean-tilt FP but OVER-SUPPRESSED real
+// recall (Res 11→0, Mud 12→1, Boxy 12→2). This refine tests whether recall can be
+// recovered WITHOUT reopening the FP, isolating two variables (Codex-approved 2×2):
+//   prominence : RELATIVE-to-local-tilted-baseline (A,B) vs ABSOLUTE M2a (C)
+//   weak-bumps : absent (A) vs present (B,C) — restored INTO the FIXED-size hard-neg
+//                slot (50/50 clean-tilt + weak-bump), so the clean/positive ratio is
+//                held fixed (Codex Q2).
+// Candidates (MLEngine::DatasetOptions {relativeProminence, weakBumpNegatives}):
+//   A={true,false}  B={true,true}  C={false,true}. Shipped + committed M2a {false,
+//   false} are the references (the 2×2 corners).
+//
+// Measurement-only; candidate weights stay in /tmp (UNSHIPPED). Trains 300/300/0.005
+// each (Codex Q4) from deterministic random init. Recall is L2 (detectProblems) at
+// sens 0.5 on the FROZEN heldout_v2 fixtures, on BOTH the heldout extrapolation band
+// AND the training band (Codex Q4). KnownDebt (non-blocking; slow — three retrains).
+// =============================================================================
+class AIAccuracyTest_M2aRefine : public juce::UnitTest
+{
+public:
+    AIAccuracyTest_M2aRefine()
+        : juce::UnitTest("AI Accuracy — P4-M2a-refine A/B/C (KnownDebt diagnostic)", "KnownDebt") {}
+
+    void runTest() override
+    {
+        beginTest("P4-M2a-refine: candidates A/B/C vs shipped on frozen held-out L2");
+
+        const juce::File shippedModelFile = juce::File(__FILE__).getParentDirectory()
+            .getParentDirectory().getParentDirectory()
+            .getChildFile("Resources/Models/ml_weights.bin");
+
+        struct Group { heldout::HClass hc; MLEngine::ProblemType type; const char* name; const char* target; };
+        const Group groups[] = {
+            { heldout::HClass::Resonance, MLEngine::ProblemType::Resonance,    "Resonance", ">=8" },
+            { heldout::HClass::Harshness, MLEngine::ProblemType::Harshness,    "Harshness", "rep" },
+            { heldout::HClass::Muddiness, MLEngine::ProblemType::Muddiness,    "Muddiness", ">=8" },
+            { heldout::HClass::Sibilance, MLEngine::ProblemType::Sibilance,    "Sibilance", "rep" },
+            { heldout::HClass::Boominess, MLEngine::ProblemType::Boominess,    "Boominess", ">=10" },
+            { heldout::HClass::Boxyness,  MLEngine::ProblemType::BoxyMidrange, "Boxyness",  ">=7" },
+            { heldout::HClass::Thinness,  MLEngine::ProblemType::Thinness,     "Thinness",  "rep" },
+        };
+        constexpr int kNumGroups = 7;
+
+        // Frozen held-out fixtures, SAME sequence as P4-D2 (seed 20260617), built once
+        // and reused for shipped + every candidate.
+        std::array<std::vector<std::vector<float>>, kNumGroups> heldFixtures;
+        {
+            std::mt19937 rng(20260617);
+            for (int g = 0; g < kNumGroups; ++g)
+                for (int v = 0; v < heldout::kVariations; ++v)
+                    heldFixtures[static_cast<size_t>(g)].push_back(heldout::make(groups[g].hc, rng));
+        }
+        std::vector<std::vector<float>> cleanTrain, cleanHeld;
+        {
+            std::mt19937 r1(20260619), r2(20260618);
+            for (int v = 0; v < heldout::kVariations; ++v)
+            {
+                cleanTrain.push_back(heldout::makeCleanTrainBand(r1));
+                cleanHeld.push_back(heldout::makeClean(r2));
+            }
+        }
+
+        auto hits = [](MLEngine& m, const std::vector<std::vector<float>>& fx, MLEngine::ProblemType t)
+        {
+            int h = 0;
+            for (const auto& lin : fx)
+                for (const auto& d : m.detectProblems(lin, kSampleRate)) if (d.type == t) { ++h; break; }
+            return h;
+        };
+        auto fp = [](MLEngine& m, const std::vector<std::vector<float>>& fx)
+        {
+            int f = 0;
+            for (const auto& lin : fx) if (! m.detectProblems(lin, kSampleRate).empty()) ++f;
+            return f;
+        };
+        auto frac = [](int x){ return juce::String(x).paddedLeft(' ', 2) + "/" + juce::String(heldout::kVariations); };
+
+        MLEngine shipped;
+        shipped.initialize();
+        expect(shipped.loadWeights(shippedModelFile), "loadWeights failed on shipped model");
+        shipped.setSensitivity(0.5f);
+
+        struct Cand { const char* name; MLEngine::DatasetOptions opt; const char* file; };
+        const Cand cands[] = {
+            { "A rel/noWB", { true,  false }, "/tmp/aieq_m2a_refine_A.bin" },
+            { "B rel/+WB",  { true,  true  }, "/tmp/aieq_m2a_refine_B.bin" },
+            { "C abs/+WB",  { false, true  }, "/tmp/aieq_m2a_refine_C.bin" },
+        };
+
+        std::array<std::unique_ptr<MLEngine>, 3> models;
+        for (int c = 0; c < 3; ++c)
+        {
+            auto m = std::make_unique<MLEngine>();
+            m->initialize();
+            m->initializeRandomWeights();
+            auto ds = m->generateSyntheticDataset(300, kSampleRate, kFFTSize, cands[static_cast<size_t>(c)].opt);
+            m->trainOnDataset(ds, 300, 0.005f);
+            m->setSensitivity(0.5f);
+            m->saveWeights(juce::File(cands[static_cast<size_t>(c)].file));   // /tmp ONLY — UNSHIPPED
+            models[static_cast<size_t>(c)] = std::move(m);
+        }
+
+        logMessage("");
+        logMessage("  P4-M2a-refine — held-out L2 recall (EXTRAPOLATION band -6.5..-5.0), n=" + juce::String(heldout::kVariations));
+        logMessage("  A=rel/noWB  B=rel/+WB  C=abs/+WB   (refs: shipped; committed M2a was abs/noWB)");
+        logMessage("  class      | shipped |   A   |   B   |   C   | target");
+        logMessage("  -----------+---------+-------+-------+-------+-------");
+        for (int g = 0; g < kNumGroups; ++g)
+        {
+            const auto t = groups[g].type;
+            logMessage("  " + juce::String(groups[g].name).paddedRight(' ', 11)
+                       + "|  " + frac(hits(shipped, heldFixtures[static_cast<size_t>(g)], t))
+                       + "  | " + frac(hits(*models[0], heldFixtures[static_cast<size_t>(g)], t))
+                       + " | " + frac(hits(*models[1], heldFixtures[static_cast<size_t>(g)], t))
+                       + " | " + frac(hits(*models[2], heldFixtures[static_cast<size_t>(g)], t))
+                       + " | " + juce::String(groups[g].target));
+        }
+        logMessage("  -----------+---------+-------+-------+-------+-------");
+        logMessage("  clean train|  " + frac(fp(shipped, cleanTrain))
+                   + "  | " + frac(fp(*models[0], cleanTrain))
+                   + " | " + frac(fp(*models[1], cleanTrain))
+                   + " | " + frac(fp(*models[2], cleanTrain)) + " | <=1");
+        logMessage("  clean held |  " + frac(fp(shipped, cleanHeld))
+                   + "  | " + frac(fp(*models[0], cleanHeld))
+                   + " | " + frac(fp(*models[1], cleanHeld))
+                   + " | " + frac(fp(*models[2], cleanHeld)) + " | <=1");
+        logMessage("  (candidates saved to /tmp/aieq_m2a_refine_{A,B,C}.bin — UNSHIPPED)");
+    }
+};
+
 static AIAccuracyTest_MLEngine   sAIAccuracyTestML;
 static AIAccuracyTest_AIEngine   sAIAccuracyTestAI;
 static AIAccuracyTest_Retrain    sAIAccuracyTestRetrain;
 static AIAccuracyTest_ThreeLevel sAIAccuracyTestThreeLevel;
 static AIAccuracyTest_HeldOut    sAIAccuracyTestHeldOut;
+static AIAccuracyTest_M2aRefine  sAIAccuracyTestM2aRefine;

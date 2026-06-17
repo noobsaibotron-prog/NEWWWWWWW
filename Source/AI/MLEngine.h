@@ -126,7 +126,17 @@ public:
         std::array<float, numProblemTypes> problemTargets{};         // 0..1 desired probabilities
         std::array<float, numProblemTypes> frequencyTargets{};       // 0..1 normalized within problem range
     };
-    
+
+    // P4-M2a-refine: dataset composition options. Default == shipped P4-M2a behaviour,
+    // so every existing caller is unchanged. Used by the A/B/C refine diagnostic.
+    struct DatasetOptions
+    {
+        bool relativeProminence = false;  // problem peaks scaled to local tilted baseline
+                                          // (constant dB prominence) instead of absolute add
+        bool weakBumpNegatives  = false;  // split the hard-negative slot 50/50 clean-tilt +
+                                          // weak-bump (ratio fixed); else all clean-tilt (M2a)
+    };
+
     void trainOnDataset(const std::vector<TrainingSample>& dataset,
                         int epochs = 3,
                         float learningRate = 0.001f);
@@ -141,7 +151,14 @@ public:
     std::vector<TrainingSample> generateSyntheticDataset(int samplesPerProblem,
                                                          double sampleRate = 44100.0,
                                                          int fftSize = 2048);
-    
+
+    // Overload with explicit composition (P4-M2a-refine). The 3-arg version above
+    // delegates here with default options (== shipped M2a).
+    std::vector<TrainingSample> generateSyntheticDataset(int samplesPerProblem,
+                                                         double sampleRate,
+                                                         int fftSize,
+                                                         const DatasetOptions& options);
+
     //==========================================================================
     // Configuration
     void setSensitivity(float sens) { sensitivity = juce::jlimit(0.0f, 1.0f, sens); }
@@ -231,7 +248,8 @@ private:
                           float minHz, float maxHz) const;
     TrainingSample createSyntheticSample(ProblemType type, double sampleRate, int fftSize);
     std::vector<float> buildSyntheticSpectrum(ProblemType type, double sampleRate,
-                                              int fftSize, float targetFreq, float strength) const;
+                                              int fftSize, float targetFreq, float strength,
+                                              bool relativeProminence = false) const;
     void trainStep(const TrainingSample& sample, float learningRate);
     std::vector<float> matMul(const DenseLayer& layer, const std::vector<float>& input) const;
     

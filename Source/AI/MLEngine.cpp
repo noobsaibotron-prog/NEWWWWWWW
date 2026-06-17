@@ -633,7 +633,8 @@ std::vector<float> MLEngine::matMul(const DenseLayer& layer, const std::vector<f
 }
 
 std::vector<float> MLEngine::buildSyntheticSpectrum(ProblemType type, double sampleRate,
-                                                    int fftSize, float targetFreq, float strength) const
+                                                    int fftSize, float targetFreq, float strength,
+                                                    bool relativeProminence) const
 {
     const int bins = juce::jmax(1, fftSize / 2);
     std::vector<float> spectrum(static_cast<size_t>(bins), 0.0f);
@@ -657,16 +658,37 @@ std::vector<float> MLEngine::buildSyntheticSpectrum(ProblemType type, double sam
     
     // Problem-specific shaping
     float sigmaHz = juce::jmax(30.0f, targetFreq * 0.08f);
-    for (int i = 0; i < bins; ++i)
+    if (relativeProminence)
     {
-        float freq = static_cast<float>(i) * binHz;
-        float d = (freq - targetFreq) / sigmaHz;
-        float peak = std::exp(-0.5f * d * d);
-        float sign = (type == ProblemType::Thinness) ? -1.0f : 1.0f;
-        float value = spectrum[static_cast<size_t>(i)] + sign * strength * peak;
-        spectrum[static_cast<size_t>(i)] = juce::jmax(0.0f, value);
+        // P4-M2a-refine (Codex Q1): constant dB prominence ABOVE the LOCAL tilted
+        // baseline — same linear-Gaussian family, amplitude scaled to context — so a
+        // low/mid hump stays detectable on a tilt-boosted background (and a resonance
+        // is not swamped). strength 0.6..1.0 -> prominence 14..22 dB. Thinness = a cut.
+        const float promDb = 14.0f + (juce::jlimit(0.6f, 1.0f, strength) - 0.6f) / 0.4f * 8.0f;
+        const bool  subtractive = (type == ProblemType::Thinness);
+        const float gain = juce::Decibels::decibelsToGain(subtractive ? -promDb : promDb);
+        for (int i = 0; i < bins; ++i)
+        {
+            float freq = static_cast<float>(i) * binHz;
+            float d = (freq - targetFreq) / sigmaHz;
+            float peak = std::exp(-0.5f * d * d);          // 0..1
+            float mult = 1.0f + (gain - 1.0f) * peak;      // == gain at the centre
+            spectrum[static_cast<size_t>(i)] = juce::jmax(0.0f, spectrum[static_cast<size_t>(i)] * mult);
+        }
     }
-    
+    else
+    {
+        for (int i = 0; i < bins; ++i)
+        {
+            float freq = static_cast<float>(i) * binHz;
+            float d = (freq - targetFreq) / sigmaHz;
+            float peak = std::exp(-0.5f * d * d);
+            float sign = (type == ProblemType::Thinness) ? -1.0f : 1.0f;
+            float value = spectrum[static_cast<size_t>(i)] + sign * strength * peak;
+            spectrum[static_cast<size_t>(i)] = juce::jmax(0.0f, value);
+        }
+    }
+
     if (type == ProblemType::Clipping)
     {
         for (auto& v : spectrum)
@@ -716,6 +738,14 @@ std::vector<MLEngine::TrainingSample> MLEngine::generateSyntheticDataset(int sam
                                                                          double sampleRate,
                                                                          int fftSize)
 {
+    return generateSyntheticDataset(samplesPerProblem, sampleRate, fftSize, DatasetOptions{});
+}
+
+std::vector<MLEngine::TrainingSample> MLEngine::generateSyntheticDataset(int samplesPerProblem,
+                                                                         double sampleRate,
+                                                                         int fftSize,
+                                                                         const DatasetOptions& options)
+{
     std::vector<TrainingSample> dataset;
     if (samplesPerProblem <= 0)
         return dataset;
@@ -744,7 +774,8 @@ std::vector<MLEngine::TrainingSample> MLEngine::generateSyntheticDataset(int sam
             const float strength = 0.6f + dist01(problemRng) * 0.4f;
 
             TrainingSample sample;
-            const auto spectrum = buildSyntheticSpectrum(type, sampleRate, fftSize, targetFreq, strength);
+            const auto spectrum = buildSyntheticSpectrum(type, sampleRate, fftSize, targetFreq, strength,
+                                                         options.relativeProminence);
             sample.melSpectrum = extractMelBands(spectrum, sampleRate, melNumBands);
             sample.problemTargets.fill(0.0f);
             sample.problemTargets[static_cast<size_t>(type)] = 1.0f;
@@ -783,9 +814,12 @@ std::vector<MLEngine::TrainingSample> MLEngine::generateSyntheticDataset(int sam
         }
     }
 
-    // ── Hard negatives: clean but tilted (look like natural program tilt, not problems) ──
-    // P4-M2a specifically attacks the 12/12 clean-tilt L1/L2 false alarm measured
-    // by P4-D2. No weak bump is added here: this lever is tilt-invariance only.
+    // ── Hard negatives ──
+    // M2a (default): ALL clean-but-tilted — attacks the 12/12 clean-tilt L1/L2 FP.
+    // M2a-refine option weakBumpNegatives: keep the slot size FIXED (ratio fixed,
+    // Codex Q2) but split it 50/50 clean-tilt + weak-bump-ON-TILT, restoring the
+    // pre-M2a "a SMALL bump on natural tilt is still NOT a problem" signal that
+    // M2a removed — the hypothesis being it over-suppressed real humps.
     {
         const int bins = juce::jmax(1, fftSize / 2);
         std::mt19937 rng(54321);
@@ -793,6 +827,11 @@ std::vector<MLEngine::TrainingSample> MLEngine::generateSyntheticDataset(int sam
         std::uniform_real_distribution<float> baseDist(0.03f, 0.08f);
         std::uniform_real_distribution<float> tiltSlope(kTrainingTiltMinDbPerDecade,
                                                         kTrainingTiltMaxDbPerDecade);
+        std::uniform_real_distribution<float> freqDist(100.0f, 10000.0f);
+        std::uniform_real_distribution<float> weakStrength(0.1f, 0.3f);   // below problem strength
+        // When weak-bumps are NOT requested, weakStart == hardNegatives so the bump
+        // branch never runs and the RNG sequence is IDENTICAL to shipped M2a.
+        const int weakStart = options.weakBumpNegatives ? hardNegatives / 2 : hardNegatives;
 
         for (int i = 0; i < hardNegatives; ++i)
         {
@@ -804,6 +843,20 @@ std::vector<MLEngine::TrainingSample> MLEngine::generateSyntheticDataset(int sam
                 spectrum[static_cast<size_t>(b)] = juce::jmax(0.0f, base + noise(rng));
 
             applyTrainingTiltToLinearSpectrum(spectrum, sampleRate, fftSize, tiltSlope(rng));
+
+            if (i >= weakStart)
+            {
+                const float binHz = static_cast<float>(sampleRate) / static_cast<float>(fftSize);
+                const float targetFreq = freqDist(rng);
+                const float strength = weakStrength(rng);
+                const float sigmaHz = juce::jmax(30.0f, targetFreq * 0.08f);
+                for (int b = 0; b < bins; ++b)
+                {
+                    const float freq = static_cast<float>(b) * binHz;
+                    const float d = (freq - targetFreq) / sigmaHz;
+                    spectrum[static_cast<size_t>(b)] += strength * std::exp(-0.5f * d * d);
+                }
+            }
 
             sample.melSpectrum = extractMelBands(spectrum, sampleRate, melNumBands);
             sample.problemTargets.fill(0.0f);     // ALL zeros = not a problem
