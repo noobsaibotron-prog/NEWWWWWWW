@@ -1896,6 +1896,100 @@ public:
     }
 };
 
+// =============================================================================
+// P4-M3-Q — does the PIPELINE catch Resonance the ML misses? (free measurement)
+//
+// All prior Resonance numbers were pure-ML L2. The shipped PRODUCT runs the full
+// AIEngine pipeline, which has an INDEPENDENT DSP/heuristic resonance detector
+// (prominence-based — good at narrow peaks). If the pipeline catches the held-out
+// resonances regardless of the ML, then candidate B's ML weakness on Resonance is
+// MOOT for the product, and the risky V1 schema change is unnecessary.
+// Measures, on the 12 frozen held-out Resonance fixtures (steep tilt) + clean controls,
+// AIEngine Resonance recall and clean FP in:
+//   HeuristicOnly  — DSP resonance detector ALONE (no ML): the decisive test
+//   Hybrid+shipped — current product path
+//   Hybrid+B       — product path if candidate B were shipped
+//   MLOnly+B       — B's ML through the pipeline (≈ B's L2), for reference
+// Measurement-only, no retrain (B loaded from /tmp, else retrained). KnownDebt.
+// =============================================================================
+class AIAccuracyTest_ResPipeline : public juce::UnitTest
+{
+public:
+    AIAccuracyTest_ResPipeline()
+        : juce::UnitTest("AI Accuracy — Resonance via PIPELINE not ML (KnownDebt diagnostic)", "KnownDebt") {}
+
+    void runTest() override
+    {
+        beginTest("Does the AIEngine pipeline catch held-out Resonance the ML misses?");
+
+        const juce::File shippedModelFile = juce::File(__FILE__).getParentDirectory()
+            .getParentDirectory().getParentDirectory().getChildFile("Resources/Models/ml_weights.bin");
+
+        // Ensure candidate B exists in /tmp (retrain if needed).
+        juce::File bFile("/tmp/aieq_m2a_refine_B.bin");
+        if (! bFile.existsAsFile())
+        {
+            MLEngine B; B.initialize(); B.initializeRandomWeights();
+            auto ds = B.generateSyntheticDataset(300, kSampleRate, kFFTSize, MLEngine::DatasetOptions{ true, true, 0 });
+            B.trainOnDataset(ds, 300, 0.005f);
+            B.saveWeights(bFile);
+        }
+
+        // Frozen held-out Resonance (group 0, seed 20260617) + clean controls.
+        std::vector<std::vector<float>> resFx, cleanTrain, cleanHeld;
+        { std::mt19937 r(20260617); for (int v = 0; v < heldout::kVariations; ++v) resFx.push_back(heldout::make(heldout::HClass::Resonance, r)); }
+        { std::mt19937 r1(20260619), r2(20260618); for (int v = 0; v < heldout::kVariations; ++v) { cleanTrain.push_back(heldout::makeCleanTrainBand(r1)); cleanHeld.push_back(heldout::makeClean(r2)); } }
+
+        auto aiHits = [](AIEngine& ai, const std::vector<std::vector<float>>& fx)
+        {
+            int h = 0;
+            for (const auto& lin : fx)
+            {
+                ai.analyzeSpectrum(linearToDb(lin), true);
+                for (const auto& c : ai.getPendingCorrections()) if (c.type == AIEngine::ProblemType::Resonance) { ++h; break; }
+            }
+            return h;
+        };
+        auto aiFp = [](AIEngine& ai, const std::vector<std::vector<float>>& fx)
+        {
+            int f = 0;
+            for (const auto& lin : fx) { ai.analyzeSpectrum(linearToDb(lin), true); if (! ai.getPendingCorrections().empty()) ++f; }
+            return f;
+        };
+
+        struct Cfg { const char* name; AIEngine::DetectionBackendMode mode; const juce::File* weights; };
+        const Cfg cfgs[] = {
+            { "HeuristicOnly (DSP alone)", AIEngine::DetectionBackendMode::HeuristicOnly, nullptr },
+            { "Hybrid + shipped ML",       AIEngine::DetectionBackendMode::Hybrid,        &shippedModelFile },
+            { "Hybrid + B ML",             AIEngine::DetectionBackendMode::Hybrid,        &bFile },
+            { "MLOnly + B ML",             AIEngine::DetectionBackendMode::MLOnly,        &bFile },
+        };
+
+        logMessage("");
+        logMessage("  PIPELINE Resonance recall + clean FP (held-out, n=" + juce::String(heldout::kVariations) + ", force=single-window)");
+        logMessage("  config                      | Res recall | clean-train FP | clean-held FP");
+        logMessage("  ----------------------------+------------+----------------+--------------");
+        for (const auto& c : cfgs)
+        {
+            AIEngine ai;
+            ai.prepare(kSampleRate, 512);
+            ai.setEnabled(true);
+            ai.setSensitivity(0.5f);
+            ai.setSourceProfile(AIEngine::SourceProfile::Generic);
+            ai.setDetectionBackendMode(c.mode);
+            if (c.weights != nullptr) { ai.setCustomMLWeightsPathForTests(*c.weights); ai.forceMLDetectionEnabledForTests(true); }
+            auto frac = [](int x){ return juce::String(x).paddedLeft(' ', 2) + "/" + juce::String(heldout::kVariations); };
+            logMessage("  " + juce::String(c.name).paddedRight(' ', 27)
+                       + "|    " + frac(aiHits(ai, resFx)).paddedLeft(' ', 5)
+                       + "   |     " + frac(aiFp(ai, cleanTrain)).paddedLeft(' ', 5)
+                       + "      |    " + frac(aiFp(ai, cleanHeld)).paddedLeft(' ', 5));
+        }
+        logMessage("  READ: if HeuristicOnly Res recall is high with clean FP low, the product's DSP path");
+        logMessage("  catches narrow resonances regardless of the ML → candidate B's ML Resonance gap is");
+        logMessage("  MOOT for the product and the V1 schema change is unnecessary.");
+    }
+};
+
 static AIAccuracyTest_MLEngine   sAIAccuracyTestML;
 static AIAccuracyTest_AIEngine   sAIAccuracyTestAI;
 static AIAccuracyTest_Retrain    sAIAccuracyTestRetrain;
@@ -1904,3 +1998,4 @@ static AIAccuracyTest_HeldOut    sAIAccuracyTestHeldOut;
 static AIAccuracyTest_M2aRefine  sAIAccuracyTestM2aRefine;
 static AIAccuracyTest_M3Diag     sAIAccuracyTestM3Diag;
 static AIAccuracyTest_M2aRefine2 sAIAccuracyTestM2aRefine2;
+static AIAccuracyTest_ResPipeline sAIAccuracyTestResPipeline;
