@@ -1760,6 +1760,142 @@ public:
     }
 };
 
+// =============================================================================
+// P4-M2a-refine-2 / D1 — Resonance recovery by RESAMPLING (DIAGNOSTIC, /tmp, no ship).
+//
+// Double-counter-examined (two agents, Codex offline). Cause (M3-diag c085bc9a): NOT
+// representation — B's tilt-invariance over-suppresses narrow low/mid on the steep eval
+// band. D1 = candidate B recipe + N EXTRA Resonance-only positives (resampling, dedicated
+// RNG; NOT loss-weighting — trainStep has no per-class weight) to rebalance the one class
+// losing the FP↔recall trade. Training tilt UNCHANGED (-4.5..-1.5): D1 does NOT touch the
+// disjointness contract. Acceptance: Resonance heldout L2 3→≥8 WITHOUT losing
+// Mud≥8/Boxy≥7/Boom≥10 or clean FP (≤1 both bands). Reports Resonance L1 AND L2 on BOTH
+// train-band and heldout-band (distinguish "doesn't learn" from "doesn't extrapolate").
+// KnownDebt (non-blocking). NOTE: AI-Sweep/AI-Corpus pass trivially here — nothing ships.
+// =============================================================================
+class AIAccuracyTest_M2aRefine2 : public juce::UnitTest
+{
+public:
+    AIAccuracyTest_M2aRefine2()
+        : juce::UnitTest("AI Accuracy — P4-M2a-refine-2 D1 Resonance (KnownDebt diagnostic)", "KnownDebt") {}
+
+    // A Resonance fixture at an arbitrary tilt band, reusing the FROZEN heldout primitives
+    // and the exact eval Resonance shape (freq 250-4000, +14..20 dB, sigma-factor 0.04).
+    static std::vector<float> makeResAtTilt(std::mt19937& rng, float minSlope, float maxSlope)
+    {
+        std::vector<float> db(static_cast<size_t>(kNumBins), heldout::kBaselineDb);
+        heldout::addPinkTiltDb(db, std::uniform_real_distribution<float>(minSlope, maxSlope)(rng));
+        auto U = [&rng](float a, float b){ return std::uniform_real_distribution<float>(a, b)(rng); };
+        heldout::addGaussianPeakDb(db, U(250.0f, 4000.0f), U(14.0f, 20.0f), 0.04f);
+        heldout::addNoiseDb(db, rng, 1.0f);
+        return heldout::toLinear(db);
+    }
+
+    void runTest() override
+    {
+        beginTest("P4-M2a-refine-2 D1: extra Resonance positives vs shipped/B");
+
+        const juce::File shippedModelFile = juce::File(__FILE__).getParentDirectory()
+            .getParentDirectory().getParentDirectory().getChildFile("Resources/Models/ml_weights.bin");
+        MLEngine shipped; shipped.initialize();
+        expect(shipped.loadWeights(shippedModelFile), "loadWeights failed on shipped model");
+        shipped.setSensitivity(0.5f);
+
+        // Candidate B (load /tmp, else retrain deterministically).
+        MLEngine B; B.initialize();
+        const juce::File bFile("/tmp/aieq_m2a_refine_B.bin");
+        if (! (bFile.existsAsFile() && B.loadWeights(bFile)))
+        {
+            B.initializeRandomWeights();
+            auto ds = B.generateSyntheticDataset(300, kSampleRate, kFFTSize, MLEngine::DatasetOptions{ true, true, 0 });
+            B.trainOnDataset(ds, 300, 0.005f);
+        }
+        B.setSensitivity(0.5f);
+
+        // D1 = B recipe + 300 extra Resonance positives (doubles the Resonance class).
+        MLEngine D1; D1.initialize(); D1.initializeRandomWeights();
+        {
+            auto ds = D1.generateSyntheticDataset(300, kSampleRate, kFFTSize,
+                                                  MLEngine::DatasetOptions{ true, true, 300 });
+            D1.trainOnDataset(ds, 300, 0.005f);
+        }
+        D1.setSensitivity(0.5f);
+        D1.saveWeights(juce::File("/tmp/aieq_m2a_refine_D1.bin"));   // /tmp ONLY — UNSHIPPED
+
+        const auto  baseThr = shipped.getBaseThresholds();
+        const int   resIdx  = static_cast<int>(MLEngine::ProblemType::Resonance);
+        const float thr     = baseThr[static_cast<size_t>(resIdx)];
+
+        struct Group { heldout::HClass hc; MLEngine::ProblemType type; const char* name; };
+        const Group groups[] = {
+            { heldout::HClass::Resonance, MLEngine::ProblemType::Resonance,    "Resonance" },
+            { heldout::HClass::Harshness, MLEngine::ProblemType::Harshness,    "Harshness" },
+            { heldout::HClass::Muddiness, MLEngine::ProblemType::Muddiness,    "Muddiness" },
+            { heldout::HClass::Sibilance, MLEngine::ProblemType::Sibilance,    "Sibilance" },
+            { heldout::HClass::Boominess, MLEngine::ProblemType::Boominess,    "Boominess" },
+            { heldout::HClass::Boxyness,  MLEngine::ProblemType::BoxyMidrange, "Boxyness" },
+            { heldout::HClass::Thinness,  MLEngine::ProblemType::Thinness,     "Thinness" },
+        };
+        constexpr int kNumGroups = 7;
+
+        std::array<std::vector<std::vector<float>>, kNumGroups> held;
+        {
+            std::mt19937 rng(20260617);
+            for (int g = 0; g < kNumGroups; ++g)
+                for (int v = 0; v < heldout::kVariations; ++v)
+                    held[static_cast<size_t>(g)].push_back(heldout::make(groups[g].hc, rng));
+        }
+        std::vector<std::vector<float>> cleanTrain, cleanHeld;
+        {
+            std::mt19937 r1(20260619), r2(20260618);
+            for (int v = 0; v < heldout::kVariations; ++v)
+            {
+                cleanTrain.push_back(heldout::makeCleanTrainBand(r1));
+                cleanHeld.push_back(heldout::makeClean(r2));
+            }
+        }
+
+        auto l2hits = [](MLEngine& m, const std::vector<std::vector<float>>& fx, MLEngine::ProblemType t)
+        { int h = 0; for (const auto& s : fx) for (const auto& d : m.detectProblems(s, kSampleRate)) if (d.type == t) { ++h; break; } return h; };
+        auto fp = [](MLEngine& m, const std::vector<std::vector<float>>& fx)
+        { int f = 0; for (const auto& s : fx) if (! m.detectProblems(s, kSampleRate).empty()) ++f; return f; };
+        auto l1mean = [resIdx](MLEngine& m, const std::vector<std::vector<float>>& fx)
+        { double s = 0; for (const auto& v : fx) s += m.forwardRawProbabilities(v, kSampleRate)[static_cast<size_t>(resIdx)]; return fx.empty() ? 0.0 : s / fx.size(); };
+        auto frac = [](int x){ return juce::String(x).paddedLeft(' ', 2) + "/" + juce::String(heldout::kVariations); };
+
+        logMessage("");
+        logMessage("  P4-M2a-refine-2 D1 — per-class L2 (held-out extrapolation band), n=" + juce::String(heldout::kVariations));
+        logMessage("  class      | shipped |   B   |   D1  | target");
+        logMessage("  -----------+---------+-------+-------+-------");
+        const char* tg[] = { ">=8", "rep", ">=8", "rep", ">=10", ">=7", "rep" };
+        for (int g = 0; g < kNumGroups; ++g)
+            logMessage("  " + juce::String(groups[g].name).paddedRight(' ', 11)
+                       + "|  " + frac(l2hits(shipped, held[static_cast<size_t>(g)], groups[g].type))
+                       + "  | " + frac(l2hits(B,       held[static_cast<size_t>(g)], groups[g].type))
+                       + " | " + frac(l2hits(D1,      held[static_cast<size_t>(g)], groups[g].type))
+                       + " | " + juce::String(tg[g]));
+        logMessage("  -----------+---------+-------+-------+-------");
+        logMessage("  clean train|  " + frac(fp(shipped, cleanTrain)) + "  | " + frac(fp(B, cleanTrain)) + " | " + frac(fp(D1, cleanTrain)) + " | <=1");
+        logMessage("  clean held |  " + frac(fp(shipped, cleanHeld )) + "  | " + frac(fp(B, cleanHeld )) + " | " + frac(fp(D1, cleanHeld )) + " | <=1");
+
+        // Resonance L1 (raw) AND L2 on BOTH bands — distinguish "doesn't learn" from "doesn't extrapolate".
+        std::vector<std::vector<float>> resTrain;
+        { std::mt19937 r(20260620); for (int v = 0; v < heldout::kVariations; ++v) resTrain.push_back(makeResAtTilt(r, heldout::kTrainTiltMinSlope, heldout::kTrainTiltMaxSlope)); }
+        const auto& resHeld = held[0];   // heldout-band Resonance (group 0)
+        auto rt = MLEngine::ProblemType::Resonance;
+        logMessage("  Resonance L1(mean raw, thr " + juce::String(thr, 2) + ") / L2(hits):");
+        logMessage("    band      | shipped         |   B             |   D1");
+        auto row = [&](const char* band, const std::vector<std::vector<float>>& fx){
+            logMessage(juce::String("    ") + juce::String(band).paddedRight(' ', 10)
+                       + "| " + juce::String(l1mean(shipped, fx), 2) + " / " + frac(l2hits(shipped, fx, rt))
+                       + "  | " + juce::String(l1mean(B, fx), 2) + " / " + frac(l2hits(B, fx, rt))
+                       + "  | " + juce::String(l1mean(D1, fx), 2) + " / " + frac(l2hits(D1, fx, rt))); };
+        row("train-band", resTrain);
+        row("heldout   ", resHeld);
+        logMessage("  (D1 candidate saved /tmp/aieq_m2a_refine_D1.bin — UNSHIPPED)");
+    }
+};
+
 static AIAccuracyTest_MLEngine   sAIAccuracyTestML;
 static AIAccuracyTest_AIEngine   sAIAccuracyTestAI;
 static AIAccuracyTest_Retrain    sAIAccuracyTestRetrain;
@@ -1767,3 +1903,4 @@ static AIAccuracyTest_ThreeLevel sAIAccuracyTestThreeLevel;
 static AIAccuracyTest_HeldOut    sAIAccuracyTestHeldOut;
 static AIAccuracyTest_M2aRefine  sAIAccuracyTestM2aRefine;
 static AIAccuracyTest_M3Diag     sAIAccuracyTestM3Diag;
+static AIAccuracyTest_M2aRefine2 sAIAccuracyTestM2aRefine2;

@@ -135,6 +135,12 @@ public:
                                           // (constant dB prominence) instead of absolute add
         bool weakBumpNegatives  = false;  // split the hard-negative slot 50/50 clean-tilt +
                                           // weak-bump (ratio fixed); else all clean-tilt (M2a)
+        // P4-M2a-refine-2 / D1 (Resonance recovery): N EXTRA Resonance-only positives,
+        // appended via a DEDICATED RNG after the main positive loop (counter-exam-approved
+        // resampling route — data-only, NOT loss-weighting). 0 == default == no change, so
+        // the deterministic stream of every other class is byte-identical. Training tilt
+        // band is UNCHANGED (-4.5..-1.5); this only rebalances the Resonance class count.
+        int  extraResonancePositives = 0;
     };
 
     void trainOnDataset(const std::vector<TrainingSample>& dataset,

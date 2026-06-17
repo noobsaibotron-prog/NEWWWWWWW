@@ -786,6 +786,35 @@ std::vector<MLEngine::TrainingSample> MLEngine::generateSyntheticDataset(int sam
         }
     }
 
+    // ── P4-M2a-refine-2 / D1: EXTRA Resonance-only positives (resampling rebalance) ──
+    // Appended AFTER the main positive loop with a DEDICATED RNG, so the deterministic
+    // streams of every other class are untouched and options.extraResonancePositives==0
+    // is byte-identical to before. Training tilt band UNCHANGED (inside buildSyntheticSpectrum).
+    if (options.extraResonancePositives > 0)
+    {
+        const auto  type  = ProblemType::Resonance;
+        const auto& range = problemFreqRanges[static_cast<size_t>(static_cast<int>(type))];
+        std::mt19937 resRng(0x5E50A11u);   // dedicated, distinct from problemRng(424242)
+        std::uniform_real_distribution<float> rdist01(0.0f, 1.0f);
+        for (int i = 0; i < options.extraResonancePositives; ++i)
+        {
+            const float freqNorm   = rdist01(resRng);
+            const float targetFreq = range.minHz * std::pow(range.maxHz / range.minHz, freqNorm);
+            const float strength   = 0.6f + rdist01(resRng) * 0.4f;
+
+            TrainingSample sample;
+            const auto spectrum = buildSyntheticSpectrum(type, sampleRate, fftSize, targetFreq, strength,
+                                                         options.relativeProminence);
+            sample.melSpectrum = extractMelBands(spectrum, sampleRate, melNumBands);
+            sample.problemTargets.fill(0.0f);
+            sample.problemTargets[static_cast<size_t>(type)] = 1.0f;
+            sample.frequencyTargets.fill(0.0f);
+            const float norm = std::log(targetFreq / range.minHz) / std::log(range.maxHz / range.minHz);
+            sample.frequencyTargets[static_cast<size_t>(type)] = juce::jlimit(0.0f, 1.0f, norm);
+            dataset.push_back(std::move(sample));
+        }
+    }
+
     // ── Clean/normal samples (all targets = 0) ──
     // CRITICAL: Without these, the model never learns to say "no problem".
     {
