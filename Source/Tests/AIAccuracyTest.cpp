@@ -2281,7 +2281,8 @@ public:
             logMessage("");
             logMessage("  MECHANISM: 6 consecutive readSpectrumSnapshot() versions: " + seq.trim());
             logMessage("    distinct versions in a row = " + juce::String(distinctCount)
-                       + "  (>1 ⇒ NON-idempotent: a veto's multiple reads see different frames)");
+                       + "  (>1 ⇒ NON-idempotent: a veto's multiple reads see different buffers/frames)");
+            expect(distinctCount > 1, "readSpectrumSnapshot() idempotent across calls — bug mechanism NOT reproduced");
         }
         auto detectsRes = [](AIEngine& ai, const std::vector<float>& lin){
             ai.analyzeSpectrum(linearToDb(lin), true);
@@ -2297,25 +2298,29 @@ public:
         std::mt19937 rng(40001);
         std::mt19937 cleanRng(40002);
         const int n = heldout::kVariations;
-        int loudFlips = 0, cleanFlips = 0, selfPos = 0, loudPos = 0, cleanPos = 0, nondet = 0, mlMatch = 0;
-        double mlSelfSum = 0, mlClnSum = 0;
+        int loudFlips = 0, cleanFlips = 0, selfPos = 0, loudPos = 0, cleanPos = 0, nondet = 0, mlMatchFull = 0;
+        double mlSelfSum = 0, mlClnSum = 0, maxMlVecDiff = 0;
         for (int v = 0; v < n; ++v)
         {
             const auto res = heldout::make(heldout::HClass::Resonance, rng);
             // LEVEL-MATCHED primer: a clean tilted frame (~same level as res, no peak) — controls for RMS carryover.
             const auto cleanP = heldout::makeClean(cleanRng);
             auto aiS = makeAi(); detectsRes(*aiS, res); detectsRes(*aiS, res); const bool self = detectsRes(*aiS, res);
-            const double mlSelf = aiS->getLastMLRawProbabilitiesForTests()[static_cast<size_t>(resIdx)];
+            const auto mlSelfV = aiS->getLastMLRawProbabilitiesForTests();   // FULL 8-vector (rank/top-K depend on all)
             auto aiL = makeAi(); detectsRes(*aiL, prime); detectsRes(*aiL, prime); const bool loud = detectsRes(*aiL, res);
             auto aiK = makeAi(); detectsRes(*aiK, cleanP); detectsRes(*aiK, cleanP); const bool cln = detectsRes(*aiK, res);
-            const double mlCln = aiK->getLastMLRawProbabilitiesForTests()[static_cast<size_t>(resIdx)];
+            const auto mlClnV = aiK->getLastMLRawProbabilitiesForTests();
             auto aiS2 = makeAi(); detectsRes(*aiS2, res); detectsRes(*aiS2, res); const bool self2 = detectsRes(*aiS2, res);
+            float vecDiff = 0.0f;
+            for (int k = 0; k < MLEngine::numProblemTypes; ++k)
+                vecDiff = std::max(vecDiff, std::abs(mlSelfV[static_cast<size_t>(k)] - mlClnV[static_cast<size_t>(k)]));
             if (self != self2) ++nondet;
             if (self != loud) ++loudFlips;
             if (self != cln)  ++cleanFlips;
-            if (std::abs(mlSelf - mlCln) < 0.01) ++mlMatch;   // ML raw prob identical across priming?
+            if (vecDiff < 0.01f) ++mlMatchFull;     // ENTIRE ML raw vector identical across priming?
             selfPos += self ? 1 : 0; loudPos += loud ? 1 : 0; cleanPos += cln ? 1 : 0;
-            mlSelfSum += mlSelf; mlClnSum += mlCln;
+            mlSelfSum += mlSelfV[static_cast<size_t>(resIdx)]; mlClnSum += mlClnV[static_cast<size_t>(resIdx)];
+            maxMlVecDiff = std::max(maxMlVecDiff, static_cast<double>(vecDiff));
         }
         logMessage("");
         logMessage("  P4-BUG-001 witness (MLOnly — isolated from heuristic temporal path, shipped, Resonance, n=" + juce::String(n) + "):");
@@ -2324,11 +2329,18 @@ public:
         logMessage("    clean-primed (clean,clean,res) Rdet  : " + juce::String(cleanPos) + "/" + juce::String(n) + "  (LEVEL-MATCHED primer: controls for RMS)");
         logMessage("    history-flips loud / clean           : " + juce::String(loudFlips) + "/" + juce::String(n) + "  /  " + juce::String(cleanFlips) + "/" + juce::String(n));
         logMessage("    nondet (self vs self2, should be 0)  : " + juce::String(nondet) + "/" + juce::String(n));
-        logMessage("    ML raw Res prob  self vs clean-primed: " + juce::String(mlSelfSum / n, 3) + " vs " + juce::String(mlClnSum / n, 3)
-                   + "  (identical-within-0.01: " + juce::String(mlMatch) + "/" + juce::String(n) + ")");
-        logMessage("  READ (isolated): MECHANISM shows non-idempotent reads (v1/v0). MLOnly removes the heuristic temporal");
-        logMessage("  path. If ML raw prob MATCHES across priming but detection FLIPS → the ML inference saw the same frame");
-        logMessage("  and ONLY THE VETO changed ⇒ P4-BUG-001 isolated. If ML raw also differs → the 2785 read is corrupted too.");
+        logMessage("    ML raw Res prob self vs clean-primed : " + juce::String(mlSelfSum / n, 3) + " vs " + juce::String(mlClnSum / n, 3));
+        logMessage("    FULL ML 8-vector identical (maxdiff " + juce::String(maxMlVecDiff, 4) + "): " + juce::String(mlMatchFull) + "/" + juce::String(n));
+        logMessage("  READ (isolated): MLOnly removes the heuristic temporal path. The ENTIRE ML raw vector matches across");
+        logMessage("  priming (so threshold/rank/top-K are identical) yet the detection FLIPS ⇒ ONLY THE VETO changed ⇒");
+        logMessage("  P4-BUG-001 isolated to the veto. LIMITS: ProblemDetection frequency/localization not compared; and the");
+        logMessage("  stale reads carry PREVIOUS real frames after warm-up (not zeros) — 'empty buffer' holds only cold-start.");
+
+        // KnownDebt assertions — the witness FAILS (visibly, non-blocking) if it stops witnessing.
+        expect(cleanFlips > 0, "P4-BUG-001 NOT reproduced: no history-dependence (level-matched) observed");
+        expect(mlMatchFull == n, "ML pre-veto NOT identical across priming (max vec diff "
+               + juce::String(maxMlVecDiff, 4) + ") — the flip is not veto-isolated");
+        expect(nondet == 0, "within-sequence non-determinism — characterization unstable");
     }
 };
 
