@@ -2086,9 +2086,9 @@ public:
 //   effThr  = effective threshold in the pipeline        (getLastMLThresholdsForTests)
 //   detect  = survived rule + veto?                      (getPendingCorrections, MLOnly)
 // READ: rawIn>>normIn → NORMALIZATION drops it; normIn>effThr but detect=0 → RULE/VETO
-// drops it; normIn low → MODEL. Run across real Sibilance @ intensities + clean steep +
-// clean bright (HF shelf) + cymbal-like HF noise. KnownDebt. Decides if B was undervalued
-// by the pipeline and whether the veto is even a future blocker. No product change.
+// drops it; normIn low → MODEL. ALL fixtures are SYNTHETIC (synthetic Sibilance Gaussians @
+// intensities + clean steep + clean bright (HF shelf) + a broad-HF synthetic negative — NOT
+// real cymbal audio). KnownDebt. No product change. Closes ONLY the synthetic attribution.
 // =============================================================================
 class AIAccuracyTest_VetoSibAttribution : public juce::UnitTest
 {
@@ -2151,49 +2151,78 @@ public:
         auto aiShipped = makeAi(shippedFile, "shipped ");
         auto aiB       = makeAi(bFile,       "B(repro)");
 
+        // Checksum compare: re-load the saved B and verify it matches what the AIEngine loaded.
+        {
+            MLEngine verify; verify.initialize();
+            expect(verify.loadWeights(bFile), "re-load of saved B failed");
+            const auto onDisk = verify.getLoadedWeightsChecksum();
+            const auto inAi   = aiB->getMLEngineForTest().getLoadedWeightsChecksum();
+            expect(onDisk == inAi, "B checksum mismatch saved-vs-loaded: " + onDisk + " != " + inAi);
+            logMessage("  B checksum verified (saved==loaded): " + onDisk);
+        }
+
         struct Cat { juce::String name; std::vector<std::vector<float>> fx; };
         std::vector<Cat> cats;
         auto build = [](const juce::String& nm, uint32_t seed, int n, std::function<std::vector<float>(std::mt19937&)> g){
             std::mt19937 r(seed); std::vector<std::vector<float>> v; v.reserve(static_cast<size_t>(n)); for (int i = 0; i < n; ++i) v.push_back(g(r)); return Cat{ nm, std::move(v) }; };
-        cats.push_back(build("sib +8dB ", 30001, 8, [](std::mt19937& r){ return sibFx(r, 8.0f); }));
-        cats.push_back(build("sib +12dB", 30002, 8, [](std::mt19937& r){ return sibFx(r, 12.0f); }));
-        cats.push_back(build("sib +16dB", 30003, 8, [](std::mt19937& r){ return sibFx(r, 16.0f); }));
-        cats.push_back(build("sib +20dB", 30004, 8, [](std::mt19937& r){ return sibFx(r, 20.0f); }));
-        cats.push_back(build("clean stp", 30010, 8, [](std::mt19937& r){ return heldout::makeClean(r); }));
-        cats.push_back(build("cleanBrgt", 30011, 8, cleanBrightFx));
-        cats.push_back(build("HF-cymbal", 30012, 8, hfNoiseFx));
+        cats.push_back(build("syn-sib08", 30001, 8, [](std::mt19937& r){ return sibFx(r, 8.0f); }));
+        cats.push_back(build("syn-sib12", 30002, 8, [](std::mt19937& r){ return sibFx(r, 12.0f); }));
+        cats.push_back(build("syn-sib16", 30003, 8, [](std::mt19937& r){ return sibFx(r, 16.0f); }));
+        cats.push_back(build("syn-sib20", 30004, 8, [](std::mt19937& r){ return sibFx(r, 20.0f); }));
+        cats.push_back(build("clean-stp", 30010, 8, [](std::mt19937& r){ return heldout::makeClean(r); }));
+        cats.push_back(build("clean-brt", 30011, 8, cleanBrightFx));
+        cats.push_back(build("broadHFng", 30012, 8, hfNoiseFx));
+
+        // Mirror MLEngine decision rule on the NORMALIZED frame: prob > effThr + margin AND
+        // Sibilance in top-K (=2 at sensitivity 0.5) of the 8 normalized probs.
+        constexpr std::array<float, MLEngine::numProblemTypes> kMlMargin {{ 0.02f, 0.10f, 0.10f, 0.10f, 0.10f, 0.10f, 0.10f, 0.10f }};
+        auto sibInTop2 = [](const std::array<float, MLEngine::numProblemTypes>& p, int s){
+            int better = 0; for (int i = 0; i < MLEngine::numProblemTypes; ++i) if (i != s && p[static_cast<size_t>(i)] > p[static_cast<size_t>(s)]) ++better; return better < 2; };
+        auto bandMeanDb = [](const std::vector<float>& db, float lo, float hi){
+            const float binHz = static_cast<float>(kSampleRate) / kFFTSize; double s = 0; int n = 0;
+            for (int i = 0; i < static_cast<int>(db.size()); ++i) { const float f = i * binHz; if (f >= lo && f <= hi) { s += db[static_cast<size_t>(i)]; ++n; } } return n ? static_cast<float>(s / n) : -120.0f; };
 
         auto measure = [&](MLEngine& ml, AIEngine& ai, const std::vector<std::vector<float>>& fx){
-            double rawIn = 0, normIn = 0, thr = 0; int rule = 0, det = 0;
+            double rawIn = 0, normIn = 0, thr = 0, legacyExc = 0, maxDelta = 0; int ruleNorm = 0, det = 0;
             for (const auto& lin : fx)
             {
-                rawIn += ml.forwardRawProbabilities(lin, kSampleRate)[static_cast<size_t>(sib)];
-                for (const auto& d : ml.detectProblems(lin, kSampleRate)) if (d.type == MLEngine::ProblemType::Sibilance) { ++rule; break; }   // RULE only (no AIEngine veto)
-                ai.analyzeSpectrum(linearToDb(lin), true);
-                normIn += ai.getLastMLRawProbabilitiesForTests()[static_cast<size_t>(sib)];
-                thr    += ai.getLastMLThresholdsForTests()[static_cast<size_t>(sib)];
-                for (const auto& c : ai.getPendingCorrections()) if (c.type == AIEngine::ProblemType::Sibilance) { ++det; break; }            // after rule + VETO
+                const auto rp = ml.forwardRawProbabilities(lin, kSampleRate);
+                rawIn += rp[static_cast<size_t>(sib)];
+                const auto db = linearToDb(lin);
+                ai.analyzeSpectrum(db, true);
+                const auto np = ai.getLastMLRawProbabilitiesForTests();
+                const auto nt = ai.getLastMLThresholdsForTests();
+                normIn += np[static_cast<size_t>(sib)];
+                thr    += nt[static_cast<size_t>(sib)];
+                maxDelta = std::max(maxDelta, static_cast<double>(std::abs(np[static_cast<size_t>(sib)] - rp[static_cast<size_t>(sib)])));
+                if (np[static_cast<size_t>(sib)] > nt[static_cast<size_t>(sib)] + kMlMargin[static_cast<size_t>(sib)] && sibInTop2(np, sib)) ++ruleNorm;   // RULE on NORMALIZED frame
+                legacyExc += bandMeanDb(db, 5000.0f, 10000.0f) - bandMeanDb(db, 2000.0f, 5000.0f);                                                     // veto's band-excess input (>=3dB keeps)
+                for (const auto& c : ai.getPendingCorrections()) if (c.type == AIEngine::ProblemType::Sibilance) { ++det; break; }                     // after rule + VETO
             }
             const int n = static_cast<int>(fx.size());
-            return std::array<double, 5>{ rawIn / n, normIn / n, thr / n, static_cast<double>(rule), static_cast<double>(det) };
+            return std::array<double, 7>{ rawIn / n, normIn / n, maxDelta, thr / n, static_cast<double>(ruleNorm), legacyExc / n, static_cast<double>(det) };
         };
 
         logMessage("");
-        logMessage("  Sibilance per-stage attribution (n=8/cat). rawIn=ML raw, normIn=ML on AIEngine-normalized,");
-        logMessage("  effThr=pipeline thr, RULE=ML detectProblems hits (no veto), det=after rule+VETO. sib=REAL; clean/HF=NOT.");
-        logMessage("  category  | model    | rawIn | normIn| effThr| RULE | det");
-        logMessage("  ----------+----------+-------+-------+-------+------+-----");
+        logMessage("  Sibilance per-stage attribution (n=8/cat). ALL fixtures SYNTHETIC. rawIn=ML raw, normIn=ML on");
+        logMessage("  AIEngine-normalized frame, maxD=max|norm-raw| per cat, ruleN=rule(thr+margin+topK) on NORMALIZED");
+        logMessage("  frame, bandExc=legacy 5-10k minus 2-5k dB (veto keeps if >=3), det=after rule+VETO.");
+        logMessage("  category  | model    | rawIn | normIn| maxD | effThr| ruleN| bandExc| det");
+        logMessage("  ----------+----------+-------+-------+------+-------+------+--------+----");
         for (const auto& c : cats)
         {
             auto s = measure(shippedMlRef(*aiShipped), *aiShipped, c.fx);
             auto b = measure(Bml, *aiB, c.fx);
             auto pr = [](double x){ return juce::String(x, 2).paddedLeft(' ', 5); };
-            logMessage("  " + c.name + " | shipped  | " + pr(s[0]) + " | " + pr(s[1]) + " | " + pr(s[2]) + " |  " + juce::String((int)s[3]) + "/8 |  " + juce::String((int)s[4]) + "/8");
-            logMessage("  " + c.name + " | B(repro) | " + pr(b[0]) + " | " + pr(b[1]) + " | " + pr(b[2]) + " |  " + juce::String((int)b[3]) + "/8 |  " + juce::String((int)b[4]) + "/8");
+            auto row = [&](const char* who, const std::array<double,7>& v){
+                logMessage("  " + c.name + " | " + juce::String(who) + " | " + pr(v[0]) + " | " + pr(v[1]) + " | " + pr(v[2]) + " | " + pr(v[3])
+                           + " |  " + juce::String((int)v[4]) + "/8 | " + juce::String(v[5], 1).paddedLeft(' ', 6) + " |  " + juce::String((int)v[6]) + "/8"); };
+            row("shipped ", s);
+            row("B(repro)", b);
         }
-        logMessage("  READ: shipped rawIn~0 on sib → nothing to un-veto. For B: RULE high but det=0 → the VETO drops it;");
-        logMessage("  but B also fires on HF-cymbal (rawIn high, non-sibilance) → B can't separate sibilance from cymbal,");
-        logMessage("  so the veto's rejection is partly JUSTIFIED → leverage is the MODEL/data, not relaxing the veto.");
+        logMessage("  READ (HONEST): if ruleN passes on the NORMALIZED frame but det=0 AND bandExc<3 → the VETO drops it;");
+        logMessage("  if ruleN<8 → the rule/top-K drops it (NOT the veto). Fixtures are SYNTHETIC shapes — the broad-HF");
+        logMessage("  negative is NOT a real cymbal, so 'B confuses sibilance/cymbal' would need REAL audio to claim.");
     }
 
     // shipped model held inside the AIEngine; expose its MLEngine for the raw-on-raw stage.
