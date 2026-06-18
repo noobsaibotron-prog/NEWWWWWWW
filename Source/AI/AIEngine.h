@@ -363,6 +363,13 @@ public:
     /** Read-only access to ML engine (for direct-vs-pipeline comparison in tests). */
     MLEngine& getMLEngineForTest() { return mlEngine; }
 
+    /** P4-BUG-001 probe: returns the .version of ONE readSpectrumSnapshot() call. Because
+        readSpectrumSnapshot() is a CONSUMING swap (not idempotent), consecutive calls within
+        the same published frame can return DIFFERENT versions — which is exactly how the ML-path
+        vetoes (multiple calculateBandEnergy/findPeakInRange) end up comparing different frames.
+        Test-only accessor; calling it itself swaps the buffer, so use it only to characterize. */
+    auto probeSnapshotVersionForTests() { return readSpectrumSnapshot().version; }
+
     /** Last raw sigmoid outputs from the ML forward pass (8 floats, 0 if ML didn't run). */
     std::array<float, MLEngine::numProblemTypes> getLastMLRawProbabilitiesForTests() const
     {

@@ -2258,11 +2258,31 @@ public:
             auto ai = std::make_unique<AIEngine>();
             ai->prepare(kSampleRate, 512); ai->setEnabled(true); ai->setSensitivity(0.5f);
             ai->setSourceProfile(AIEngine::SourceProfile::Generic);
-            ai->setDetectionBackendMode(AIEngine::DetectionBackendMode::Hybrid);
-            ai->setCustomMLWeightsPathForTests(shippedFile);
+            // MLOnly (NOT Hybrid) — isolates the ML-path veto from the heuristic detectResonances
+            // temporal path (persistence/history), so any history-dependence is the ML reality-check.
+            ai->setDetectionBackendMode(AIEngine::DetectionBackendMode::MLOnly);
+            expect(ai->setCustomMLWeightsPathForTests(shippedFile), "shipped load failed");
             ai->forceMLDetectionEnabledForTests(true);
             return ai;
         };
+
+        // ── Mechanism witness: consecutive readSpectrumSnapshot() return DIFFERENT versions ──
+        // (this is exactly what the ML-path vetoes do via multiple calculateBandEnergy/findPeakInRange).
+        {
+            auto ai = makeAi();
+            std::vector<float> f(static_cast<size_t>(kNumBins), heldout::kBaselineDb);
+            for (auto& x : f) x = -20.0f; f = heldout::toLinear(f);
+            ai->analyzeSpectrum(linearToDb(f), true);                 // publish + run ML path
+            std::vector<long long> vers;
+            for (int i = 0; i < 6; ++i) vers.push_back(static_cast<long long>(ai->probeSnapshotVersionForTests()));
+            auto sorted = vers; std::sort(sorted.begin(), sorted.end());
+            const int distinctCount = static_cast<int>(std::unique(sorted.begin(), sorted.end()) - sorted.begin());
+            juce::String seq; for (auto v : vers) seq += juce::String(v) + " ";
+            logMessage("");
+            logMessage("  MECHANISM: 6 consecutive readSpectrumSnapshot() versions: " + seq.trim());
+            logMessage("    distinct versions in a row = " + juce::String(distinctCount)
+                       + "  (>1 ⇒ NON-idempotent: a veto's multiple reads see different frames)");
+        }
         auto detectsRes = [](AIEngine& ai, const std::vector<float>& lin){
             ai.analyzeSpectrum(linearToDb(lin), true);
             for (const auto& c : ai.getPendingCorrections()) if (c.type == AIEngine::ProblemType::Resonance) return true;
@@ -2273,34 +2293,42 @@ public:
         for (auto& v : prime) v = -8.0f;   // dB, loud broadband
         prime = heldout::toLinear(prime);
 
+        const int resIdx = static_cast<int>(MLEngine::ProblemType::Resonance);
         std::mt19937 rng(40001);
         std::mt19937 cleanRng(40002);
         const int n = heldout::kVariations;
-        int loudFlips = 0, cleanFlips = 0, selfPos = 0, loudPos = 0, cleanPos = 0, nondet = 0;
+        int loudFlips = 0, cleanFlips = 0, selfPos = 0, loudPos = 0, cleanPos = 0, nondet = 0, mlMatch = 0;
+        double mlSelfSum = 0, mlClnSum = 0;
         for (int v = 0; v < n; ++v)
         {
             const auto res = heldout::make(heldout::HClass::Resonance, rng);
             // LEVEL-MATCHED primer: a clean tilted frame (~same level as res, no peak) — controls for RMS carryover.
             const auto cleanP = heldout::makeClean(cleanRng);
             auto aiS = makeAi(); detectsRes(*aiS, res); detectsRes(*aiS, res); const bool self = detectsRes(*aiS, res);
+            const double mlSelf = aiS->getLastMLRawProbabilitiesForTests()[static_cast<size_t>(resIdx)];
             auto aiL = makeAi(); detectsRes(*aiL, prime); detectsRes(*aiL, prime); const bool loud = detectsRes(*aiL, res);
             auto aiK = makeAi(); detectsRes(*aiK, cleanP); detectsRes(*aiK, cleanP); const bool cln = detectsRes(*aiK, res);
+            const double mlCln = aiK->getLastMLRawProbabilitiesForTests()[static_cast<size_t>(resIdx)];
             auto aiS2 = makeAi(); detectsRes(*aiS2, res); detectsRes(*aiS2, res); const bool self2 = detectsRes(*aiS2, res);
             if (self != self2) ++nondet;
             if (self != loud) ++loudFlips;
             if (self != cln)  ++cleanFlips;
+            if (std::abs(mlSelf - mlCln) < 0.01) ++mlMatch;   // ML raw prob identical across priming?
             selfPos += self ? 1 : 0; loudPos += loud ? 1 : 0; cleanPos += cln ? 1 : 0;
+            mlSelfSum += mlSelf; mlClnSum += mlCln;
         }
         logMessage("");
-        logMessage("  P4-BUG-001 witness (Hybrid, shipped, Resonance, n=" + juce::String(n) + "):");
+        logMessage("  P4-BUG-001 witness (MLOnly — isolated from heuristic temporal path, shipped, Resonance, n=" + juce::String(n) + "):");
         logMessage("    self-primed  (res,res,res)   Res det : " + juce::String(selfPos) + "/" + juce::String(n));
         logMessage("    loud-primed  (loud,loud,res) Res det : " + juce::String(loudPos) + "/" + juce::String(n) + "  (loud primer: ~18 dB hotter — RMS confound possible)");
         logMessage("    clean-primed (clean,clean,res) Rdet  : " + juce::String(cleanPos) + "/" + juce::String(n) + "  (LEVEL-MATCHED primer: controls for RMS)");
         logMessage("    history-flips loud / clean           : " + juce::String(loudFlips) + "/" + juce::String(n) + "  /  " + juce::String(cleanFlips) + "/" + juce::String(n));
         logMessage("    nondet (self vs self2, should be 0)  : " + juce::String(nondet) + "/" + juce::String(n));
-        logMessage("  READ: flips>0 ⇒ the SAME final frame's detection depends on PRECEDING frames ⇒ stale-buffer reads.");
-        logMessage("  If clean-flips>0 (level-matched), it is NOT just RMS carryover → consistent with the snapshot bug.");
-        logMessage("  This witnesses history-dependence; exact per-read version attribution still needs an internal hook.");
+        logMessage("    ML raw Res prob  self vs clean-primed: " + juce::String(mlSelfSum / n, 3) + " vs " + juce::String(mlClnSum / n, 3)
+                   + "  (identical-within-0.01: " + juce::String(mlMatch) + "/" + juce::String(n) + ")");
+        logMessage("  READ (isolated): MECHANISM shows non-idempotent reads (v1/v0). MLOnly removes the heuristic temporal");
+        logMessage("  path. If ML raw prob MATCHES across priming but detection FLIPS → the ML inference saw the same frame");
+        logMessage("  and ONLY THE VETO changed ⇒ P4-BUG-001 isolated. If ML raw also differs → the 2785 read is corrupted too.");
     }
 };
 
