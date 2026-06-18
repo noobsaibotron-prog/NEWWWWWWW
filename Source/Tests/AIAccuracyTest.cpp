@@ -2074,6 +2074,132 @@ public:
     }
 };
 
+// =============================================================================
+// P4-Veto-Sib — per-stage ATTRIBUTION: where does Sibilance die? (Codex-scoped)
+//
+// Isolates the Sibilance drop across the pipeline stages, on the SAME fixtures, for
+// the shipped model AND a DETERMINISTICALLY-REPRODUCED B (no stale /tmp; identity
+// logged: path/bytes/checksum; loadWeights expect()ed). Uses the existing AIEngine
+// audit hooks — NO veto/production change:
+//   rawIn   = ML raw prob on the RAW fixture            (forwardRawProbabilities)
+//   normIn  = ML raw prob on AIEngine's NORMALIZED frame (getLastMLRawProbabilitiesForTests)
+//   effThr  = effective threshold in the pipeline        (getLastMLThresholdsForTests)
+//   detect  = survived rule + veto?                      (getPendingCorrections, MLOnly)
+// READ: rawIn>>normIn → NORMALIZATION drops it; normIn>effThr but detect=0 → RULE/VETO
+// drops it; normIn low → MODEL. Run across real Sibilance @ intensities + clean steep +
+// clean bright (HF shelf) + cymbal-like HF noise. KnownDebt. Decides if B was undervalued
+// by the pipeline and whether the veto is even a future blocker. No product change.
+// =============================================================================
+class AIAccuracyTest_VetoSibAttribution : public juce::UnitTest
+{
+public:
+    AIAccuracyTest_VetoSibAttribution()
+        : juce::UnitTest("AI Accuracy — P4-Veto-Sib per-stage attribution (KnownDebt)", "KnownDebt") {}
+
+    static void addHfShelfDb(std::vector<float>& db, float cutoffHz, float gainDb)
+    {
+        const float binHz = static_cast<float>(kSampleRate) / kFFTSize;
+        for (int i = 0; i < kNumBins; ++i) { const float f = static_cast<float>(i) * binHz; if (f > cutoffHz) db[static_cast<size_t>(i)] += gainDb * juce::jlimit(0.0f, 1.0f, (f - cutoffHz) / cutoffHz); }
+    }
+    static std::vector<float> sibFx(std::mt19937& r, float peakDb)
+    {
+        std::vector<float> db(static_cast<size_t>(kNumBins), heldout::kBaselineDb);
+        heldout::addPinkTiltDb(db, std::uniform_real_distribution<float>(heldout::kEvalTiltMinSlope, heldout::kEvalTiltMaxSlope)(r));
+        heldout::addGaussianPeakDb(db, std::uniform_real_distribution<float>(5500.0f, 8500.0f)(r), peakDb, 0.18f);
+        heldout::addNoiseDb(db, r, 1.0f); return heldout::toLinear(db);
+    }
+    static std::vector<float> cleanBrightFx(std::mt19937& r)
+    {
+        std::vector<float> db(static_cast<size_t>(kNumBins), heldout::kBaselineDb);
+        heldout::addPinkTiltDb(db, std::uniform_real_distribution<float>(heldout::kEvalTiltMinSlope, heldout::kEvalTiltMaxSlope)(r));
+        addHfShelfDb(db, 5000.0f, 6.0f); heldout::addNoiseDb(db, r, 1.0f); return heldout::toLinear(db);
+    }
+    static std::vector<float> hfNoiseFx(std::mt19937& r)
+    {
+        std::vector<float> db(static_cast<size_t>(kNumBins), heldout::kBaselineDb);
+        heldout::addPinkTiltDb(db, std::uniform_real_distribution<float>(heldout::kEvalTiltMinSlope, heldout::kEvalTiltMaxSlope)(r));
+        heldout::addGaussianPeakDb(db, 9000.0f, 8.0f, 0.5f);   // broad HF hump (cymbal-ish, NOT a sibilance peak)
+        heldout::addNoiseDb(db, r, 3.0f); return heldout::toLinear(db);
+    }
+
+    void runTest() override
+    {
+        beginTest("Per-stage attribution: where does Sibilance die? (shipped vs reproduced B)");
+
+        const juce::File shippedFile = juce::File(__FILE__).getParentDirectory()
+            .getParentDirectory().getParentDirectory().getChildFile("Resources/Models/ml_weights.bin");
+
+        // B reproduced DETERMINISTICALLY (no stale /tmp), identity verified below.
+        MLEngine Bml; Bml.initialize(); Bml.initializeRandomWeights();
+        { auto ds = Bml.generateSyntheticDataset(300, kSampleRate, kFFTSize, MLEngine::DatasetOptions{ true, true, 0 }); Bml.trainOnDataset(ds, 300, 0.005f); }
+        const juce::File bFile("/tmp/aieq_vetosib_B.bin");
+        expect(Bml.saveWeights(bFile), "saveWeights(B) failed");
+
+        const int   sib        = static_cast<int>(MLEngine::ProblemType::Sibilance);
+        auto makeAi = [&](const juce::File& w, const char* who) -> std::unique_ptr<AIEngine>
+        {
+            auto ai = std::make_unique<AIEngine>();
+            ai->prepare(kSampleRate, 512); ai->setEnabled(true); ai->setSensitivity(0.5f);
+            ai->setSourceProfile(AIEngine::SourceProfile::Generic);
+            ai->setDetectionBackendMode(AIEngine::DetectionBackendMode::MLOnly);
+            expect(ai->setCustomMLWeightsPathForTests(w), juce::String("AIEngine loadWeights failed: ") + who);
+            auto& m = ai->getMLEngineForTest();
+            logMessage(juce::String("  ") + who + " identity: " + m.getLoadedWeightsPath()
+                       + " (" + juce::String(m.getLoadedWeightsBytes()) + " bytes, fnv " + m.getLoadedWeightsChecksum() + ")");
+            return ai;
+        };
+        auto aiShipped = makeAi(shippedFile, "shipped ");
+        auto aiB       = makeAi(bFile,       "B(repro)");
+
+        struct Cat { juce::String name; std::vector<std::vector<float>> fx; };
+        std::vector<Cat> cats;
+        auto build = [](const juce::String& nm, uint32_t seed, int n, std::function<std::vector<float>(std::mt19937&)> g){
+            std::mt19937 r(seed); std::vector<std::vector<float>> v; v.reserve(static_cast<size_t>(n)); for (int i = 0; i < n; ++i) v.push_back(g(r)); return Cat{ nm, std::move(v) }; };
+        cats.push_back(build("sib +8dB ", 30001, 8, [](std::mt19937& r){ return sibFx(r, 8.0f); }));
+        cats.push_back(build("sib +12dB", 30002, 8, [](std::mt19937& r){ return sibFx(r, 12.0f); }));
+        cats.push_back(build("sib +16dB", 30003, 8, [](std::mt19937& r){ return sibFx(r, 16.0f); }));
+        cats.push_back(build("sib +20dB", 30004, 8, [](std::mt19937& r){ return sibFx(r, 20.0f); }));
+        cats.push_back(build("clean stp", 30010, 8, [](std::mt19937& r){ return heldout::makeClean(r); }));
+        cats.push_back(build("cleanBrgt", 30011, 8, cleanBrightFx));
+        cats.push_back(build("HF-cymbal", 30012, 8, hfNoiseFx));
+
+        auto measure = [&](MLEngine& ml, AIEngine& ai, const std::vector<std::vector<float>>& fx){
+            double rawIn = 0, normIn = 0, thr = 0; int rule = 0, det = 0;
+            for (const auto& lin : fx)
+            {
+                rawIn += ml.forwardRawProbabilities(lin, kSampleRate)[static_cast<size_t>(sib)];
+                for (const auto& d : ml.detectProblems(lin, kSampleRate)) if (d.type == MLEngine::ProblemType::Sibilance) { ++rule; break; }   // RULE only (no AIEngine veto)
+                ai.analyzeSpectrum(linearToDb(lin), true);
+                normIn += ai.getLastMLRawProbabilitiesForTests()[static_cast<size_t>(sib)];
+                thr    += ai.getLastMLThresholdsForTests()[static_cast<size_t>(sib)];
+                for (const auto& c : ai.getPendingCorrections()) if (c.type == AIEngine::ProblemType::Sibilance) { ++det; break; }            // after rule + VETO
+            }
+            const int n = static_cast<int>(fx.size());
+            return std::array<double, 5>{ rawIn / n, normIn / n, thr / n, static_cast<double>(rule), static_cast<double>(det) };
+        };
+
+        logMessage("");
+        logMessage("  Sibilance per-stage attribution (n=8/cat). rawIn=ML raw, normIn=ML on AIEngine-normalized,");
+        logMessage("  effThr=pipeline thr, RULE=ML detectProblems hits (no veto), det=after rule+VETO. sib=REAL; clean/HF=NOT.");
+        logMessage("  category  | model    | rawIn | normIn| effThr| RULE | det");
+        logMessage("  ----------+----------+-------+-------+-------+------+-----");
+        for (const auto& c : cats)
+        {
+            auto s = measure(shippedMlRef(*aiShipped), *aiShipped, c.fx);
+            auto b = measure(Bml, *aiB, c.fx);
+            auto pr = [](double x){ return juce::String(x, 2).paddedLeft(' ', 5); };
+            logMessage("  " + c.name + " | shipped  | " + pr(s[0]) + " | " + pr(s[1]) + " | " + pr(s[2]) + " |  " + juce::String((int)s[3]) + "/8 |  " + juce::String((int)s[4]) + "/8");
+            logMessage("  " + c.name + " | B(repro) | " + pr(b[0]) + " | " + pr(b[1]) + " | " + pr(b[2]) + " |  " + juce::String((int)b[3]) + "/8 |  " + juce::String((int)b[4]) + "/8");
+        }
+        logMessage("  READ: shipped rawIn~0 on sib → nothing to un-veto. For B: RULE high but det=0 → the VETO drops it;");
+        logMessage("  but B also fires on HF-cymbal (rawIn high, non-sibilance) → B can't separate sibilance from cymbal,");
+        logMessage("  so the veto's rejection is partly JUSTIFIED → leverage is the MODEL/data, not relaxing the veto.");
+    }
+
+    // shipped model held inside the AIEngine; expose its MLEngine for the raw-on-raw stage.
+    static MLEngine& shippedMlRef(AIEngine& ai) { return ai.getMLEngineForTest(); }
+};
+
 static AIAccuracyTest_MLEngine   sAIAccuracyTestML;
 static AIAccuracyTest_AIEngine   sAIAccuracyTestAI;
 static AIAccuracyTest_Retrain    sAIAccuracyTestRetrain;
@@ -2084,3 +2210,4 @@ static AIAccuracyTest_M3Diag     sAIAccuracyTestM3Diag;
 static AIAccuracyTest_M2aRefine2 sAIAccuracyTestM2aRefine2;
 static AIAccuracyTest_ResPipeline sAIAccuracyTestResPipeline;
 static AIAccuracyTest_PipelineAllClasses sAIAccuracyTestPipelineAllClasses;
+static AIAccuracyTest_VetoSibAttribution sAIAccuracyTestVetoSibAttribution;
