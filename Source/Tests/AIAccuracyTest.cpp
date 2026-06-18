@@ -2229,6 +2229,81 @@ public:
     static MLEngine& shippedMlRef(AIEngine& ai) { return ai.getMLEngineForTest(); }
 };
 
+// =============================================================================
+// P4-BUG-001 — snapshot-coherence WITNESS (Codex finding; characterization, no fix).
+//
+// The ML-path reality-check vetoes (Resonance prominence: findPeakInRange + 2×
+// calculateBandEnergy; Sibilance: 2× calculateBandEnergy) re-read readSpectrumSnapshot,
+// which SWAPS the triple-buffer indices each call → the bands in one veto decision can
+// come from DIFFERENT frames (incoherent). Hook-free observable witness: if the veto
+// outcome on the SAME final frame DIFFERS depending on the PRECEDING (priming) frames,
+// the veto read stale buffers. We feed the same Resonance frame either SELF-primed
+// (res,res,res) or CROSS-primed (loud-broadband ×2, then res) and compare the final
+// detection. Flips>0 ⇒ history/buffer dependence ⇒ P4-BUG-001 confirmed observably.
+// NO production change. KnownDebt (non-blocking; reports, does not gate).
+// =============================================================================
+class AIAccuracyTest_SnapshotCoherence : public juce::UnitTest
+{
+public:
+    AIAccuracyTest_SnapshotCoherence()
+        : juce::UnitTest("AI Accuracy — P4-BUG-001 snapshot-coherence witness (KnownDebt)", "KnownDebt") {}
+
+    void runTest() override
+    {
+        beginTest("Is the veto outcome history/buffer-dependent? (same final frame, different priming)");
+
+        const juce::File shippedFile = juce::File(__FILE__).getParentDirectory()
+            .getParentDirectory().getParentDirectory().getChildFile("Resources/Models/ml_weights.bin");
+        auto makeAi = [&](){
+            auto ai = std::make_unique<AIEngine>();
+            ai->prepare(kSampleRate, 512); ai->setEnabled(true); ai->setSensitivity(0.5f);
+            ai->setSourceProfile(AIEngine::SourceProfile::Generic);
+            ai->setDetectionBackendMode(AIEngine::DetectionBackendMode::Hybrid);
+            ai->setCustomMLWeightsPathForTests(shippedFile);
+            ai->forceMLDetectionEnabledForTests(true);
+            return ai;
+        };
+        auto detectsRes = [](AIEngine& ai, const std::vector<float>& lin){
+            ai.analyzeSpectrum(linearToDb(lin), true);
+            for (const auto& c : ai.getPendingCorrections()) if (c.type == AIEngine::ProblemType::Resonance) return true;
+            return false;
+        };
+        // A frame VERY different from a tilted narrow resonance: loud, flat, high everywhere.
+        std::vector<float> prime(static_cast<size_t>(kNumBins), heldout::kBaselineDb);
+        for (auto& v : prime) v = -8.0f;   // dB, loud broadband
+        prime = heldout::toLinear(prime);
+
+        std::mt19937 rng(40001);
+        std::mt19937 cleanRng(40002);
+        const int n = heldout::kVariations;
+        int loudFlips = 0, cleanFlips = 0, selfPos = 0, loudPos = 0, cleanPos = 0, nondet = 0;
+        for (int v = 0; v < n; ++v)
+        {
+            const auto res = heldout::make(heldout::HClass::Resonance, rng);
+            // LEVEL-MATCHED primer: a clean tilted frame (~same level as res, no peak) — controls for RMS carryover.
+            const auto cleanP = heldout::makeClean(cleanRng);
+            auto aiS = makeAi(); detectsRes(*aiS, res); detectsRes(*aiS, res); const bool self = detectsRes(*aiS, res);
+            auto aiL = makeAi(); detectsRes(*aiL, prime); detectsRes(*aiL, prime); const bool loud = detectsRes(*aiL, res);
+            auto aiK = makeAi(); detectsRes(*aiK, cleanP); detectsRes(*aiK, cleanP); const bool cln = detectsRes(*aiK, res);
+            auto aiS2 = makeAi(); detectsRes(*aiS2, res); detectsRes(*aiS2, res); const bool self2 = detectsRes(*aiS2, res);
+            if (self != self2) ++nondet;
+            if (self != loud) ++loudFlips;
+            if (self != cln)  ++cleanFlips;
+            selfPos += self ? 1 : 0; loudPos += loud ? 1 : 0; cleanPos += cln ? 1 : 0;
+        }
+        logMessage("");
+        logMessage("  P4-BUG-001 witness (Hybrid, shipped, Resonance, n=" + juce::String(n) + "):");
+        logMessage("    self-primed  (res,res,res)   Res det : " + juce::String(selfPos) + "/" + juce::String(n));
+        logMessage("    loud-primed  (loud,loud,res) Res det : " + juce::String(loudPos) + "/" + juce::String(n) + "  (loud primer: ~18 dB hotter — RMS confound possible)");
+        logMessage("    clean-primed (clean,clean,res) Rdet  : " + juce::String(cleanPos) + "/" + juce::String(n) + "  (LEVEL-MATCHED primer: controls for RMS)");
+        logMessage("    history-flips loud / clean           : " + juce::String(loudFlips) + "/" + juce::String(n) + "  /  " + juce::String(cleanFlips) + "/" + juce::String(n));
+        logMessage("    nondet (self vs self2, should be 0)  : " + juce::String(nondet) + "/" + juce::String(n));
+        logMessage("  READ: flips>0 ⇒ the SAME final frame's detection depends on PRECEDING frames ⇒ stale-buffer reads.");
+        logMessage("  If clean-flips>0 (level-matched), it is NOT just RMS carryover → consistent with the snapshot bug.");
+        logMessage("  This witnesses history-dependence; exact per-read version attribution still needs an internal hook.");
+    }
+};
+
 static AIAccuracyTest_MLEngine   sAIAccuracyTestML;
 static AIAccuracyTest_AIEngine   sAIAccuracyTestAI;
 static AIAccuracyTest_Retrain    sAIAccuracyTestRetrain;
@@ -2240,3 +2315,4 @@ static AIAccuracyTest_M2aRefine2 sAIAccuracyTestM2aRefine2;
 static AIAccuracyTest_ResPipeline sAIAccuracyTestResPipeline;
 static AIAccuracyTest_PipelineAllClasses sAIAccuracyTestPipelineAllClasses;
 static AIAccuracyTest_VetoSibAttribution sAIAccuracyTestVetoSibAttribution;
+static AIAccuracyTest_SnapshotCoherence  sAIAccuracyTestSnapshotCoherence;
