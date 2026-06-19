@@ -2369,6 +2369,91 @@ public:
     }
 };
 
+// =============================================================================
+// P4-BUG-001 LIVE BASELINE — does the bug survive the live regime? (Codex closure 2)
+//
+// The witness above runs force=true (single-window, persistence OFF) — a worst-case that
+// EXAGGERATES. This measures the REAL live regime: force=false (rate-limiter analyzes every
+// 3rd call, AIEngine.cpp:229) + warm-up + temporal persistence ON (8-frame/60% gate). Codex:
+// "live impact must be MEASURED, not deduced", and "a STABLE repeated error passes the gate".
+// We compare, per Resonance fixture T (and level-matched clean C), the SURFACED detection
+// (getPendingCorrections, persistence-filtered) of two live streams ending on T:
+//   CONTROL  = all-T          (T detected when NOT contaminated by a contrasting primer)
+//   ALTERNATING = C,T,C,T,…    (each T preceded by C — the regime that exposes the veto bug)
+// If CONTROL surfaces Res but ALTERNATING does not (or differs), the bug is LIVE-RELEVANT
+// (a stable history error that survives persistence). If they match, persistence absorbs it.
+// Measured for MLOnly AND Hybrid (product default). KnownDebt, no production change.
+// =============================================================================
+class AIAccuracyTest_LiveBaseline : public juce::UnitTest
+{
+public:
+    AIAccuracyTest_LiveBaseline()
+        : juce::UnitTest("AI Accuracy — P4-BUG-001 LIVE baseline force=false (KnownDebt)", "KnownDebt") {}
+
+    void runTest() override
+    {
+        beginTest("Live regime (force=false, warm-up, persistence ON): is the bug live-relevant?");
+
+        const juce::File shippedFile = juce::File(__FILE__).getParentDirectory()
+            .getParentDirectory().getParentDirectory().getChildFile("Resources/Models/ml_weights.bin");
+
+        auto makeAi = [&](AIEngine::DetectionBackendMode mode){
+            auto ai = std::make_unique<AIEngine>();
+            ai->prepare(kSampleRate, 512); ai->setEnabled(true); ai->setSensitivity(0.5f);
+            ai->setSourceProfile(AIEngine::SourceProfile::Generic);
+            ai->setDetectionBackendMode(mode);
+            ai->setCustomMLWeightsPathForTests(shippedFile);
+            ai->forceMLDetectionEnabledForTests(true);
+            return ai;
+        };
+        auto feed = [](AIEngine& ai, const std::vector<float>& lin, int reps){
+            for (int i = 0; i < reps; ++i) ai.analyzeSpectrum(linearToDb(lin), false);   // force=false → rate-limited + persistence ON
+        };
+        auto surfacedRes = [](AIEngine& ai){
+            for (const auto& c : ai.getPendingCorrections()) if (c.type == AIEngine::ProblemType::Resonance) return true;
+            return false;
+        };
+
+        struct Mode { const char* name; AIEngine::DetectionBackendMode mode; };
+        const Mode modes[] = { { "MLOnly", AIEngine::DetectionBackendMode::MLOnly },
+                               { "Hybrid", AIEngine::DetectionBackendMode::Hybrid } };
+        const int n = heldout::kVariations;
+        const int kLogical = 14;   // logical frames per stream; ×3 reps ≈ 42 calls (warm-up + 8-frame persistence)
+
+        logMessage("");
+        logMessage("  LIVE baseline (force=false, ~42 calls/stream, persistence ON), shipped, Resonance, n=" + juce::String(n) + ":");
+        logMessage("  mode   | control(all-T) Res | alternating(C,T) Res | divergence (live history-dep)");
+        logMessage("  -------+--------------------+----------------------+------------------------------");
+        for (const auto& m : modes)
+        {
+            std::mt19937 rng(50001), cleanRng(50002);
+            int ctrlPos = 0, altPos = 0, diverge = 0;
+            for (int v = 0; v < n; ++v)
+            {
+                const auto T = heldout::make(heldout::HClass::Resonance, rng);
+                const auto C = heldout::makeClean(cleanRng);
+                // control: all-T live stream
+                auto aiC = makeAi(m.mode);
+                for (int f = 0; f < kLogical; ++f) feed(*aiC, T, 3);
+                const bool ctrl = surfacedRes(*aiC);
+                // alternating: C,T,C,T,… ending on T
+                auto aiA = makeAi(m.mode);
+                for (int f = 0; f < kLogical; ++f) feed(*aiA, (f % 2 == 0) ? C : T, 3);   // f=kLogical-1 is odd → T (kLogical=14 even → last index 13 odd → T)
+                const bool alt = surfacedRes(*aiA);
+                ctrlPos += ctrl ? 1 : 0; altPos += alt ? 1 : 0; if (ctrl != alt) ++diverge;
+            }
+            logMessage("  " + juce::String(m.name).paddedRight(' ', 6)
+                       + " |        " + juce::String(ctrlPos) + "/" + juce::String(n)
+                       + "         |         " + juce::String(altPos) + "/" + juce::String(n)
+                       + "          |   " + juce::String(diverge) + "/" + juce::String(n));
+        }
+        logMessage("  READ: divergence>0 ⇒ the SURFACED live detection depends on preceding frames EVEN through the");
+        logMessage("  persistence gate ⇒ P4-BUG-001 is LIVE-RELEVANT (a stable history error survives the 8f/60% gate).");
+        logMessage("  divergence=0 in a mode ⇒ persistence absorbs the bug there (live-irrelevant in that mode).");
+        logMessage("  This is the MEASURED live baseline; the post-fix run must be compared on the identical streams.");
+    }
+};
+
 static AIAccuracyTest_MLEngine   sAIAccuracyTestML;
 static AIAccuracyTest_AIEngine   sAIAccuracyTestAI;
 static AIAccuracyTest_Retrain    sAIAccuracyTestRetrain;
@@ -2381,3 +2466,4 @@ static AIAccuracyTest_ResPipeline sAIAccuracyTestResPipeline;
 static AIAccuracyTest_PipelineAllClasses sAIAccuracyTestPipelineAllClasses;
 static AIAccuracyTest_VetoSibAttribution sAIAccuracyTestVetoSibAttribution;
 static AIAccuracyTest_SnapshotCoherence  sAIAccuracyTestSnapshotCoherence;
+static AIAccuracyTest_LiveBaseline       sAIAccuracyTestLiveBaseline;
