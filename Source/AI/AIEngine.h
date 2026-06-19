@@ -493,6 +493,11 @@ private:
     float calculateBandEnergyUnlocked(float lowFreq, float highFreq) const;  // Internal - caller must hold spectrumMutex
     float findPeakInRange(float lowFreq, float highFreq);     // Find peak frequency in range
     float findLowestInRange(float lowFreq, float highFreq);   // Find lowest energy frequency in range
+    // P4-BUG-001: pure, frame-coherent variants — operate on a CALLER-SUPPLIED spectrum (no
+    // readSpectrumSnapshot consuming-swap) so the ML-path Resonance/Sibilance vetoes read every
+    // band from ONE frame (scratchTemp). Bin math identical to the originals (see .cpp).
+    float bandEnergyFromSpectrum(const std::vector<float>& bins, float loHz, float hiHz) const;
+    float findPeakInSpectrum(const std::vector<float>& bins, float loHz, float hiHz) const;
     float binToFrequency(int bin) const;
     int frequencyToBin(float frequency) const;
     

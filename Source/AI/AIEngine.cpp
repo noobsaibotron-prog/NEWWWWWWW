@@ -2266,6 +2266,100 @@ float AIEngine::calculateBandEnergy(float lowFreq, float highFreq)
     return (count > 0) ? (sum / static_cast<float>(count)) : -100.0f;
 }
 
+// P4-BUG-001: pure variant of calculateBandEnergy over a CALLER-SUPPLIED spectrum (no
+// readSpectrumSnapshot consuming-swap) so all ML-path veto reads share ONE coherent frame.
+// Bin formula / -100 dB exclusion gate / mean are IDENTICAL to calculateBandEnergy; the only
+// difference is the frame source (bins) and the clamp ceiling (bins.size()-1, the supplied
+// vector may be shorter than numBins). NOT routed through frequencyToBin — keeps the inline
+// truncating bin math byte-identical to calculateBandEnergy (do NOT unify the two mappings).
+float AIEngine::bandEnergyFromSpectrum(const std::vector<float>& bins, float loHz, float hiHz) const
+{
+    if (bins.empty())
+        return -100.0f;
+
+    // SAFETY: Validate sample rate
+    if (currentSampleRate <= 0.0)
+        return -100.0f;
+
+    int lowBin = static_cast<int>(loHz * static_cast<float>(fftSize) / static_cast<float>(currentSampleRate));
+    int highBin = static_cast<int>(hiHz * static_cast<float>(fftSize) / static_cast<float>(currentSampleRate));
+
+    // BOUNDS CHECK: clamp to the SUPPLIED vector's indices (NOT numBins)
+    const int maxIdx = static_cast<int>(bins.size()) - 1;
+    lowBin = std::max(0, std::min(lowBin, maxIdx));
+    highBin = std::max(0, std::min(highBin, maxIdx));
+
+    if (lowBin >= highBin)
+        return -100.0f;
+
+    float sum = 0.0f;
+    int count = 0;
+    for (int i = lowBin; i <= highBin; ++i)
+    {
+        // Double-check bounds (defensive)
+        if (i >= 0 && i < static_cast<int>(bins.size()) && bins[static_cast<size_t>(i)] > -100.0f)
+        {
+            sum += bins[static_cast<size_t>(i)];
+            ++count;
+        }
+    }
+    return (count > 0) ? (sum / static_cast<float>(count)) : -100.0f;
+}
+
+// P4-BUG-001: pure variant of findPeakInRange over a CALLER-SUPPLIED spectrum (no
+// readSpectrumSnapshot consuming-swap). frequencyToBin mapping / argmax / parabolic
+// interpolation are IDENTICAL to findPeakInRange; returns <= 0 on failure (preserves the
+// Resonance veto's `actualPeak <= 0.0f` early-out). Length-guarded against bins.size() since
+// the supplied vector may be shorter than numBins; the NaN guard abs(denom)>1e-10f is verbatim.
+float AIEngine::findPeakInSpectrum(const std::vector<float>& bins, float loHz, float hiHz) const
+{
+    if (bins.empty())
+        return -1.0f;
+
+    int lowBin = frequencyToBin(loHz);
+    int highBin = frequencyToBin(hiHz);
+
+    lowBin = juce::jlimit(0, numBins - 1, lowBin);
+    highBin = juce::jlimit(0, numBins - 1, highBin);
+
+    if (highBin <= lowBin)
+        return -1.0f;
+
+    float maxMag = -200.0f;
+    int maxBin = lowBin;
+
+    for (int i = lowBin; i <= highBin; ++i)
+    {
+        if (i >= 0 && i < numBins && i < static_cast<int>(bins.size()))
+        {
+            if (bins[static_cast<size_t>(i)] > maxMag)
+            {
+                maxMag = bins[static_cast<size_t>(i)];
+                maxBin = i;
+            }
+        }
+    }
+
+    // Apply parabolic interpolation for precise frequency
+    if (maxBin > 0 && maxBin < numBins - 1
+        && static_cast<size_t>(maxBin) + 1 < bins.size())
+    {
+        float y0 = bins[static_cast<size_t>(maxBin - 1)];
+        float y1 = bins[static_cast<size_t>(maxBin)];
+        float y2 = bins[static_cast<size_t>(maxBin + 1)];
+
+        float denom = 2.0f * (2.0f * y1 - y0 - y2);
+        if (std::abs(denom) > 1e-10f)
+        {
+            float delta = (y0 - y2) / denom;
+            delta = juce::jlimit(-0.5f, 0.5f, delta);
+            return binToFrequency(maxBin) + delta * (static_cast<float>(currentSampleRate) / static_cast<float>(fftSize));
+        }
+    }
+
+    return binToFrequency(maxBin);
+}
+
 // Internal version - caller must hold spectrumMutex
 float AIEngine::calculateBandEnergyUnlocked(float lowFreq, float highFreq) const
 {
@@ -3065,7 +3159,9 @@ void AIEngine::detectProblemsWithML()
                     const float lo = juce::jmax(20.0f, c.frequency * 0.5f);
                     const float hi = juce::jmin(static_cast<float>(currentSampleRate) * 0.5f,
                                                 c.frequency * 2.0f);
-                    const float actualPeak = findPeakInRange(lo, hi);
+                    // P4-BUG-001: read peak + both prominence bands from the SINGLE captured
+                    // frame (scratchTemp), not via consuming readSpectrumSnapshot re-reads.
+                    const float actualPeak = findPeakInSpectrum(scratchTemp, lo, hi);
                     if (actualPeak <= 0.0f)
                     {
                         keep = false;
@@ -3076,8 +3172,8 @@ void AIEngine::detectProblemsWithML()
                         // +-1 octave band mean. A genuine narrow resonance towers over
                         // its surroundings; a flat/clean window max does not.
                         const float prominence =
-                              calculateBandEnergy(actualPeak * 0.975f, actualPeak * 1.025f)
-                            - calculateBandEnergy(actualPeak * 0.5f,   actualPeak * 2.0f);
+                              bandEnergyFromSpectrum(scratchTemp, actualPeak * 0.975f, actualPeak * 1.025f)
+                            - bandEnergyFromSpectrum(scratchTemp, actualPeak * 0.5f,   actualPeak * 2.0f);
                         if (prominence < kResonanceProminenceDb)
                             keep = false;             // flat spectrum: window max is no real peak
                         else
@@ -3100,8 +3196,9 @@ void AIEngine::detectProblemsWithML()
                     break;
                 case ProblemType::Sibilance:
                     // band 5000..10000 vs 2000..5000 reference
-                    keep = (calculateBandEnergy(thresholds.sibilanceLow, thresholds.sibilanceHigh)
-                            - calculateBandEnergy(2000.0f, 5000.0f)) >= kBandExcessDb;
+                    // P4-BUG-001: both bands from the SINGLE captured frame (scratchTemp).
+                    keep = (bandEnergyFromSpectrum(scratchTemp, thresholds.sibilanceLow, thresholds.sibilanceHigh)
+                            - bandEnergyFromSpectrum(scratchTemp, 2000.0f, 5000.0f)) >= kBandExcessDb;
                     break;
                 case ProblemType::LowEndBoom:
                     keep = computeTrendBandExcess(kBoomLo, kBoomHi,

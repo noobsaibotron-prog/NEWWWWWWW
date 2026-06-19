@@ -2351,16 +2351,18 @@ public:
         logMessage("    ML raw Res prob self vs clean-primed : " + juce::String(mlSelfSum / n, 3) + " vs " + juce::String(mlClnSum / n, 3));
         logMessage("    FULL ML 8-vector identical (maxdiff " + juce::String(maxMlVecDiff, 4) + "): " + juce::String(mlMatchFull) + "/" + juce::String(n));
         logMessage("    FULL pre-veto DETECTION list identical (type/freq/conf/sev/Q/gain): " + juce::String(preVetoMatch) + "/" + juce::String(n));
-        logMessage("  READ (isolated): MLOnly removes the heuristic temporal path. The ENTIRE ML raw vector AND the full");
-        logMessage("  pre-veto ProblemDetection list (incl. localization frequency) are identical across priming, yet the");
-        logMessage("  detection FLIPS ⇒ ONLY THE VETO changed ⇒ P4-BUG-001 isolated to the veto (localization confound closed).");
+        logMessage("  READ (regression guard): MLOnly removes the heuristic temporal path. The ENTIRE ML raw vector AND the");
+        logMessage("  full pre-veto ProblemDetection list (incl. localization frequency) are identical across priming.");
+        logMessage("  PRE-FIX the detection FLIPPED here (the veto read bands from DIFFERENT frames); POST-FIX the coherence");
+        logMessage("  fix routes every veto band read through the SINGLE scratchTemp frame ⇒ cleanFlips→0 (history-independent).");
         logMessage("  (Stale reads carry PREVIOUS real frames after warm-up, not zeros — 'empty buffer' is cold-start only.)");
 
-        // KnownDebt assertions — the witness FAILS (visibly, non-blocking) if it stops witnessing.
-        // PRE-FIX semantics: the bug must REPRODUCE (cleanFlips>0) AND the pre-veto decision must be
-        // IDENTICAL (only the veto differs). POST-FIX this same test becomes the regression guard
-        // (flip cleanFlips>0 → ==0). See scorecard P4-BUG-001.
-        expect(cleanFlips > 0, "P4-BUG-001 NOT reproduced: no history-dependence (level-matched) observed");
+        // KnownDebt REGRESSION GUARD (post-fix): the ML-path coherence fix routes the Resonance/
+        // Sibilance veto band reads through the SINGLE scratchTemp frame, so the detection must be
+        // history-independent (cleanFlips==0). The pre-veto decision is still IDENTICAL across
+        // priming (the fix changed ONLY the veto's frame source). See scorecard P4-BUG-001.
+        expect(cleanFlips == 0, "P4-BUG-001 REGRESSION: ML-path veto still history/buffer-dependent "
+               "(cleanFlips>0) after the coherence fix — a veto band read is not using scratchTemp");
         expect(mlMatchFull == n, "ML raw 8-vector NOT identical across priming (max vec diff "
                + juce::String(maxMlVecDiff, 4) + ") — the flip is not veto-isolated");
         expect(preVetoMatch == n, "pre-veto ML DETECTION LIST (incl. frequency) differs across priming — "
