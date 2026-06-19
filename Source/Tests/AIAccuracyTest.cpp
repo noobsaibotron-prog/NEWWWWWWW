@@ -2418,39 +2418,46 @@ public:
         const Mode modes[] = { { "MLOnly", AIEngine::DetectionBackendMode::MLOnly },
                                { "Hybrid", AIEngine::DetectionBackendMode::Hybrid } };
         const int n = heldout::kVariations;
-        const int kLogical = 14;   // logical frames per stream; ×3 reps ≈ 42 calls (warm-up + 8-frame persistence)
+        // CODEX FIX: the patterns must keep the TARGET duty-cycle ABOVE the 60% persistence gate
+        // (AIEngine.cpp:924), so any suppression is the BUG corrupting C-primed T-frames, NOT a
+        // sub-threshold duty-cycle. all-T (100% T), C,T,T (~67% T), C,T,T,T (~75% T) — all >60%,
+        // all end on T (kLogical=18: last idx 17 → 17%3=2=T and 17%4=1=T).
+        const int kLogical = 18;   // ×3 reps ≈ 54 calls (warm-up + 8-frame persistence window)
+        auto runStream = [&](AIEngine& ai, const std::vector<float>& C, const std::vector<float>& T, int cPeriod){
+            for (int i = 0; i < kLogical; ++i)
+            {
+                const bool isC = (cPeriod > 0) && (i % cPeriod == 0);   // cPeriod 0 = all-T (no C)
+                feed(ai, isC ? C : T, 3);
+            }
+        };
 
         logMessage("");
-        logMessage("  LIVE baseline (force=false, ~42 calls/stream, persistence ON), shipped, Resonance, n=" + juce::String(n) + ":");
-        logMessage("  mode   | control(all-T) Res | alternating(C,T) Res | divergence (live history-dep)");
-        logMessage("  -------+--------------------+----------------------+------------------------------");
+        logMessage("  LIVE baseline (force=false, ~54 calls/stream, persistence ON), shipped, Resonance, n=" + juce::String(n) + ":");
+        logMessage("  target duty-cycle kept >60% (above the persistence gate) → suppression = BUG, not duty-cycle.");
+        logMessage("  mode   | all-T (100%) | C,T,T (~67%) | C,T,T,T (~75%)");
+        logMessage("  -------+--------------+--------------+---------------");
         for (const auto& m : modes)
         {
             std::mt19937 rng(50001), cleanRng(50002);
-            int ctrlPos = 0, altPos = 0, diverge = 0;
+            int allT = 0, ctt = 0, cttt = 0;
             for (int v = 0; v < n; ++v)
             {
                 const auto T = heldout::make(heldout::HClass::Resonance, rng);
                 const auto C = heldout::makeClean(cleanRng);
-                // control: all-T live stream
-                auto aiC = makeAi(m.mode);
-                for (int f = 0; f < kLogical; ++f) feed(*aiC, T, 3);
-                const bool ctrl = surfacedRes(*aiC);
-                // alternating: C,T,C,T,… ending on T
-                auto aiA = makeAi(m.mode);
-                for (int f = 0; f < kLogical; ++f) feed(*aiA, (f % 2 == 0) ? C : T, 3);   // f=kLogical-1 is odd → T (kLogical=14 even → last index 13 odd → T)
-                const bool alt = surfacedRes(*aiA);
-                ctrlPos += ctrl ? 1 : 0; altPos += alt ? 1 : 0; if (ctrl != alt) ++diverge;
+                { auto ai = makeAi(m.mode); runStream(*ai, C, T, 0); allT += surfacedRes(*ai) ? 1 : 0; }
+                { auto ai = makeAi(m.mode); runStream(*ai, C, T, 3); ctt  += surfacedRes(*ai) ? 1 : 0; }
+                { auto ai = makeAi(m.mode); runStream(*ai, C, T, 4); cttt += surfacedRes(*ai) ? 1 : 0; }
             }
             logMessage("  " + juce::String(m.name).paddedRight(' ', 6)
-                       + " |        " + juce::String(ctrlPos) + "/" + juce::String(n)
-                       + "         |         " + juce::String(altPos) + "/" + juce::String(n)
-                       + "          |   " + juce::String(diverge) + "/" + juce::String(n));
+                       + " |     " + (juce::String(allT) + "/" + juce::String(n)).paddedRight(' ', 8)
+                       + " |     " + (juce::String(ctt) + "/" + juce::String(n)).paddedRight(' ', 8)
+                       + " |     " + juce::String(cttt) + "/" + juce::String(n));
         }
-        logMessage("  READ: divergence>0 ⇒ the SURFACED live detection depends on preceding frames EVEN through the");
-        logMessage("  persistence gate ⇒ P4-BUG-001 is LIVE-RELEVANT (a stable history error survives the 8f/60% gate).");
-        logMessage("  divergence=0 in a mode ⇒ persistence absorbs the bug there (live-irrelevant in that mode).");
-        logMessage("  This is the MEASURED live baseline; the post-fix run must be compared on the identical streams.");
+        logMessage("  READ (Codex-correct): target stays >60% in C,T,T and C,T,T,T, so persistence ALONE would KEEP it.");
+        logMessage("  - all-T detects but C,T,T does NOT  ⇒ the BUG corrupts C-primed T-frames below the gate ⇒ live-relevant.");
+        logMessage("  - C,T,T ≈ all-T                      ⇒ the earlier 12→1 (C,T 50%) was DUTY-CYCLE, not the bug.");
+        logMessage("  - C,T,T,T detects but C,T,T not      ⇒ borderline (measured RISK, not certainty).");
+        logMessage("  MEASURED live baseline; compare the post-fix run on the identical streams.");
     }
 };
 
