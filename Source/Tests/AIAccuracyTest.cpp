@@ -2402,7 +2402,7 @@ public:
             ai->prepare(kSampleRate, 512); ai->setEnabled(true); ai->setSensitivity(0.5f);
             ai->setSourceProfile(AIEngine::SourceProfile::Generic);
             ai->setDetectionBackendMode(mode);
-            ai->setCustomMLWeightsPathForTests(shippedFile);
+            expect(ai->setCustomMLWeightsPathForTests(shippedFile), "shipped weights load failed");
             ai->forceMLDetectionEnabledForTests(true);
             return ai;
         };
@@ -2493,7 +2493,7 @@ public:
             ai->prepare(kSampleRate, 512); ai->setEnabled(true); ai->setSensitivity(0.5f);
             ai->setSourceProfile(AIEngine::SourceProfile::Generic);
             ai->setDetectionBackendMode(mode);
-            ai->setCustomMLWeightsPathForTests(shippedFile);
+            expect(ai->setCustomMLWeightsPathForTests(shippedFile), "shipped weights load failed");
             ai->forceMLDetectionEnabledForTests(true);
             return ai;
         };
