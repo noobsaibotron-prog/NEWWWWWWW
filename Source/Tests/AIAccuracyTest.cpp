@@ -2461,6 +2461,156 @@ public:
     }
 };
 
+// =============================================================================
+// P4-BUG-001 ACCEPTANCE before/after — ONE consolidated scorecard (Codex)
+//
+// Run ONCE on the shipped/buggy build to record the BEFORE column, then AGAIN after
+// the ML-path coherence fix for the AFTER column; compare each row to its post-fix
+// TARGET. Report-only (KnownDebt): pre-fix and post-fix have OPPOSITE expectations,
+// so the directional asserts live in the SnapshotCoherence witness (flip>0 pre-fix →
+// ==0 post-fix) and in the gate binaries (AI-Sweep floor 0/18, AI-Corpus). All shipped
+// weights. Metrics:
+//   [A] coherence flip   — clean-primed vs self-primed Res flip (MLOnly)  TARGET post-fix: 0
+//   [B] live baseline    — all-T vs C,T,T vs C,T,T,T surfaced Res         TARGET: C,T,T/C,T,T,T → ~all-T
+//   [C] clean-input FP   — Res/Sib hallucinated on pure-clean LIVE stream TARGET: NOT higher
+//   [D] per-class recall — Hybrid product recall, held-out                TARGET: NOT lower
+// =============================================================================
+class AIAccuracyTest_BugFixAcceptance : public juce::UnitTest
+{
+public:
+    AIAccuracyTest_BugFixAcceptance()
+        : juce::UnitTest("AI Accuracy — P4-BUG-001 fix before/after acceptance (KnownDebt)", "KnownDebt") {}
+
+    void runTest() override
+    {
+        beginTest("Consolidated before/after acceptance scorecard (shipped weights)");
+
+        const juce::File shippedFile = juce::File(__FILE__).getParentDirectory()
+            .getParentDirectory().getParentDirectory().getChildFile("Resources/Models/ml_weights.bin");
+
+        auto makeAi = [&](AIEngine::DetectionBackendMode mode){
+            auto ai = std::make_unique<AIEngine>();
+            ai->prepare(kSampleRate, 512); ai->setEnabled(true); ai->setSensitivity(0.5f);
+            ai->setSourceProfile(AIEngine::SourceProfile::Generic);
+            ai->setDetectionBackendMode(mode);
+            ai->setCustomMLWeightsPathForTests(shippedFile);
+            ai->forceMLDetectionEnabledForTests(true);
+            return ai;
+        };
+        auto surfaced = [](AIEngine& ai, AIEngine::ProblemType t){
+            for (const auto& c : ai.getPendingCorrections()) if (c.type == t) return true;
+            return false;
+        };
+        auto feed = [](AIEngine& ai, const std::vector<float>& lin, int reps){
+            for (int i = 0; i < reps; ++i) ai.analyzeSpectrum(linearToDb(lin), false);   // force=false → rate-limited + persistence ON
+        };
+        const int n = heldout::kVariations;
+
+        logMessage("");
+        logMessage("  ===== P4-BUG-001 ACCEPTANCE SCORECARD (shipped, n=" + juce::String(n) + ") =====");
+
+        // ── [A] coherence flip (force=true single-window, MLOnly — isolates the veto) ──
+        auto detects = [&](AIEngine& ai, const std::vector<float>& lin, AIEngine::ProblemType t){
+            ai.analyzeSpectrum(linearToDb(lin), true); return surfaced(ai, t);
+        };
+        {
+            std::mt19937 rng(40001), cleanRng(40002);
+            int cleanFlips = 0;
+            for (int v = 0; v < n; ++v)
+            {
+                const auto res = heldout::make(heldout::HClass::Resonance, rng);
+                const auto cln = heldout::makeClean(cleanRng);
+                auto aiS = makeAi(AIEngine::DetectionBackendMode::MLOnly);
+                detects(*aiS, res, AIEngine::ProblemType::Resonance);
+                detects(*aiS, res, AIEngine::ProblemType::Resonance);
+                const bool self = detects(*aiS, res, AIEngine::ProblemType::Resonance);
+                auto aiK = makeAi(AIEngine::DetectionBackendMode::MLOnly);
+                detects(*aiK, cln, AIEngine::ProblemType::Resonance);
+                detects(*aiK, cln, AIEngine::ProblemType::Resonance);
+                const bool clnPrimed = detects(*aiK, res, AIEngine::ProblemType::Resonance);
+                if (self != clnPrimed) ++cleanFlips;
+            }
+            logMessage("  [A] coherence flip (MLOnly, clean-primed vs self, Res) : "
+                       + juce::String(cleanFlips) + "/" + juce::String(n) + "    TARGET post-fix: 0");
+        }
+
+        // ── [B] live baseline v2 (force=false, persistence ON, duty-cycle >60%) ──
+        struct Mode { const char* name; AIEngine::DetectionBackendMode mode; };
+        const Mode modes[] = { { "MLOnly", AIEngine::DetectionBackendMode::MLOnly },
+                               { "Hybrid", AIEngine::DetectionBackendMode::Hybrid } };
+        const int kLogical = 18;
+        auto runStream = [&](AIEngine& ai, const std::vector<float>& C, const std::vector<float>& T, int cPeriod){
+            for (int i = 0; i < kLogical; ++i) feed(ai, ((cPeriod > 0) && (i % cPeriod == 0)) ? C : T, 3);
+        };
+        logMessage("  [B] live baseline Res (force=false)   all-T | C,T,T | C,T,T,T   TARGET: C,T,T & C,T,T,T → ~all-T");
+        for (const auto& m : modes)
+        {
+            std::mt19937 rng(50001), cleanRng(50002);
+            int allT = 0, ctt = 0, cttt = 0;
+            for (int v = 0; v < n; ++v)
+            {
+                const auto T = heldout::make(heldout::HClass::Resonance, rng);
+                const auto C = heldout::makeClean(cleanRng);
+                { auto ai = makeAi(m.mode); runStream(*ai, C, T, 0); allT += surfaced(*ai, AIEngine::ProblemType::Resonance) ? 1 : 0; }
+                { auto ai = makeAi(m.mode); runStream(*ai, C, T, 3); ctt  += surfaced(*ai, AIEngine::ProblemType::Resonance) ? 1 : 0; }
+                { auto ai = makeAi(m.mode); runStream(*ai, C, T, 4); cttt += surfaced(*ai, AIEngine::ProblemType::Resonance) ? 1 : 0; }
+            }
+            logMessage("      " + juce::String(m.name).paddedRight(' ', 6) + "  "
+                       + (juce::String(allT) + "/" + juce::String(n)).paddedRight(' ', 7) + "| "
+                       + (juce::String(ctt) + "/" + juce::String(n)).paddedRight(' ', 7) + "| "
+                       + juce::String(cttt) + "/" + juce::String(n));
+        }
+
+        // ── [C] clean-input FP (floor proxy): Res/Sib hallucinated on a pure-clean LIVE stream ──
+        // Complements AI-Sweep (which is force=true): this is the force=false persistence regime.
+        logMessage("  [C] clean-input FP (force=false, pure-clean stream)   Res-FP | Sib-FP   TARGET: NOT higher post-fix");
+        for (const auto& m : modes)
+        {
+            std::mt19937 cleanRng(60001);
+            int resFp = 0, sibFp = 0;
+            for (int v = 0; v < n; ++v)
+            {
+                const auto C = heldout::makeClean(cleanRng);
+                auto ai = makeAi(m.mode);
+                for (int i = 0; i < kLogical; ++i) feed(*ai, C, 3);
+                if (surfaced(*ai, AIEngine::ProblemType::Resonance)) ++resFp;
+                if (surfaced(*ai, AIEngine::ProblemType::Sibilance)) ++sibFp;
+            }
+            logMessage("      " + juce::String(m.name).paddedRight(' ', 6) + "  "
+                       + (juce::String(resFp) + "/" + juce::String(n)).paddedRight(' ', 7) + "| "
+                       + juce::String(sibFp) + "/" + juce::String(n));
+        }
+
+        // ── [D] per-class recall (Hybrid product, force=true single-frame, held-out) ──
+        struct Grp { heldout::HClass hc; AIEngine::ProblemType type; const char* name; };
+        const Grp groups[] = {
+            { heldout::HClass::Resonance, AIEngine::ProblemType::Resonance,  "Resonance" },
+            { heldout::HClass::Sibilance, AIEngine::ProblemType::Sibilance,  "Sibilance" },
+            { heldout::HClass::Muddiness, AIEngine::ProblemType::Muddiness,  "Muddiness" },
+            { heldout::HClass::Boxyness,  AIEngine::ProblemType::Boxyness,   "Boxyness"  },
+            { heldout::HClass::Boominess, AIEngine::ProblemType::LowEndBoom, "Boominess" },
+            { heldout::HClass::Harshness, AIEngine::ProblemType::Harshness,  "Harshness" },
+            { heldout::HClass::Thinness,  AIEngine::ProblemType::ThinSound,  "Thinness"  },
+        };
+        auto hits = [&](AIEngine& ai, const std::vector<std::vector<float>>& fx, AIEngine::ProblemType t){
+            int h = 0; for (const auto& lin : fx) { ai.analyzeSpectrum(linearToDb(lin), true); for (const auto& c : ai.getPendingCorrections()) if (c.type == t) { ++h; break; } } return h;
+        };
+        auto aiHy = makeAi(AIEngine::DetectionBackendMode::Hybrid);
+        logMessage("  [D] per-class recall (Hybrid product, held-out)   TARGET: NOT lower post-fix");
+        std::mt19937 r(20260617);
+        for (const auto& g : groups)
+        {
+            std::vector<std::vector<float>> fx; for (int v = 0; v < n; ++v) fx.push_back(heldout::make(g.hc, r));
+            logMessage("      " + juce::String(g.name).paddedRight(' ', 11) + ": "
+                       + juce::String(hits(*aiHy, fx, g.type)) + "/" + juce::String(n));
+        }
+        logMessage("  ============================================================");
+        logMessage("  Compare BEFORE (this, shipped/buggy) vs AFTER (post-fix) row-by-row against each TARGET.");
+        logMessage("  Sibilance recall is model-limited (0/12 PRE-veto) — the veto fix is NOT expected to move it.");
+        logMessage("  AI-Sweep floor 0/18 + AI-Corpus are checked by their own binaries (separate gate).");
+    }
+};
+
 static AIAccuracyTest_MLEngine   sAIAccuracyTestML;
 static AIAccuracyTest_AIEngine   sAIAccuracyTestAI;
 static AIAccuracyTest_Retrain    sAIAccuracyTestRetrain;
@@ -2474,3 +2624,4 @@ static AIAccuracyTest_PipelineAllClasses sAIAccuracyTestPipelineAllClasses;
 static AIAccuracyTest_VetoSibAttribution sAIAccuracyTestVetoSibAttribution;
 static AIAccuracyTest_SnapshotCoherence  sAIAccuracyTestSnapshotCoherence;
 static AIAccuracyTest_LiveBaseline       sAIAccuracyTestLiveBaseline;
+static AIAccuracyTest_BugFixAcceptance   sAIAccuracyTestBugFixAcceptance;
