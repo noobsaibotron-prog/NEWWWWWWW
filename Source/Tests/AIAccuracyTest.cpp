@@ -2295,10 +2295,26 @@ public:
         prime = heldout::toLinear(prime);
 
         const int resIdx = static_cast<int>(MLEngine::ProblemType::Resonance);
+        // Full pre-veto ML ProblemDetection list comparison (closes the localization confound:
+        // proves the pre-veto ML DECISION — incl. frequency/severity — is identical across priming).
+        auto sameDetList = [](const std::vector<MLEngine::ProblemDetection>& a,
+                              const std::vector<MLEngine::ProblemDetection>& b){
+            if (a.size() != b.size()) return false;
+            for (size_t i = 0; i < a.size(); ++i)
+            {
+                if (a[i].type != b[i].type) return false;
+                if (std::abs(a[i].frequency  - b[i].frequency)  > 1.0f)   return false;
+                if (std::abs(a[i].confidence  - b[i].confidence)  > 0.001f) return false;
+                if (std::abs(a[i].severity    - b[i].severity)    > 0.001f) return false;
+                if (std::abs(a[i].suggestedGain - b[i].suggestedGain) > 0.001f) return false;
+                if (std::abs(a[i].suggestedQ  - b[i].suggestedQ)  > 0.001f) return false;
+            }
+            return true;
+        };
         std::mt19937 rng(40001);
         std::mt19937 cleanRng(40002);
         const int n = heldout::kVariations;
-        int loudFlips = 0, cleanFlips = 0, selfPos = 0, loudPos = 0, cleanPos = 0, nondet = 0, mlMatchFull = 0;
+        int loudFlips = 0, cleanFlips = 0, selfPos = 0, loudPos = 0, cleanPos = 0, nondet = 0, mlMatchFull = 0, preVetoMatch = 0;
         double mlSelfSum = 0, mlClnSum = 0, maxMlVecDiff = 0;
         for (int v = 0; v < n; ++v)
         {
@@ -2306,10 +2322,12 @@ public:
             // LEVEL-MATCHED primer: a clean tilted frame (~same level as res, no peak) — controls for RMS carryover.
             const auto cleanP = heldout::makeClean(cleanRng);
             auto aiS = makeAi(); detectsRes(*aiS, res); detectsRes(*aiS, res); const bool self = detectsRes(*aiS, res);
-            const auto mlSelfV = aiS->getLastMLRawProbabilitiesForTests();   // FULL 8-vector (rank/top-K depend on all)
+            const auto mlSelfV   = aiS->getLastMLRawProbabilitiesForTests();   // FULL 8-vector (rank/top-K depend on all)
+            const auto preVetoS  = aiS->getLastPreVetoMLDetectionsForTests();  // FULL pre-veto detection list
             auto aiL = makeAi(); detectsRes(*aiL, prime); detectsRes(*aiL, prime); const bool loud = detectsRes(*aiL, res);
             auto aiK = makeAi(); detectsRes(*aiK, cleanP); detectsRes(*aiK, cleanP); const bool cln = detectsRes(*aiK, res);
-            const auto mlClnV = aiK->getLastMLRawProbabilitiesForTests();
+            const auto mlClnV    = aiK->getLastMLRawProbabilitiesForTests();
+            const auto preVetoK  = aiK->getLastPreVetoMLDetectionsForTests();
             auto aiS2 = makeAi(); detectsRes(*aiS2, res); detectsRes(*aiS2, res); const bool self2 = detectsRes(*aiS2, res);
             float vecDiff = 0.0f;
             for (int k = 0; k < MLEngine::numProblemTypes; ++k)
@@ -2318,6 +2336,7 @@ public:
             if (self != loud) ++loudFlips;
             if (self != cln)  ++cleanFlips;
             if (vecDiff < 0.01f) ++mlMatchFull;     // ENTIRE ML raw vector identical across priming?
+            if (sameDetList(preVetoS, preVetoK)) ++preVetoMatch;   // FULL pre-veto detection list identical?
             selfPos += self ? 1 : 0; loudPos += loud ? 1 : 0; cleanPos += cln ? 1 : 0;
             mlSelfSum += mlSelfV[static_cast<size_t>(resIdx)]; mlClnSum += mlClnV[static_cast<size_t>(resIdx)];
             maxMlVecDiff = std::max(maxMlVecDiff, static_cast<double>(vecDiff));
@@ -2331,15 +2350,21 @@ public:
         logMessage("    nondet (self vs self2, should be 0)  : " + juce::String(nondet) + "/" + juce::String(n));
         logMessage("    ML raw Res prob self vs clean-primed : " + juce::String(mlSelfSum / n, 3) + " vs " + juce::String(mlClnSum / n, 3));
         logMessage("    FULL ML 8-vector identical (maxdiff " + juce::String(maxMlVecDiff, 4) + "): " + juce::String(mlMatchFull) + "/" + juce::String(n));
-        logMessage("  READ (isolated): MLOnly removes the heuristic temporal path. The ENTIRE ML raw vector matches across");
-        logMessage("  priming (so threshold/rank/top-K are identical) yet the detection FLIPS ⇒ ONLY THE VETO changed ⇒");
-        logMessage("  P4-BUG-001 isolated to the veto. LIMITS: ProblemDetection frequency/localization not compared; and the");
-        logMessage("  stale reads carry PREVIOUS real frames after warm-up (not zeros) — 'empty buffer' holds only cold-start.");
+        logMessage("    FULL pre-veto DETECTION list identical (type/freq/conf/sev/Q/gain): " + juce::String(preVetoMatch) + "/" + juce::String(n));
+        logMessage("  READ (isolated): MLOnly removes the heuristic temporal path. The ENTIRE ML raw vector AND the full");
+        logMessage("  pre-veto ProblemDetection list (incl. localization frequency) are identical across priming, yet the");
+        logMessage("  detection FLIPS ⇒ ONLY THE VETO changed ⇒ P4-BUG-001 isolated to the veto (localization confound closed).");
+        logMessage("  (Stale reads carry PREVIOUS real frames after warm-up, not zeros — 'empty buffer' is cold-start only.)");
 
         // KnownDebt assertions — the witness FAILS (visibly, non-blocking) if it stops witnessing.
+        // PRE-FIX semantics: the bug must REPRODUCE (cleanFlips>0) AND the pre-veto decision must be
+        // IDENTICAL (only the veto differs). POST-FIX this same test becomes the regression guard
+        // (flip cleanFlips>0 → ==0). See scorecard P4-BUG-001.
         expect(cleanFlips > 0, "P4-BUG-001 NOT reproduced: no history-dependence (level-matched) observed");
-        expect(mlMatchFull == n, "ML pre-veto NOT identical across priming (max vec diff "
+        expect(mlMatchFull == n, "ML raw 8-vector NOT identical across priming (max vec diff "
                + juce::String(maxMlVecDiff, 4) + ") — the flip is not veto-isolated");
+        expect(preVetoMatch == n, "pre-veto ML DETECTION LIST (incl. frequency) differs across priming — "
+               "flip is not veto-isolated (localization confound NOT closed)");
         expect(nondet == 0, "within-sequence non-determinism — characterization unstable");
     }
 };

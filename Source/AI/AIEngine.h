@@ -388,6 +388,16 @@ public:
         return lastMLThresholds;
     }
 
+    /** P4-BUG-001 closure: the FULL ML ProblemDetection list (type/confidence/severity/
+        frequency/Q/gain) produced by the model BEFORE the reality-check veto. Lets a test
+        prove the pre-veto ML decision is identical across priming while the post-veto
+        detection flips — isolating the flip to the veto (not localization). */
+    std::vector<MLEngine::ProblemDetection> getLastPreVetoMLDetectionsForTests() const
+    {
+        std::lock_guard<std::mutex> lock(mlAuditMutex);
+        return lastPreVetoMLDetectionsForTests;
+    }
+
     // P2-HAZARD-001 (AIEngine half): these resonance-debug TYPES + their two
     // accessors are UNCONDITIONAL (not #if JUCE_UNIT_TESTS) so that the DATA
     // members below (lastResonanceDebugForTests, resonanceDebugProbeFreqsForTests)
@@ -807,6 +817,10 @@ private:
     // P2-HAZARD-001 fix: unconditional (see the resonance-debug types above).
     ResonanceDebugSnapshot lastResonanceDebugForTests {};
     std::vector<float> resonanceDebugProbeFreqsForTests;
+    // P4-BUG-001 closure: the FULL ML ProblemDetection list as produced by the model,
+    // BEFORE the reality-check veto runs. Data member is UNCONDITIONAL (layout safety,
+    // P2-HAZARD-001); the populate path in detectProblemsWithML stays #if JUCE_UNIT_TESTS.
+    std::vector<MLEngine::ProblemDetection> lastPreVetoMLDetectionsForTests;
 
     /** Unified decision: should this analysis frame use the ML path?
         Accounts for: backend mode, useMLDetection, forceMLDetectionForTests. */

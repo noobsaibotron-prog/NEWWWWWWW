@@ -2850,6 +2850,15 @@ void AIEngine::detectProblemsWithML()
                                                 &rawProbsThisInference);
     storeMLAuditSnapshot(rawProbsThisInference, effectiveThresholds);
 
+   #if JUCE_UNIT_TESTS
+    // P4-BUG-001 closure: snapshot the FULL pre-veto ML detection list (test-only populate;
+    // the data member itself is unconditional for layout safety — P2-HAZARD-001).
+    {
+        std::lock_guard<std::mutex> auditLock(mlAuditMutex);
+        lastPreVetoMLDetectionsForTests = mlDetections;
+    }
+   #endif
+
     // Convert ML detections to AIEngine corrections
     std::lock_guard<std::mutex> lock(correctionsWriteMutex);
     pendingCorrections.clear();
