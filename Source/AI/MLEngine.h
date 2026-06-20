@@ -179,6 +179,13 @@ public:
    #if JUCE_UNIT_TESTS
     void setTopKOverrideForTests(int topK) { topKOverrideForTests = topK; }
     void clearTopKOverrideForTests() { topKOverrideForTests = 0; }
+    // Real-data pipeline (data factory): build the 64 mel-band feature vector from an
+    // arbitrary linear-magnitude spectrum via the SAME extractMelBands the inference path
+    // uses, so real-audio training samples match the model input exactly.
+    std::vector<float> melBandsFromSpectrumForTests(const std::vector<float>& spectrum, double sampleRate) const
+    { return extractMelBands(spectrum, sampleRate, melNumBands); }
+    std::pair<float, float> problemFreqRangeForTests(ProblemType t) const
+    { const auto& r = problemFreqRanges[static_cast<size_t>(t)]; return { r.minHz, r.maxHz }; }
    #endif
 
     //==========================================================================
