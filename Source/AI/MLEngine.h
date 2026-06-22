@@ -186,6 +186,17 @@ public:
     { return extractMelBands(spectrum, sampleRate, melNumBands); }
     std::pair<float, float> problemFreqRangeForTests(ProblemType t) const
     { const auto& r = problemFreqRanges[static_cast<size_t>(t)]; return { r.minHz, r.maxHz }; }
+    // Test-only: like initializeRandomWeights() but with a CALLER seed — production init (fixed seed 42)
+    // is UNCHANGED. Mirrors the production layer order + hand-tuned biases; only the seed differs. Lets a
+    // diagnostic estimate seed/initialisation variance (the production training is otherwise deterministic).
+    void initializeRandomWeightsForTests(uint32_t seed)
+    {
+        std::mt19937 rng(seed);
+        problemNet_fc1->randomize(rng); problemNet_fc2->randomize(rng); problemNet_fc3->randomize(rng);
+        genreNet_fc1->randomize(rng);   genreNet_fc2->randomize(rng);
+        freqNet_fc1->randomize(rng);    freqNet_fc2->randomize(rng);
+        problemNet_fc3->setBias({ -0.5f, -0.3f, -0.4f, -0.3f, -0.5f, -0.6f, -0.5f, -1.0f });
+    }
    #endif
 
     //==========================================================================

@@ -574,6 +574,53 @@ public:
         }
         logMessage("  READ: pick the row where Sib recall stays high AND Resonance returns near shipped(11)/synth-only(12).");
         logMessage("  If no row keeps both, it is a model-capacity tradeoff (bigger net / different training needed).");
+
+        // ════════════════════════════════════════════════════════════════════════
+        // LOW-VARIANCE GATE (Codex): n=50 fixtures, 3 INIT seeds (kEpochs FIXED at 600). Report
+        // mean[min..max] of Resonance + Sibilance for synth-only and candidate(+sib) to decide NOISE vs
+        // real TRADEOFF. The init-seed (variance) and the epoch-duration (stability) are SEPARATE axes.
+        // ════════════════════════════════════════════════════════════════════════
+        const int kBigN = 50;
+        const uint32_t seeds[] = { 11u, 22u, 33u };
+        auto recallN = [&](MLEngine& m, int idx, int n){
+            std::mt19937 r(static_cast<unsigned>(70000 + idx));
+            int hit = 0;
+            for (int v = 0; v < n; ++v) { auto spec = makeFixture(idx, r);
+                for (const auto& d : m.detectProblems(spec, 44100.0)) if (static_cast<int>(d.type) == idx) { ++hit; break; } }
+            return hit;
+        };
+        struct Agg { int mn = 9999, mx = -1; double sum = 0; int k = 0;
+                     void add(int x){ mn = std::min(mn, x); mx = std::max(mx, x); sum += x; ++k; }
+                     double mean() const { return k ? sum / k : 0.0; } };
+        Agg soRes, soSib, caRes, caSib;
+        for (uint32_t sd : seeds) {
+            MLEngine so; so.initialize(); so.initializeRandomWeightsForTests(sd); so.trainOnDataset(synthDataset, kEpochs, kLearningRate);
+            MLEngine ca; ca.initialize(); ca.initializeRandomWeightsForTests(sd); ca.trainOnDataset(combined,     kEpochs, kLearningRate);
+            soRes.add(recallN(so, 0, kBigN)); soSib.add(recallN(so, 3, kBigN));
+            caRes.add(recallN(ca, 0, kBigN)); caSib.add(recallN(ca, 3, kBigN));
+        }
+        const int shRes = recallN(shipped, 0, kBigN), shSib = recallN(shipped, 3, kBigN);
+        logMessage("");
+        logMessage("  ===== LOW-VARIANCE GATE (n=" + juce::String(kBigN) + ", 3 init seeds, " + juce::String(kEpochs) + " epochs) =====");
+        logMessage("  class      | shipped  | synth-only mean[min..max] | candidate(+sib) mean[min..max]");
+        logMessage("  -----------+----------+---------------------------+-------------------------------");
+        auto vrow = [&](const char* nm, int sh, const Agg& so, const Agg& ca){
+            logMessage("  " + juce::String(nm).paddedRight(' ', 10) + " |  " + (juce::String(sh) + "/" + juce::String(kBigN)).paddedRight(' ', 7)
+                       + " |   " + (juce::String(so.mean(), 1) + " [" + juce::String(so.mn) + ".." + juce::String(so.mx) + "]").paddedRight(' ', 24)
+                       + "|   " + juce::String(ca.mean(), 1) + " [" + juce::String(ca.mn) + ".." + juce::String(ca.mx) + "]"); };
+        vrow("Resonance", shRes, soRes, caRes);
+        vrow("Sibilance", shSib, soSib, caSib);
+        logMessage("  READ: if candidate Resonance mean ~= synth-only mean (overlapping [min..max]), the sibilance mix");
+        logMessage("  is NOT a real regression (seed/instability noise). If candidate << synth-only across ALL seeds, it");
+        logMessage("  is a real Sibilance-vs-Resonance tradeoff. (Sibilance: candidate should be high, shipped ~0.)");
+
+        // SEPARATE AXIS — epoch stability (fixed seed 11, candidate): does recall move with training duration?
+        logMessage("  --- epoch-stability axis (seed 11, candidate, n=" + juce::String(kBigN) + ") ---");
+        for (int ep : { 400, 600 }) {
+            MLEngine ca; ca.initialize(); ca.initializeRandomWeightsForTests(11u); ca.trainOnDataset(combined, ep, kLearningRate);
+            logMessage("    epochs " + juce::String(ep) + ": Resonance " + juce::String(recallN(ca, 0, kBigN)) + "/" + juce::String(kBigN)
+                       + " | Sibilance " + juce::String(recallN(ca, 3, kBigN)) + "/" + juce::String(kBigN));
+        }
     }
 };
 
