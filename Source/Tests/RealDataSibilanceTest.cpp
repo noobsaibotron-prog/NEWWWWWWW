@@ -652,6 +652,93 @@ public:
             logMessage("    epochs " + juce::String(ep) + ": Resonance " + juce::String(recallN(ca, 0, kBigN)) + "/" + juce::String(kBigN)
                        + " | Sibilance " + juce::String(recallN(ca, 3, kBigN)) + "/" + juce::String(kBigN));
         }
+
+        // ════════════════════════════════════════════════════════════════════════
+        // BLOCCO 1 (diagnostic, REPORT-ONLY - Codex-authorized): BROAD-Muddiness POSITIVES fixed at
+        // +100 (the case that gave Mud 50 / Res 48.7) PLUS a swept count of BROAD-LOW-MID HARD-
+        // NEGATIVES. ONE variable = number of broad negatives. The negatives are WEAK low-mid
+        // emphasis (2..8 dB, all-zero label = "natural emphasis, NOT a problem") on the TRAINING
+        // tilt band; they teach the AMPLITUDE threshold so the model separates a true Muddiness hump
+        // from natural low-mid tilt -> taming the +100 clean-FP overfire WITHOUT dropping Muddiness.
+        // All TEST-SIDE, TRAINING tilt band (not eval), NOT makeFixture, NOT the eval shape -> no
+        // leakage. Row "+0 neg" reproduces the broad+100 case (Mud 50 / clean-FP ~21). PASS only if
+        // Mud>=48 AND clean-FP mean<=10 & max<=15 AND Res/Boom/Boxy/Thin not regressing.
+        //
+        // BLOCCO 1 SUMMARY (5 levers, all NEGATIVE; SYNTH-ONLY, n=50, 3 seeds) -- the Muddiness
+        // shipped-2 bar is OVERFIRE-INFLATED:
+        //   baseline (200/cls, 600 ep)     : Mud 44.7  Res 46.0  clean-FP 0.7
+        //   epochs {600,800,1000}          : Mud 44.7->42.3->38.7 (falls); Res 46->40->30; clean-FP ~0
+        //   kSynthPerClass {200,300,400}   : 400 -> Mud 48.7 BUT Res 22 (steals Resonance)
+        //   DatasetOptions weakBump on/off : no move (Mud ~44, within noise)
+        //   broad-Mud positives only +100  : Mud 50 / Res 48.7 BUT clean-FP 21 (overfire)
+        //   broad +100 pos + neg (below)   : neg tame FP but Mud falls back, or Res collapses
+        // => Mud>=48 is reachable ONLY by overfire or by stealing Resonance. shipped reaches Mud 50
+        //    ONLY by overfiring (its ML clean-FP is 50/50). Our synth-only (Mud 44.7, clean-FP 0.7)
+        //    is the MORE HONEST model. Reported to Codex/Marco: the per-class Muddiness bar should be
+        //    the gate's OWN honest one (>= synthOnly-3) + clean-FP floor, NOT shipped-2. The gate is
+        //    NOT changed here, pending Codex counter-sign.
+        // ════════════════════════════════════════════════════════════════════════
+        auto buildBroadLowMid = [&](std::mt19937& rng, bool positive) -> MLEngine::TrainingSample {
+            constexpr int   fft = 2048, bins = fft / 2;   // matches generateSyntheticDataset(fft=2048)
+            constexpr float sr  = 44100.0f;
+            const float binHz = sr / (float) fft;
+            std::uniform_real_distribution<float> u01(0.0f, 1.0f);
+            std::normal_distribution<float> noise(0.0f, 0.02f);
+            std::uniform_real_distribution<float> tiltD(-4.5f, -1.5f);    // TRAINING tilt band (NOT eval)
+            std::uniform_real_distribution<float> sigFrac(0.15f, 0.22f);  // BROAD (train 0.08, eval 0.25)
+            const float fcMin = 100.0f, fcMax = 400.0f;                   // Muddiness training range
+            const float fc = fcMin * std::pow(fcMax / fcMin, u01(rng));
+            // positive: STRONG hump (14..22 dB, label Muddiness). negative: WEAK low-mid emphasis
+            // (2..8 dB, all-zero label) -> model learns the AMPLITUDE threshold, not the width.
+            const float promDb = positive ? (14.0f + u01(rng) * 8.0f) : (2.0f + u01(rng) * 6.0f);
+            const float gain = juce::Decibels::decibelsToGain(promDb);
+            const float sigmaHz = juce::jmax(30.0f, fc * sigFrac(rng));
+            const float slope = tiltD(rng);
+            std::vector<float> spec((size_t) bins, 0.0f);
+            for (int i = 0; i < bins; ++i) spec[(size_t) i] = juce::jmax(0.0f, 0.05f + noise(rng));
+            for (int i = 0; i < bins; ++i) { const float f = juce::jmax(20.0f, (float) i * binHz);
+                spec[(size_t) i] *= juce::Decibels::decibelsToGain(slope * std::log10(f / 100.0f)); }
+            for (int i = 0; i < bins; ++i) { const float f = (float) i * binHz; const float d = (f - fc) / sigmaHz;
+                spec[(size_t) i] = juce::jmax(0.0f, spec[(size_t) i] * (1.0f + (gain - 1.0f) * std::exp(-0.5f * d * d))); }
+            MLEngine::TrainingSample s;
+            s.melSpectrum = trained.melBandsFromSpectrumForTests(spec, sr);
+            if (positive) { s.problemTargets[(size_t) 2] = 1.0f;   // Muddiness
+                s.frequencyTargets[(size_t) 2] = juce::jlimit(0.0f, 1.0f, std::log(fc / fcMin) / std::log(fcMax / fcMin)); }
+            return s;   // negative: all targets stay 0
+        };
+        logMessage("");
+        logMessage("  ===== BLOCCO 1 BROAD-Mud +100 pos + swept broad-low-mid NEG (SYNTH-ONLY, kSynthPerClass="
+                   + juce::String(kSynthPerClass) + ", LR " + juce::String(kLearningRate, 3) + ", " + juce::String(kEpochs) + " ep, n=" + juce::String(kBigN) + ", 3 seeds) =====");
+        logMessage("  +neg   | Muddiness        | Resonance        | Boominess        | BoxyMidrange     | Thinness         | clean-FP");
+        logMessage("  -------+------------------+------------------+------------------+------------------+------------------+----------------");
+        auto aggStr = [](const Agg& a){ return (juce::String(a.mean(), 1) + " [" + juce::String(a.mn) + ".." + juce::String(a.mx) + "]").paddedRight(' ', 16); };
+        const int nPos = 100;   // fixed at the broad+100 case (Mud 50 / Res 48.7)
+        for (int nNeg : { 0, 100, 200, 300 }) {
+            std::mt19937 augRng(0xB80ADDu);
+            auto ds = synthDataset;
+            for (int i = 0; i < nPos; ++i) ds.push_back(buildBroadLowMid(augRng, true));
+            for (int i = 0; i < nNeg; ++i) ds.push_back(buildBroadLowMid(augRng, false));
+            Agg mud, res, boom, boxy, thin, cln;
+            for (uint32_t sd : seeds) {
+                MLEngine so; so.initialize(); so.initializeRandomWeightsForTests(sd);
+                so.trainOnDataset(ds, kEpochs, kLearningRate);
+                mud.add(recallN(so, 2, kBigN));  res.add(recallN(so, 0, kBigN));
+                boom.add(recallN(so, 4, kBigN)); boxy.add(recallN(so, 6, kBigN));
+                thin.add(recallN(so, 5, kBigN)); cln.add(cleanFpN(so, kBigN));
+            }
+            const bool fpOk  = cln.mean() <= 10.0 && cln.mx <= 15;
+            const bool resOk = res.mean() >= 43.0;   // synth-only Resonance baseline ~46, allow -3
+            const char* flag = ! fpOk  ? "  <-- clean-FP BREACH"
+                             : ! resOk ? "  <-- Resonance REGRESS"
+                             : (mud.mean() >= 48.0 ? "  <-- Mud>=48 & clean-FP & Res all ok" : "");
+            logMessage("  " + (juce::String(nNeg)).paddedRight(' ', 6)
+                       + " | " + aggStr(mud) + " | " + aggStr(res) + " | " + aggStr(boom)
+                       + " | " + aggStr(boxy) + " | " + aggStr(thin)
+                       + " | " + (juce::String(cln.mean(), 1) + " [" + juce::String(cln.mn) + ".." + juce::String(cln.mx) + "]")
+                       + flag);
+        }
+        logMessage("  READ: PASS = Muddiness >= 48 AND clean-FP mean<=10/max<=15 AND Res/Boom/Boxy/Thin not regressing.");
+        logMessage("  If neg tame clean-FP but Muddiness falls back, the shipped-2 bar is overfire-inflated -> report.");
     }
 };
 
