@@ -27,6 +27,7 @@
 #include <cmath>
 
 #include "../AI/MLEngine.h"
+#include "../AI/AIEngine.h"
 #include "Support/OfflineAnalysisPipeline.h"
 
 namespace
@@ -250,6 +251,99 @@ public:
         expect(featDeltaMax > 0.02, "feature delta ~0 — injected signal not present in mel features");
         expect(trMargin > 0.10, "real-trained model does not separate boost from de-ess (margin "
                + juce::String(trMargin, 3) + ") — sibilance axis not learned");
+
+        // ════════════════════════════════════════════════════════════════════════
+        // M3 — PRODUCT-PIPELINE bridge (counter-exam amendment): does the candidate's
+        // sibilance survive the FULL AIEngine path (rule + top-K + VETO) in BOTH MLOnly and
+        // Hybrid, and how does it behave on RAW/natural sibilant frames (unmodified)? The
+        // raw column is REPORTED not gated — natural sibilance is unlabelled, so a high rate
+        // there means "fires on normal singing", to be judged, not auto-failed.
+        // ════════════════════════════════════════════════════════════════════════
+        const juce::File candFile = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                                        .getChildFile("aieq_sib_candidate.bin");
+        expect(trained.saveWeights(candFile), "could not save candidate weights to /tmp");
+
+        auto linToDb = [](const std::vector<float>& lin){
+            std::vector<float> db(lin.size());
+            for (size_t i = 0; i < lin.size(); ++i) db[i] = juce::Decibels::gainToDecibels(lin[i], -120.0f);
+            return db;
+        };
+        auto makeAi = [](const juce::File& w, AIEngine::DetectionBackendMode mode, double sr){
+            auto ai = std::make_unique<AIEngine>();
+            ai->prepare(sr, 512); ai->setEnabled(true); ai->setSensitivity(0.5f);
+            ai->setSourceProfile(AIEngine::SourceProfile::Generic);
+            ai->setDetectionBackendMode(mode);
+            ai->setCustomMLWeightsPathForTests(w);
+            ai->forceMLDetectionEnabledForTests(true);
+            return ai;
+        };
+        auto aiSib = [](AIEngine& ai, const std::vector<float>& db){
+            ai.analyzeSpectrum(db, true);
+            for (const auto& c : ai.getPendingCorrections()) if (c.type == AIEngine::ProblemType::Sibilance) return true;
+            return false;
+        };
+
+        struct PScore { int boost = 0, deess = 0, raw = 0, n = 0; };
+        struct Mode { const char* name; AIEngine::DetectionBackendMode mode; };
+        const Mode pmodes[] = { { "MLOnly", AIEngine::DetectionBackendMode::MLOnly },
+                                { "Hybrid", AIEngine::DetectionBackendMode::Hybrid } };
+        logMessage("");
+        logMessage("  ===== M3: candidate through the PRODUCT pipeline (AIEngine, held-out singers) =====");
+        logMessage("  mode   | model     | recall(boost) | FP(de-ess) | fire(raw natural)");
+        logMessage("  -------+-----------+---------------+------------+------------------");
+        double candBoostMin = 1.0, candDeessMax = 0.0;
+        auto pc3 = [](int x, int n){ return n > 0 ? juce::String(100.0 * x / n, 0) + "%" : juce::String("-"); };
+        for (const auto& m : pmodes)
+        {
+            auto aiShip = makeAi(shippedWeights(), m.mode, 44100.0);
+            auto aiCand = makeAi(candFile, m.mode, 44100.0);
+            PScore ps, pc;
+            double candRawSum = 0.0; int candPreVeto = 0;   // boosted-frame internals (where is recall lost?)
+            std::mt19937 rngP(13579);
+            std::uniform_real_distribution<float> cutP(-14.0f, -8.0f), boostP(6.0f, 14.0f);
+            for (const auto& f : testFiles)
+            {
+                juce::AudioBuffer<float> audio; double sr = 0;
+                if (! loadMono(f, audio, sr)) continue;
+                for (const auto& frame : sibilantFrames(audio, sr, kFramesPerClip))
+                {
+                    auto dbRaw   = linToDb(frame);
+                    auto dbBoost = linToDb(scaleSibBand(frame, sr, boostP(rngP)));
+                    auto dbDeess = linToDb(scaleSibBand(frame, sr, cutP(rngP)));
+                    ps.n++; pc.n++;
+                    ps.boost += aiSib(*aiShip, dbBoost) ? 1 : 0; ps.deess += aiSib(*aiShip, dbDeess) ? 1 : 0; ps.raw += aiSib(*aiShip, dbRaw) ? 1 : 0;
+                    // candidate boosted: capture raw-on-product-frame + pre-veto to locate the loss
+                    const bool candB = aiSib(*aiCand, dbBoost);
+                    candRawSum += aiCand->getLastMLRawProbabilitiesForTests()[static_cast<size_t>(kSibIdx)];
+                    for (const auto& d : aiCand->getLastPreVetoMLDetectionsForTests()) if (d.type == MLEngine::ProblemType::Sibilance) { ++candPreVeto; break; }
+                    pc.boost += candB ? 1 : 0;
+                    pc.deess += aiSib(*aiCand, dbDeess) ? 1 : 0; pc.raw += aiSib(*aiCand, dbRaw) ? 1 : 0;
+                }
+            }
+            logMessage("  " + juce::String(m.name).paddedRight(' ', 6) + " | shipped   |     " + pc3(ps.boost, ps.n).paddedRight(' ', 10) + "|   " + pc3(ps.deess, ps.n).paddedRight(' ', 9) + "|   " + pc3(ps.raw, ps.n));
+            logMessage("  " + juce::String(m.name).paddedRight(' ', 6) + " | candidate |     " + pc3(pc.boost, pc.n).paddedRight(' ', 10) + "|   " + pc3(pc.deess, pc.n).paddedRight(' ', 9) + "|   " + pc3(pc.raw, pc.n));
+            logMessage("         candidate boosted internals: raw-Sib(product frame) "
+                       + juce::String(pc.n > 0 ? candRawSum / pc.n : 0.0, 3) + " | pre-veto " + pc3(candPreVeto, pc.n)
+                       + " | final " + pc3(pc.boost, pc.n) + "  (locates the loss: low raw=representation; raw high+pre-veto low=rule/top-K; pre-veto high+final low=veto)");
+            if (pc.n > 0) { candBoostMin = std::min(candBoostMin, (double) pc.boost / pc.n); candDeessMax = std::max(candDeessMax, (double) pc.deess / pc.n); }
+        }
+        logMessage("  READ: candidate must KEEP high recall(boost) in BOTH modes (the veto does not prune real");
+        logMessage("  sibilance) and low FP(de-ess). fire(raw natural) = firing on the unmodified sibilant frames —");
+        logMessage("  REPORTED not gated (natural sibilance is unlabelled; high here = over-eager on normal singing).");
+        candFile.deleteFile();
+
+        logMessage("");
+        if (candBoostMin > 0.5)
+            logMessage("  M3 PASS: candidate sibilance SURVIVES the product pipeline (>=50% recall in both modes).");
+        else
+            logMessage("  M3 OPEN FINDING: the Sibilance VETO prunes real vocal sibilance (pre-veto ~97% -> final ~"
+                       + juce::String(candBoostMin * 100.0, 0) + "%). The veto's 2-5 kHz reference band is naturally HOT"
+                       + " in vocals, so excessive 5-9 kHz rarely exceeds it by the 3 dB gate. Shipping sibilance needs"
+                       + " the VETO fixed too (M4, a production change), not just a better model. Report-only here.");
+
+        // The candidate must at least NOT over-fire on de-essed frames through the pipeline.
+        expect(candDeessMax < 0.5, "candidate over-fires on de-essed frames through the pipeline (max "
+               + juce::String(candDeessMax * 100.0, 0) + "%)");
     }
 };
 
