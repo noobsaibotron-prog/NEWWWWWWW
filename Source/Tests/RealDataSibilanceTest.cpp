@@ -619,12 +619,17 @@ public:
                        + "|   " + (juce::String(caAgg[c].mean(), 1) + " [" + juce::String(caAgg[c].mn) + ".." + juce::String(caAgg[c].mx) + "]").paddedRight(' ', 24)
                        + "| " + (ok ? "ok" : "FAIL"));
         }
-        const bool cleanOk = caClean.mean() <= shClean;
+        // Blocco 0 (Codex-mandated): OVERFIRE-AWARE clean-FP. shipped overfires at the ML level
+        // (clean-FP ~50/50 on this faithful fixture), so "candidate <= shipped" is meaningless. Tighten
+        // to an ABSOLUTE numeric floor — this STRENGTHENS the gate, it does not relax it. shClean stays
+        // logged below only as the shipped-overfire reference.
+        const bool cleanOk = caClean.mean() <= 10.0 && caClean.mx <= 15;
         logMessage("  clean FP     |  " + (juce::String(shClean) + "/50").paddedRight(' ', 6)
                    + " |   -                         |   " + (juce::String(caClean.mean(), 1) + " [" + juce::String(caClean.mn) + ".." + juce::String(caClean.mx) + "]").paddedRight(' ', 24)
                    + "| " + (cleanOk ? "ok" : "FAIL"));
         logMessage("  GATE (numeric): non-Sib candidateMean >= shipped-2/50 AND >= synth-only-3/50; Sibilance >= 35/50 AND");
-        logMessage("  >= synth-only; clean-FP candidate <= shipped. AI-Sweep floor 0/18 by its own binary (C1 is test-only).");
+        logMessage("  >= synth-only; clean-FP candidate mean <= 10/50 AND max <= 15/50 (overfire-aware: shipped");
+        logMessage("  clean-FP overfires ~50/50 at ML, shown as REF only). AI-Sweep floor 0/18 by its own binary.");
 
         // ── PHASE C1 RESULT ──
         // C1 is the SHIP pre-flight gate, but kept REPORT-ONLY in the repo while the candidate is not
