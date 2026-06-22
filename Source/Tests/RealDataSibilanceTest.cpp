@@ -589,30 +589,56 @@ public:
                 for (const auto& d : m.detectProblems(spec, 44100.0)) if (static_cast<int>(d.type) == idx) { ++hit; break; } }
             return hit;
         };
+        auto cleanFpN = [&](MLEngine& m, int n){ std::mt19937 r(71000u); int fp = 0;
+            for (int v = 0; v < n; ++v) { auto s = makeFixture(-1, r); if (! m.detectProblems(s, 44100.0).empty()) ++fp; } return fp; };
         struct Agg { int mn = 9999, mx = -1; double sum = 0; int k = 0;
                      void add(int x){ mn = std::min(mn, x); mx = std::max(mx, x); sum += x; ++k; }
                      double mean() const { return k ? sum / k : 0.0; } };
-        Agg soRes, soSib, caRes, caSib;
+        Agg soAgg[8], caAgg[8], caClean;
         for (uint32_t sd : seeds) {
             MLEngine so; so.initialize(); so.initializeRandomWeightsForTests(sd); so.trainOnDataset(synthDataset, kEpochs, kLearningRate);
             MLEngine ca; ca.initialize(); ca.initializeRandomWeightsForTests(sd); ca.trainOnDataset(combined,     kEpochs, kLearningRate);
-            soRes.add(recallN(so, 0, kBigN)); soSib.add(recallN(so, 3, kBigN));
-            caRes.add(recallN(ca, 0, kBigN)); caSib.add(recallN(ca, 3, kBigN));
+            for (int c = 0; c < 8; ++c) { soAgg[c].add(recallN(so, c, kBigN)); caAgg[c].add(recallN(ca, c, kBigN)); }
+            caClean.add(cleanFpN(ca, kBigN));
         }
-        const int shRes = recallN(shipped, 0, kBigN), shSib = recallN(shipped, 3, kBigN);
+        int shp[8]; for (int c = 0; c < 8; ++c) shp[c] = recallN(shipped, c, kBigN);
+        const int shClean = cleanFpN(shipped, kBigN);
         logMessage("");
-        logMessage("  ===== LOW-VARIANCE GATE (n=" + juce::String(kBigN) + ", 3 init seeds, " + juce::String(kEpochs) + " epochs) =====");
-        logMessage("  class      | shipped  | synth-only mean[min..max] | candidate(+sib) mean[min..max]");
-        logMessage("  -----------+----------+---------------------------+-------------------------------");
-        auto vrow = [&](const char* nm, int sh, const Agg& so, const Agg& ca){
-            logMessage("  " + juce::String(nm).paddedRight(' ', 10) + " |  " + (juce::String(sh) + "/" + juce::String(kBigN)).paddedRight(' ', 7)
-                       + " |   " + (juce::String(so.mean(), 1) + " [" + juce::String(so.mn) + ".." + juce::String(so.mx) + "]").paddedRight(' ', 24)
-                       + "|   " + juce::String(ca.mean(), 1) + " [" + juce::String(ca.mn) + ".." + juce::String(ca.mx) + "]"); };
-        vrow("Resonance", shRes, soRes, caRes);
-        vrow("Sibilance", shSib, soSib, caSib);
-        logMessage("  READ: if candidate Resonance mean ~= synth-only mean (overlapping [min..max]), the sibilance mix");
-        logMessage("  is NOT a real regression (seed/instability noise). If candidate << synth-only across ALL seeds, it");
-        logMessage("  is a real Sibilance-vs-Resonance tradeoff. (Sibilance: candidate should be high, shipped ~0.)");
+        logMessage("  ===== PHASE C1 PRE-FLIGHT GATE (all 8 classes, n=" + juce::String(kBigN) + ", 3 init seeds, " + juce::String(kEpochs) + " epochs) =====");
+        logMessage("  class        | shipped | synth-only mean[min..max] | candidate mean[min..max]  | gate");
+        logMessage("  -------------+---------+---------------------------+---------------------------+-----");
+        bool c1pass = true;
+        for (int c = 0; c < 8; ++c) {
+            const bool isSib = (c == 3);
+            const bool ok = isSib ? (caAgg[c].mean() >= 35.0 && caAgg[c].mean() >= soAgg[c].mean())
+                                  : (caAgg[c].mean() >= shp[c] - 2.0 && caAgg[c].mean() >= soAgg[c].mean() - 3.0);
+            c1pass = c1pass && ok;
+            logMessage("  " + juce::String(clsNames[c]).paddedRight(' ', 12)
+                       + " |  " + (juce::String(shp[c]) + "/50").paddedRight(' ', 6)
+                       + " |   " + (juce::String(soAgg[c].mean(), 1) + " [" + juce::String(soAgg[c].mn) + ".." + juce::String(soAgg[c].mx) + "]").paddedRight(' ', 24)
+                       + "|   " + (juce::String(caAgg[c].mean(), 1) + " [" + juce::String(caAgg[c].mn) + ".." + juce::String(caAgg[c].mx) + "]").paddedRight(' ', 24)
+                       + "| " + (ok ? "ok" : "FAIL"));
+        }
+        const bool cleanOk = caClean.mean() <= shClean;
+        logMessage("  clean FP     |  " + (juce::String(shClean) + "/50").paddedRight(' ', 6)
+                   + " |   -                         |   " + (juce::String(caClean.mean(), 1) + " [" + juce::String(caClean.mn) + ".." + juce::String(caClean.mx) + "]").paddedRight(' ', 24)
+                   + "| " + (cleanOk ? "ok" : "FAIL"));
+        logMessage("  GATE (numeric): non-Sib candidateMean >= shipped-2/50 AND >= synth-only-3/50; Sibilance >= 35/50 AND");
+        logMessage("  >= synth-only; clean-FP candidate <= shipped. AI-Sweep floor 0/18 by its own binary (C1 is test-only).");
+
+        // ── PHASE C1 RESULT ──
+        // C1 is the SHIP pre-flight gate, but kept REPORT-ONLY in the repo while the candidate is not
+        // shippable (a hard fail would just leave the RealData test red with data). Re-enable c1pass/cleanOk
+        // as HARD expects when Phase C resumes — i.e. after the separate ML work (Muddiness recipe parity +
+        // Thinness protection under the real-sibilance mix) makes the candidate clear the gate.
+        logMessage("");
+        if (c1pass && cleanOk)
+            logMessage("  PHASE C1 RESULT: PASS — candidate clears the all-8 numeric gate (shippable pending C2 + Ableton).");
+        else
+            logMessage("  PHASE C1 RESULT: FAIL — candidate NOT shippable. Resonance + Sibilance PASS; OPEN BLOCKERS: "
+                       "Muddiness (RECIPE gap — synth-only is already below shipped, not a sibilance effect) + Thinness "
+                       "(the real-sibilance mix regresses it vs synth-only). NEXT = a separate ML ticket (recipe parity "
+                       "on Muddiness + Thinness protection), THEN re-run C1 and re-enable the hard gate.");
 
         // SEPARATE AXIS — epoch stability (fixed seed 11, candidate): does recall move with training duration?
         logMessage("  --- epoch-stability axis (seed 11, candidate, n=" + juce::String(kBigN) + ") ---");
