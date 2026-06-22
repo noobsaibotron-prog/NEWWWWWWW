@@ -126,6 +126,28 @@ juce::String singerOf(const juce::File& f, const juce::File& root)
     auto rel = f.getRelativePathFrom(root);
     return rel.upToFirstOccurrenceOf(juce::File::getSeparatorString(), false, false);
 }
+
+// Mean dB over a band — FAITHFUL to AIEngine::bandEnergyFromSpectrum (inline bin map, exclude
+// -100 floor, arithmetic mean). Input is a dB frame (the representation the veto sees).
+float bandMeanDb(const std::vector<float>& db, double sr, float loHz, float hiHz)
+{
+    const int fftSize = static_cast<int>(db.size()) * 2;
+    const int maxIdx = static_cast<int>(db.size()) - 1;
+    int lo = juce::jlimit(0, maxIdx, static_cast<int>(loHz * static_cast<float>(fftSize) / static_cast<float>(sr)));
+    int hi = juce::jlimit(0, maxIdx, static_cast<int>(hiHz * static_cast<float>(fftSize) / static_cast<float>(sr)));
+    if (lo >= hi) return -100.0f;
+    float sum = 0.0f; int c = 0;
+    for (int i = lo; i <= hi; ++i) if (db[static_cast<size_t>(i)] > -100.0f) { sum += db[static_cast<size_t>(i)]; ++c; }
+    return c > 0 ? sum / static_cast<float>(c) : -100.0f;
+}
+
+double percentile(std::vector<double> v, double p)
+{
+    if (v.empty()) return 0.0;
+    std::sort(v.begin(), v.end());
+    const double idx = p * static_cast<double>(v.size() - 1);
+    return v[static_cast<size_t>(idx + 0.5)];
+}
 } // namespace
 
 class RealDataSibilanceTest : public juce::UnitTest
@@ -340,6 +362,53 @@ public:
                        + juce::String(candBoostMin * 100.0, 0) + "%). The veto's 2-5 kHz reference band is naturally HOT"
                        + " in vocals, so excessive 5-9 kHz rarely exceeds it by the 3 dB gate. Shipping sibilance needs"
                        + " the VETO fixed too (M4, a production change), not just a better model. Report-only here.");
+
+        // ════════════════════════════════════════════════════════════════════════
+        // M3b — QUANTIFY the veto + compare alternative reference bands (counter-exam).
+        // Measure excess = meanDb(5-10k) − meanDb(REF) on boost/de-ess/raw, report p10/p50/p90
+        // and pass-rate vs the 3 dB gate, for the CURRENT ref (2-5k) and 3 alternatives. Picks
+        // the lowest-floor-risk reference for M4 (one where boost passes, de-ess fails).
+        // ════════════════════════════════════════════════════════════════════════
+        const char* refNames[4]  = { "current 2-5k", "alt 1-2k", "trend .2-20k", "HF-local 3-5&10-14k" };
+        const char* condNames[3] = { "boost ", "de-ess", "raw   " };
+        std::vector<double> ex[4][3];
+        std::mt19937 rngB(24680);
+        std::uniform_real_distribution<float> cutB(-14.0f, -8.0f), boostB(6.0f, 14.0f);
+        for (const auto& f : testFiles)
+        {
+            juce::AudioBuffer<float> audio; double sr = 0;
+            if (! loadMono(f, audio, sr)) continue;
+            for (const auto& frame : sibilantFrames(audio, sr, kFramesPerClip))
+            {
+                const std::vector<std::vector<float>> conds = {
+                    scaleSibBand(frame, sr, boostB(rngB)), scaleSibBand(frame, sr, cutB(rngB)), frame };
+                for (int c = 0; c < 3; ++c)
+                {
+                    std::vector<float> db(conds[static_cast<size_t>(c)].size());
+                    for (size_t i = 0; i < db.size(); ++i) db[i] = juce::Decibels::gainToDecibels(conds[static_cast<size_t>(c)][i], -120.0f);
+                    const float sib   = bandMeanDb(db, sr, 5000.0f, 10000.0f);
+                    const float rCur  = bandMeanDb(db, sr, 2000.0f, 5000.0f);
+                    const float r12   = bandMeanDb(db, sr, 1000.0f, 2000.0f);
+                    const float rTr   = bandMeanDb(db, sr, 200.0f, 20000.0f);
+                    const float rHF   = 0.5f * (bandMeanDb(db, sr, 3000.0f, 5000.0f) + bandMeanDb(db, sr, 10000.0f, 14000.0f));
+                    ex[0][c].push_back(sib - rCur); ex[1][c].push_back(sib - r12);
+                    ex[2][c].push_back(sib - rTr);  ex[3][c].push_back(sib - rHF);
+                }
+            }
+        }
+        auto passRate = [](const std::vector<double>& v){ int p = 0; for (double x : v) if (x >= 3.0) ++p; return v.empty() ? 0.0 : 100.0 * p / static_cast<double>(v.size()); };
+        auto f1 = [](double x){ return juce::String(x, 1).paddedLeft(' ', 6); };
+        logMessage("");
+        logMessage("  ===== M3b: Sibilance-veto characterization (excess = meanDb(5-10k) − meanDb(REF) dB), held-out =====");
+        logMessage("  reference             | cond   |   p10    p50    p90 | pass>=3dB");
+        logMessage("  ----------------------+--------+---------------------+----------");
+        for (int r = 0; r < 4; ++r)
+            for (int c = 0; c < 3; ++c)
+                logMessage("  " + juce::String(refNames[r]).paddedRight(' ', 21) + " | " + condNames[c] + " | "
+                           + f1(percentile(ex[r][c], 0.10)) + " " + f1(percentile(ex[r][c], 0.50)) + " " + f1(percentile(ex[r][c], 0.90))
+                           + " |   " + juce::String(passRate(ex[r][c]), 0) + "%");
+        logMessage("  GOAL: a reference where BOOST passes (p10 >> 3), DE-ESS fails (p90 < 3), RAW sensible. 'current 2-5k'");
+        logMessage("  boost pass-rate should ~match M3 final ~22% (confirms the veto is the bottleneck). Lowest-floor-risk ref -> M4.");
 
         // The candidate must at least NOT over-fire on de-essed frames through the pipeline.
         expect(candDeessMax < 0.5, "candidate over-fires on de-essed frames through the pipeline (max "
