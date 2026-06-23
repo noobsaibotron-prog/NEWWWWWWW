@@ -616,7 +616,7 @@ public:
             // honest target. For Muddiness ONLY, drop the shipped-2 anchor and keep the gate's own
             // honest bar (>= synthOnly-3); the overfire-aware clean-FP floor (mean<=10, max<=15) is
             // still enforced globally by cleanOk below. ALL OTHER non-Sib classes keep shipped-2
-            // (shipped does not overfire there). Muddiness-specific, NOT a global relaxation.
+            // (no sufficient evidence yet to drop shipped-2 there). Muddiness-specific, NOT a global relaxation.
             const bool ok = isSib ? (caAgg[c].mean() >= 35.0 && caAgg[c].mean() >= soAgg[c].mean())
                           : isMud ? (caAgg[c].mean() >= soAgg[c].mean() - 3.0)
                                   : (caAgg[c].mean() >= shp[c] - 2.0 && caAgg[c].mean() >= soAgg[c].mean() - 3.0);
@@ -747,6 +747,70 @@ public:
         }
         logMessage("  READ: PASS = Muddiness >= 48 AND clean-FP mean<=10/max<=15 AND Res/Boom/Boxy/Thin not regressing.");
         logMessage("  If neg tame clean-FP but Muddiness falls back, the shipped-2 bar is overfire-inflated -> report.");
+
+        // ════════════════════════════════════════════════════════════════════════
+        // BLOCCO 2 (diagnostic, REPORT-ONLY - Codex-authorized): THINNESS protection by CAPPING the
+        // real-sibilance pair count in `combined` (= synthDataset + first cap*2 of `dataset`, which is
+        // ordered neg,pos,neg,pos...). ONE variable = cap (pairs). Measured at C1 rigor (n=50, 3
+        // seeds) under the SAME per-class C1 gate:
+        //   Sibilance : cand >= 35 AND >= synthOnly
+        //   Thinness  : cand >= shipped-2 AND >= synthOnly-3      (synthOnly Thin = soAgg[5])
+        //   guards    : Resonance/Boominess/BoxyMidrange under shipped-2 & synthOnly-3; Muddiness under
+        //               its honest bar (>= synthOnly-3); clean-FP global mean<=10/max<=15
+        // Goal: smallest cap where Sibilance stays >=35 AND Thinness recovers to >= synthOnly-3 with no
+        // other class regressing. "full" reproduces the C1 candidate column (cross-check). NOTHING is
+        // cemented (combined and the gate are unchanged); this only MEASURES the recovery point.
+        // ════════════════════════════════════════════════════════════════════════
+        logMessage("");
+        logMessage("  ===== BLOCCO 2 Thinness protection: real-sibilance pair CAP sweep (n=" + juce::String(kBigN)
+                   + ", 3 seeds, " + juce::String(kEpochs) + " ep) =====");
+        logMessage("  cap    | Sibilance        | Thinness         | Resonance        | Muddiness        | Boom | Boxy | clean-FP        | C1");
+        logMessage("  -------+------------------+------------------+------------------+------------------+------+------+-----------------+----");
+        auto aggS2 = [](const Agg& a){ return (juce::String(a.mean(), 1) + " [" + juce::String(a.mn) + ".." + juce::String(a.mx) + "]").paddedRight(' ', 16); };
+        const int capPairs[] = { (int) pairs, 120, 90, 60, 30 };
+        for (int cap : capPairs) {
+            const int nSamp = std::min((int) dataset.size(), cap * 2);
+            auto ds = synthDataset;
+            for (int i = 0; i < nSamp; ++i) ds.push_back(dataset[(size_t) i]);
+            Agg sib, thin, res, mud, boom, boxy, cln;
+            for (uint32_t sd : seeds) {
+                MLEngine ca; ca.initialize(); ca.initializeRandomWeightsForTests(sd);
+                ca.trainOnDataset(ds, kEpochs, kLearningRate);
+                sib.add(recallN(ca, 3, kBigN));  thin.add(recallN(ca, 5, kBigN));
+                res.add(recallN(ca, 0, kBigN));  mud.add(recallN(ca, 2, kBigN));
+                boom.add(recallN(ca, 4, kBigN)); boxy.add(recallN(ca, 6, kBigN));
+                cln.add(cleanFpN(ca, kBigN));
+            }
+            const bool sibOk  = sib.mean()  >= 35.0 && sib.mean() >= soAgg[3].mean();
+            const bool thinOk = thin.mean() >= shp[5] - 2.0 && thin.mean() >= soAgg[5].mean() - 3.0;
+            const bool resOk  = res.mean()  >= shp[0] - 2.0 && res.mean() >= soAgg[0].mean() - 3.0;
+            const bool mudOk  = mud.mean()  >= soAgg[2].mean() - 3.0;   // Muddiness honest bar
+            const bool boomOk = boom.mean() >= shp[4] - 2.0 && boom.mean() >= soAgg[4].mean() - 3.0;
+            const bool boxyOk = boxy.mean() >= shp[6] - 2.0 && boxy.mean() >= soAgg[6].mean() - 3.0;
+            const bool clnOk  = cln.mean()  <= 10.0 && cln.mx <= 15;
+            const bool allOk  = sibOk && thinOk && resOk && mudOk && boomOk && boxyOk && clnOk;
+            // Codex: show ALL failing classes, not just the first (e.g. cap 60/30 fail BOTH Thin & Res).
+            juce::String flag;
+            if (allOk) flag = "  C1 ok";
+            else {
+                if (! sibOk)  flag += " Sib";
+                if (! thinOk) flag += " Thin";
+                if (! resOk)  flag += " Res";
+                if (! mudOk)  flag += " Mud";
+                if (! boomOk) flag += " Boom";
+                if (! boxyOk) flag += " Boxy";
+                if (! clnOk)  flag += " cleanFP";
+                flag = "  FAIL:" + flag;
+            }
+            logMessage("  " + (juce::String(cap) + (cap == (int) pairs ? "f" : "")).paddedRight(' ', 6)
+                       + " | " + aggS2(sib) + " | " + aggS2(thin) + " | " + aggS2(res) + " | " + aggS2(mud)
+                       + " |  " + juce::String(boom.mean(), 0).paddedRight(' ', 3)
+                       + " |  " + juce::String(boxy.mean(), 0).paddedRight(' ', 3)
+                       + " | " + (juce::String(cln.mean(), 1) + " [" + juce::String(cln.mn) + ".." + juce::String(cln.mx) + "]").paddedRight(' ', 15)
+                       + " |" + flag);
+        }
+        logMessage("  READ: pick the smallest cap with C1 ok (Sib>=35 & Thin>= synthOnly-3 & no other class regressing");
+        logMessage("  & clean-FP ok). 'full' must match the C1 candidate column. Nothing cemented here - report to Codex.");
     }
 };
 
