@@ -811,6 +811,35 @@ public:
         }
         logMessage("  READ: pick the smallest cap with C1 ok (Sib>=35 & Thin>= synthOnly-3 & no other class regressing");
         logMessage("  & clean-FP ok). 'full' must match the C1 candidate column. Nothing cemented here - report to Codex.");
+
+        // ════════════════════════════════════════════════════════════════════════
+        // BLOCCO 2b (diagnostic, REPORT-ONLY - Codex-authorized): per-SEED Thinness attribution.
+        // For EACH init seed, train (a) synth-only (zero sibilance), (b) candidate-full (all pairs),
+        // (c) candidate-minimal (30 pairs), and read Thinness recall (n=50) for each. SAME seed across
+        // the three isolates WHY Thinness fails: seed variance (does synth-only itself swing?),
+        // sibilance interference (does the SAME seed drop synth-only -> candidate?), or structural
+        // class weakness (low everywhere). NOTHING cemented.
+        // ════════════════════════════════════════════════════════════════════════
+        logMessage("");
+        logMessage("  ===== BLOCCO 2b per-seed Thinness attribution (Thinness recall, n=" + juce::String(kBigN) + ") =====");
+        logMessage("  seed | synth-only | cand-full | cand-min(30 pairs)");
+        logMessage("  -----+-----------+-----------+-------------------");
+        {
+            auto dsMin = synthDataset;
+            const int nMin = std::min((int) dataset.size(), 30 * 2);
+            for (int i = 0; i < nMin; ++i) dsMin.push_back(dataset[(size_t) i]);
+            for (uint32_t sd : seeds) {
+                MLEngine so; so.initialize(); so.initializeRandomWeightsForTests(sd); so.trainOnDataset(synthDataset, kEpochs, kLearningRate);
+                MLEngine cf; cf.initialize(); cf.initializeRandomWeightsForTests(sd); cf.trainOnDataset(combined,     kEpochs, kLearningRate);
+                MLEngine cm; cm.initialize(); cm.initializeRandomWeightsForTests(sd); cm.trainOnDataset(dsMin,        kEpochs, kLearningRate);
+                logMessage("  " + juce::String((int) sd).paddedRight(' ', 4)
+                           + " |    " + (juce::String(recallN(so, 5, kBigN)) + "/50").paddedRight(' ', 7)
+                           + "|    " + (juce::String(recallN(cf, 5, kBigN)) + "/50").paddedRight(' ', 7)
+                           + "|    " + juce::String(recallN(cm, 5, kBigN)) + "/50");
+            }
+        }
+        logMessage("  READ: synth-only stable & high => not seed variance. Same-seed drop synth-only->cand => sibilance");
+        logMessage("  interference. Low everywhere => structural class weakness. Guides the Thinness fix lever.");
     }
 };
 
