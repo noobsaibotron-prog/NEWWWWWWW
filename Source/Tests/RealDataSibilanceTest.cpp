@@ -919,6 +919,47 @@ public:
         }
         logMessage("  READ: WIN = smallest +thin with C1 ok AND Thinness MIN lifted across seeds (robust, not lucky).");
         logMessage("  '+0' must match the C1 candidate column. Nothing cemented - report to Codex.");
+
+        // ════════════════════════════════════════════════════════════════════════
+        // BLOCCO 2d (diagnostic, REPORT-ONLY - Codex-authorized): LEARNING-RATE sweep, aimed at the
+        // diagnosed cause (SGD instability). ONE variable = lr (a TEST recipe param, kLearningRate,
+        // NOT MLEngine). `combined` and kEpochs=600 and seeds unchanged. For EACH lr, train synth-only
+        // AND candidate at 3 seeds and evaluate the FULL C1 gate (all 8 classes + clean-FP) with the
+        // Muddiness-honest bar. lr=0.003 row reproduces the current C1 candidate column. NOTHING is
+        // cemented. If NO lr clears C1, the test-only recipe perimeter is exhausted (-> Thinness needs
+        // a model/training-side fix in production MLEngine, a separate scope).
+        // ════════════════════════════════════════════════════════════════════════
+        logMessage("");
+        logMessage("  ===== BLOCCO 2d LR sweep (combined, kEpochs=" + juce::String(kEpochs) + ", 3 seeds, FULL C1 per lr) =====");
+        logMessage("  lr     | Thinness         | Sibilance        | Resonance        | Muddiness        | clean-FP        | C1 (all 8 + cleanFP)");
+        logMessage("  -------+------------------+------------------+------------------+------------------+-----------------+--------------------");
+        auto aggS2d = [](const Agg& a){ return (juce::String(a.mean(), 1) + " [" + juce::String(a.mn) + ".." + juce::String(a.mx) + "]").paddedRight(' ', 16); };
+        for (float lr : { 0.003f, 0.002f, 0.0015f, 0.001f }) {
+            Agg so[8], ca[8], caCln;
+            for (uint32_t sd : seeds) {
+                MLEngine s; s.initialize(); s.initializeRandomWeightsForTests(sd); s.trainOnDataset(synthDataset, kEpochs, lr);
+                MLEngine c; c.initialize(); c.initializeRandomWeightsForTests(sd); c.trainOnDataset(combined,     kEpochs, lr);
+                for (int k = 0; k < 8; ++k) { so[k].add(recallN(s, k, kBigN)); ca[k].add(recallN(c, k, kBigN)); }
+                caCln.add(cleanFpN(c, kBigN));
+            }
+            juce::String fails;
+            for (int k = 0; k < 8; ++k) {
+                bool ok;
+                if (k == 3)      ok = ca[k].mean() >= 35.0 && ca[k].mean() >= so[k].mean();               // Sibilance
+                else if (k == 2) ok = ca[k].mean() >= so[k].mean() - 3.0;                                 // Muddiness honest bar
+                else             ok = ca[k].mean() >= shp[k] - 2.0 && ca[k].mean() >= so[k].mean() - 3.0; // other non-Sib
+                if (! ok) fails += " " + juce::String(clsNames[k]).substring(0, 4);
+            }
+            const bool clnOk = caCln.mean() <= 10.0 && caCln.mx <= 15;
+            if (! clnOk) fails += " cleanFP";
+            const juce::String flag = fails.isEmpty() ? "  C1 ok" : ("  FAIL:" + fails);
+            logMessage("  " + juce::String(lr, 4).paddedRight(' ', 6)
+                       + " | " + aggS2d(ca[5]) + " | " + aggS2d(ca[3]) + " | " + aggS2d(ca[0]) + " | " + aggS2d(ca[2])
+                       + " | " + (juce::String(caCln.mean(), 1) + " [" + juce::String(caCln.mn) + ".." + juce::String(caCln.mx) + "]").paddedRight(' ', 15)
+                       + " |" + flag);
+        }
+        logMessage("  READ: C1 ok at the smallest stable lr = Thinness robust. If none, the test-only recipe perimeter");
+        logMessage("  is exhausted -> Thinness needs a model/training-side fix (production MLEngine, separate scope).");
     }
 };
 
