@@ -207,6 +207,13 @@ public:
         root.findChildFiles(wavs, juce::File::findFiles, true, "*.wav");
         if (wavs.size() < 40) { logMessage("  SKIP: only " + juce::String(wavs.size()) + " wavs."); return; }
 
+        // Heavy diagnostic sweeps (REBALANCE + epoch-stability + Blocco 1/2/2b/2c/2d) re-train MANY
+        // models (a full run is ~60 trainings). They are gated behind AIEQ_SWEEPS=1; the DEFAULT
+        // RealData run does only the core (M2/M3/M3b/Phase B + the C1 PRE-FLIGHT GATE + RESULT) and
+        // stays fast. The negative sweep evidence lives in git history (commits 54ea6132..920d22c2)
+        // and the Blocco summaries above.
+        const bool heavySweeps = juce::SystemStats::getEnvironmentVariable("AIEQ_SWEEPS", "0").getIntValue() != 0;
+
         const juce::StringArray testSingers { "female9", "female8", "male11", "male10" };
         juce::Array<juce::File> trainPool, testPool;
         for (const auto& f : wavs)
@@ -545,7 +552,9 @@ public:
         // all FIXED) to find a point where Sibilance survives AND Resonance recovers — or conclude a model-
         // capacity tradeoff. Sibilance proxy = real held-out BOOSTED-frame recall at MLEngine level;
         // Resonance/Mud/Sib = faithful held-out gate. sp == full reuses the already-trained `trained`.
+        // HEAVY (re-trains models) -> gated behind AIEQ_SWEEPS so the default RealData run stays fast.
         // ════════════════════════════════════════════════════════════════════════
+        if (heavySweeps) {
         std::vector<std::vector<float>> testBoost;
         { std::mt19937 rB(31415); std::uniform_real_distribution<float> bD(6.0f, 14.0f);
           for (const auto& f : testFiles) { juce::AudioBuffer<float> a; double sr = 0; if (! loadMono(f, a, sr)) continue;
@@ -574,6 +583,7 @@ public:
         }
         logMessage("  READ: pick the row where Sib recall stays high AND Resonance returns near shipped(11)/synth-only(12).");
         logMessage("  If no row keeps both, it is a model-capacity tradeoff (bigger net / different training needed).");
+        } // end if (heavySweeps) — REBALANCE SWEEP
 
         // ════════════════════════════════════════════════════════════════════════
         // LOW-VARIANCE GATE (Codex): n=50 fixtures, 3 INIT seeds (kEpochs FIXED at 600). Report
@@ -648,10 +658,14 @@ public:
         if (c1pass && cleanOk)
             logMessage("  PHASE C1 RESULT: PASS — candidate clears the all-8 numeric gate (shippable pending C2 + Ableton).");
         else
-            logMessage("  PHASE C1 RESULT: FAIL - candidate NOT shippable. PASS: Resonance, Sibilance, Muddiness (bar "
-                       "redefined overfire-aware, Codex counter-signed), Boominess, BoxyMidrange, clean-FP. SOLE OPEN "
-                       "BLOCKER: Thinness (the real-sibilance mix regresses it vs synth-only). NEXT = Blocco 2 (Thinness "
-                       "protection via sibilance-count cap), THEN re-run C1 and re-enable the hard gate.");
+            logMessage("  PHASE C1 RESULT: FAIL - candidate NOT shippable. PASS: Resonance, Sibilance, Muddiness (honest "
+                       "bar, Codex counter-signed), Boominess, BoxyMidrange, clean-FP. SOLE OPEN BLOCKER: Thinness. "
+                       "Test-side recipe levers (cap/augment/lr) ALL NEGATIVE (run AIEQ_SWEEPS=1 for the evidence) -> "
+                       "Thinness needs a production-side MLEngine training fix (separate ticket). C1 stays report-only.");
+
+        // Heavy diagnostic sweeps below (epoch-stability + Blocco 1/2/2b/2c/2d) run ONLY with AIEQ_SWEEPS=1.
+        // The core above (incl. the C1 PRE-FLIGHT GATE + RESULT) always runs and is what the gate reads.
+        if (! heavySweeps) return;
 
         // SEPARATE AXIS — epoch stability (fixed seed 11, candidate): does recall move with training duration?
         logMessage("  --- epoch-stability axis (seed 11, candidate, n=" + juce::String(kBigN) + ") ---");
