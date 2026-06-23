@@ -840,6 +840,85 @@ public:
         }
         logMessage("  READ: synth-only stable & high => not seed variance. Same-seed drop synth-only->cand => sibilance");
         logMessage("  interference. Low everywhere => structural class weakness. Guides the Thinness fix lever.");
+
+        // ════════════════════════════════════════════════════════════════════════
+        // BLOCCO 2c (diagnostic, REPORT-ONLY - Codex-authorized): THINNESS AUGMENT. Add N synthetic
+        // Thinness POSITIVES (test-side, TRAINING-faithful: linear baseline + TRAINING tilt +
+        // SUBTRACTIVE relProm 14..22 dB cut, sigma 0.08*fc, fc in the Thinness range 80..300 Hz =
+        // the TRAINING Thinness shape, NOT the eval low-shelf -> no leakage) to the CANDIDATE
+        // `combined` (synth + real sibilance). ONE variable = N Thinness positives. Goal: anchor the
+        // class so the real-sibilance interference no longer destabilises it. Measured at full C1
+        // rigor (n=50, 3 seeds) under the C1 per-class gate; Thinness shown as mean[min..max] so the
+        // per-seed MIN is visible (Codex: must lift the MIN across seeds, not just the mean). Row
+        // "+0" reproduces the C1 candidate column. NOTHING cemented.
+        // ════════════════════════════════════════════════════════════════════════
+        auto buildThinPositive = [&](std::mt19937& rng) -> MLEngine::TrainingSample {
+            constexpr int   fft = 2048, bins = fft / 2;
+            constexpr float sr  = 44100.0f;
+            const float binHz = sr / (float) fft;
+            std::uniform_real_distribution<float> u01(0.0f, 1.0f);
+            std::normal_distribution<float> noise(0.0f, 0.02f);
+            std::uniform_real_distribution<float> tiltD(-4.5f, -1.5f);   // TRAINING tilt band (NOT eval)
+            const float fcMin = 80.0f, fcMax = 300.0f;                   // Thinness training range
+            const float fc = fcMin * std::pow(fcMax / fcMin, u01(rng));
+            const float strength = 0.6f + u01(rng) * 0.4f;
+            const float promDb = 14.0f + (strength - 0.6f) / 0.4f * 8.0f;     // relProm 14..22 dB
+            const float gain = juce::Decibels::decibelsToGain(-promDb);       // SUBTRACTIVE (Thinness cut)
+            const float sigmaHz = juce::jmax(30.0f, fc * 0.08f);              // training sigma (not broad)
+            const float slope = tiltD(rng);
+            std::vector<float> spec((size_t) bins, 0.0f);
+            for (int i = 0; i < bins; ++i) spec[(size_t) i] = juce::jmax(0.0f, 0.05f + noise(rng));
+            for (int i = 0; i < bins; ++i) { const float f = juce::jmax(20.0f, (float) i * binHz);
+                spec[(size_t) i] *= juce::Decibels::decibelsToGain(slope * std::log10(f / 100.0f)); }
+            for (int i = 0; i < bins; ++i) { const float f = (float) i * binHz; const float d = (f - fc) / sigmaHz;
+                spec[(size_t) i] = juce::jmax(0.0f, spec[(size_t) i] * (1.0f + (gain - 1.0f) * std::exp(-0.5f * d * d))); }
+            MLEngine::TrainingSample s;
+            s.melSpectrum = trained.melBandsFromSpectrumForTests(spec, sr);
+            s.problemTargets[(size_t) 5] = 1.0f;   // Thinness
+            s.frequencyTargets[(size_t) 5] = juce::jlimit(0.0f, 1.0f, std::log(fc / fcMin) / std::log(fcMax / fcMin));
+            return s;
+        };
+        logMessage("");
+        logMessage("  ===== BLOCCO 2c Thinness AUGMENT: +N synthetic Thinness positives into combined (n="
+                   + juce::String(kBigN) + ", 3 seeds, " + juce::String(kEpochs) + " ep) =====");
+        logMessage("  +thin | Thinness(mn..mx)  | Sibilance        | Resonance        | Muddiness        | Boom | Boxy | clean-FP        | C1");
+        logMessage("  ------+-------------------+------------------+------------------+------------------+------+------+-----------------+----");
+        auto aggS2c = [](const Agg& a){ return (juce::String(a.mean(), 1) + " [" + juce::String(a.mn) + ".." + juce::String(a.mx) + "]").paddedRight(' ', 16); };
+        for (int nThin : { 0, 50, 100, 200 }) {
+            std::mt19937 thRng(0x7417Eu);
+            auto ds = combined;
+            for (int i = 0; i < nThin; ++i) ds.push_back(buildThinPositive(thRng));
+            Agg thin, sib, res, mud, boom, boxy, cln;
+            for (uint32_t sd : seeds) {
+                MLEngine ca; ca.initialize(); ca.initializeRandomWeightsForTests(sd);
+                ca.trainOnDataset(ds, kEpochs, kLearningRate);
+                thin.add(recallN(ca, 5, kBigN)); sib.add(recallN(ca, 3, kBigN));
+                res.add(recallN(ca, 0, kBigN));  mud.add(recallN(ca, 2, kBigN));
+                boom.add(recallN(ca, 4, kBigN)); boxy.add(recallN(ca, 6, kBigN));
+                cln.add(cleanFpN(ca, kBigN));
+            }
+            const bool thinOk = thin.mean() >= shp[5] - 2.0 && thin.mean() >= soAgg[5].mean() - 3.0;
+            const bool sibOk  = sib.mean()  >= 35.0 && sib.mean() >= soAgg[3].mean();
+            const bool resOk  = res.mean()  >= shp[0] - 2.0 && res.mean() >= soAgg[0].mean() - 3.0;
+            const bool mudOk  = mud.mean()  >= soAgg[2].mean() - 3.0;   // Muddiness honest bar
+            const bool boomOk = boom.mean() >= shp[4] - 2.0 && boom.mean() >= soAgg[4].mean() - 3.0;
+            const bool boxyOk = boxy.mean() >= shp[6] - 2.0 && boxy.mean() >= soAgg[6].mean() - 3.0;
+            const bool clnOk  = cln.mean()  <= 10.0 && cln.mx <= 15;
+            const bool allOk  = thinOk && sibOk && resOk && mudOk && boomOk && boxyOk && clnOk;
+            juce::String flag;
+            if (allOk) flag = "  C1 ok";
+            else { if (! sibOk) flag += " Sib"; if (! thinOk) flag += " Thin"; if (! resOk) flag += " Res";
+                   if (! mudOk) flag += " Mud"; if (! boomOk) flag += " Boom"; if (! boxyOk) flag += " Boxy";
+                   if (! clnOk) flag += " cleanFP"; flag = "  FAIL:" + flag; }
+            logMessage("  " + (juce::String(nThin)).paddedRight(' ', 5)
+                       + " | " + aggS2c(thin) + " | " + aggS2c(sib) + " | " + aggS2c(res) + " | " + aggS2c(mud)
+                       + " |  " + juce::String(boom.mean(), 0).paddedRight(' ', 3)
+                       + " |  " + juce::String(boxy.mean(), 0).paddedRight(' ', 3)
+                       + " | " + (juce::String(cln.mean(), 1) + " [" + juce::String(cln.mn) + ".." + juce::String(cln.mx) + "]").paddedRight(' ', 15)
+                       + " |" + flag);
+        }
+        logMessage("  READ: WIN = smallest +thin with C1 ok AND Thinness MIN lifted across seeds (robust, not lucky).");
+        logMessage("  '+0' must match the C1 candidate column. Nothing cemented - report to Codex.");
     }
 };
 
