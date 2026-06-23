@@ -197,6 +197,38 @@ public:
         freqNet_fc1->randomize(rng);    freqNet_fc2->randomize(rng);
         problemNet_fc3->setBias({ -0.5f, -0.3f, -0.4f, -0.3f, -0.5f, -0.6f, -0.5f, -1.0f });
     }
+
+    // Test-only TRAINING-TRAJECTORY diagnostics (PROD-TICKET Blocco 0 — Thinness failure-signature).
+    // Pure observation, NO production behaviour. trainStepForTests drives the epoch loop from a test so
+    // it can checkpoint; the forward hook mirrors trainStep's forward EXACTLY (same matMul/ReLU, no
+    // inference preprocess) so the logits/activations match what trainStep's gradient actually sees.
+    void trainStepForTests(const TrainingSample& sample, float learningRate) { trainStep(sample, learningRate); }
+
+    struct ProblemForwardDiag { std::array<float, numProblemTypes> logits{}; float h1ActiveRatio = 0.0f; float h2ActiveRatio = 0.0f; };
+    ProblemForwardDiag problemForwardDiagForTests(const std::vector<float>& mel) const
+    {
+        auto z1 = matMul(*problemNet_fc1, mel);  auto h1 = applyRelu(z1);   // mirrors trainStep forward
+        auto z2 = matMul(*problemNet_fc2, h1);   auto h2 = applyRelu(z2);
+        auto z3 = matMul(*problemNet_fc3, h2);                              // pre-sigmoid logits
+        ProblemForwardDiag d;
+        for (int i = 0; i < numProblemTypes; ++i) d.logits[static_cast<size_t>(i)] = z3[static_cast<size_t>(i)];
+        int a1 = 0; for (float v : h1) if (v > 0.0f) ++a1;
+        int a2 = 0; for (float v : h2) if (v > 0.0f) ++a2;
+        d.h1ActiveRatio = h1.empty() ? 0.0f : static_cast<float>(a1) / static_cast<float>(h1.size());
+        d.h2ActiveRatio = h2.empty() ? 0.0f : static_cast<float>(a2) / static_cast<float>(h2.size());
+        return d;
+    }
+
+    // L2 norm of the problemNet_fc3 weight row feeding output `outIdx` (final-layer class strength).
+    float problemFc3RowL2NormForTests(int outIdx) const
+    {
+        const auto& w = problemNet_fc3->getWeights();
+        const int in = problemNet_fc3->getInputSize();
+        if (outIdx < 0 || static_cast<size_t>((outIdx + 1) * in) > w.size()) return 0.0f;
+        double s = 0.0;
+        for (int i = 0; i < in; ++i) { const float v = w[static_cast<size_t>(outIdx * in + i)]; s += static_cast<double>(v) * v; }
+        return static_cast<float>(std::sqrt(s));
+    }
    #endif
 
     //==========================================================================

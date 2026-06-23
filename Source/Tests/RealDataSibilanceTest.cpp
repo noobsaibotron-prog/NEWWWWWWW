@@ -663,6 +663,102 @@ public:
                        "Test-side recipe levers (cap/augment/lr) ALL NEGATIVE (run AIEQ_SWEEPS=1 for the evidence) -> "
                        "Thinness needs a production-side MLEngine training fix (separate ticket). C1 stays report-only.");
 
+        // ════════════════════════════════════════════════════════════════════════
+        // PROD-TICKET BLOCCO 0 (diagnostic, REPORT-ONLY) — Thinness FAILURE-SIGNATURE.
+        // Measure-first for the production-side Thinness fix (CODEX_BRIEF_THINNESS_PROD.txt). NO
+        // production change / NO fix / NO ml_weights.bin: test-only forward hooks observe the Thinness
+        // output's TRAINING TRAJECTORY across checkpoints, synth-only (stable) vs combined (fragile),
+        // 3 seeds. The loop replicates MLEngine::trainOnDataset EXACTLY (init+seed, rng(1234), per-epoch
+        // shuffle, trainStep) — keep in lockstep; it only stops to MEASURE. Gated behind AIEQ_BLOCCO0=1
+        // so it runs on its own (NOT bundled with the historical AIEQ_SWEEPS levers, which are closed).
+        // Picks the production lever from evidence; applies NONE. STOP after the table.
+        // ════════════════════════════════════════════════════════════════════════
+        if (juce::SystemStats::getEnvironmentVariable("AIEQ_BLOCCO0", "0").getIntValue() != 0)
+        {
+            constexpr int kThin = 5;                              // ProblemType::Thinness
+            const float kProbScale = 1.0f / 8.0f;                 // == trainStep probScale (1/numProblemTypes)
+            const int   kDiagFix   = 24;
+            const std::vector<int> ckpts = { 0, 50, 100, 200, 400, 600 };
+
+            auto measureThin = [&](MLEngine& m, const std::vector<MLEngine::TrainingSample>& ds)
+            {
+                auto fixStats = [&](int idx, double& lg, double& pr, double& r1, double& r2)
+                {
+                    std::mt19937 r(static_cast<unsigned>(72000 + idx));
+                    double sl = 0, sp = 0, s1 = 0, s2 = 0;
+                    for (int v = 0; v < kDiagFix; ++v) {
+                        auto mel = m.melBandsFromSpectrumForTests(makeFixture(idx, r), 44100.0);
+                        auto d   = m.problemForwardDiagForTests(mel);
+                        const double z = d.logits[static_cast<size_t>(kThin)];
+                        sl += z; sp += 1.0 / (1.0 + std::exp(-z)); s1 += d.h1ActiveRatio; s2 += d.h2ActiveRatio;
+                    }
+                    lg = sl / kDiagFix; pr = sp / kDiagFix; r1 = s1 / kDiagFix; r2 = s2 / kDiagFix;
+                };
+                double lFix = 0, pFix = 0, h1 = 0, h2 = 0, lCln = 0, pCln = 0, dN1 = 0, dN2 = 0;
+                fixStats(kThin, lFix, pFix, h1, h2);
+                fixStats(-1,    lCln, pCln, dN1, dN2);
+                double d3pos = 0, d3neg = 0; int nPos = 0, nNeg = 0;
+                for (const auto& s : ds) {
+                    const double z = m.problemForwardDiagForTests(s.melSpectrum).logits[static_cast<size_t>(kThin)];
+                    const double prob = 1.0 / (1.0 + std::exp(-z));
+                    const float  tgt  = s.problemTargets[static_cast<size_t>(kThin)];
+                    const double delta = kProbScale * (prob - tgt);
+                    if (tgt >= 0.5f) { d3pos += delta; ++nPos; } else { d3neg += delta; ++nNeg; }
+                }
+                return std::array<double, 9>{ lFix, pFix, lCln, pCln,
+                                              nPos ? d3pos / nPos : 0.0, nNeg ? d3neg / nNeg : 0.0,
+                                              m.problemFc3RowL2NormForTests(kThin), h1, h2 };
+            };
+
+            auto runDiag = [&](const char* tag, const std::vector<MLEngine::TrainingSample>& ds, uint32_t sd)
+            {
+                int nPos = 0, nNeg = 0;
+                for (const auto& s : ds) { if (s.problemTargets[static_cast<size_t>(kThin)] >= 0.5f) ++nPos; else ++nNeg; }
+                MLEngine m; m.initialize(); m.initializeRandomWeightsForTests(sd);
+                std::vector<MLEngine::TrainingSample> shuffled = ds;
+                std::mt19937 rng(1234);                              // == MLEngine::trainOnDataset
+                logMessage("");
+                logMessage(juce::String("  [") + tag + ", seed " + juce::String(static_cast<int>(sd))
+                           + "]  Thin pos/neg in train = " + juce::String(nPos) + "/" + juce::String(nNeg)
+                           + "   (training-transform view; NOT the recall path)");
+                logMessage("    epoch | logitThin(fix) prob | logitThin(cln) prob |  d3+/pos   d3-/neg  | fc3norm | reluH1 reluH2");
+                auto emit = [&](int ep, const std::array<double, 9>& s){
+                    logMessage("    " + juce::String(ep).paddedLeft(' ', 5)
+                               + " | " + juce::String(s[0], 2).paddedLeft(' ', 8) + " " + juce::String(s[1], 3)
+                               + " | " + juce::String(s[2], 2).paddedLeft(' ', 8) + " " + juce::String(s[3], 3)
+                               + " | " + juce::String(s[4], 5).paddedLeft(' ', 8) + " " + juce::String(s[5], 5).paddedLeft(' ', 8)
+                               + " | " + juce::String(s[6], 3).paddedLeft(' ', 6)
+                               + " | " + juce::String(s[7], 2).paddedLeft(' ', 5) + "  " + juce::String(s[8], 2).paddedLeft(' ', 5));
+                };
+                size_t ci = 0;
+                if (! ckpts.empty() && ckpts[0] == 0) { emit(0, measureThin(m, ds)); ci = 1; }
+                for (int e = 0; e < kEpochs; ++e) {
+                    std::shuffle(shuffled.begin(), shuffled.end(), rng);
+                    for (const auto& s : shuffled) m.trainStepForTests(s, kLearningRate);
+                    if (ci < ckpts.size() && (e + 1) == ckpts[ci]) { emit(e + 1, measureThin(m, ds)); ++ci; }
+                }
+            };
+
+            logMessage("");
+            logMessage("  ===== PROD-TICKET BLOCCO 0: Thinness failure-signature (synth-only vs combined, 3 seeds) =====");
+            for (uint32_t sd : seeds) {
+                runDiag("synth-only", synthDataset, sd);
+                runDiag("combined",   combined,     sd);
+            }
+            logMessage("");
+            logMessage("  READ (signature only — does NOT pick or apply a lever; the production ticket A/Bs them):");
+            logMessage("   - PRIMARY signature = INSTABILITY/INTERFERENCE during training: logitThin(fix) oscillates and the");
+            logMessage("     combined mix lands it on a LOWER band than synth-only (seed lottery), NOT a total loss of signal.");
+            logMessage("   - Negatives weigh heavily on the Thinness gradient, but this also holds in synth-only -> it is PART");
+            logMessage("     of the story, not the whole cause.");
+            logMessage("   - GLOBAL Thinness weight is RISKY (amplifies positives AND negatives). POSITIVE-ONLY Thinness weight");
+            logMessage("     is the more plausible class-weight lever, but MUST be tested against clean-FP (brief refinement #2).");
+            logMessage("   - No weight-collapse, no dead-ReLU (fc3norm grows, reluH1/H2 healthy): weight-decay stays PLAUSIBLE as");
+            logMessage("     a variance reducer (NOT as a fix for vanishing weights); capacity is last resort.");
+            logMessage("   - Suggested A/B order (Codex): mini-batch averaging or light weight-decay first; positive-only Thinness");
+            logMessage("     weight only if that is not enough; capacity last. STOP: signature only, no fix (Blocco 0 first).");
+        }
+
         // Heavy diagnostic sweeps below (epoch-stability + Blocco 1/2/2b/2c/2d) run ONLY with AIEQ_SWEEPS=1.
         // The core above (incl. the C1 PRE-FLIGHT GATE + RESULT) always runs and is what the gate reads.
         if (! heavySweeps) return;
