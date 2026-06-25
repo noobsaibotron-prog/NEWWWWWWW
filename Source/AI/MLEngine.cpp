@@ -1196,12 +1196,21 @@ bool MLEngine::loadWeights(const juce::File& modelFile)
             return total;
         }();
         const auto totalBytes = stream.getTotalLength();
-        const auto expectedBytes = static_cast<juce::int64>(expectedLengthFloats * sizeof(float));
-        if (totalBytes > 0 && expectedBytes > 0 && totalBytes < expectedBytes)
+        // P0-fix: a single record on disk is magic(4) + version(4) + floats. Compute the EXACT size.
+        const auto expectedTotalBytes = static_cast<juce::int64>(8 + expectedLengthFloats * sizeof(float));
+        if (totalBytes > 0 && expectedTotalBytes > 0 && totalBytes < expectedTotalBytes)
         {
-            AIEQ_LOG_ERROR("ML weights file too small: expected at least " + juce::String(expectedBytes) +
+            AIEQ_LOG_ERROR("ML weights file too small: expected " + juce::String(expectedTotalBytes) +
                            " bytes, got " + juce::String(totalBytes));
             return false;
+        }
+        if (totalBytes > expectedTotalBytes && expectedTotalBytes > 0)
+        {
+            // TRAILING DATA (e.g. a multi-record / concatenated blob, as the shipped file currently is).
+            // Do NOT silently accept it: warn, then load the FIRST record only (backward-compatible).
+            AIEQ_LOG_WARNING("ML weights file has trailing data: " + juce::String(totalBytes) + " bytes vs expected "
+                             + juce::String(expectedTotalBytes) + " (~" + juce::String((double) totalBytes / (double) expectedTotalBytes, 1)
+                             + " concatenated records). Loading the FIRST record only; re-save to clean it.");
         }
         
         // Read magic number
@@ -1300,7 +1309,13 @@ bool MLEngine::saveWeights(const juce::File& modelFile) const
         juce::FileOutputStream stream(modelFile);
         if (!stream.openedOk())
             return false;
-        
+
+        // P0-fix: juce::FileOutputStream positions at the END of an existing file, so re-saving over a
+        // path would APPEND (concatenating models — the cause of the 2x/4x-size blobs). Truncate to 0
+        // first so every save produces exactly ONE record.
+        stream.setPosition(0);
+        stream.truncate();
+
         // Write magic number
         stream.writeInt(static_cast<int>(0x4D4C4551)); // "MLEQ"
         
