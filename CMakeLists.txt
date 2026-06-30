@@ -1038,6 +1038,7 @@ if(HAVE_JUCE)
         Source/Tests/AICorpusTest.cpp
         Source/Tests/AIFrontEndTest.cpp
         Source/Tests/RealDataSibilanceTest.cpp
+        Source/Tests/ManualClipProbeTest.cpp
         Source/Tests/TestMain.cpp
     )
     target_compile_features(AIEqualizerPro_AI_Tests PRIVATE cxx_std_20)
