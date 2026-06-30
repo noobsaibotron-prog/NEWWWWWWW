@@ -1,0 +1,77 @@
+================================================================================
+CODEX_BRIEF_RESONANCE_ASSIST_FIX  —  POSTMORTEM / NO-GO
+================================================================================
+
+Status: ARCHIVED. This is no longer an active implementation brief.
+
+Summary
+-------
+The proposed runtime path was:
+
+  ML-primary + heuristic Resonance Assist
+
+That path is now rejected for shipping. VOXDIAG1-6 showed that the available
+heuristic features do not reliably separate vocal formants from true resonances
+inside a single signal:
+
+  - confidence did not separate clean/sibilant/resonant voice;
+  - per-peak z-score, prominence, stability, and consistency overlapped;
+  - temporal persistence rescued formants as if they were resonances;
+  - occupancy and local contrast did not provide a runtime-safe separator;
+  - the apparent separation seen earlier depended on a reference-like
+    comparison across files, which is not available in normal runtime use.
+
+Decision
+--------
+Do not consolidate Resonance Assist as a runtime fix.
+
+Do not ship:
+
+  - AIEQ_RESASSIST_GATE;
+  - confidence-gated Resonance Assist;
+  - occupancy/local-contrast Resonance Assist;
+  - VOXDIAG runtime logic;
+  - changelog claims that vocal Resonance is solved.
+
+Current interim direction
+-------------------------
+The current interim build is intentionally conservative:
+
+  - seed22 ML weights;
+  - MLOnly default backend;
+  - Sibilance HF-local veto retained;
+  - heuristic Resonance Assist removed from the ML path;
+  - Problem Panel visual hold for transient Sibilance;
+  - Resonance-on-voice and instrument resonance recall are FutureModel debt.
+
+Manual validation so far
+------------------------
+Ableton smoke test:
+
+  - clean female vocal: no false problem;
+  - sibilant vocal: Sibilance appears, no dominant Resonance;
+  - resonant vocal: no detection, accepted as known debt for the interim.
+
+Offline probe
+-------------
+Use ManualProbe for first-pass clip screening before Ableton:
+
+  AIEQ_PROBE_DIR=/path/to/wavs \
+  AIEQ_PROBE_OUT=/path/to/probe_results.csv \
+  build-mac/Release/bin/AIEqualizerPro_AI_Tests --category=ManualProbe -v
+
+Interpretation:
+
+  - LIVE final pending: closest to final Problem Panel state;
+  - LIVE present-over-time: detections that surfaced under live persistence;
+  - FORCE frame-level recognitions: raw frame-level signal only, not UI behavior.
+
+Future work
+-----------
+Open a separate model/training ticket for:
+
+  Resonance ML-on-vocals/instruments
+
+That ticket should define data, labels, metrics, and Ableton validation cases. It
+must not revive the rejected runtime heuristic without new evidence.
+================================================================================

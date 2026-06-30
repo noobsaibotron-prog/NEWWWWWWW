@@ -1,0 +1,75 @@
+================================================================================
+CODEX_BRIEF_MANUAL_PROBE  —  env-gated offline clip report
+================================================================================
+
+Purpose
+-------
+ManualProbe is a report-only test utility for screening real WAV clips before
+opening Ableton. It answers:
+
+  "What does the current AI path produce on this folder of clips?"
+
+It is not a scientific benchmark and it is not a shipping gate.
+
+Command
+-------
+From the repo root:
+
+  AIEQ_PROBE_DIR=/Users/marco/Desktop/AIEQ_Ableton_Test_Clips/processed \
+  AIEQ_PROBE_OUT=/Users/marco/Desktop/AIEQ_Ableton_Test_Clips/probe_results.csv \
+  build-mac/Release/bin/AIEqualizerPro_AI_Tests --category=ManualProbe -v
+
+Optional:
+
+  AIEQ_PROBE_PROFILE=Generic
+  AIEQ_PROBE_WEIGHTS=/path/to/ml_weights.bin
+
+Profiles:
+
+  Generic, Vocals, Drums, Bass, Synth, Master, EDM, Techno
+
+What It Uses
+------------
+ManualProbe runs test-only code:
+
+  - OfflineAnalysisPipeline;
+  - real AIEngine;
+  - current shipped/default ML weights unless AIEQ_PROBE_WEIGHTS is set;
+  - MLOnly backend;
+  - source profile from AIEQ_PROBE_PROFILE.
+
+It does not modify plugin runtime behavior.
+
+Columns
+-------
+LIVE final pending:
+  Closest to final Problem Panel state after the clip.
+
+LIVE present-over-time:
+  Detections that appeared during the clip under live persistence.
+
+FORCE frame-level recognitions:
+  Raw frame-level model signal. This bypasses live temporal persistence and is
+  useful for debugging weak/transient recognitions. It is not equivalent to UI.
+
+How To Judge
+------------
+Use the probe as a first-pass filter:
+
+  - if LIVE columns show obvious nonsense on clean material, investigate;
+  - if LIVE is empty but FORCE is active, audition only that clip in Ableton;
+  - if both LIVE and FORCE are empty on an intentionally obvious case, treat it
+    as a recall gap, not a false positive problem.
+
+Current seed22 interpretation
+-----------------------------
+On the initial 8-clip non-vocal matrix, seed22 MLOnly is conservative:
+
+  - no stable LIVE final pending problems on all 8 clips;
+  - weak/transient Boxyness and Harshness signals appear at frame level;
+  - Resonance remains FutureModel debt.
+
+This supports the interim claim:
+
+  clean/safe and conservative, not yet a strong general instrument detector.
+================================================================================
