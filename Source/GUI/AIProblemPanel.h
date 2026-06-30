@@ -96,6 +96,7 @@ public:
         clearBtn.setDescription(tr("Dismiss every detected problem without applying fixes",
                                    "Dismiss every detected problem without applying fixes"));
         clearBtn.onClick = [this]() { 
+            transientVisualHolds.clear();
             processor.getAIEngine().clearCorrections();
             updateProblemList();
         };
@@ -260,6 +261,9 @@ public:
             statusLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::accentYellow);
         }
 
+        if (! transientVisualHolds.empty())
+            shouldUpdate = true;
+
         if (shouldUpdate)
         {
             updateProblemList();
@@ -336,11 +340,14 @@ public:
             menu.showMenuAsync(juce::PopupMenu::Options(), [this, row, p](int result) {
                 if (result == 1) {
                     if (!canApplyNow()) return;
+                    if (! isProblemLive(p)) { removeTransientVisualHold(p); updateProblemList(); return; }
                     // Apply ONLY this single correction, not all approved ones
                     processor.applySingleCorrection(p);
+                    removeTransientVisualHold(p);
                     updateProblemList();
                 } else if (result == 2) {
                     rejectCorrectionByMatch(p);
+                    removeTransientVisualHold(p);
                     updateProblemList();
                 } else if (result == 3) {
                     showFullAnalysis(row);
@@ -355,8 +362,10 @@ public:
         {
             if (!canApplyNow()) return;
             const auto& p = problems[row];
+            if (! isProblemLive(p)) { removeTransientVisualHold(p); updateProblemList(); return; }
             // Apply ONLY this single correction, not all approved ones
             processor.applySingleCorrection(p);
+            removeTransientVisualHold(p);
             updateProblemList();
         }
     }
@@ -877,6 +886,8 @@ private:
     void updateProblemList()
     {
         auto raw = processor.getAIEngine().getPendingCorrections();
+        const auto liveProblemCount = raw.size();
+        mergeTransientVisualHolds(raw);
         problems = raw;
         
         // Sort by priority (severity * confidence) for display
@@ -898,7 +909,11 @@ private:
         const auto newIssuesMsg = (n == 1)
             ? juce::String::formatted(tr("%d nuovo problema rilevato", "%d new problem detected").toRawUTF8(), n)
             : juce::String::formatted(tr("%d nuovi problemi rilevati", "%d new problems detected").toRawUTF8(), n);
-        juce::AccessibilityHandler::postAnnouncement(newIssuesMsg, juce::AccessibilityHandler::AnnouncementPriority::high);
+        if (n != lastAnnouncedProblemCount)
+        {
+            lastAnnouncedProblemCount = n;
+            juce::AccessibilityHandler::postAnnouncement(newIssuesMsg, juce::AccessibilityHandler::AnnouncementPriority::high);
+        }
         
         if (n == 0)
         {
@@ -911,7 +926,77 @@ private:
             statusLabel.setText(juce::String::formatted(fmt.toRawUTF8(), n), juce::dontSendNotification);
         }
         
-        autoFixBtn.setEnabled(n > 0);
+        autoFixBtn.setEnabled(liveProblemCount > 0);
+    }
+
+    static bool shouldHoldVisually(const AIEngine::Correction& c) noexcept
+    {
+        return c.type == AIEngine::ProblemType::Sibilance;
+    }
+
+    static bool isSameDisplayedProblem(const AIEngine::Correction& a,
+                                       const AIEngine::Correction& b) noexcept
+    {
+        if (a.type != b.type)
+            return false;
+
+        const float freqRatio = std::abs(std::log2(a.frequency / juce::jmax(20.0f, b.frequency)));
+        const bool freqMatch = freqRatio < 0.05f;
+        const bool gainMatch = std::abs(a.suggestedGain - b.suggestedGain) < 0.5f;
+        return freqMatch && gainMatch;
+    }
+
+    void mergeTransientVisualHolds(std::vector<AIEngine::Correction>& raw)
+    {
+        const auto now = juce::Time::currentTimeMillis();
+
+        for (const auto& c : raw)
+        {
+            if (! shouldHoldVisually(c))
+                continue;
+
+            auto it = std::find_if(transientVisualHolds.begin(), transientVisualHolds.end(),
+                [&c](const TransientVisualHold& hold) { return isSameDisplayedProblem(hold.correction, c); });
+
+            if (it != transientVisualHolds.end())
+            {
+                it->correction = c;
+                it->expiresAtMs = now + kTransientVisualHoldMs;
+            }
+            else
+            {
+                transientVisualHolds.push_back({ c, now + kTransientVisualHoldMs });
+            }
+        }
+
+        transientVisualHolds.erase(
+            std::remove_if(transientVisualHolds.begin(), transientVisualHolds.end(),
+                [now](const TransientVisualHold& hold) { return hold.expiresAtMs <= now; }),
+            transientVisualHolds.end());
+
+        for (const auto& hold : transientVisualHolds)
+        {
+            const auto alreadyLive = std::any_of(raw.begin(), raw.end(),
+                [&hold](const AIEngine::Correction& c) { return isSameDisplayedProblem(c, hold.correction); });
+
+            if (! alreadyLive)
+                raw.push_back(hold.correction);
+        }
+    }
+
+    void removeTransientVisualHold(const AIEngine::Correction& target)
+    {
+        transientVisualHolds.erase(
+            std::remove_if(transientVisualHolds.begin(), transientVisualHolds.end(),
+                [&target](const TransientVisualHold& hold) { return isSameDisplayedProblem(hold.correction, target); }),
+            transientVisualHolds.end());
+    }
+
+    bool isProblemLive(const AIEngine::Correction& target) const
+    {
+        const auto pending = processor.getAIEngine().getPendingCorrections();
+        return std::any_of(pending.begin(), pending.end(),
+            [&target](const AIEngine::Correction& p) { return isSameDisplayedProblem(p, target); });
     }
     
     void updateButtons()
@@ -932,22 +1017,23 @@ private:
 
     void showAutoFixConfirmation()
     {
-        if (problems.empty()) return;
+        auto actionableProblems = processor.getAIEngine().getPendingCorrections();
+        if (actionableProblems.empty()) return;
         if (fixAllInProgress) return;
         fixAllInProgress = true;
         autoFixBtn.setEnabled(false);
 
-        juce::String msg = tr("Apply ", "Apply ") + juce::String(problems.size()) + tr(" corrections?\n\n", " corrections?\n\n");
+        juce::String msg = tr("Apply ", "Apply ") + juce::String(actionableProblems.size()) + tr(" corrections?\n\n", " corrections?\n\n");
 
-        for (size_t i = 0; i < juce::jmin(problems.size(), size_t(5)); ++i)
+        for (size_t i = 0; i < juce::jmin(actionableProblems.size(), size_t(5)); ++i)
         {
-            const auto& p = problems[i];
+            const auto& p = actionableProblems[i];
             msg += "• " + AIEngine::getProblemTypeName(p.type) + " @ " + formatFreq(p.frequency);
             msg += " → " + juce::String(p.suggestedGain, 1) + " dB\n";
         }
 
-        if (problems.size() > 5)
-            msg += "\n" + tr("...and ", "...and ") + juce::String(problems.size() - 5) + tr(" more\n", " more\n");
+        if (actionableProblems.size() > 5)
+            msg += "\n" + tr("...and ", "...and ") + juce::String(actionableProblems.size() - 5) + tr(" more\n", " more\n");
 
         msg += "\n" + tr("You can UNDO these changes.", "You can UNDO these changes.");
 
@@ -960,6 +1046,7 @@ private:
                     if (!canApplyNow()) { updateProblemList(); return; }
                     processor.getAIEngine().approveAllCorrections();
                     processor.applyAICorrections();
+                    transientVisualHolds.clear();
                     updateProblemList();
                     juce::AccessibilityHandler::postAnnouncement(
                         tr("Corrections applied", "Corrections applied"),
@@ -1016,8 +1103,10 @@ private:
         if (!canApplyNow()) return;
 
         const auto& p = problems[row];
+        if (! isProblemLive(p)) { removeTransientVisualHold(p); updateProblemList(); return; }
         // Apply ONLY this single correction, not all approved ones
         processor.applySingleCorrection(p);
+        removeTransientVisualHold(p);
         updateProblemList();
     }
 
@@ -1127,11 +1216,19 @@ private:
     static constexpr bool kMultiTrackUIEnabled = false;
     
     std::vector<AIEngine::Correction> problems;
+    struct TransientVisualHold
+    {
+        AIEngine::Correction correction;
+        juce::int64 expiresAtMs = 0;
+    };
+    static constexpr juce::int64 kTransientVisualHoldMs = 900;
+    std::vector<TransientVisualHold> transientVisualHolds;
     std::atomic<bool> needsUpdate { true };
     juce::int64 lastApplyTimeMs { 0 };      // throttle rapid apply clicks (300ms window)
     bool fixAllInProgress { false };         // guard for FIX ALL re-entry
     float lastStrength { -1.0f };            // detect strength knob changes for live gain preview
     float lastSensitivity { -1.0f };         // detect sensitivity changes for re-analyze feedback
+    int lastAnnouncedProblemCount { -1 };
 
     /** Returns true if enough time has passed since the last apply (300ms). */
     bool canApplyNow()
