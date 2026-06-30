@@ -60,8 +60,8 @@ public:
     };
 
     /** Detection backend routing mode.
-        Hybrid   — ML first, then heuristic supplement (shipping default).
-        MLOnly   — pure ML, no heuristic fallback (for accuracy tests).
+        Hybrid   — ML first, then heuristic supplement when a validated supplement exists.
+        MLOnly   — pure ML, no heuristic fallback (interim shipping default).
         HeuristicOnly — classical DSP only, ML path never runs. */
     enum class DetectionBackendMode
     {
@@ -809,8 +809,8 @@ private:
     // Resolved ML backend status (see MLBackendStatus). Set in prepare()/test hooks.
     std::atomic<int> mlBackendStatus { static_cast<int>(MLBackendStatus::NotInitialized) };
 
-    // Detection backend mode (default Hybrid for shipping)
-    std::atomic<int> detectionBackendMode { static_cast<int>(DetectionBackendMode::Hybrid) };
+    // Detection backend mode: seed22 interim ships ML-only until Resonance-on-voice is model-owned.
+    std::atomic<int> detectionBackendMode { static_cast<int>(DetectionBackendMode::MLOnly) };
 
     // Test hooks state
     std::atomic<int> forceMLDetectionForTests { -1 }; // -1 = not set, 0 = force off, 1 = force on

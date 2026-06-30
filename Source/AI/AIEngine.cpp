@@ -3195,10 +3195,12 @@ void AIEngine::detectProblemsWithML()
                                                    { { 150.0f, 280.0f }, { 850.0f, 1600.0f } }) >= kBandExcessDb;
                     break;
                 case ProblemType::Sibilance:
-                    // band 5000..10000 vs 2000..5000 reference
-                    // P4-BUG-001: both bands from the SINGLE captured frame (scratchTemp).
+                    // HF-local veto: sib band vs 3-5k and 10-14k flanking reference.
+                    // The old 2-5k reference is hot in vocals and prunes true sibilance.
+                    // P4-BUG-001: all bands from the SINGLE captured frame (scratchTemp).
                     keep = (bandEnergyFromSpectrum(scratchTemp, thresholds.sibilanceLow, thresholds.sibilanceHigh)
-                            - bandEnergyFromSpectrum(scratchTemp, 2000.0f, 5000.0f)) >= kBandExcessDb;
+                            - 0.5f * (bandEnergyFromSpectrum(scratchTemp, 3000.0f, 5000.0f)
+                                    + bandEnergyFromSpectrum(scratchTemp, 10000.0f, 14000.0f))) >= kBandExcessDb;
                     break;
                 case ProblemType::LowEndBoom:
                     keep = computeTrendBandExcess(kBoomLo, kBoomHi,
@@ -3245,12 +3247,10 @@ void AIEngine::detectProblemsWithML()
         pendingCorrections.push_back(c);
     }
 
-    // Heuristic supplement: only in Hybrid mode (skip in MLOnly)
-    auto mode = static_cast<DetectionBackendMode>(detectionBackendMode.load(std::memory_order_relaxed));
-    if (mode == DetectionBackendMode::Hybrid)
-    {
-        detectResonances(thresholds.resonanceThreshold * (1.0f - sensitivity * 0.5f));
-    }
+    // Interim seed22 build: no heuristic Resonance Assist. VOXDIAG1-6 showed that,
+    // on vocals, the spectral resonance detector cannot reliably separate formants
+    // from true resonances without a reference signal. Resonance-on-voice therefore
+    // remains a model-side follow-up rather than a runtime heuristic supplement.
 
     // Sort by type and frequency first, so std::unique can find all duplicates
     // (std::unique only removes consecutive duplicates)
