@@ -221,3 +221,5 @@ test_*.bat
 
 # Extra local build dir
 build-aitest/
+build-san/
+build-tsan/

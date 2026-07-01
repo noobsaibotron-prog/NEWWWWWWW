@@ -1,0 +1,16 @@
+# UBSan suppressions — JUCE's OWN bundled unit tests only. Product code (Source/*) is NEVER suppressed.
+#
+# WHY these are unavoidable: JUCE compiles its own unit tests into the binary (they are gated by
+# JUCE_UNIT_TESTS, which we must define for our own test-only hooks) and registers its SIMD test in
+# category "DSP" — the SAME category as our DSP tests. So `--category=DSP` necessarily also runs
+# juce::dsp::SIMDRegisterUnitTests, which DELIBERATELY exercises signed-integer-overflow (SIMD wraparound
+# arithmetic) via juce_SIMDNativeOps_fallback.h and std::accumulate. That is JUCE test noise, not our code.
+#
+# Scope note: only the JUCE SIMD-test paths are listed (the vptr downcast in juce_ReferenceCountedArray's
+# self-test is NOT listed — our gate categories never run it). accumulate.h is a libc++ header, listed
+# reluctantly because JUCE's SIMD test overflows THROUGH std::accumulate; product code performs no integer
+# std::accumulate that could overflow, so this masks no product bug today. The truly clean fix — not
+# compiling JUCE's own bundled unit tests — has no simple JUCE flag and is tracked as a follow-up.
+signed-integer-overflow:juce_SIMDRegister_test.cpp
+signed-integer-overflow:juce_SIMDNativeOps_fallback.h
+signed-integer-overflow:accumulate.h

@@ -519,6 +519,18 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 endif()
 
+# --- Opt-in sanitizer build (validation net; OFF by default — no effect on normal Release/CI builds) -------
+# Usage:  cmake -S . -B build-san -DCMAKE_BUILD_TYPE=Debug -DAIEQ_SANITIZE=address,undefined
+#   address,undefined = memory/UB gate;  thread = concurrency gate (run SEPARATELY — TSan is mutually
+#   exclusive with ASan). Placed BEFORE add_subdirectory(JUCE) so JUCE + all targets are instrumented.
+#   Clang/GCC only; ignored on MSVC. Runtime strictness via UBSAN_OPTIONS/ASAN_OPTIONS.
+set(AIEQ_SANITIZE "" CACHE STRING "Comma-separated sanitizers to enable (e.g. address,undefined | thread). Empty = off.")
+if(AIEQ_SANITIZE AND (CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU"))
+    message(STATUS "AIEQ_SANITIZE enabled: -fsanitize=${AIEQ_SANITIZE}")
+    add_compile_options(-fsanitize=${AIEQ_SANITIZE} -fno-omit-frame-pointer -g)
+    add_link_options(-fsanitize=${AIEQ_SANITIZE})
+endif()
+
 # Output directories (per-config where appropriate)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
