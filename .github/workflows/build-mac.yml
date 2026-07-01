@@ -13,7 +13,7 @@ on:
 jobs:
   build-macos:
     runs-on: macos-14
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     strategy:
       matrix:
@@ -40,6 +40,10 @@ jobs:
       - name: Build (${{ matrix.config }})
         run: |
           cmake --build build-mac --config ${{ matrix.config }} -- -quiet
+
+      - name: Run regression tests (ctest)
+        working-directory: build-mac
+        run: ctest --build-config ${{ matrix.config }} --output-on-failure --timeout 120
 
       - name: Find and list build artifacts
         id: find_artifacts
