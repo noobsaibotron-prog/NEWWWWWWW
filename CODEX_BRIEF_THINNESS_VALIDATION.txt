@@ -1,0 +1,74 @@
+CODEX BRIEF — Thinness production fix: REAL VALIDATION of the AB7 candidate bundle (pre-Phase-C2)
+================================================================================================
+Date: 2026-06-23   Branch: feature/ui-polish-post-recovery
+Status: PROPOSED, doc only. Counter-exam REQUIRED before any code. Pre-Phase-C2. NO ship.
+NO ml_weights.bin copy to Resources, NO constructor change, NO AIEngine.cpp/veto/runtime.
+
+THE CANDIDATE BUNDLE (clears the SYNTHETIC C1 gate; from AB7)
+------------------------------------------------------------
+  - Lever C: thinPosWeight = 2.0 (training-side; scales delta3[Thinness] on positives).
+  - Resonance detection threshold: 0.20 -> 0.225 (baseThresholds[Resonance]).
+  - Synthetic all-8 C1 + clean-FP: PASS (clean-FP 1.0[0..2], Thin 33.3[17..45], Reso 43.7[39..50]).
+  - BUT: this is the SYNTHETIC gate (metric-targeted), and the Resonance margin is THIN (43.7 vs the
+    synthOnly-3 bar 43). => real validation is MANDATORY before any ship (Codex).
+
+GOAL
+----
+  Prove the bundle holds on REAL data before Phase C2 — 4 checks (Codex):
+   (1) AI-Corpus measured on the CANDIDATE weights (not the shipped blob);
+   (2) real-clean false positives (especially Resonance, the thin-margin class);
+   (3) real Resonance not lost (the thin synthetic margin must survive on real material);
+   (4) real Thinness stays above the gate (Lever C's gain is REAL, not synthetic-only).
+
+SCOPE (test-only; NO runtime/veto/AIEngine; NO ship; NO constructor change)
+---------------------------------------------------------------------------
+  (a) CANDIDATE BLOB: a DETERMINISTIC training run (the C1 `combined` recipe = synthetic +
+      real-sibilance, thinPosWeight=2.0, 600 ep, lr 0.003) -> saveWeights to /tmp/candidate_ab7.bin
+      + logged fnv64 checksum. This is the eventual Phase-C2 training code; here it ONLY writes /tmp.
+  (b) CANDIDATE-LOAD PATH: a test-only path so the AI-Corpus eval loads /tmp/candidate_ab7.bin
+      (loadWeights) + applies the Resonance threshold 0.225 (setBaseThresholdForTests), INSTEAD of the
+      shipped blob. (AICorpusTest currently loads the shipped weights — this is the gap the Phase C
+      plan already flagged.) Measure the corpus invariant + per-class vs the shipped baseline.
+  (c) REAL-CLEAN FP: run the candidate (0.225) on REAL clean frames (VocalSet held-out singers, NO
+      injection) -> per-class FP, especially Resonance; compare to shipped. Real analogue of the
+      synthetic clean-FP that AB6/AB7 fixed.
+  (d) REAL Resonance / Thinness: confirm the candidate still detects real Resonance (0.225 did not
+      over-suppress) and real Thinness (Lever C's gain transfers to real material).
+
+OPEN DESIGN QUESTIONS (for the counter-exam — decide BEFORE code)
+----------------------------------------------------------------
+  - HOW to source real Resonance / real Thinness material: the corpus may not carry labelled
+    Resonance/Thinness. The natural route is INJECTION on real audio (as the Sibilance loop did:
+    inject a known resonance peak / a known low-mid cut into clean real frames -> known labels). This
+    injection does NOT exist yet for Resonance/Thinness — scope it here or defer (a)+(b)+(c) first?
+  - CANDIDATE-LOAD mechanism for AICorpusTest: smallest test-only hook that points the corpus eval at
+    /tmp/candidate_ab7.bin without changing production load order.
+
+ACCEPTANCE (to UNLOCK Phase C2 — still NOT shipping here)
+--------------------------------------------------------
+  - AI-Corpus: candidate >= shipped on the corpus invariant (no regression) with candidate weights.
+  - real-clean FP: candidate clean-FP (incl. Resonance) <= shipped on real clean material.
+  - real Resonance: not materially lost vs shipped (the thin synthetic margin must survive on real).
+  - real Thinness: measurably better than shipped (0) on real Thin material.
+  - STOP after the table. If it holds -> Phase C2 is UNLOCKED (own sign-off). If it FAILS (esp. real
+    Resonance loss) -> the 0.225 margin is too thin on real; revisit (lower thinPosWeight? a different
+    Resonance control?) BEFORE any ship.
+
+FORBIDDEN
+---------
+  - Phase C2 / ship / copying ml_weights.bin to Resources; the constructor threshold change;
+    AIEngine.cpp / the veto / runtime; relaxing any gate.
+
+PROCESS
+-------
+  1. Counter-exam THIS brief — especially the two OPEN DESIGN QUESTIONS.
+  2. Implement the validation (test-only: candidate blob + candidate-load + real-clean + real
+     Resonance/Thinness), measure, STOP after the table.
+  3. If it holds -> Phase C2 brief (ship) under its OWN sign-off. If not -> revisit the bundle.
+
+POINTERS
+--------
+  - Candidate bundle: CODEX_BRIEF_THINNESS_AB7.txt. Trail: CODEX_BRIEF_THINNESS_AB1..AB6.txt.
+  - Corpus: AICorpusTest (loads shipped today). Real factory + VocalSet + OfflineAnalysisPipeline:
+    RealDataSibilanceTest.cpp. loadWeights / saveWeights (MLEngine.cpp ~1163/1293) exist.
+  - Master brief: CODEX_BRIEF_THINNESS_PROD.txt.

@@ -1,0 +1,118 @@
+CODEX BRIEF — Thinness production-side fix (handoff from the P4-C1 test-only ticket)
+====================================================================================
+Date: 2026-06-23   Branch: feature/ui-polish-post-recovery
+Status: PROPOSED scope, NOT started. Counter-exam REQUIRED before any code.
+
+WHY THIS TICKET EXISTS
+----------------------
+The P4-C1 test-only ticket (commits 54ea6132 -> 920d22c2, all in
+Source/Tests/RealDataSibilanceTest.cpp, no production) closed every C1 blocker
+EXCEPT Thinness:
+  - Sibilance unlocked (45.3, was 0), Resonance ok (45.7), Boom/Boxy ok.
+  - Muddiness was a FALSE blocker: its shipped-2 bar was overfire-inflated
+    (shipped Mud 50/50 comes with shipped clean-FP 50/50). Bar made honest
+    (>= synthOnly-3) + global clean-FP floor (mean<=10/max<=15). Muddiness PASSES
+    at 46.3 without touching the recipe.
+  - clean-FP gate made overfire-aware (mean<=10/max<=15).
+Thinness is the SOLE residual C1 blocker and is REAL (honest bar synthOnly-3 = 25.3;
+shipped Thin = 0). It is NOT fixable by any test-side recipe lever.
+
+MEASURED DIAGNOSIS (n=50, 3 init seeds, RealDataSibilanceTest.cpp Blocco 2/2b/2c/2d)
+-----------------------------------------------------------------------------------
+  - synth-only Thinness is STABLE and clears the bar: per-seed 27/30/28.
+  - Adding real sibilance makes Thinness FRAGILE / seed-dependent: per-seed
+    27->10, 30->35, 28->17 (same seed). Mean 20.7 [10..35].
+  => Cause: real-sibilance x SGD optimization instability in the small MLP
+     (128->64->8, fixed lr, uniform BCE, no regularization). NOT pair volume,
+     NOT seed variance alone, NOT structural class weakness.
+  - Test-side recipe levers ALL NEGATIVE:
+      * cap real-sibilance pairs {full,120,90,60,30}: Thin never >= 25.3; low caps
+        also collapse Resonance.
+      * augment Thinness positives {+0,+50,+100,+200}: chaotic; +100 overfires
+        (clean-FP 25); no row passes C1.
+      * learning rate {0.003,0.002,0.0015,0.001}: lower lr UNDER-trains Thinness
+        (->0) and collapses Resonance below 0.0015. 0.003 stays best (20.7, FAIL).
+
+COUNTER-EXAM REFINEMENTS (2026-06-23 — verified against MLEngine training code)
+------------------------------------------------------------------------------
+Read of trainStep / trainOnDataset / applyGradients / saveWeights CONFIRMS the
+diagnosis: uniform BCE (probScale 1/8, NO class weight, MLEngine.cpp:932); plain SGD
+w -= lr*grad (NO weight decay, MLEngine.cpp:101); per-sample, no batch/schedule. Four
+additions, BEFORE picking a lever:
+
+  1. BLOCCO 0 = MEASURE FIRST. Instrument trainStep to log the Thinness pre-sigmoid
+     logit z3[Thinness] + its gradient norm per epoch across the 3 init seeds. Localize
+     the instability signature (oscillation / vanishing gradient / dead ReLU) so the
+     lever is chosen on evidence, not guessed. One cause per change.
+
+  2. LEVER ORDER. Diagnosis = variance / seed-instability -> try the VARIANCE REDUCERS
+     first: weight decay (1 line in applyGradients) and/or mini-batch gradient averaging
+     (trainOnDataset loop). CLASS-WEIGHTING second, and it is TWO DISTINCT LEVERS with
+     potentially OPPOSITE-SIGN effects (Codex 2026-06-23):
+       - GLOBAL Thinness weight: scale delta3[Thinness] for ALL samples (target=1 AND
+         target=0). Because Thinness NEGATIVES outnumber positives, this also amplifies
+         the negative push -> can drive Thinness DOWN (UNDERfire).
+       - POSITIVE-ONLY Thinness weight: scale delta3[Thinness] only when target=1 ->
+         pushes toward detection, risks OVERfire (clean-FP; cf. test-side augment +100
+         -> clean-FP 25).
+     Which regime applies is EXACTLY what Blocco 0's delta3[Thinness] split by target=1
+     vs target=0 measures -> measure before choosing. Any Thinness-boosting lever must
+     hold the clean-FP floor (mean<=10 / max<=15).
+
+  3. SERIALIZATION CONSTRAINT. saveWeights = magic 0x4D4C4551 + version=1 + raw floats,
+     NO architecture header (MLEngine.cpp:1293). Non-architectural levers (class-weight /
+     weight-decay / lr / schedule) are DROP-IN: same format, version stays 1, only float
+     values change. A CAPACITY change (bigger hidden) changes the layer sizes -> MUST
+     bump the file version + add a loadWeights migration, else shipped installs mis-read
+     the blob (silent corruption). Capacity = LAST resort; prefer the drop-in levers.
+
+  4. GATE PREREQUISITE -- candidate-load path. The C1 all-8 gate AND AI-Corpus must load
+     the CANDIDATE blob (loadWeights points at a juce::File, e.g. /tmp/candidate.bin),
+     NOT the shipped weights -- else the gate measures shipped, not what would ship. Build
+     this path first; it also resolves the AICorpusTest "loads shipped weights" caveat
+     from the Phase C plan.
+
+SCOPE (PRODUCTION — MLEngine training)
+--------------------------------------
+Make Thinness ROBUST to the real-sibilance mix at the model/training level.
+Candidate levers (to be A/B'd, one cause per change):
+  - Regularization (dropout / L2 on the problem net).
+  - Weight decay.
+  - Class-weighting in the loss — GLOBAL vs POSITIVE-ONLY Thinness weight are two
+    distinct levers with opposite-sign risks (see COUNTER-EXAM REFINEMENTS #2).
+  - Capacity / training-stability (slightly larger hidden, lr schedule, early-stop
+    on a held-out split, mini-batch instead of per-sample SGD).
+Goal: lift the PER-SEED MINIMUM of Thinness (robust, not lucky), not just the mean.
+
+HARD CONSTRAINTS
+----------------
+  - Separate scope, separate sign-off. Counter-exam BEFORE writing any code.
+  - Do NOT mix with the Sibilance veto change, the candidate weights, or any
+    runtime/AIEngine change until this is signed off on its own.
+  - Validate test-only FIRST: RealDataSibilanceTest.cpp C1 gate (n=50, 3 seeds),
+    full per-class + clean-FP floor mean<=10/max<=15, Muddiness honest bar.
+  - A PRODUCTION change to MLEngine training dynamics can move EVERY class and the
+    floor -> requires full before/after: AI-Sweep floor 0/18, 4 binaries no-arg
+    0 fail, AI-Corpus invariant-or-better, + Ableton.
+
+ACCEPTANCE (to re-enable the C1 hard expects and unblock Phase C2)
+-----------------------------------------------------------------
+  - Thinness candidate >= synthOnly-3 ROBUSTLY (per-seed min lifted, not one lucky seed).
+  - No other class regresses under its C1 bar.
+  - clean-FP within mean<=10/max<=15.
+  - Sibilance stays >= 35 and >= synthOnly.
+  Then: re-enable c1pass/cleanOk hard expects, run full C1, proceed to Phase C2
+  (veto line AIEngine.cpp 2-5k -> 3-5k&10-14k + candidate ml_weights.bin + Ableton)
+  under its OWN sign-off.
+
+POINTERS
+--------
+  - Diagnostics + gate: Source/Tests/RealDataSibilanceTest.cpp (category RealData,
+    env AIEQ_REALDATA_DIR=~/aieq_data/real_audio/vocalset_extracted/FULL).
+    Heavy sweeps are gated behind AIEQ_SWEEPS=1 (see that commit) so the default
+    run stays fast.
+  - Training: MLEngine::trainOnDataset / trainStep (MLEngine.cpp ~900-1073);
+    init MLEngine::initializeRandomWeights (fixed seed 42); test-only seed hook
+    initializeRandomWeightsForTests.
+  - Commits: 54ea6132 (clean-FP gate) .. 5028a073 (Muddiness bar) .. 920d22c2
+    (lr sweep / perimeter exhausted).

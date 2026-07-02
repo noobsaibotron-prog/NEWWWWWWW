@@ -1,0 +1,96 @@
+CODEX BRIEF — Thinness production fix, A/B #4: clean-FP control for Lever C (thinPosWeight=2.0)
+=============================================================================================
+Date: 2026-06-23   Branch: feature/ui-polish-post-recovery
+Status: PROPOSED, doc only. Counter-exam REQUIRED before any code.
+NO ml_weights.bin, NO AIEngine.cpp, NO runtime/veto, NO save-format change, NO manual threshold.
+
+WHY THIS A/B EXISTS
+-------------------
+  - A/B #3 (Lever C, positive-only Thinness weight) is a BREAKTHROUGH: at thinPosWeight=2.0 Thinness
+    PASSES C1 (mean 33.3 >= 25.3 bar; per-seed MIN lifted 10 -> 17), Sibilance/Resonance/Muddiness
+    hold. The ONLY remaining blocker is clean-FP: mean 8.0 OK (<=10) but per-seed MAX 16 > 15 — over
+    the hard bound by a SINGLE point (one unlucky seed). Codex: don't revert; pair Lever C with a
+    clean-FP control.
+  - Codex preference: hard-negative clean Thinness TRAINING DATA (stays in the training domain),
+    NOT a manual detection-threshold bump.
+
+SCOPE (this A/B only — thinPosWeight FIXED at 2.0; ONE control variable = N)
+---------------------------------------------------------------------------
+  - PRODUCTION: Lever C stays exactly as held (thinPosWeight=2.0). NO new production code in AB4.
+  - TEST-SIDE: add N clean hard-negative samples (all-zero targets => Thinness=0 and every other
+    class=0) to `combined`, sweeping N. Rationale: the boost amplified the Thinness POSITIVE
+    gradient and pushed the boundary toward "thin", so clean material now trips it. More clean
+    NEGATIVES tighten that boundary => clean-FP drops, WITHOUT lowering true Thinness (which the
+    boost keeps high). clean-FP counts ANY firing on clean fixtures, so all-zero clean negatives
+    target it directly; the Thinness over-fire is what rose, so these specifically counter it.
+
+CONSTRUCTION OF THE HARD-NEGATIVES (the KEY counter-exam decision)
+-----------------------------------------------------------------
+  - (A, RECOMMENDED) DISJOINT synthetic clean-tilt spectra: the SAME steep-pink-tilt family as the
+    clean eval fixtures (makeFixture(-1)) but drawn from a SEPARATE RNG stream so there is NO
+    leakage into the eval. Labeled all-zero. Directly matches the distribution the clean-FP is
+    measured on => most direct effect on the measured max.
+  - (B, real-data fidelity) real CLEAN frames from the TRAINING singers (disjoint from the held-out
+    eval singers) -> OfflineAnalysisPipeline -> mel, labeled all-zero. More faithful "real clean !=
+    thin", but a different spectral shape than the synthetic-clean eval (may transfer less to the
+    measured metric).
+  - Pick ONE before the sweep (recommend A now; revisit B when clean-FP is validated on real/corpus).
+
+A/B MATRIX (test-only, behind its OWN env e.g. AIEQ_AB4=1)
+---------------------------------------------------------
+  - thinPosWeight FIXED at 2.0. N in { 0 (control), 240, 480, 960 } (limited; no opportunistic adds).
+  - 3 seeds (11/22/33), 600 ep, lr 0.003, synth-only + combined; FULL C1 all-8 + clean-FP, Thinness
+    PER-SEED MIN highlighted.
+  - CONTROL (N=0): MUST reproduce the AB3 thinPosWeight=2.0 row (Thin 33.3[17..45] / Sib 45.3 /
+    Reso 47.0 / Mud 44.0 / cleanFP 8.0[3..16]) — parity check that the data add is the only change.
+
+ACCEPTANCE (clears the bundle / advances toward Phase C2 — NOTHING shipped here)
+-------------------------------------------------------------------------------
+  - clean-FP back WITHIN mean<=10 AND max<=15 (gate NOT relaxed).
+  - Thinness stays >= synthOnly-3 (~25) AND the per-seed MIN does NOT regress below the
+    thinPosWeight=2.0 level (17).
+  - Sibilance >= 35 AND >= synthOnly; no other class regresses under its C1 bar.
+  - If it clears: the bundle = Lever C @2.0 (production) + hard-neg data (training) is the candidate;
+    write it to /tmp + logged checksum. STOP after the table; commit + Phase C2 need their OWN go.
+
+OUT OF SCOPE / FORBIDDEN
+------------------------
+  - changing thinPosWeight (FIXED 2.0); adding any other variable; manual Thinness threshold
+    (deferred — Codex's 2nd choice, only if data fails); relaxing the clean-FP gate.
+  - ml_weights.bin, AIEngine.cpp, the veto, runtime, save format/version.
+
+PROCESS
+-------
+  1. Counter-exam THIS brief — especially construction A vs B and the N grid.
+  2. Implement AB4 (test-side hard-neg data + sweep) ON TOP of the held Lever C; measure; STOP.
+  3. If it clears -> bundle is the candidate (separate commit + Phase C2 go).
+     If negative -> revert Lever C too (numbers stay in the briefs), and Thinness escalates to
+     capacity / structural-loss (last resort).
+
+POINTERS
+--------
+  - AB3 result + the HELD Lever C (thinPosWeight=2.0, uncommitted): CODEX_BRIEF_THINNESS_AB3.txt.
+  - Data factory + makeFixture(-1) clean shape + combined build: RealDataSibilanceTest.cpp.
+  - Master brief: CODEX_BRIEF_THINNESS_PROD.txt.
+
+RESULT (2026-06-23 — measured; NEGATIVE — construction A over-suppresses tilt-sensitive classes)
+-----------------------------------------------------------------------------------------------
+Implemented test-side (disjoint clean-tilt hard-negs, RNG 88000, all-zero targets) ON the held
+Lever C (thinPosWeight=2.0). Sweep N {0,240,480,960}, 3 seeds, full C1. AI_Tests 6/6.
+  - N=0 PARITY: reproduces AB3 w2.0 exactly (Thin 33.3[17..45] / Sib 45.3 / Reso 47.0 / Mud 44.0 /
+    cleanFP 8.0[3..16]) -> "parity vs AB3 w2.0: OK".
+  - N=240: clean-FP -> 0.0, BUT Resonance COLLAPSES 47->10.3, Thin 14.3. FAIL.
+  - N=480: clean-FP 0.0, Thin recovers 29.0[23..34], but Resonance 6.0, Mud 32.7, Harsh/Boom fail.
+  - N=960: clean-FP 0.0, Resonance 8.7, Mud 32.3, Thin 16.3. FAIL.
+VERDICT: the GLOBAL clean-tilt hard-negatives KILL clean-FP (->0) but COLLAPSE Resonance (and
+Boxy/Boom/Mud). Root cause: the steep-pink-tilt clean shape OVERLAPS the Resonance/Boxy positive
+feature space; labeling it all-zero teaches "tilt = no problem" => the tilt-sensitive classes stop
+firing. Construction A is too BLUNT — a global negative over-suppresses; no N threads the needle.
+clean-FP itself is trivially solvable; the problem is the COLLATERAL on other classes.
+IMPLICATION: clean-FP needs a TARGETED control, not a global one. Codex's 2nd choice — raising the
+Thinness DETECTION THRESHOLD (0.50) — is targeted (suppresses only Thinness clean firing, no
+Resonance collateral) and was NOT yet tried. Construction B (real clean frames) is also untried but
+shares the over-suppression risk (still all-zero negatives, just a different shape).
+DISPOSITION: AB4 harness + Lever C HELD (not reverted) pending Codex: revert Lever C + escalate to
+capacity/structural-loss per protocol, OR keep Lever C(2.0) and try the TARGETED Thinness-threshold
+control (new brief) — A's failure mode (global over-suppression) specifically argues for targeting.

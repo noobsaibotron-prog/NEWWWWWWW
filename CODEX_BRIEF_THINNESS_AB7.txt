@@ -1,0 +1,52 @@
+CODEX BRIEF — Thinness production fix, A/B #7: RESONANCE threshold calibration — RESULT
+======================================================================================
+Date: 2026-06-23   Branch: feature/ui-polish-post-recovery
+Status: WINNER on the SYNTHETIC C1 gate. Candidate bundle (NOT shipped). Real validation REQUIRED.
+NO ml_weights.bin, NO AIEngine.cpp, NO runtime/veto, NO constructor change yet.
+
+WHY
+- AB6 located the residual clean-FP: it is 100% RESONANCE (every clean FP is Resonance; threshold
+  0.20 is the LOWEST in the model). AB7 raises ONLY the Resonance threshold (test-only setter,
+  inference-side) on the held Lever C (thinPosWeight=2.0).
+
+RESULT (2026-06-23 — measured; FIRST FULL C1 PASS)
+--------------------------------------------------
+Candidate trained once/seed (combined, thinPosWeight=2.0); Resonance threshold swept
+{0.20,0.225,0.25,0.275,0.30}, all 8 + clean-FP re-measured. AI_Tests 6/6.
+  - 0.200 PARITY: reproduces AB3/AB6 (Reso 47.0 / Thin 33.3[17..45] / cleanFP 8.0[3..16]) -> OK.
+  - 0.225: CLEARS the full gate -> Reso 43.7[39..50] / Thin 33.3[17..45] / Sib 45.3 / Mud 44.0 /
+    clean-FP 1.0[0..2]. The clean-FP collapses from 8.0[3..16] to 1.0[0..2] (max 16 -> 2); Thinness
+    keeps Lever C's gain (33.3, min 17); no class regresses.
+  - 0.25/0.275/0.30: clean-FP -> 0 but Resonance falls below its bar (40.7/37.7/33.7) -> FAIL Reso.
+WINNER = LOWEST passing Resonance threshold = 0.225.
+
+CANDIDATE BUNDLE (clears C1; NOT final)
+---------------------------------------
+  - Lever C: thinPosWeight = 2.0 (production training change — delta3[Thinness] scaled on positives).
+  - Resonance detection threshold: 0.20 -> 0.225 (baseThresholds[Resonance]).
+  Together they pass the all-8 C1 gate + clean-FP on the synthetic eval.
+
+HONEST CAVEATS
+--------------
+  - RESONANCE MARGIN IS THIN: the binding bar is synthOnly-3 = 43; the candidate is 43.7 (clears by
+    0.7). 0.225 is the ONLY passing threshold (0.25 already fails). Per-seed min 39 == shp-2 floor.
+  - This is the SYNTHETIC C1 gate (metric-targeted). It is NOT proof of real-world behaviour.
+
+REQUIRED BEFORE PHASE C2 (Codex, repeated)
+------------------------------------------
+  - AI-Corpus validation with the CANDIDATE weights (needs a test-only candidate-load path, per the
+    Phase C plan — AICorpusTest currently loads the shipped blob).
+  - real-clean validation (no new false positives on real clean material; the thin Resonance margin
+    makes this important).
+  - ONLY after that: Phase C2 = ship (Lever C in the deterministic training code + Resonance 0.225 in
+    the MLEngine constructor + new ml_weights.bin + Ableton), under its OWN sign-off.
+
+STATE
+-----
+  Code HELD, uncommitted: Lever C (MLEngine.cpp/.h), setBaseThresholdForTests, AB3-AB7 harnesses
+  (RealDataSibilanceTest.cpp). HEAD still 96a5da46. NO ship.
+
+POINTERS
+--------
+  - Trail: CODEX_BRIEF_THINNESS_AB1..AB6.txt + this. Master: CODEX_BRIEF_THINNESS_PROD.txt.
+  - Resonance threshold: MLEngine.cpp:117 (0.20f). Lever C: trainStep delta3 + thinPosWeight.

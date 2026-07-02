@@ -1,0 +1,69 @@
+CODEX BRIEF — Training stability #2: ADAM optimizer (replace plain SGD, train-only)
+==================================================================================
+Date: 2026-06-23   Branch: feature/ui-polish-post-recovery
+Status: PROPOSED, doc only. Counter-exam REQUIRED before any code. Lever 2 of AT MOST 3 (bounded).
+NO ship, NO ml_weights.bin, NO AIEngine.cpp/veto/runtime, NO threshold/dropout/capacity changes.
+
+WHY (from Stability1)
+--------------------
+  - Stability1 (sum-gradient mini-batch): PARTIAL — B=4 lifted the single-blob seed pass-rate
+    4/12 -> 6/12 (repro 12/12), but only by rescuing BORDERLINE seeds (22, 303); 6 seeds
+    (1,2,3,11,42,202) never pass at any B, each weak on a DIFFERENT class. => SGD variance is PART of
+    the cause; the rest is convergence instability of plain SGD on the tiny net (some inits land on
+    weak/mal-fit solutions).
+  - Dropout is NOT the next lever (Codex): it cuts effective CAPACITY, and the hard seeds already look
+    under-capacity; weight-decay (the other classic regularizer) already FAILED (AB2). The indicated
+    lever is a better OPTIMIZER, not more regularization.
+
+LEVER (Stability2) — ADAM optimizer (train-only)
+------------------------------------------------
+  Replace the plain SGD update (w -= lr*grad) with Adam: an adaptive per-parameter step from the 1st
+  and 2nd gradient moments. Adam directly attacks gradient-scale imbalance + seed sensitivity — the
+  measured "convergence instability" failure mode. TRAIN-ONLY: Adam state (m, v, t) is TRANSIENT,
+  NOT saved in the weight blob; inference, the weight FORMAT, and ml_weights.bin are UNCHANGED.
+  Default = SGD (byte-identical); Adam is opt-in via a training param.
+
+DESIGN (production training; default preserves SGD byte-for-byte)
+----------------------------------------------------------------
+  - DenseLayer gains OPTIONAL Adam state (m,v per weight+bias; a shared timestep t) + an Adam apply
+    path: m=b1*m+(1-b1)*g; v=b2*v+(1-b2)*g^2; mhat=m/(1-b1^t); vhat=v/(1-b2^t);
+    w -= lr * mhat / (sqrt(vhat)+eps), with beta1=0.9, beta2=0.999, eps=1e-8 (standard). SGD path
+    UNCHANGED when Adam is off (the m,v buffers are only allocated/used in Adam mode).
+  - trainStep / trainBatch / trainOnDataset thread an optimizer choice (SGD|Adam) + Adam lr. Adam and
+    mini-batch COMPOSE (Adam applied to the summed mini-batch gradient).
+  - NO serialization change (Adam state is not persisted). Drop-in on ml_weights.bin.
+
+A/B MATRIX (test-only; reuse the 12-seed single-blob harness, AIEQ_STAB2=1)
+--------------------------------------------------------------------------
+  - Optimizer = Adam, lr in { 0.001, (0.0005 ONLY if 0.001 diverges / over-fires clean-FP) }.
+  - Measure Adam at B=1 (per-sample) vs the SGD-B=1 baseline (4/12), AND at B=4 vs SGD-B=4 (6/12) —
+    one cause (the optimizer) at fixed B, to see if Adam helps and whether it composes with mini-batch.
+  - 12 seeds, thinPosWeight=2.0, Resonance threshold 0.225, 600 ep, measured on the SAVED+RELOADED
+    blob (repro must stay ok). Report the seed pass-rate per (optimizer, lr, B).
+  - WIN = >=9/12 (robust); 7-8/12 = partial (no ship); <=6/12 = lever negative.
+
+THE BOUND (explicit — this is the agreed frame)
+-----------------------------------------------
+  Lever 2 of <=3. If Adam does NOT reach >=7-8/12 -> NO more small tricks. DECIDE:
+   (A) PRAGMATIC SHIP of ONE selected blob that clears the FULL gate + REAL validation
+       (AI-Corpus / real-clean), documented (a vetted choice, NOT a lucky seed); OR
+   (B) REDESIGN the net (bigger capacity / different model) = a larger workstream.
+
+FORBIDDEN
+---------
+  dropout, weight-decay, capacity/architecture change, threshold changes, ml_weights.bin, AIEngine,
+  runtime, save-format. ONE cause per change (Adam only).
+
+PROCESS
+-------
+  1. Counter-exam THIS brief (esp. Adam at B=1 vs B=4; the lr).
+  2. Implement Adam (train-only, optional), measure the 12-seed pass-rate, STOP after the table.
+  3. If negative: revert the production code, keep the numbers here.
+
+POINTERS
+--------
+  - Stability1 result (6/12 @B=4, repro ok): memory + RealDataSibilanceTest.cpp (AIEQ_STAB1=1).
+    AB1/AB2 (mini-batch-mean / weight-decay, reverted): CODEX_BRIEF_THINNESS_AB1/AB2.txt.
+  - Optimizer site: DenseLayer::applyGradients (MLEngine.cpp ~93-108) + trainStep / trainBatch /
+    trainOnDataset / applyGradientSet.
+  - Persistence (done): 0ed9f286 + db8e5f5d. Master brief: CODEX_BRIEF_THINNESS_PROD.txt.

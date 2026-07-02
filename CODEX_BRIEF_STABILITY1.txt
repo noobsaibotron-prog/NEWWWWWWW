@@ -1,0 +1,69 @@
+CODEX BRIEF — Training stability #1: lift the SINGLE-BLOB seed pass-rate (4/12 -> robust)
+========================================================================================
+Date: 2026-06-23   Branch: feature/ui-polish-post-recovery
+Status: PROPOSED, doc only. Counter-exam REQUIRED before any code. Lever 1 of AT MOST 2-3 (bounded).
+NO ship, NO ml_weights.bin, NO AIEngine.cpp/veto/runtime, NO threshold changes.
+
+OBJECTIVE (NEW — a STABILITY goal, not a single class)
+------------------------------------------------------
+  V2 baseline (post-persistence-fix, measured on the SAVED+RELOADED blob, repro=ok on all 12 seeds):
+  at the bundle config (thinPosWeight=2.0, Resonance threshold 0.225, 600 ep, lr 0.003), a single
+  deterministic blob passes the all-8 C1 gate on only **4/12 init seeds**; 8/12 fail on ASSORTED
+  classes (Reso/Thin/Sib/Mud/clean-FP). Everything seed-varies (Thin 17->45, Reso 28->50, Sib 32->50,
+  clean-FP 0->25). => The blocker is TRAINING INSTABILITY w.r.t. the init seed: the SAME recipe lands
+  a different, often-failing model depending on the random init.
+  GOAL: lift the seed pass-rate (4/12 -> most/all) so ANY seed yields a shippable blob — explicitly
+  NOT "pick a lucky seed" (rejected repeatedly), NOT more threshold tuning.
+
+WHAT IS ALREADY TRIED (and why it doesn't serve THIS objective)
+---------------------------------------------------------------
+  - AB2 weight-decay (classic L2 regularization): NEGATIVE — suppressed Thinness + inflated clean-FP.
+    Naive L2 is OUT.
+  - AB1 mini-batch averaging at FIXED lr: under-trained (the MEAN step shrank per-epoch movement ~B x).
+    The idea (variance reduction) is RIGHT; the execution (no lr compensation) was WRONG.
+
+LEVER 1 — candidate (counter-exam picks ONE)
+--------------------------------------------
+  (A, RECOMMENDED) lr-COMPENSATED mini-batch averaging = variance reduction done right. Average the
+      gradient over a mini-batch of B samples AND preserve the per-epoch step (apply the SUM, i.e.
+      effective lr = lr*B; or mean + lr scaled by B). This lowers per-step SGD NOISE — the source of
+      seed-trajectory divergence — WITHOUT under-training (fixes the AB1 failure mode directly).
+      Sweep B in { 1 (control), 4, 8, 16 }. Default B=1 == current (byte-identical). DROP-IN on
+      ml_weights.bin (no architecture change).
+  (B, alternative) DROPOUT on the problem-net hidden layers — the untried CLASSIC regularizer. Needs
+      train/eval modes (bigger surface); on a tiny 128->64 net dropout can be aggressive. Sweep p in
+      {0 (control), 0.1, 0.2}. Also drop-in on the weight file (dropout is train-only).
+  RATIONALE for recommending A: the measured failure is seed-VARIANCE; lr-compensated mini-batch
+  attacks the variance most directly, and AB1 already built/validated the (reverted) infrastructure.
+  Classic regularization (weight-decay) already failed, so A is the more targeted "stability" lever.
+
+A/B DESIGN (test-only; reuse the V2 12-seed single-blob harness)
+---------------------------------------------------------------
+  - FIXED: thinPosWeight=2.0, Resonance threshold 0.225 (the bundle), 600 ep, lr 0.003, 12 seeds.
+  - Sweep the lever value; for EACH value, for EACH seed: train -> SAVE -> RELOAD blob (repro must
+    stay ok) -> measure the all-8 C1 + clean-FP at threshold 0.20 and 0.225; report the SEED PASS-RATE.
+  - CONTROL (lever off) MUST reproduce the 4/12 baseline (else STOP).
+  - WIN = the seed pass-rate rises MATERIALLY (target >= 9/12) WITHOUT regressing any class's gate.
+
+ACCEPTANCE / BOUND (the agreed frame)
+-------------------------------------
+  - A lever "works" only if it lifts the seed pass-rate ROBUSTLY (most seeds pass) — not one lucky seed.
+  - BOUNDED: this is lever 1 of AT MOST 2-3. If 2-3 stability levers do NOT lift the pass-rate -> STOP
+    and DECIDE: (a) pragmatic vetted-single-blob ship (one model that clears the FULL gate + real
+    validation, documented) or (b) model redesign (bigger/different net). No infinite grind.
+  - Production change (trainStep/trainOnDataset/applyGradients), DEFAULTS preserve current behaviour
+    byte-for-byte; drop-in on ml_weights.bin. Capacity/architecture = LAST resort (version bump).
+  - NO ship, NO ml_weights.bin, NO AIEngine/veto/runtime, NO threshold changes (bundle threshold fixed).
+
+PROCESS
+-------
+  1. Counter-exam THIS brief (lever A vs B; the exact lr-compensation form).
+  2. Implement lever 1 ONLY, measure the 12-seed pass-rate, STOP after the table.
+  3. If NEGATIVE: revert the production code, keep numbers in this brief (as the A/B series).
+
+POINTERS
+--------
+  - Baseline: V2 post-fix (4/12 @0.225, repro ok) in RealDataSibilanceTest.cpp (AIEQ_V2=1). Blocco 0
+    signature: commit 96a5da46. AB1/AB2 results (reverted): CODEX_BRIEF_THINNESS_AB1/AB2.txt.
+  - Training: MLEngine::trainStep / trainOnDataset / DenseLayer::applyGradients.
+  - Persistence (done): 0ed9f286 (code) + db8e5f5d (shipped blob). Master: CODEX_BRIEF_THINNESS_PROD.txt.

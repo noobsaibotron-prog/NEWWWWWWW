@@ -1,0 +1,195 @@
+================================================================================
+BRIEF PER CODEX — RICERCA APPROFONDITA SU TICKET #3
+"Falso positivo Risonanza euristica su tilt ripido, SOLO a bassa sensibilita"
+Data: 2026-06-06
+================================================================================
+
+--------------------------------------------------------------------------------
+0. COSA TI CHIEDO (in una riga)
+--------------------------------------------------------------------------------
+Spiega la CAUSA RADICE dell'inversione paradossale descritta sotto, e proponi la
+fix MINIMA, MISURABILE e a RISCHIO-FLOOR-ZERO. NON serve che scrivi codice di
+produzione: serve la diagnosi causale e il design. Ragiona sul codice reale
+citato qui sotto (te lo riporto integrale).
+
+--------------------------------------------------------------------------------
+1. CONTESTO PROGETTO E PROCESSO (sintetico)
+--------------------------------------------------------------------------------
+Plugin JUCE "AI Equalizer Pro" (VST3/AU/Standalone), EQ 24 bande con detection AI
+dei problemi di frequenza. Obiettivo della linea di lavoro: eliminare le
+"allucinazioni" (falsi positivi su segnale pulito) SENZA perdere recall sui
+problemi veri. Precisione > recall.
+Repo:    /Users/marco/Desktop/NEWWWWWWW   (worktree attivo .../.claude/worktrees/recover-ember-core)
+Branch:  feature/ui-polish-post-recovery
+Processo: due AI evidence-driven; ogni fix = 1 commit causale; si misura
+prima/dopo con la stessa matrice; STOP a ogni checkpoint; il FLOOR PULITO (0 falsi
+positivi) NON si riapre MAI.
+
+Backend detection: Hybrid (default), MLOnly, HeuristicOnly.
+Heuristic = AIEngine::detectProblems -> detectResonances/detectMuddiness/...
+ML        = MLEngine via AIEngine::detectProblemsWithML.
+Il ticket #3 e' nel PATH EURISTICO (detectResonances).
+
+--------------------------------------------------------------------------------
+2. IL FENOMENO (dati misurati, matrice AI-Sweep)
+--------------------------------------------------------------------------------
+Stimolo "CleanSteep(control)" = spettro PULITO con tilt ripido -6 dB/decade
+(suono naturalmente molto scuro, NESSUN difetto reale). Atteso: nessuna
+rilevazione a qualsiasi sensibilita.
+
+Risultato reale (backend Heuristic e Hybrid):
+  sens 0.2  ->  FP x2 :  Res@14373Hz (c=0.48)   Res@5890Hz (c=0.46)
+  sens 0.5  ->  CLEAN (0)
+  sens 0.8  ->  CLEAN (0)
+(ML puro: CLEAN a tutte le sensibilita. Il problema e' solo euristico.)
+
+PARADOSSO: il falso positivo appare a sensibilita BASSA e sparisce a sensibilita
+ALTA. E' l'opposto dell'intuizione (alta sensibilita dovrebbe produrre PIU
+rilevazioni, non meno). Finche non capiamo QUESTA inversione, non tocchiamo il
+detector (protegge il floor pulito).
+
+Nota: i due FP sono ad alta frequenza (5890 e 14373 Hz), dove la finestra di
+analisi e' la piu stretta (vedi getAdaptiveWindowSize sotto: 7 bin sopra 5 kHz).
+
+--------------------------------------------------------------------------------
+3. IL CODICE REALE (AIEngine.cpp, funzione detectResonances, ~righe 991-1265)
+--------------------------------------------------------------------------------
+La sensibilita entra DUE volte, in due punti diversi:
+
+(I) A monte, in detectProblems() (riga ~865):
+      float sensitivityFactor = 1.0f - (sensitivity * 0.5f);   // 0.5..1.0
+      float resonanceThresh   = thresholds.resonanceThreshold * sensitivityFactor;
+      // resonanceThreshold base = 6.0 (AIEngine.h:437)
+      // sens 0.2 -> thresh 5.40 ; sens 0.5 -> 4.50 ; sens 0.8 -> 3.60
+      detectResonances(resonanceThresh);
+
+(II) Dentro detectResonances() la soglia viene ri-scalata di nuovo dalla
+     sensibilita, con una curva a 3 zone (righe ~1108-1127):
+      float adaptedThreshold = calculateAdaptiveThreshold(threshold); // (I) -> adattiva
+      ...
+      float sensitivityFactor;
+      if (sensitivity < 0.3f)
+          sensitivityFactor = 1.3f - sensitivity * 0.5f;            // 1.30..1.15
+      else if (sensitivity < 0.7f)
+          sensitivityFactor = 1.15f - (sensitivity - 0.3f) * 0.75f; // 1.15..0.85
+      else
+          sensitivityFactor = 0.85f - (sensitivity - 0.7f) * 1.0f;  // 0.85..0.55
+      float effectiveThreshold = adaptedThreshold * sensitivityFactor;
+      // sens 0.2 -> *1.20 ; sens 0.5 -> *1.00 ; sens 0.8 -> *0.75
+
+Gate del CANDIDATO picco (riga ~1132):
+      float minPeakHeight = 3.0f;
+      if (peakHeight > minPeakHeight && peakHeight > effectiveThreshold) { ... candidato ... }
+  dove peakHeight = centerMag - surroundAvg (media PESATA del contorno, righe
+  1090-1106; il contorno NON e' detrendato per la pendenza dello spettro).
+
+Finestra adattiva per frequenza (riga ~1024):
+      <150Hz:21  <400:15  <1500:11  <5000:9  else:7   (HF = 7 bin)
+
+Gate del LOCAL-MAX (righe 1062-1081): il bin deve superare strettamente i vicini
++-1 e +-2 (su un tilt monotono puro nessun bin e' local-max; servono ripple).
+
+CONFIDENZA (righe 1191-1240), combinazione pesata:
+      levelConfidence  = clamp((magnitude+60)/50)              * 0.25
+      heightConfidence = clamp(peakHeight/8)                   * 0.35
+      persistConfidence(=persist+temporal+crossValid+harmonic+coherence...) * 0.25
+      zBoost = clamp((zScore-2)/3)                             * 0.15
+  -> c.confidence (NESSUN floor a 0.4; il floor fu rimosso apposta).
+
+GATE DI CONFIDENZA FINALE (righe 1248-1264), INDIPENDENTE dalla sensibilita:
+      constexpr float kHeuristicConfidenceGate = 0.45f;
+      if (c.confidence < kHeuristicConfidenceGate) continue;
+  Commento del codice: risonanza vera c~0.56-0.57; ripple di rumore/pulito
+  c~0.39-0.46. Il gate a 0.45 tiene fuori lo "spray". I due FP (c=0.46/0.48)
+  passano per un soffio (0.01-0.03 sopra il gate).
+
+--------------------------------------------------------------------------------
+4. LE DOMANDE DI RICERCA (per te, Codex)
+--------------------------------------------------------------------------------
+Q1. SPIEGA L'INVERSIONE. Perche i due FP HF passano a sens 0.2 ma NON a 0.5/0.8?
+    Considera che entrambe le scalature (I) e (II) ABBASSANO la soglia
+    all'aumentare della sensibilita (quindi ad alta sens dovrebbero passare PIU
+    candidati, non meno). Ipotesi da valutare/confutare:
+    (a) A sens alta entrano PIU candidati e un eventuale cap/merge a valle
+        (mergeNearbyCorrections / top-K) scarta o fonde i deboli ripple HF.
+    (b) heightConfidence = peakHeight/8: a sens BASSA la soglia piu alta lascia
+        passare solo ripple con peakHeight maggiore -> confidenza piu alta ->
+        sopra 0.45; a sens alta passano anche ripple piu bassi che pero finiscono
+        sotto 0.45 e vengono gated (ma allora i 5890/14373 perche spariscono?).
+    (c) calculateAdaptiveThreshold dipende dal livello/spettro in modo che,
+        combinato con la curva a 3 zone, crea un minimo di effectiveThreshold
+        proprio intorno a sens 0.2 per le HF.
+    (d) z-score / temporal / crossValidation cambiano l'esito tra le sensibilita.
+    Dimmi QUALE ipotesi regge e con quale meccanismo preciso (riga per riga).
+
+Q2. LA DOPPIA SCALATURA (I)+(II) e' voluta o un bug? Due curve di sensibilita
+    che si compongono sono sospette. Andrebbe unificata? Con quale effetto sul
+    paradosso e sul recall delle risonanze vere?
+
+Q3. IL CONTORNO NON DETRENDATO. peakHeight = centerMag - surroundAvg con media
+    pesata simmetrica in BIN. Su scala log-freq con tilt ripido, una finestra
+    simmetrica in bin e' asimmetrica in ottava: a HF copre molte piu ottave sul
+    lato basso. Questo introduce un bias sistematico nel peakHeight ad alta
+    frequenza? Conviene detrendare il contorno (sottrarre la pendenza locale
+    stimata) prima di calcolare peakHeight? Come, in modo minimale?
+
+Q4. LA FIX MINIMA. Tra queste, quale e' la piu sicura per il floor (0 FP) SENZA
+    ridurre il recall delle risonanze vere (c~0.56-0.57)? Classifica e motiva:
+    - detrend del contorno (Q3);
+    - unificare la doppia scalatura (Q2);
+    - gate di confidenza adattivo solo a bassa sens (rischio: margine 0.45->0.52
+      e' fragile, 0.04 dal vero positivo; gia scartato come cerotto);
+    - finestra in OTTAVE invece che in bin a HF;
+    - requisito di prominenza minima in dB scalato per la finestra.
+    Per ognuna: rischio di riaprire il floor, costo di recall, complessita.
+
+Q5. COME MISURARLO. Quale variante della matrice AI-Sweep (stimoli/sensibilita)
+    falsifica la fix? Proponi gli stimoli minimi: CleanSteep a sens 0.2/0.35/0.5,
+    piu una risonanza vera HF (es. Res@6kHz e Res@12kHz) per provare che il
+    recall non cala. Definisci il criterio di accettazione numerico.
+
+--------------------------------------------------------------------------------
+5. VINCOLI HARD
+--------------------------------------------------------------------------------
+- Floor pulito = 0 FP a OGNI sensibilita: invariante sacro, non riaprirlo.
+- Il gate di confidenza e' INTENZIONALMENTE indipendente dalla sensibilita
+  (commento codice 1259-1261): una fix sensibilita-dipendente va giustificata
+  fortissimo o evitata.
+- NON toccare ml_weights.bin (path ML, comunque gia pulito su questo caso).
+- detectResonances e' lungo ~290 righe e protegge il floor: ogni modifica e' ad
+  alto rischio -> serve la diagnosi causale PRIMA del codice.
+
+--------------------------------------------------------------------------------
+6. STATO ATTUALE DEL BRANCH (contesto, gia fatto e committato)
+--------------------------------------------------------------------------------
+Campagna anti-allucinazione, commit in ordine:
+  bd4c825f  banco di misura (AIBackendSweepTest)
+  4cd5ce46  ML fallback esplicito
+  4c6cdf9f  stop euristico che fabbricava risonanze
+  66588631  gate di confidenza euristico 0.45 (il gate citato sopra)
+  54588297  4A: ML decision rule (margine + rank<=2 + topK)
+  5f072d92  4B: ML reality-check per classe
+  a596622a  4C: Resonance veto per prominenza
+  cb635d80  test robustezza multi-seed
+  6001c681  per-class kMlMargin (Resonance 0.02) per recall
+  e09c3e67  persistenza temporale (isteresi)
+  2b84876b  test: prova empirica effetto manopole
+  3fb513e8  veto Muddiness tilt-robust (riferimento sotto-banda 80-150) + cap ML
+  d35360a4  manopola Sensitivity/Strength viva in play (param listener)
+  2bb64545  test guardiano manopola (in play)
+  5770c3c2  manopola viva anche a TRASPORTO FERMO (re-analisi forzata ultimo frame)
+
+Ticket aperti (oltre #3): #2 = stessa "trappola del tilt" ancora nei veto ML
+LowEndBoom(30-100 vs 100-5000) e Boxyness(300-800 vs 100-8000); D = tabelle
+frequenze divergenti AIEngine vs MLEngine; E = classi ML senza veto
+(Harshness/Clipping/ThinSound); + una race in getSmoothedSpectrum del grafico.
+
+--------------------------------------------------------------------------------
+7. COME VERIFICARE (comandi, cwd = worktree attivo)
+--------------------------------------------------------------------------------
+  ./build_mac.sh Release
+  build-mac/Release/bin/AIEqualizerPro_AI_Tests --category=AI-Sweep   # matrice cella-per-cella
+  build-mac/Release/bin/AIEqualizerPro_AI_Tests                       # suite AI completa (deve restare verde)
+Lo stimolo CleanSteep e in Source/Tests/AIBackendSweepTest.cpp (applySteepTilt,
+-6 dB/decade). detectResonances in Source/AI/AIEngine.cpp:991.
+================================================================================

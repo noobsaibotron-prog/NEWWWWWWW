@@ -1,0 +1,98 @@
+CODEX BRIEF — Thinness production fix, A/B #5: Thinness DETECTION-THRESHOLD calibration
+======================================================================================
+Date: 2026-06-23   Branch: feature/ui-polish-post-recovery
+Status: PROPOSED, doc only. Counter-exam REQUIRED before any code.
+NO ml_weights.bin, NO AIEngine.cpp, NO runtime/veto, NO save-format change, NO other thresholds.
+
+WHY THIS A/B EXISTS
+-------------------
+  - AB3 (Lever C, thinPosWeight=2.0): Thinness FIXED — mean 33.3 >= 25.3 bar, per-seed MIN lifted to
+    17. SOLE residual = clean-FP per-seed max 16 > 15 (over by ONE).
+  - AB4 (global clean hard-negatives): NEGATIVE — zeroes clean-FP but COLLAPSES Resonance/Boxy/Boom
+    (the clean-tilt shape overlaps those positives). clean-FP needs a TARGETED control, not a global
+    one.
+  => AB5 = Codex's 2nd choice: raise the THINNESS detection threshold. It suppresses ONLY the
+     Thinness firing on clean (the source of the residual clean-FP), with NO collateral on the other
+     classes (each class keeps its own threshold).
+
+FRAMING (so this is NOT mistaken for relaxing the gate)
+-------------------------------------------------------
+  This is NOT relaxing the clean-FP gate. It is CALIBRATING the Thinness detection threshold AFTER
+  Lever C changed Thinness's TRAINING (the positive boost raised true-Thinness probability, so the
+  old 0.50 threshold now also lets through clean material near the boundary). The clean-FP gate
+  (mean<=10 / max<=15) stays HARD; the threshold is the knob that earns it back. Document it as
+  "threshold re-calibration after a training change", not as a test-passing patch.
+
+SCOPE (this A/B only — ONE variable = baseThresholds[Thinness])
+--------------------------------------------------------------
+  - Vary the Thinness detection threshold (today 0.50f, MLEngine.cpp:116-123; consumed in
+    detectProblems ~MLEngine.cpp:357). thinPosWeight FIXED at 2.0 (Lever C held). NO hard-negatives,
+    NO weight changes, NO OTHER thresholds, NO AIEngine/veto/runtime.
+
+DESIGN — the experiment is INFERENCE-side (cheap; NO retrain per threshold)
+--------------------------------------------------------------------------
+  - Train the candidate ONCE per seed (combined, thinPosWeight=2.0). Then, for each threshold value,
+    SET baseThresholds[Thinness] via a test-only setter and RE-MEASURE all 8 recalls + clean-FP on
+    the SAME trained model (re-measure ALL classes, since detectProblems' top-K can couple them).
+  - Test hook (MLEngine.h, #if JUCE_UNIT_TESTS): e.g. setBaseThresholdForTests(int idx, float v).
+    Production behaviour UNCHANGED (test-only). The eventual SHIP change is the constructor value
+    baseThresholds[Thinness] = <winner> — DEFERRED to Phase C2, NOT done in AB5.
+  - Default 0.50 == current => the 0.50 row reproduces AB3 w2.0 (parity).
+
+A/B MATRIX (test-only, behind its OWN env e.g. AIEQ_AB5=1)
+---------------------------------------------------------
+  - Thinness threshold in { 0.50 (control), 0.525, 0.55, 0.575, 0.60 } — CONSERVATIVE, no big jumps.
+  - 3 seeds (11/22/33), 600 ep, lr 0.003; full C1 all-8 + clean-FP, Thinness PER-SEED MIN highlighted.
+  - CONTROL (0.50): MUST reproduce AB3 w2.0 (Thin 33.3[17..45] / Sib 45.3 / Reso 47.0 / Mud 44.0 /
+    cleanFP 8.0[3..16]) — else STOP.
+
+ACCEPTANCE (clears the bundle / advances toward Phase C2 — NOTHING shipped here)
+-------------------------------------------------------------------------------
+  - A threshold where: clean-FP mean<=10 AND max<=15 (gate NOT relaxed); Thinness mean >= synthOnly-3
+    (25.3) AND per-seed MIN >= 17 (do NOT lose Lever C's gain); Sibilance >= 35; no other class
+    regresses (their thresholds/recall unchanged).
+  - If found: the bundle = Lever C @2.0 (training) + baseThresholds[Thinness]=<winner> (calibration)
+    is the candidate -> /tmp + logged checksum. STOP after the table. NOTE: still needs an
+    AI-Corpus / real-clean validation before Phase C2 (AB3/AB4/AB5 are all synthetic-gate-targeted).
+  - If NONE clears: revert Lever C, numbers stay in the briefs; escalate to capacity/structural-loss.
+
+OUT OF SCOPE / FORBIDDEN
+------------------------
+  - changing thinPosWeight (FIXED 2.0); hard-negatives; ANY other class's threshold; relaxing the
+    clean-FP gate; ml_weights.bin; AIEngine.cpp; the veto; runtime; save format/version.
+
+PROCESS
+-------
+  1. Counter-exam THIS brief.
+  2. Implement (test-only threshold setter + AB5 inference-side sweep on the held Lever C), measure,
+     STOP after the table.
+  3. If it clears -> bundle is the candidate (commit + Phase C2 + real validation need their OWN go).
+     If negative -> revert Lever C; escalate to capacity / structural loss (new brief).
+
+POINTERS
+--------
+  - AB3 / AB4 results + the HELD Lever C(2.0): CODEX_BRIEF_THINNESS_AB3.txt / AB4.txt.
+  - Threshold: MLEngine.cpp:116-123 (baseThresholds, Thinness 0.50f) + detectProblems (~:357);
+    read-only accessor getBaseThresholds() already exists.
+  - Master brief: CODEX_BRIEF_THINNESS_PROD.txt.
+
+RESULT (2026-06-23 — NEGATIVE; and a DIAGNOSTIC that re-frames the problem)
+--------------------------------------------------------------------------
+Test-only setter setBaseThresholdForTests (#if JUCE_UNIT_TESTS, bounds-guarded, clamped 0..1).
+Candidate trained once/seed (combined, thinPosWeight=2.0); Thinness threshold swept
+{0.50,0.525,0.55,0.575,0.60} at inference (all 8 + clean-FP re-measured). AI_Tests 6/6.
+  - 0.50 PARITY: reproduces AB3 w2.0 (Thin 33.3[17..45] / cleanFP 8.0[3..16]) -> OK.
+  - clean-FP is INVARIANT across 0.50..0.60: 8.0[3..16] at EVERY threshold (max stays 16).
+  - Thinness recall only DROPS (33.3->32.7->31->31->29.7); per-seed MIN falls below 17 from 0.55.
+VERDICT: raising the Thinness threshold removes ZERO clean false-positives => the residual clean-FP
+is NOT Thinness firing on clean (in [0.50,0.60]); it is OTHER classes (or Thinness with prob>0.60).
+The targeted-threshold hypothesis was WRONG; here the threshold is pure Thinness-recall loss. NO
+threshold clears.
+KEY DIAGNOSTIC: clean-FP at Lever C(2.0) is mean 8.0 (fine) with ONE seed at max 16 (vs baseline
+pw=1.0 max 14) — a MARGINAL +2 on one seed, NOT Thinness-sourced. The clean-FP control has been
+mis-targeted twice (AB4 global over-corrects; AB5 Thinness-threshold does nothing).
+DISPOSITION: Lever C HELD (not reverted) pending Codex: (A) revert + escalate to
+capacity/structural-loss per protocol, OR (B, recommended) first run a CHEAP clean-FP-SOURCE
+diagnostic (which classes false-fire on clean at Lever C 2.0) — if it's ONE class, a targeted
+control (that class's threshold / a hard-negative for that class) is trivial and avoids a 4th
+mis-target + the big escalation.

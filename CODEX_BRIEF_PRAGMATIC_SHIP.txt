@@ -1,0 +1,81 @@
+CODEX BRIEF — Pragmatic vetted SHIP: select + validate ONE candidate blob (model selection by gate)
+==================================================================================================
+Date: 2026-06-23   Branch: feature/ui-polish-post-recovery
+Status: PROPOSED, doc only. Counter-exam REQUIRED before any code. NO ml_weights.bin committed until validated.
+
+WHY (the bounded stability program landed here)
+-----------------------------------------------
+  - Stability1 (sum-gradient mini-batch): PARTIAL — single-blob seed pass-rate 4/12 -> 6/12.
+  - Stability2 (Adam): NEGATIVE — 0/12 (rejected; lr=0.0005 NOT pursued — 0/0 is a clear failure, not
+    "diverges-but-rescuable").
+  => The tiny 128->64->8 net does NOT become robust across ALL seeds (6 seeds stay hard). Per the
+     bounded plan (<=3 levers, then decide), we STOP chasing stability and instead do a RIGOROUS MODEL
+     SELECTION of the best mini-batch-B=4 candidate + FULL real validation, and ship IT if it clears
+     everything. This is NOT lucky-seed: it is selection through the COMPLETE gate + real-audio
+     validation, documented. Redesign (bigger net) is a SEPARATE future project, opened only if no
+     candidate clears.
+
+THE CANDIDATE RECIPE (frozen — SGD, not Adam)
+---------------------------------------------
+  - thinPosWeight = 2.0 (Lever C, baked into the blob via training)
+  - miniBatchSize = 4 (Stability1 sum-gradient, baked into the blob via training)
+  - optimizer = SGD (Adam REJECTED), 600 epochs, lr 0.003, on the `combined` recipe
+  - Resonance detection threshold 0.20 -> 0.225 (the bundle; a constructor/baseThresholds change at ship)
+  - persistence FIXED (0ed9f286 + db8e5f5d) -> single-record blob, faithful save/load (repro=ok proven)
+  - candidate SEED POOL (passed the single-blob C1 @0.225 with B=4): { 4, 5, 22, 33, 101, 303 }
+
+THE PLAN (test-only selection + validation; NO production blob committed until it clears)
+----------------------------------------------------------------------------------------
+  1. REGENERATE the 6 candidate blobs deterministically (combined, SGD, B=4, pw=2.0, 600 ep) ->
+     /tmp/cand_seed<N>.bin + logged checksum. Single-record (post-fix).
+  2. FULL C1 gate (ALL 8 classes + clean-FP) on each, at Resonance 0.225, on the SAVED+RELOADED blob
+     (repro must be ok). [The B=4 pass used a 5-condition gate; here use the FULL all-8 gate — stricter.]
+  3. AI-CORPUS on each candidate vs shipped (load via the existing setCustomMLWeightsPathForTests path):
+     no regression on the corpus invariant.
+  4. REAL-CLEAN: per-class FP on real clean VocalSet frames (held-out singers) -> NO new false positives
+     vs shipped (esp. Resonance — the thin-margin class + the AB6 culprit).
+  5. AI-SWEEP floor (cleanRateML<=5, cleanRateHy<=20) UNCHANGED (0/18) with the candidate weights.
+  6. SELECT the candidate that passes ALL of the above. If >1 passes, pick the strongest (best weak-class
+     recall with the cleanest floor), documented.
+  7. NO ml_weights.bin copied to Resources / committed until a candidate clears EVERYTHING.
+
+OPEN DESIGN QUESTIONS (counter-exam)
+------------------------------------
+  - The 0.225 Resonance threshold through AIEngine: the corpus/sweep run through AIEngine (no MLEngine
+    threshold hook allowed) -> they validate the WEIGHTS at the default threshold; the 0.225 is validated
+    MLEngine-direct (C1 + real-clean). Same split as the V1 reasoning. Is that acceptable for selection,
+    or do we want the 0.225 baked differently?
+  - real-clean source: VocalSet held-out clean frames (reuse the factory). Real Resonance/Thinness
+    DETECTION on real material (injection like Sibilance) is a separate generator — include or defer?
+  - The Sibilance VETO (AIEngine.cpp HF-local, the M4 fix): needed at SHIP for Sibilance to survive the
+    plugin pipeline. Is it part of THIS ship bundle (one commit) or a separate one?
+
+ACCEPTANCE (to ship)
+--------------------
+  - FULL C1 PASS (all-8 + clean-FP) on the reloaded blob; repro/save-load PASS.
+  - AI-Sweep floor unchanged (0/18).
+  - AI-Corpus not worse than shipped.
+  - real-clean opens no new FP.
+  - weak classes (Sibilance, Thinness) MEASURABLY better than the shipped model (which is 0 on them).
+  - If a candidate clears all -> a final ship (Resources/ml_weights.bin = that blob + the Resonance 0.225
+    constructor change + the Sibilance veto + Ableton) under its OWN final sign-off.
+  - If NO candidate clears -> CLOSE the current ML program; open the redesign project.
+
+FORBIDDEN (this phase)
+----------------------
+  - Adam (rejected; its dead code to be reverted before/with the ship-validation work — the candidate
+    uses SGD B=4, useAdam=false), more stability levers, lucky-seed without the gate, committing
+    ml_weights.bin before validation, AIEngine/runtime changes beyond the agreed Sibilance veto.
+
+PROCESS
+-------
+  1. Counter-exam THIS brief (esp. the 3 open questions + which validations are in-scope for selection).
+  2. Implement the selection+validation harness (test-only), produce the per-candidate table, STOP.
+  3. The actual ship (Resources/ml_weights.bin + threshold + veto + Ableton) is a SEPARATE final
+     sign-off AFTER a candidate clears.
+
+POINTERS
+--------
+  - B=4 6/12 result: Stability1 (AIEQ_STAB1=1). Persistence: 0ed9f286 + db8e5f5d. Bundle (Lever C + Reso
+    0.225): CODEX_BRIEF_THINNESS_AB7.txt. AI-Corpus candidate-load: setCustomMLWeightsPathForTests
+    (AICorpusTest.cpp). AI-Sweep floor: AIBackendSweepTest. Master: CODEX_BRIEF_THINNESS_PROD.txt.

@@ -1,0 +1,105 @@
+CODEX BRIEF — Thinness production fix, A/B #3: POSITIVE-ONLY THINNESS WEIGHT
+===========================================================================
+Date: 2026-06-23   Branch: feature/ui-polish-post-recovery
+Status: PROPOSED, doc only. Counter-exam REQUIRED before any code.
+NO ml_weights.bin, NO AIEngine.cpp, NO runtime/veto, NO save-format change.
+
+WHY (evidence chain)
+--------------------
+  - Blocco 0 (96a5da46): Thinness fails via training instability; the NEGATIVES dominate the
+    Thinness gradient (200 positives vs 1700-2660 negatives) — but NOT dead-ReLU / weight-collapse.
+  - A/B #1 (mini-batch, fixed lr): under-trains (untestable at fixed lr) — reverted.
+  - A/B #2 (weight-decay): SUPPRESSES Thinness (20.7->14->4->0) + inflates clean-FP (7->33) —
+    reverted. Proves Thinness does NOT need less weight / regularization.
+  => CONVERGENCE: Thinness needs MORE useful signal on its POSITIVES, WITHOUT amplifying the
+     negatives (which would worsen it) or the clean fixtures (overfire). Lever C = POSITIVE-ONLY
+     Thinness weight.
+
+SCOPE (this A/B only — ONE variable = thinPosWeight)
+----------------------------------------------------
+  - Scale the Thinness OUTPUT gradient ONLY when the Thinness target = 1 (positive sample):
+    in trainStep, delta3[Thinness] *= thinPosWeight  IFF problemTargets[Thinness] >= 0.5.
+  - Thinness NEGATIVES (target=0) are NOT scaled (constraint #1/#2: no negative amplification).
+  - The other 7 classes are untouched; freq-net untouched; DenseLayer::applyGradients UNCHANGED
+    (the scaling is at the output-delta level, before backprop).
+  - DROP-IN on ml_weights.bin (no architecture change -> file version=1 unchanged).
+
+DESIGN — production training, DEFAULT PRESERVES CURRENT BEHAVIOUR BYTE-FOR-BYTE
+------------------------------------------------------------------------------
+  - trainStep gains an OPTIONAL float thinPosWeight = 1.0f. Immediately AFTER the existing
+    delta3 loop:
+        if (thinPosWeight != 1.0f
+            && sample.problemTargets[(size_t) ProblemType::Thinness] >= 0.5f)
+            delta3[(size_t) ProblemType::Thinness] *= thinPosWeight;
+    thinPosWeight = 1.0f => NO scaling => byte-identical to today.
+  - trainOnDataset threads an OPTIONAL thinPosWeight = 1.0f to trainStep.
+  - KEY SAFETY: default 1.0 == current => the shipped ml_weights.bin and the tests that load it
+    (AICorpus, AI-Sweep, BugFixAcceptance) are UNAFFECTED. The param only changes HOW a candidate
+    blob is GENERATED (offline/in-test); inference, runtime and audio are NOT touched.
+    trainOnDataset(samples, epochs, lr) stays backward-compatible.
+  - SIGN NOTE: for a Thinness positive, delta3[Thin] = probScale*(prob - 1) < 0; the update is
+    w -= lr*delta3 => the parameter INCREASES (pushes Thinness UP). Scaling that (negative) delta
+    by thinPosWeight>1 makes the upward push STRONGER — exactly the intended "more positive signal".
+    It does NOT touch the negatives' downward push (those keep target=0, unscaled).
+
+A/B MATRIX (test-only sweep, behind its OWN env e.g. AIEQ_AB3=1)
+---------------------------------------------------------------
+  - thinPosWeight in { 1.0 (control), 1.5, 2.0, 3.0 } — LIMITED, no opportunistic values added.
+  - For EACH: train synth-only AND combined at seeds 11/22/33; report FULL C1 all-8 + clean-FP,
+    Thinness PER-SEED MIN highlighted (mean[min..max]).
+  - CONTROL PARITY (1.0): MUST reproduce the C1 candidate column
+    (Thin 20.7[10..35] / Sib 45.3 / Reso 45.7 / Mud 46.3 / cleanFP 7.0) — else STOP.
+
+ACCEPTANCE (pick a winning weight / advance toward Phase C2 — NOTHING shipped here)
+----------------------------------------------------------------------------------
+  - Thinness candidate >= synthOnly-3 (~25) ROBUSTLY: the per-seed MINIMUM lifted (was 10).
+  - clean-FP floor mean<=10 / max<=15 — THE KEY RISK of this lever (boosting positives can
+    overfire on clean). Watch it row by row.
+  - Sibilance >= 35 AND >= synthOnly. No other class regresses under its C1 bar.
+  - Candidate -> /tmp + logged fnv64 checksum; deterministic training code committed alongside.
+  - STOP after the table.
+
+OUT OF SCOPE / FORBIDDEN
+------------------------
+  - GLOBAL Thinness class-weight (would amplify the negatives too -> worsen, per Blocco 0 + AB2).
+  - mini-batch / weight-decay (done, reverted); capacity / larger net (LAST resort).
+  - ml_weights.bin, AIEngine.cpp, the Sibilance veto, runtime, save format/version.
+
+PROCESS
+-------
+  1. Counter-exam THIS brief.
+  2. Implement Lever C ONLY (positive-only Thinness delta scaling), measure the thinPosWeight
+     matrix, STOP after the table.
+  3. If NEGATIVE: revert the production code, keep only the numbers here (as A/B #1/#2).
+     If POSITIVE: STOP after the table; no Phase C2 without a new go.
+
+POINTERS
+--------
+  - A/B #1 / #2 results + reverts: CODEX_BRIEF_THINNESS_AB1.txt / CODEX_BRIEF_THINNESS_AB2.txt.
+    Blocco 0 signature: commit 96a5da46.
+  - Update sites: trainStep delta3 loop (MLEngine.cpp ~931-937), trainStep/trainOnDataset signatures
+    (~900, ~1054-1072); decls in MLEngine.h.
+  - Master brief: CODEX_BRIEF_THINNESS_PROD.txt.
+
+RESULT (2026-06-23 — measured; BREAKTHROUGH on Thinness, clean-FP is the new blocker)
+------------------------------------------------------------------------------------
+Implemented test-only behind AIEQ_AB3=1 (trainStep scales delta3[Thinness] on POSITIVE Thinness
+samples only; trainOnDataset optional thinPosWeight default 1.0). Sweep {1.0,1.5,2.0,3.0}, 3
+seeds, 600 ep, lr 0.003, full C1.
+  - CONTROL PARITY (1.0): C1 candidate column BYTE-IDENTICAL to baseline
+    (Thin 20.7[10..35] / Sib 45.3 / Reso 45.7 / Mud 46.3 / cleanFP 7.0). AI_Tests 6/6.
+  - 1.5: Thin 29.0[14..40] (PASSES C1 Thin bar >=25.3), Sib 45.7, Reso 49.3, Mud 46.0; clean-FP
+    16.0[2..24] -> FAIL cleanFP only.
+  - 2.0: Thin 33.3[17..45] (PASSES), Sib 45.3, Reso 47.0, Mud 44.0; clean-FP 8.0[3..16]
+    (mean 8.0 OK<=10, MAX 16 > 15) -> FAIL cleanFP by ONE point (per-seed max).
+  - 3.0: Thin 33.0[19..45], clean-FP 8.7[0..22] -> FAIL Harshness + cleanFP.
+VERDICT: Lever C is the FIRST lever to FIX Thinness — the C1 Thinness criterion (mean >= 25.3) is
+MET at 1.5/2.0/3.0 and the per-seed MIN is lifted (10 -> 17 at 2.0). The remaining blocker is the
+PREDICTED key risk = clean-FP overfire (boosting Thinness positives makes the model fire on clean).
+weight 2.0 is closest: clean-FP mean 8.0 OK, max 16 — over the hard max<=15 by a SINGLE point.
+This is NOT a clean negative like AB1/AB2 — the lever works; the problem is NARROWED to clean-FP.
+Constraints honoured: sweep limited to {1.0,1.5,2.0,3.0} (no opportunistic values), clean-FP gate
+NOT relaxed, no ship, no ml_weights.bin.
+DISPOSITION: code HELD (NOT reverted, NOT committed) pending Codex's call — revert per strict
+protocol, OR keep and pair Lever C(~2.0) with a clean-FP control (e.g. Thinness detection
+threshold, or clean/hard-negative Thinness training data) in a follow-up brief.

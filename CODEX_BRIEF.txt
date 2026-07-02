@@ -1,0 +1,254 @@
+================================================================================
+BRIEF DI ALLINEAMENTO PROGETTO — AI EQUALIZER PRO
+Per: seconda AI coding agent (Codex) nel processo a due AI
+Data: 2026-06-03
+================================================================================
+
+--------------------------------------------------------------------------------
+0. RUOLO E PROCESSO (NON DEROGABILE)
+--------------------------------------------------------------------------------
+Sei la seconda AI di un processo a DUE AI, evidence-driven e disciplinato.
+L'altra AI (Claude) lavora dentro il repo; tu fai da revisore tecnico /
+sparring partner sul design e sulle priorità. Regole del processo:
+
+- Ogni fix = UN commit separato, causalmente attribuibile.
+- Si MISURA prima/dopo ogni passo con lo STESSO harness/seed/backend/sensitivita,
+  cella per cella (non solo il sommario). Nessun claim senza misura.
+- STOP a ogni re-misura per revisione umana (Marco).
+- Il "floor" di falsi positivi su segnale pulito NON si riapre MAI (resta 0/9).
+- Precisione > recall: meglio non rilevare un problema piccolo che inventarne
+  uno inesistente.
+- Git safety: si committa SOLO su richiesta esplicita; mai amend, mai
+  force-push, mai skip hook; si stagiano file specifici, mai `git add -A`.
+- Si scrive a Marco SEMPRE in italiano (lui e' italiano).
+
+--------------------------------------------------------------------------------
+1. POSIZIONE REPOSITORY / WORKTREE / BRANCH
+--------------------------------------------------------------------------------
+Repo principale (root):   /Users/marco/Desktop/NEWWWWWWW
+Remote 'openclaw':        /Users/marco/.openclaw/workspace/sandboxes/AIEqualizerPro-working-copy
+
+Si lavora in un GIT WORKTREE dedicato (non nella root):
+  WORKTREE ATTIVO:  /Users/marco/Desktop/NEWWWWWWW/.claude/worktrees/recover-ember-core
+  BRANCH ATTIVO:    feature/ui-polish-post-recovery
+  HEAD ATTUALE:     2bb64545
+
+Altri worktree esistenti sullo stesso repo (NON toccare, sono altri filoni):
+  /Users/marco/Desktop/NEWWWWWWW                      [debug/host-clicks-real]   (baseline storica consigliata nel README)
+  .claude/worktrees/affectionate-wing                 [claude/affectionate-wing]
+  .claude/worktrees/charming-cohen                    [fix/click-free-audio]
+  .claude/worktrees/crazy-noyce                        [claude/crazy-noyce]
+  .claude/worktrees/strange-einstein                   [phase-b/rbj-coefficients]
+  .claude/worktrees/vigorous-nobel                     [claude/vigorous-nobel]
+  .claude/worktrees/wizardly-elion                     [feature/post-meeting-fixes]
+
+IMPORTANTE: ogni comando va eseguito con cwd nel worktree attivo
+(.../recover-ember-core), altrimenti i path e i build falliscono.
+
+--------------------------------------------------------------------------------
+2. COS'E' IL PROGETTO (PANORAMICA COMPLETA)
+--------------------------------------------------------------------------------
+AI Equalizer Pro = plugin audio JUCE cross-platform (VST3 / AU / Standalone):
+equalizzatore parametrico fino a 24 bande, con AI integrata che analizza lo
+spettro in tempo reale, rileva problemi frequenziali e suggerisce/applica
+correzioni EQ. Architettura progettata per tenere il thread audio real-time safe
+(strutture lock-free / atomiche, snapshot triple-buffer dello spettro).
+
+FUNZIONALITA' PRINCIPALI:
+- EQ parametrico 8-24 bande, 9 tipi di filtro per banda:
+  LowCut, LowShelf, Peak, HighShelf, HighCut, Notch, BandPass,
+  Vintage LowShelf, Vintage HighShelf. Slope cut: 12/24/48 dB/oct.
+  Smoothing parametri + atomiche per ridurre zipper/glitch in automazione.
+- Dynamic EQ per-banda: modalita' Compress / Expand / Gate.
+  Parametri: threshold, ratio, attack, release, range, knee.
+  Meter thread-safe: input level, gain reduction, output level.
+- Tre modalita' di fase:
+  * Zero Latency (IIR standard, latenza minima)
+  * Natural Phase (oversampling 2x/4x, path HQ)
+  * Linear Phase (partitioned convolution, blocchi 128 sample; IR costruita da
+    magnitude response in background con debounce + crossfade IR vecchia/nuova)
+- Mid/Side: Stereo, Mid Only, Side Only, MS Linked.
+- AI Engine (rilevamento problemi): Resonance, Harshness, Muddiness, Boxyness,
+  Sibilance, Low-End Boom, Thin Sound, Dull Sound. Detection multi-scala,
+  smoothing temporale, soglie adattive, comunicazione lock-free analisi<->audio.
+- Source Profiles: Generic, Vocals, Drums, Bass, Synth, Master, EDM, Techno.
+- Semantic EQ: linguaggio naturale -> EQ (Air, Brilliance, Warmth, Punch,
+  Clarity, Smoothness, Weight, Vintage, ...).
+- A/B/C/D comparison, auto-gain, analizzatore spettro pre/post, controllo OSC.
+
+LAYOUT SORGENTI (Source/):
+  AI/     19 file  - AIEngine, MLEngine, AdaptiveAIEngine, SemanticEQEngine,
+                     NeuralNetworkWrapper, ReferenceMatcher, UserLearning,
+                     OnlineLearningSystem, MultiTrackUnmasking, ...
+  DSP/    12 file  - ParametricEQProcessor, DynamicEQProcessor,
+                     LinearPhaseProcessor, PartitionedConvolver,
+                     SpectrumAnalyzer, BiquadCoefficients, ...
+  Core/    5 file  - CaptureService, HistoryManager, LockFreeAudioFIFO,
+                     LockFreeStructures, OSCParameterServer
+  GUI/    23 file  - PluginEditor + componenti (AdvancedSpectrumDisplay,
+                     AIProblemPanel, ModernLookAndFeel, ...)
+  Tests/  44 file  - UnitTest JUCE (vedi sezione 7)
+  Utils/   5 file  - Logger, ecc.
+  PluginProcessor.cpp/.h in Source/ (root del modulo)
+
+--------------------------------------------------------------------------------
+3. FOCUS DEL LAVORO CORRENTE: ANTI-ALLUCINAZIONE AI
+--------------------------------------------------------------------------------
+Obiettivo della linea di lavoro: eliminare le "allucinazioni" dell'AI (falsi
+positivi / sovra-rilevamento su segnale pulito) SENZA perdere il recall sui
+problemi veri.
+
+ARCHITETTURA DETECTION RILEVANTE:
+- Backend (DetectionBackendMode): Hybrid (default), MLOnly, HeuristicOnly.
+  Heuristic = AIEngine::detectProblems.
+  ML        = MLEngine::detectProblems via AIEngine::detectProblemsWithML.
+- Decision rule ML (MLEngine::detectProblems): per-classe kMlMargin
+  (Resonance=0.02, altri=0.10) + rank<=kMlTopK su prob GREZZE (NO dominance-gap)
+  + cap top-K. ProblemType enum: Resonance, Harshness, Muddiness, Sibilance,
+  Boominess, Thinness, BoxyMidrange, Clipping.
+- Veto "reality-check" in AIEngine::detectProblemsWithML (per classe, applicato
+  PRIMA di pendingCorrections.push_back):
+  * Resonance: peak-prominence (kResonanceProminenceDb=11.0) con peak-snap.
+  * classi larghe (Muddiness/Boxyness/Sibilance/LowEndBoom): band-excess in dB,
+    cioe' (mean dB banda - mean dB riferimento) >= kBandExcessDb (=3.0).
+
+SCOPERTA CHIAVE (causa radice di gran parte delle allucinazioni):
+La famiglia di veto "band-excess" e' SISTEMICAMENTE distorta dal rolloff HF del
+tilt rosa naturale. Un riferimento largo (es. 100-10000 Hz) viene tirato giu'
+~3.5 dB dal rolloff, quindi il tilt low-mid naturale (segnale pulito ma "caldo")
+legge come "eccesso" -> Muddiness allucinata.
+
+WIRING PARAMETRI AI -> ENGINE (rilevante per la manopola Sensitivity):
+I parametri APVTS aiSensitivity / aiStrength sono applicati all'engine SOLO
+dentro updateEQFromParameters() (chiamate setSensitivity/setStrength), che gira
+nel processBlock SOLO quando parametersNeedUpdate==true. parametersNeedUpdate
+viene settato in parameterChanged(), che scatta SOLO per parametri registrati
+come listener via apvts.addParameterListener(). aiEnabled invece e' letto live
+ogni blocco (non dipende dal listener).
+
+--------------------------------------------------------------------------------
+4. STATO ATTUALE — 3 COMMIT DI QUESTA SESSIONE (tutti validati in Ableton)
+--------------------------------------------------------------------------------
+[3fb513e8]  feat(ai): sensitivity-driven ML cap + tilt-robust Muddiness veto
+  - MLEngine.cpp: cap top-K guidato dalla sensitivity -> 1 / 2 / 2
+    (low / default / high). La manopola e' "viva" su stimoli a singolo problema
+    (1->2). Cap massimo tenuto a 2 (NON 3) per la distorsione tilt del veto.
+  - AIEngine.cpp: veto Muddiness ridisegnato a riferimento SOTTO-BANDA:
+    band 150..400 vs 80..150 (invece di 100..10000). Auto-normalizza il tilt
+    (le due bande condividono la pendenza naturale) ED e' sotto la zona di
+    contaminazione boxy/risonanza -> tilt-robusto E peak-robusto.
+  - AIBackendSweepTest.cpp: aggiunto controllo di regressione "CleanSteep"
+    (tilt -6 dB/decade) che ha deciso in modo definitivo tra le alternative.
+  - MISURATO: clean 0/9 su tilt dolce E ripido (path ML); Mud@250 ancora
+    rilevato; recall Risonanza 100%; suite intera verde.
+  - RESIDUO NOTO/documentato: mud modesto (+7dB) sotto risonanza dominante
+    (+18dB) NON rilevato (non-rilevazione conservativa). Recupero = ticket #2.
+
+[d35360a4]  fix(ai): make Sensitivity/Strength knobs update detection live
+  - PluginProcessor.cpp (+8 righe): aiSensitivity e aiStrength NON erano
+    registrati come parameter listener -> parameterChanged() non scattava ->
+    durante playback steady parametersNeedUpdate restava false ->
+    updateEQFromParameters() non girava -> setSensitivity/setStrength mai
+    chiamati. La manopola appariva "MORTA" (barre ambra + AI panel non
+    aggiornati live) finche' un altro parametro non scatenava per caso un update.
+  - FIX: registrati entrambi come listener (apvts.addParameterListener).
+    parameterChanged cade nel ramo generico parametersNeedUpdate=true; nessun
+    rebuild EQ/IR collaterale (non sono band/phase param).
+
+[2bb64545]  test(ai): regression guard for live Sensitivity/Strength knob propagation
+  - Source/Tests/SensitivityKnobLiveTest.cpp (NUOVO, categoria "Integration",
+    linkato in target AIEqualizerPro_IntegrationTests + riga in CMakeLists.txt).
+  - Test a livello di PROCESSOR REALE: istanzia AIEqualizerAudioProcessor,
+    prepareToPlay, "settle", poi cambia SOLO aiSensitivity/aiStrength durante
+    playback simulato, processa 1 blocco, asserisce che
+    getAIEngine().getSensitivity()/getStrength() riflettano il nuovo valore.
+    3 sotto-test: sensitivity (0.20/0.85/0.40), strength (0.30/0.95/0.55),
+    sweep continuo 0->1 (11 step).
+  - FALSIFICATO dal vivo: rimuovendo i 2 listener il test FALLISCE
+    (engine bloccato a 0.5/0.7 mentre il param si muove); coi listener PASSA.
+    Suite Integration verde: 686 assert, 0 fail.
+
+WORKING TREE: resta non committato Source/Tests/AIAccuracyTest.cpp (fixture
+dB-domain di sessione precedente, scollegate, escluse di proposito). Da decidere
+separatamente.
+
+--------------------------------------------------------------------------------
+5. EVIDENZA MISURATA (matrice AI-Sweep attuale, post 3 commit)
+--------------------------------------------------------------------------------
+Risonanza@800 / ML:  sens 0.2 -> 1 det (Res); 0.5 -> 2 (Res+Bxy); 0.8 -> 2.  KNOB VIVO.
+Muddiness@250 / ML+Hybrid: rilevato a tutti i livelli (Mud@~200, c~0.98).
+Clean(control) / ML+Hybrid: CLEAN a 0.2/0.5/0.8 (zero allucinazioni anche al max).
+CleanSteep(control) / ML+Hybrid: CLEAN a tutti i livelli.
+  ECCEZIONE: Heuristic (e quindi Hybrid via euristica) a sens 0.2 fa 2 FP su
+  CleanSteep: Res@14373 c~0.48 e Res@5890 c~0.46. Problema PRE-ESISTENTE del
+  path euristico, separato dalla manopola (ticket #3).
+
+--------------------------------------------------------------------------------
+6. TICKET APERTI (differiti, NON iniziati, in attesa di priorita' da Marco)
+--------------------------------------------------------------------------------
+#1  DEFECT B — la manopola NON aggiorna a trasporto FERMO/PAUSA.
+    La detection e' guidata dall'audio: a pausa non arrivano nuovi frame,
+    l'analisi non rigira, quindi muovere la manopola non cambia barre/pannello
+    finche' l'audio non riparte. Fix candidata: al cambio-parametro rilanciare
+    un'analisi sull'ULTIMO frame catturato (serve segnalare il thread AI).
+    Indipendente dai 3 commit fatti.
+
+#2  REDESIGN SISTEMICA del veto band-excess (Muddiness/Boxyness/Sibilance/
+    LowEndBoom) per recuperare il mud-sotto-risonanza e sbloccare in sicurezza
+    il cap 3 (manopola viva su TUTTO il range, non solo low<->default).
+
+#3  FP RISONANZA EURISTICA su tilt ripido a bassa sensitivity (vedi CleanSteep
+    sopra). Path euristico, pre-esistente, separato.
+
+--------------------------------------------------------------------------------
+7. COME MISURARE / VERIFICARE
+--------------------------------------------------------------------------------
+(cwd = worktree attivo .../recover-ember-core)
+
+Build plugin (universal x86_64+arm64):
+  ./build_mac.sh Release          # artefatti in build-mac/Release/lib
+
+Test AI engine (matrice cella-per-cella + knob):
+  build-mac/Release/bin/AIEqualizerPro_AI_Tests --category=AI-Sweep
+  build-mac/Release/bin/AIEqualizerPro_AI_Tests --category=AI-Knobs
+  build-mac/Release/bin/AIEqualizerPro_AI_Tests        # suite AI completa, deve restare verde
+
+Test wiring processor (manopola live):
+  cmake --build build-mac --target AIEqualizerPro_IntegrationTests -j8
+  build-mac/Release/bin/AIEqualizerPro_IntegrationTests --category=Integration
+
+Target di test (CMakeLists.txt):
+  AIEqualizerPro_Tests             - DSP-only (no AI/ML deps)
+  AIEqualizerPro_AI_Tests          - moduli AI soltanto (no full processor)
+  AIEqualizerPro_IntegrationTests  - linka il processor completo (AIEqualizerPro)
+  AIEqualizerPro_PerformanceTests  - GUI paint fluidity
+
+Install in cartelle di SISTEMA (richiede password admin; macOS):
+  /Library/Audio/Plug-Ins/VST3/AI Equalizer Pro.vst3
+  /Library/Audio/Plug-Ins/Components/AI Equalizer Pro.component
+  NB: i bundle JUCE lasciano la cartella models/ (pesi ML) NON sigillata ->
+  codesign --verify fallisce; rifirmare adhoc con:  codesign --force --deep -s -
+
+--------------------------------------------------------------------------------
+8. VINCOLI HARD (non toccare senza decisione esplicita di Marco)
+--------------------------------------------------------------------------------
+- NON ritoccare il file dei pesi ML shippato (ml_weights.bin): niente
+  retraining, e' l'ultima spiaggia.
+- NON aggiungere dominance-gap nella decision rule ML: su Mud@250 reale
+  Res~0.98 e Mud~0.98 sono quasi pari, un gate di gap ucciderebbe un vero positivo.
+- NON toccare problemFreqRanges (interno a MLEngine).
+- Il floor clean DEVE restare 0/9 a OGNI sensitivita'. Mai riaprirlo.
+- NON toccare gli altri worktree/branch.
+
+--------------------------------------------------------------------------------
+9. DOMANDA PER TE (CODEX)
+--------------------------------------------------------------------------------
+Dato lo stato sopra, quale ticket tra #1/#2/#3 affronteresti per primo, con
+quale design MINIMALE e MISURABILE (e con quale prova di regressione)?
+
+Per #1 in particolare: come faresti rilanciare l'analisi sull'ultimo frame al
+cambio-sensitivity, SENZA introdurre race condition ne' ri-analisi continue,
+restando dentro il modello thread esistente (thread AI off-line che consuma
+snapshot triple-buffer dello spettro)? Considera: rate-limiter (ogni 3 frame) e
+persistenza temporale (~0.5-0.8s, finestra 8 frame) gia' presenti nel path live.
+================================================================================

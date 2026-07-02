@@ -1,0 +1,126 @@
+================================================================================
+BRIEF PER CODEX — PIANIFICAZIONE follow-up #2 (recall mud-sotto-risonanza)
+"Migrare il veto Muddiness all'helper trend per recuperare il recall e rendere la
+ manopola viva anche su materiale modesto"
+Data: 2026-06-08
+================================================================================
+
+--------------------------------------------------------------------------------
+0. COSA TI CHIEDO (in una riga)
+--------------------------------------------------------------------------------
+Produci un PIANO (non codice di produzione) per migrare il veto ML di Muddiness
+dall'attuale riferimento sotto-banda 80-150 al nuovo helper trend-robust
+computeTrendBandExcess (gia' in produzione per Boxy/Boom), allo scopo di
+recuperare il "mud modesto sotto risonanza dominante" che oggi e' scartato,
+SENZA riaprire il floor pulito. Stessa disciplina evidence-driven.
+
+--------------------------------------------------------------------------------
+1. STATO E DIAGNOSI (gia' verificata, 3 agenti + tribunale)
+--------------------------------------------------------------------------------
+Il ticket #2 e' chiuso e committato:
+  efcea231 veto Boxy/Boom tilt-robust (helper computeTrendBandExcess)
+  9f4a0a61 cap ML 1/2/3
+La "manopola viva fino a 3" E' dimostrata: la sezione di test "ML cap-3 is
+exercised on a validated multi-problem witness" (AIBackendSweepTest.cpp:988,
+stimolo a :880-889 = Res forte + Mud@250 +12dB + Bxy@500 +14dB) mostra a cap 3
+-> 3 detection (Bxy+Mud+Res), e l'asserzione :1002 prova che capHi==3 e
+capHiForcedTwo<3. Quindi il cap funziona su materiale forte.
+
+IL LIMITE RESIDUO (questo follow-up): su materiale MODESTO la manopola resta
+piatta. Causa verificata empiricamente: il veto Muddiness in
+AIEngine::detectProblemsWithML (AIEngine.cpp:3081-3082):
+    keep = (calculateBandEnergy(150,400) - calculateBandEnergy(80,150)) >= 3.0 dB
+Su mud@250 +7dB sotto res@800 +18dB l'excess misurato e' 2.05 dB < 3.0 -> Mud
+rifiutato. E' il LIMITE NOTO gia' documentato nel codice (AIEngine.cpp:3076-3080:
+"a modest hump ~+7dB co-occurring with a dominant resonance does not clear 3 dB
+over its own low-end neighbourhood, so it is missed (conservative). ... a proper
+multi-band redesign is deferred to its own commit."). QUESTO e' quel commit.
+
+NB: il collo di bottiglia NON e' il cap ne' il margine ML (kMlMargin) — e' il
+veto band-excess. (Confermato: il witness +12dB passa il veto a 4.34 dB; il
++7dB no a 2.05 dB.)
+
+--------------------------------------------------------------------------------
+2. L'HELPER GIA' ESISTENTE DA RIUSARE
+--------------------------------------------------------------------------------
+computeTrendBandExcess (AIEngine.cpp, lambda ~2895-2985) gia' in produzione per
+Boxy/Boom: bucket log-spaced sulla banda problema (mediana per bucket) + OLS
+dB vs log10(freq) sui bucket dei contorni + predizione al centro geometrico ->
+excessDb = problemLevel - trendBaseline. Tilt-robust per costruzione.
+Uso attuale:
+  Boxyness  (3084-3086): computeTrendBandExcess(300,800, {{150,280},{850,1600}})
+  LowEndBoom(3093-3095): computeTrendBandExcess(30,100, {{100,500}})
+Muddiness  (3081) usa ANCORA il sotto-banda 80-150 (controllo, non migrato).
+
+--------------------------------------------------------------------------------
+3. L'OBIETTIVO E LA TENSIONE CHIAVE
+--------------------------------------------------------------------------------
+Migrare Muddiness al trend helper deve:
+  (A) RECUPERARE il recall: mud@250 +7dB sotto res@800 deve passare (excessDb>=3).
+  (B) NON riaprire il floor: CleanSteep e CleanBassTilt devono restare 0 FP,
+      su Mud, a cap 1/2/3.
+La tensione: il sotto-banda 80-150 era stato scelto apposta perche' SOTTO la zona
+boxy/risonanza (300-800), cosi' una Res@800 non contamina il riferimento. Un
+trend helper per Muddiness con contorno-sopra che include 300-800 rischia di
+essere ALZATO da una Res@800 vicina -> il mud reale viene di nuovo mascherato
+(stesso problema che il sotto-banda risolveva). Quindi i contorni per Muddiness
+vanno scelti con cura (es. sotto 80-150 + sopra che SALTA la zona boxy, tipo
+sopra 500-? oppure niente contorno-sopra come per Boom). DEVI progettare e
+misurare questo.
+
+--------------------------------------------------------------------------------
+4. DOMANDE A CUI IL PIANO DEVE RISPONDERE
+--------------------------------------------------------------------------------
+Q1. Quali contorni esatti per Muddiness nel trend helper? (problema 150-400;
+    contorno sotto e/o sopra — quali bande, con quale gap dalla zona boxy 300-800
+    e dalla risonanza?) Motiva la scelta in modo che Res@800 NON alzi la baseline.
+Q2. Si tiene kBandExcessDb=3.0 o si ritara? (giustifica con i numeri attesi:
+    +7dB mud sotto res deve dare >=3; clean tilt <3).
+Q3. Misura su: Mud@250 standalone, Mud@250+Res@800 (il caso target), CleanSteep,
+    CleanBassTilt, e un nuovo "Mud@250 +7dB on SteepTilt + Res@800" se serve.
+    Estendi la diagnostica offline esistente (computeBroadBandMetric / la sezione
+    AI-Diag Ticket #2) per stampare legacy vs trend excess anche per Muddiness.
+Q4. Sequenza commit: (1) diagnostica Muddiness trend (offline, no veto change);
+    (2) wiring veto Muddiness + rimisura cap 2 (no-op su clean, recall su target)
+    e cap 3 test-only (floor 0). Cap produzione invariato.
+Q5. Effetto sulla manopola: dimostra (witness o stimolo dedicato) che dopo la
+    migrazione, su un materiale con Res forte + Mud@250 +7dB, il conteggio cresce
+    con la sensitivity (es. 1 a low -> 2 a high) dove prima restava 1.
+Q6. Rischi: il mud-sotto-risonanza recuperato e' un VERO positivo o si rischia di
+    reintrodurre FP su clean? Come lo intercetti PRIMA del commit.
+
+--------------------------------------------------------------------------------
+5. VINCOLI HARD
+--------------------------------------------------------------------------------
+- Floor pulito = 0 FP a OGNI sensibilita' su Clean/CleanSteep/CleanBassTilt:
+  invariante sacro.
+- NON toccare ml_weights.bin; NON aggiungere dominance-gap; NON toccare
+  problemFreqRanges.
+- Solo il veto ML di Muddiness in questo follow-up. Boxy/Boom/Sib gia' a posto;
+  euristica non in scope.
+- Misura prima/dopo, STOP ai checkpoint, niente commit finche' i numeri non
+  reggono.
+
+--------------------------------------------------------------------------------
+6. HARNESS E CRITERI DI ACCETTAZIONE
+--------------------------------------------------------------------------------
+  cmake --build build-mac --target AIEqualizerPro_AI_Tests -j8
+  build-mac/Release/bin/AIEqualizerPro_AI_Tests --category=AI-Sweep
+  build-mac/Release/bin/AIEqualizerPro_AI_Tests --category=AI-Diag --verbose
+  build-mac/Release/bin/AIEqualizerPro_AI_Tests            # suite completa, verde
+
+Accettazione (TUTTI):
+- Mud@250 + Res@800 (mud +7dB): Muddiness ORA rilevato (trendExcess>=3).
+- CleanSteep + CleanBassTilt: 0 FP Mud a 0.2/0.5/0.8, ML e Hybrid, anche cap-3 test-only.
+- Mud@250 standalone: invariato (ancora rilevato).
+- Robustness multi-seed: clean-FP rate non peggiora.
+- Suite AI completa verde.
+- Manopola: su Res+Mud@250+7dB il conteggio cresce con sensitivity (>1 ad alta).
+
+--------------------------------------------------------------------------------
+7. NOTA EXTRA (bug separato trovato, NON in questo scope)
+--------------------------------------------------------------------------------
+getLastMLRawProbabilitiesForTests() e' un no-op: storeMLAuditSnapshot a
+AIEngine.cpp:2821 fa self-assignment, le prob grezze del forward pass non vengono
+mai copiate. Va sistemato in un ticket separato (utile per future diagnostiche).
+================================================================================

@@ -1,0 +1,135 @@
+================================================================================
+BRIEF PER CODEX — PIANIFICAZIONE P3 (Dynamic Tracking, il gap soothe2)
+Da analizzare in parallelo mentre Marco testa il build P2-complete in Ableton
+Data: 2026-06-11
+================================================================================
+
+--------------------------------------------------------------------------------
+0. COSA TI CHIEDO
+--------------------------------------------------------------------------------
+Produci il PIANO operativo di P3 (commit sequence, gate, checkpoint) partendo
+dalla bozza in sezione 4, sfidandola dove serve. NON codice di produzione.
+Domande specifiche in sezione 5.
+
+--------------------------------------------------------------------------------
+1. STATO (tutto verificato e committato)
+--------------------------------------------------------------------------------
+Branch feature/ui-polish-post-recovery, HEAD e48e9dc3, tag checkpoint/p2-complete
+(restore point certificato). Pilastri P0/P1/P2 CHIUSI:
+- P0: osservabilita' ML (raws fresche, weights witness).
+- P1: corpus reale + scorecard (docs/AI_SCORECARD.md = ledger; gap registrati:
+  P1-GAP-001 recall 3.2k mancato + inversione sensitivity su audio reale,
+  P1-GAP-002 FP heuristico HF su dark tilt, P1-QUIRK-001 smoothing coeffs,
+  P2-HAZARD-001 layout ODR JUCE_UNIT_TESTS — APERTO: niente nuovi accessor
+  inline su processor/AIEngine).
+- P2: PerceptualFrontEnd cablato nel thread AI su FIFO SPSC dedicato,
+  DIAGNOSTICS-ONLY (nessun detector lo consuma). Produce per hop (2048 samples):
+  rawDb (2049 bin non smussati), bandDb (122 bande log 12/oct), bandDbFused
+  (bande <200Hz dal path 8192: 45/60Hz separati con 13.94 dB), salienceDb
+  (fused + equal-loudness ~75phon), fluxDb (onset: transiente localizzato ±1
+  frame, picco 41dB vs steady 0.000). CPU combinata 0.057 ms/main-frame.
+  VINCOLO SCOLPITO: bandDbFused usa il LATEST frame LF, NON time-aligned col
+  main frame (può precedere/seguire fino a un hop LF ~85ms). Il contratto di
+  allineamento va FORMALIZZATO prima che qualsiasi detector lo consumi.
+
+--------------------------------------------------------------------------------
+2. L'OBIETTIVO P3 (dal piano congelato Roadmap v1)
+--------------------------------------------------------------------------------
+Rilevare problemi che VANNO E VENGONO con le note (risonanze intermittenti) —
+invisibili oggi: la persistenza temporale (8 frame a ~3.3Hz ≈ 1s di presenza
+continua richiesta) li scarta per costruzione. E' il core di soothe2; nessun
+EQ assistivo lo fa come suggeritore. Fix mappato sulla DYNAMIC EQ per-banda che
+il plugin GIA' possiede (DynamicEQProcessor::setBandParams: threshold/ratio/
+attack/release per banda), non su tagli statici.
+
+--------------------------------------------------------------------------------
+3. ASSET DISPONIBILI (riusare, non reinventare)
+--------------------------------------------------------------------------------
+- Front-end P2: frame raw a ~23Hz con bandDb/fused/salience/flux — la materia
+  prima delle statistiche per-banda.
+- Harness: AI-Sweep (floor sintetico), AI-Corpus (fixture reali, manifest con
+  known_fail, scorecard CSV), AI-Diag (diagnostica), AI-Front (witness front-end),
+  AIFrontEndWiringTest (witness in-vivo). tools/make_fixtures.py per fixture
+  nuove (deterministiche, royalty-free).
+- DynamicEQBehavioralTest: macchinario per misurare l'effetto di una banda
+  dinamica applicata (serve per il gate "il suggerimento DYN riduce P95-P50").
+- Logica salienza a ottava validata (#3) per la prominenza.
+- Correction struct estendibile; apply-path noto (applyAICorrections/
+  applySingleCorrection, BandState).
+
+--------------------------------------------------------------------------------
+4. BOZZA DI SEQUENZA (sfidala)
+--------------------------------------------------------------------------------
+P3C1 (foundation, diagnostics-only):
+  - Formalizzare il contratto di allineamento LF (decidere: le BandStats usano
+    SOLO bandDb main-path? o fused con regola esplicita di lag?). Documentare.
+  - BandStats nel front-end: ring per-banda ~4s di frame raw (122 bande x ~96
+    frame), P50/P95/dynamicExcess=P95-P50 incrementali. Witness: su fixture
+    pulsata il dynamicExcess della banda colpita >> vicinato; su steady ~0;
+    CPU witness aggiornato (budget invariato).
+P3C2 (fixture + before-witness):
+  - Fixture corpus pulsate (es. gate 4Hz, +15dB @3.2kHz su pink; piu' una
+    variante musicale tipo nota ribattuta) via make_fixtures.py + manifest
+    known_fail=false ma expected mode="dynamic".
+  - Before-witness REGISTRATO: pipeline attuale recall 0% sulle pulsate.
+P3C3 (detector, suggest-only):
+  - detectDynamicResonances in AIEngine: prominenza sul profilo P95 (stessa
+    logica salienza a ottava del #3 applicata alle stats), dynamicExcess >>
+    vicinato, correlazione flux come booster (mai gate unico). Static vince
+    su overlap. Correction esteso: dynamic flag + dynThresholdDb/dynRatio/
+    dynAttack/dynRelease derivati dalle stats (threshold ≈ P50 + 1/3*excess).
+  - SUGGERIMENTI GENERATI MA NON APPLICABILI (lista/badge DYN only). Gate:
+    recall ≥90% sulle pulsate, ±1/3 oct; clean-floor DINAMICO = 0 su tutti i
+    controlli clean/static (famiglia nuova = floor nuovo, da zero); floor
+    statico invariato; corpus invariato.
+P3C4 (wiring Fix All → DynamicEQ, commit separato):
+  - Mapping su DynamicEQProcessor::setBandParams; test state round-trip/undo/
+    preset; gate: applicare la banda DYN suggerita riduce P95-P50 ≥50% con
+    variazione P50 <1dB (riuso DynamicEQBehavioralTest).
+NOTA ESPLICITA: le BandStats vivono nel front-end (modulo), i detector nuovi
+in AIEngine — ma come passa il dato? OPZIONE A: AIEngine riceve il Frame/stats
+via il path AI-thread esistente (estendere analyzeSpectrum con input opzionale).
+OPZIONE B: il detector dinamico vive NEL front-end e pubblica "candidati DYN"
+che AIEngine merge-a. Decidere (P2-HAZARD-001: attenzione agli accessor).
+
+--------------------------------------------------------------------------------
+5. DOMANDE PER TE
+--------------------------------------------------------------------------------
+Q1. Contratto LF: per le statistiche P50/P95 serve davvero il fused, o basta
+    bandDb main-path (allineato per costruzione) e il fused resta per il futuro
+    balance/P5? Raccomanda il contratto minimo.
+Q2. Architettura dato (Opzione A vs B in sezione 4) rispettando P2-HAZARD-001
+    e il principio "AIEngine decide, front-end misura".
+Q3. La cadenza: stats accumulate a ~23Hz nel front-end, decisione AI a ~3.3Hz
+    (rate-limiter intoccato). Va bene? O il detector dinamico deve girare a
+    cadenza piena (e con quale costo/rischio)?
+Q4. Il clean-floor dinamico: quali controlli aggiungere oltre clean/cleanSteep/
+    cleanBassTilt (es. tremolo/vibrato musicale che NON e' un difetto — il
+    falso positivo piu' insidioso del dynamic tracking)?
+Q5. P1-GAP-001 (recall 3.2k su audio reale + inversione): P3 lo tocca o resta
+    parcheggiato? Le BandStats potrebbero offrire una via (P95-prominence e'
+    piu' robusta del frame singolo sul reale) — opportunita' o scope creep?
+Q6. Sequenza commit e gate: cosa manca/cosa toglieresti dalla bozza?
+
+--------------------------------------------------------------------------------
+6. VINCOLI HARD (invarianti)
+--------------------------------------------------------------------------------
+- Floor pulito statico 0 FP: mai riaperto. Famiglia dinamica: floor proprio a 0
+  dal primo commit.
+- P2-HAZARD-001: niente nuovi accessor inline su processor/AIEngine.
+- Detector statici INTOCCATI in P3 (overlap: static vince).
+- Suggest-only fino al commit wiring dedicato; auto-mode fuori scope.
+- Un commit causale per volta, STOP ai checkpoint, scorecard aggiornata nello
+  stesso commit di ogni numero che cambia.
+- ml_weights.bin intoccato (P4 separato).
+
+--------------------------------------------------------------------------------
+7. VERIFICA (comandi, cwd = worktree)
+--------------------------------------------------------------------------------
+cmake --build build-mac --target AIEqualizerPro_AI_Tests AIEqualizerPro_IntegrationTests -j8
+build-mac/Release/bin/AIEqualizerPro_AI_Tests --category=AI-Front --verbose
+build-mac/Release/bin/AIEqualizerPro_AI_Tests --category=AI-Sweep
+build-mac/Release/bin/AIEqualizerPro_AI_Tests --category=AI-Corpus --verbose
+build-mac/Release/bin/AIEqualizerPro_AI_Tests
+build-mac/Release/bin/AIEqualizerPro_IntegrationTests --category=Integration
+================================================================================

@@ -1,0 +1,99 @@
+CODEX BRIEF — Thinness production fix, A/B #2: LIGHT WEIGHT-DECAY
+================================================================
+Date: 2026-06-23   Branch: feature/ui-polish-post-recovery
+Status: PROPOSED, doc only. Counter-exam REQUIRED before any code.
+NO mini-batch, NO ml_weights.bin, NO AIEngine.cpp, NO runtime/veto, NO save-format change.
+
+WHY (evidence chain)
+--------------------
+  - Blocco 0 (commit 96a5da46): Thinness fails via TRAINING INSTABILITY / OSCILLATION (NOT
+    dead-ReLU, NOT weight-collapse). A VARIANCE reducer is indicated.
+  - A/B #1 (Lever A, mini-batch averaging): NEGATIVE in the fixed-lr form — it under-trains
+    (averaging shrinks the per-epoch step ~B x). Untestable without an lr/epoch compensation
+    (its own brief). Reverted, not committed.
+  => Lever B = LIGHT WEIGHT-DECAY is the cleaner next variance reducer: ONE variable, it does
+     NOT change the number of updates or the step scale, and it acts directly on overfit /
+     oscillation.
+
+SCOPE (this A/B only — ONE variable = lambda)
+---------------------------------------------
+  - Add L2 weight-decay to the SGD update: w -= lr * (grad + lambda * w).
+  - DECAY ON WEIGHTS ONLY, NOT BIASES (standard; biases must not be shrunk).
+  - LAYER SCOPE: apply to the PROBLEM-net weights (problemNet_fc1/fc2/fc3) — the net where the
+    Thinness output and the instability live. Leave freq-net and genre-net UNCHANGED (minimal,
+    targeted surface). [Counter-exam alternative to weigh: GLOBAL decay incl. freq-net.]
+  - NO mini-batch (per-sample SGD unchanged). lr FIXED 0.003, 600 ep, seeds 11/22/33.
+  - DROP-IN on ml_weights.bin (no architecture change -> file version=1 unchanged).
+
+DESIGN — production training, DEFAULTS PRESERVE CURRENT BEHAVIOUR BYTE-FOR-BYTE
+------------------------------------------------------------------------------
+  - DenseLayer::applyGradients gains an OPTIONAL float weightDecay = 0.0f: for WEIGHTS,
+    w -= lr * (grad + weightDecay * w); for BIASES, UNCHANGED (b -= lr * gradBias).
+    weightDecay = 0 reproduces today's blob EXACTLY.
+  - trainStep / trainOnDataset thread an OPTIONAL weightDecay (default 0), passed ONLY to the
+    problem-net layers' applyGradients; freq-net gets 0.
+  - KEY SAFETY: default weightDecay = 0 == current => shipped ml_weights.bin and the tests that
+    load it (AICorpus, AI-Sweep, BugFixAcceptance) are UNAFFECTED. The param only changes HOW a
+    candidate blob is GENERATED (offline/in-test); the inference path, runtime and audio path are
+    NOT touched. trainOnDataset(samples, epochs, lr) stays backward-compatible.
+
+A/B MATRIX (test-only sweep, behind its OWN env e.g. AIEQ_AB2=1)
+---------------------------------------------------------------
+  - lambda in { 0 (control), 1e-4, 3e-4, 1e-3 }; per-sample SGD; lr 0.003; 600 ep.
+  - For EACH: train synth-only AND combined at seeds 11/22/33; report FULL C1 all-8 + clean-FP,
+    Thinness PER-SEED MIN highlighted (mean[min..max]).
+  - CONTROL PARITY (Codex): the lambda=0 row MUST reproduce the C1 gate candidate column
+    (Reso 45.7 / Sib 45.3 / Mud 46.3 / Thin 20.7[10..35] / cleanFP 7.0) — else the change altered
+    the default => STOP.
+
+ACCEPTANCE (pick a winning lambda / advance toward Phase C2 — NOTHING shipped here)
+----------------------------------------------------------------------------------
+  - Thinness candidate >= synthOnly-3 (~25) ROBUSTLY: the per-seed MINIMUM lifted (Blocco 2b
+    min was 10) — the whole point.
+  - Sibilance stays >= 35 AND >= synthOnly. No other class regresses under its C1 bar.
+  - clean-FP floor mean<=10 / max<=15.
+  - Candidate -> /tmp + logged fnv64 checksum; deterministic training code committed alongside.
+  - STOP after the table.
+
+OUT OF SCOPE / FORBIDDEN
+------------------------
+  - mini-batch (reverted; its own brief only if lr-compensated), positive-only Thinness weight
+    (LATER, only if weight-decay is not enough), capacity (LAST resort).
+  - ml_weights.bin, AIEngine.cpp, the Sibilance veto, runtime, save format/version.
+
+PROCESS
+-------
+  1. Counter-exam THIS brief.
+  2. Implement Lever B ONLY (problem-net weight-decay on weights), measure the lambda matrix,
+     STOP after the table.
+  Re-enable the C1 hard expects only once a lever clears the gate robustly, THEN Phase C2
+  (veto line + candidate ml_weights.bin + Ableton) under its OWN sign-off.
+
+POINTERS
+--------
+  - A/B #1 result + revert: CODEX_BRIEF_THINNESS_AB1.txt. Blocco 0 signature: commit 96a5da46.
+  - Update sites: DenseLayer::applyGradients (MLEngine.cpp ~93-108); trainStep / trainOnDataset
+    (MLEngine.cpp ~900-1085); decls in MLEngine.h.
+  - Master brief: CODEX_BRIEF_THINNESS_PROD.txt.
+
+RESULT (2026-06-23 — measured, then REVERTED per Codex amendment #5; NOT committed)
+----------------------------------------------------------------------------------
+Implemented test-only behind AIEQ_AB2=1 (applyGradients optional weightDecay branch on
+problem-net WEIGHTS only, not bias, not freq-net; trainStep/trainOnDataset optional weightDecay
+default 0). Sweep lambda {0,1e-4,3e-4,1e-3}, 3 seeds, 600 ep, lr 0.003, full C1.
+  - CONTROL PARITY (lambda=0): C1 candidate column BYTE-IDENTICAL to baseline
+    (Thin 20.7[10..35] / Sib 45.3 / Reso 45.7 / Mud 46.3 / cleanFP 7.0) => default unchanged. 6/6.
+  - lambda=1e-4: Thin 14.0[9..18] (WORSE), Sib 40.0, Reso 49.0, Mud 48.7, clean-FP 20.3[3..45] -> FAIL.
+  - lambda=3e-4: Thin 4.3[1..10], clean-FP 17.7 -> FAIL.
+  - lambda=1e-3: Thin 0, Reso 0, Mud 21.3, clean-FP 33.0 -> collapse.
+VERDICT: weight-decay is the WRONG lever for Thinness. It SUPPRESSES the weak subtractive class
+(Thin 20.7 -> 14 -> 4 -> 0, monotonic) and INFLATES clean-FP (7 -> 20 -> 18 -> 33): shrinking the
+problem-net weights drifts outputs toward the (moderately negative, un-decayed) biases, which
+still clear the low thresholds => more clean firing. It mildly HELPS the strong classes (Reso/Mud
+up) — the opposite of what Thinness needs. Thinness needs MORE signal for its weak positives, NOT
+global regularization.
+DISPOSITION (Codex amendment #5): negative => production code REVERTED (git checkout, NOT
+committed). Only numbers kept here. HEAD stays 96a5da46.
+CONVERGENCE: both variance reducers are now OUT (mini-batch untestable at fixed lr [AB1];
+weight-decay harmful [AB2]). Evidence points to the CLASS-BALANCE lever = POSITIVE-ONLY Thinness
+weight (boost the weak positives' gradient, watch clean-FP). That is the next brief + counter-exam.

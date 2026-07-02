@@ -1,0 +1,119 @@
+CODEX BRIEF — Resonance ML-on-vocals/instruments (handoff from the Resonance Assist NO-GO)
+==========================================================================================
+Data: 2026-07-01   Worktree: recover-ember-core
+Status: PROPOSED scope, NOT started. Counter-exam REQUIRED before any code.
+Fratello del ticket Thinness (CODEX_BRIEF_THINNESS_PROD.txt): stessa natura = fix lato
+MODELLO/dati, non gating euristico. Stesso playbook del programma real-data (audio reale +
+iniezione) che ha sbloccato Sibilance.
+
+WHY THIS TICKET EXISTS
+----------------------
+Il filone euristico "Resonance Assist" e' stato CHIUSO NO-GO (postmortem in
+CODEX_BRIEF_RESONANCE_ASSIST_FIX.txt; diagnosi VOXDIAG1-6). Prova: sulla voce nessuna
+feature euristica (confidence, frequenza, persistenza, occupancy, contrasto locale) separa
+i FORMANTI vocali dalla risonanza vera DENTRO UN SINGOLO SEGNALE. L'unica separazione mai
+osservata (VOXDIAG3: 19.6% vs 7.8% frame attivi a 700-1100) dipendeva dal confronto
+risonante-vs-pulito DELLA STESSA VOCE — un riferimento che il runtime non ha.
+=> Conclusione ferma: sulla voce, Resonance deve diventare compito del MODELLO ML.
+
+L'interim shippato (commit 71eef41b) e' MLOnly/seed22 SENZA Resonance Assist euristico:
+pannello pulito, Sibilance ok, ma Resonance-su-voce assente. Questo ticket chiude quel
+debito (FutureModel).
+
+MEASURED DIAGNOSIS (VOXDIAG1-6 + ManualProbe, seed22=945338dc, 3 file reali:
+pulita / SIBILANTE / RISONANTE@~850Hz; profilo Generic)
+------------------------------------------------------------------------------------------
+  - seed22 e' ML-CIECO su Resonance: ManualProbe (2026-07-01, MLOnly) su RISONANTE =>
+    LIVE final (none), nessun Resonance rilevato. La risonanza vera iniettata NON viene
+    vista dal modello. (raw prob Reso ~0 vs shipped storico ~0.96.)
+  - L'euristico invece VEDE troppo: trattava ~1000 formanti/423 frame come risonanze
+    (flood), indistinguibili per-picco dalla risonanza vera (zScore ~2.0, promDb ~22-25,
+    confidence 0.57-0.59 IDENTICHE fra pulita/sibilante/risonante).
+  - Causa nota del cieco-ML: le fixture SINTETICHE di Resonance sono OFF-DISTRIBUTION vs la
+    voce reale (RESONANCE FIXTURE-MISMATCH DIAGNOSTIC nel programma real-data: "the AI-Sweep
+    fixture, not the model, is off-distribution; melMax confirms"). Il modello non ha mai
+    visto risonanza IN-distribution su voce reale.
+  => Il problema e' prima di tutto DATI: servono esempi di risonanza REALE/IN-distribution
+     (voce/strumento reale + risonanza iniettata, come il file RISONANTE), etichettati, per
+     insegnare al modello la differenza formante-vs-risonanza che l'euristico non coglie.
+
+COUNTER-EXAM / MEASURE-FIRST (prima di scegliere una leva — una causa per cambio)
+--------------------------------------------------------------------------------
+  1. BLOCCO 0 = CARATTERIZZARE IL GAP DI DATI. Prima di addestrare, misurare COSA vede il
+     modello sulla risonanza reale: logit pre-sigmoid Resonance (z3[Resonance]) su
+     RISONANTE vs pulita/sibilante, frame per frame. Confermare che il modello non
+     distingue (logit piatto) e localizzare se il problema e' assenza di segnale in input
+     (le feature mel non catturano il modo) o assenza di apprendimento (feature ci sono ma
+     il peso e' morto). La leva si sceglie su evidenza.
+
+  2. IL DATASET E' LA LEVA PRINCIPALE (non l'architettura). Costruire un corpus Resonance
+     reale+iniettato IN-distribution:
+       - base: voce reale (VocalSet FULL, gia' in ~/aieq_data) + strumenti se disponibili;
+       - iniezione: risonanze a Q/freq/livello variati (non solo 850Hz — evitare
+         l'overfit a una banda), come il file RISONANTE ma parametrizzato;
+       - NEGATIVI CRITICI: voce pulita con formanti forti (il caso che l'euristico sbagliava)
+         DEVE essere negativo esplicito, cosi' il modello impara formante != risonanza.
+     Disgiunzione train/eval come nel programma real-data (bande di tilt separate, niente
+     leakage delle fixture di eval nel training).
+
+  3. LEVE DI TRAINING (drop-in, dopo i dati). Serializzazione: saveWeights = magic +
+     version=1 + raw floats, NO header architetturale => class-weight / weight-decay / lr /
+     schedule sono DROP-IN (stesso formato, stessa version). Una CAPACITY change (hidden piu'
+     grande) cambia le dimensioni => bump version + migrazione loadWeights: ULTIMA risorsa.
+     Ordine: prima i dati (#2), poi bilanciamento classe Resonance (POSITIVE-ONLY vs GLOBAL,
+     rischi di segno opposto come nel brief Thinness), poi regolarizzazione/schedule.
+
+  4. GATE PREREQUISITE = candidate-load path. Il gate C1 all-8 + AI-Corpus DEVE caricare il
+     blob CANDIDATO (loadWeights su juce::File), non i pesi shipped — altrimenti misura il
+     modello sbagliato. (Stesso prerequisito del ticket Thinness: condividere l'infra.)
+
+SCOPE (PRODUCTION — MLEngine training + dati)
+---------------------------------------------
+Insegnare Resonance al modello da dati reali+iniettati IN-distribution, SENZA rianimare
+l'euristico e SENZA far tornare il flood di formanti.
+  - Stessa architettura 128->64->8 (drop-in) se possibile; capacity solo se necessario.
+  - Bilanciare Resonance senza regredire le altre 7 classi ne' il clean-FP.
+  - Coordinare con il ticket Thinness (stessa infra di training/gate; NON mescolare i due
+    sign-off).
+
+HARD CONSTRAINTS
+----------------
+  - Scope separato, sign-off separato. Counter-exam PRIMA di scrivere codice.
+  - NON rianimare l'euristico Resonance Assist / AIEQ_RESASSIST_GATE / occupancy runtime
+    senza NUOVA evidenza (il postmortem lo vieta esplicitamente).
+  - NON mescolare con il veto Sibilance, i pesi candidati Thinness, o altri cambi runtime
+    finche' non firmato a se'.
+  - Validazione test-only PRIMA: C1 gate (n=50, 3 seed), per-classe + clean-FP floor
+    mean<=10/max<=15, bar Muddiness onesto.
+  - Un cambio PRODUZIONE alla dinamica di training puo' muovere OGNI classe e il floor =>
+    before/after completo: AI-Sweep floor 0/18, 4 binarie no-arg 0 fail, AI-Corpus
+    invariato-o-meglio, + ManualProbe sui 3 file + Ableton.
+
+ACCEPTANCE (per riabilitare Resonance-on-voice e chiudere il debito FutureModel)
+--------------------------------------------------------------------------------
+  - RISONANTE: Resonance RILEVATA a recall ragionevole (ManualProbe LIVE final non-vuoto;
+    la risonanza vera emerge nel pannello).
+  - pulita & SIBILANTE: NESSUNA falsa Resonance (il problema dei formanti NON deve tornare
+    per via ML) — pannello pulito su voce pulita/sibilante.
+  - Sibilance resta >= soglia e >= synthOnly; le altre 6 classi non regrediscono sotto i
+    loro bar C1; clean-FP entro mean<=10/max<=15.
+  - Generalizzazione: validato su PIU' risonanze (freq/Q/livello) e piu' voci, non solo 850Hz.
+  Poi: reintrodurre Resonance nel path prodotto (backend/soglia) sotto il PROPRIO sign-off.
+
+POINTERS
+--------
+  - Postmortem euristico: CODEX_BRIEF_RESONANCE_ASSIST_FIX.txt (perche' l'euristico e' NO-GO).
+  - Evidenza VOXDIAG1-6: memoria [[resonance-assist-direction]] (i diagnostici test sono
+    stati rimossi dal worktree; i numeri vivono nel postmortem + memoria).
+  - Screening offline: ManualClipProbeTest (--category=ManualProbe, AIEQ_PROBE_DIR=<wav dir>,
+    AIEQ_PROBE_OUT=<csv>, AIEQ_PROBE_WEIGHTS=<candidate.bin>). E' l'harness di validazione
+    veloce prima di Ableton; MLOnly + pesi (shipped o candidato).
+  - File reali: ~/Desktop/test_voce_{pulita_femmina,SIBILANTE,RISONANTE}.wav.
+  - Programma real-data (fratello Thinness): memoria [[real-data-program]];
+    CODEX_BRIEF_THINNESS_PROD.txt (stessa infra di training/gate/serializzazione).
+  - Corpus reale: ~/aieq_data/real_audio/vocalset_extracted/FULL (AIEQ_REALDATA_DIR).
+  - Training: MLEngine::trainOnDataset / trainStep; soglia Resonance 0.20; init seed 42,
+    hook test initializeRandomWeightsForTests.
+  - Interim shippato: seed22 MLOnly, Assist rimosso (commit 71eef41b), UI-hold Sibilance
+    (7919f982), ManualProbe (3c6e97a7), recall Resonance = FutureModel debt (d9314500).
+==========================================================================================

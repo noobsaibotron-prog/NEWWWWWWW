@@ -1,0 +1,180 @@
+================================================================================
+BRIEF PER CODEX — PIANIFICAZIONE TICKET #2
+"Redesign sistemica del veto band-excess (tilt-robust) per sbloccare il cap 3"
+Data: 2026-06-07
+================================================================================
+
+--------------------------------------------------------------------------------
+0. COSA TI CHIEDO (in una riga)
+--------------------------------------------------------------------------------
+Produci un PIANO DI IMPLEMENTAZIONE dettagliato (NON codice di produzione) per
+rendere TILT-ROBUSTI i veto di Boxyness e LowEndBoom (oggi ancora distorti dal
+tilt), in modo da poter alzare in sicurezza il cap ML da 2 a 3 -> manopola
+Sensitivity viva su TUTTO il range. Output atteso: design + passi misurabili +
+criteri di accettazione + rischi. Stessa disciplina evidence-driven del #3.
+
+--------------------------------------------------------------------------------
+1. CONTESTO PROGETTO E PROCESSO
+--------------------------------------------------------------------------------
+Plugin JUCE "AI Equalizer Pro" (VST3/AU/Standalone), EQ 24 bande, detection AI
+dei problemi di frequenza (heuristic + ML, Hybrid default).
+Repo:    /Users/marco/Desktop/NEWWWWWWW   (remote origin GitHub, remote openclaw locale)
+WORKTREE: /Users/marco/Desktop/NEWWWWWWW/.claude/worktrees/recover-ember-core
+BRANCH:   feature/ui-polish-post-recovery
+
+Processo (NON derogabile):
+- Ogni fix = UN commit causale; si MISURA prima/dopo con la stessa matrice;
+  STOP a ogni checkpoint; il FLOOR pulito (0 falsi positivi) NON si riapre MAI.
+- Niente fede nei report: si verifica sul codice reale.
+
+--------------------------------------------------------------------------------
+2. IL PROBLEMA (la "famiglia band-excess" e la sua distorsione da tilt)
+--------------------------------------------------------------------------------
+In AIEngine::detectProblemsWithML c'e' un "reality-check" per le classi larghe:
+per ogni detection ML di Muddiness/Boxyness/Sibilance/LowEndBoom si tiene la
+correzione solo se la banda-problema supera una banda di RIFERIMENTO di
+kBandExcessDb (3.0 dB):  keep = (band - reference) >= 3.0 dB.
+
+SCOPERTA CHIAVE (gia' documentata nel codice, vedi NOTE a AIEngine.cpp:2866):
+con un RIFERIMENTO LARGO, il rolloff HF del tilt rosa naturale tira giu' la media
+del riferimento -> una banda low/mid su segnale PULITO ma "scuro/caldo" legge
+come "eccesso" -> falso positivo (allucinazione). E' lo stesso bug che era su
+Muddiness e che e' gia' stato risolto (commit 3fb513e8) sostituendo il
+riferimento largo con un RIFERIMENTO SOTTO-BANDA locale (80-150 Hz), che condivide
+la stessa pendenza della banda-problema e quindi si auto-normalizza sul tilt.
+
+STATO ATTUALE dei 4 veto (AIEngine.cpp, blocco ~2962-2990):
+  - Muddiness (2962-2975): band(150..400) - band(80..150)   >= 3 dB   -> GIA' TILT-ROBUST (sotto-banda)
+  - Boxyness  (2977-2980): band(300..800) - band(100..8000) >= 3 dB   -> ANCORA tilt-biased (riferimento LARGO)
+  - Sibilance (2982-2985): band(5000..10000) - band(2000..5000) >= 3  -> riferimento HF locale, MENO esposto
+  - LowEndBoom(2987-2990): band(30..100) - band(100..5000)  >= 3 dB   -> ANCORA tilt-biased (riferimento LARGO, sopra la banda)
+  Costanti: kBandExcessDb=3.0 (2863), kBoomLo=30, kBoomHi=100 (2864-2865).
+
+PERCHE' OGGI IL FLOOR REGGE LO STESSO (cap mascherante):
+Il cap ML kMlTopK (MLEngine.cpp:288) e' (sens<0.34?1 : sens<0.67?2 : 2). Cioe' il
+tier alto e' 2, NON 3. Tenendo max 2 detection, Boxyness/LowEndBoom (rank piu'
+basso sul tilt pulito) non raggiungono il veto e non allucinano. MA questo e'
+mascheramento per rank-luck, non robustezza: alzando il cap a 3, Boxy/Boom
+tornerebbero ad allucinare su CleanSteep. Per questo il cap e' bloccato a 2.
+
+NB su LowEndBoom (la direzione del bias e' OPPOSTA a Muddiness): la banda 30-100
+e' la PIU' BASSA. Su tilt rosa ha PIU' energia del riferimento 100-5000 -> il veto
+`band - ref >= 3` PASSA su qualunque materiale bass-heavy pulito -> falso positivo.
+Qui non esiste un "sotto-banda" (non c'e' nulla sotto 30 Hz di utile): il
+riferimento tilt-robust va cercato LOCALMENTE SOPRA la banda boom (es. l'ottava
+100-200/100-300), non nella media larga 100-5000.
+
+--------------------------------------------------------------------------------
+3. L'OBIETTIVO
+--------------------------------------------------------------------------------
+Rendere i veto di Boxyness e LowEndBoom tilt-robusti (come Muddiness), cosi' da
+poter alzare kMlTopK a (1/2/3) senza riaprire il floor su CleanSteep. Risultato:
+manopola Sensitivity viva su tutto il range (oggi solo low<->default).
+Bonus possibile: recuperare il "mud/boxy sotto risonanza" che il riferimento
+largo a volte mascherava (analogo al recall HF recuperato nel #3).
+
+--------------------------------------------------------------------------------
+4. UN'AVENUE DI DESIGN CHE DEVI VALUTARE (riuso del lavoro #3)
+--------------------------------------------------------------------------------
+Nel #3 hai gia' costruito e validato una metrica di salienza di banda
+TILT-ROBUST per costruzione: mediana di una banda stretta vs mediana di un
+CONTORNO a ottava (+-0.25 oct, esclusa la fascia immediata +-0.08 oct). Vedi
+AIBackendSweepTest.cpp computeOfflineMetric / il gate a ottava HF in
+detectResonances (AIEngine.cpp, freq>=5kHz). La mediana del contorno a ottava
+si auto-normalizza sulla pendenza locale e ignora gli spike 1-bin.
+
+DOMANDA CENTRALE DEL PIANO: conviene sostituire l'INTERA famiglia band-excess
+(Mud/Boxy/Sib/Boom) con UNA singola metrica unificata "bandExcess vs contorno a
+ottava mediano" (riusando la logica gia' provata del #3), invece di tarare 4
+riferimenti locali ad-hoc? Valuta pro/contro:
+  (a) Riferimenti locali ad-hoc per classe (come il fix Muddiness 80-150):
+      semplice, minimale, ma 4 tarature separate e fragili ai confini.
+  (b) Metrica unificata octave-context-median per tutte e 4: coerente,
+      tilt-robust per costruzione, riusa codice validato; ma cambia di piu' e
+      va rimisurata su tutte le classi (incluso Sibilance che oggi e' ok).
+Raccomanda (a) o (b) con motivazione, e per la scelta definisci ESATTAMENTE i
+parametri (bande/ottave/soglia) per Boxyness e LowEndBoom.
+
+--------------------------------------------------------------------------------
+5. VINCOLI HARD
+--------------------------------------------------------------------------------
+- Floor pulito = 0 FP a OGNI sensibilita', su Clean E CleanSteep: invariante sacro.
+- NON toccare ml_weights.bin (niente retraining).
+- NON aggiungere dominance-gap nella decision rule ML (4A): su problemi co-occorrenti
+  (es. Res~0.98 e Mud~0.98) un gate di gap ucciderebbe un vero positivo.
+- NON toccare problemFreqRanges (interno a MLEngine).
+- Il cambio del cap (kMlTopK -> 1/2/3) va fatto SOLO DOPO che i veto sono
+  tilt-robusti e misurati; e' l'ultimo passo, in un commit separato.
+- Heuristica: i detector euristici (detectBoxyness ~1738, detectLowEndBoom ~1840)
+  hanno la LORO logica di reference (es. detectLowEndBoom usa overallEnergy
+  100-5000 a riga ~1867, detectBoxyness 100-8000 a ~1741). Decidi se il redesign
+  riguarda solo il veto ML o anche questi (per coerenza). Misura l'impatto.
+
+--------------------------------------------------------------------------------
+6. HARNESS DI MISURA E CRITERI DI ACCETTAZIONE
+--------------------------------------------------------------------------------
+Comandi (cwd = worktree):
+  cmake --build build-mac --target AIEqualizerPro_AI_Tests -j8
+  build-mac/Release/bin/AIEqualizerPro_AI_Tests --category=AI-Sweep   # matrice cella-per-cella
+  build-mac/Release/bin/AIEqualizerPro_AI_Tests --category=AI-Diag    # diagnostica strumentata (#3) - estendibile
+  build-mac/Release/bin/AIEqualizerPro_AI_Tests                       # suite AI completa (deve restare verde)
+
+La matrice AI-Sweep ha gli stimoli: Resonance@800, Sibilance@7k, Muddiness@250,
+Clean(control), CleanSteep(control) (-6 dB/decade), Resonance@800/6k/12k on tilt.
+C'e' anche una sezione robustness multi-seed (64 semi, FP-rate + recall) dentro
+AI-Sweep. Lo stimolo CleanSteep e' la trappola del tilt (applySteepTilt).
+
+PROPONI NEL PIANO:
+- nuovi stimoli necessari (es. un "Boxy@500 on steep tilt" vero, e un
+  "bass-heavy clean" per LowEndBoom) per provare recall E floor;
+- la sequenza misurata: (1) baseline cap 2; (2) redesign veto, rimisura a cap 2
+  (no-op proof: stessi numeri, nessun nuovo FP); (3) alza cap a 1/2/3, rimisura.
+
+CRITERI DI ACCETTAZIONE (devono valere TUTTI, a cap 1/2/3):
+- Clean(control) e CleanSteep(control): 0 FP a sens 0.2/0.5/0.8 su ML e Hybrid.
+- Robustness multi-seed: clean-FP rate NON peggiora vs baseline (anzi, idealmente
+  migliora come nel #3); recall risonanze 100%.
+- Mud@250, Res@800 e gli altri veri positivi: invariati.
+- Boxy/Boom veri (stimoli nuovi): rilevati quando presenti.
+- Suite AI completa verde.
+- Knob: a cap 3, su stimoli a problema singolo, il numero di detection cresce
+  1->2->3 con la sensibilita' senza FP su pulito.
+
+--------------------------------------------------------------------------------
+7. DOMANDE A CUI IL TUO PIANO DEVE RISPONDERE
+--------------------------------------------------------------------------------
+Q1. (a) riferimenti locali ad-hoc per classe vs (b) metrica unificata a ottava:
+    quale, e perche'? Parametri esatti per Boxyness e LowEndBoom.
+Q2. Per LowEndBoom (banda piu' bassa, bias opposto): quale riferimento
+    tilt-robust? (ottava sopra? contorno a ottava? altro?)
+Q3. Sibilance: si tocca o si lascia (oggi e' HF-locale, meno esposto)? Misura.
+Q4. Il redesign tocca anche i detector EURISTICI o solo il veto ML? Impatto su Hybrid.
+Q5. Il "mud/boxy sotto risonanza" mancante (recall) viene recuperato dal nuovo
+    riferimento? Come si misura?
+Q6. Sequenza commit: quanti commit causali, in che ordine, con quale misura tra
+    l'uno e l'altro (incluso il no-op proof a cap 2 prima di alzare a 3).
+Q7. Rischi: cosa puo' rompersi (floor, recall, Hybrid merge, robustness) e come
+    lo intercetti PRIMA del commit.
+
+--------------------------------------------------------------------------------
+8. RIFERIMENTI DI CODICE (verificati, branch attuale)
+--------------------------------------------------------------------------------
+- Veto family: Source/AI/AIEngine.cpp:2962-2990 (le 4 case), NOTE a :2866,
+  kBandExcessDb/kBoomLo/kBoomHi a :2863-2865.
+- Fix Muddiness gia' fatto (template): la case Muddiness a :2962-2975
+  (band 150..400 vs 80..150).
+- Cap ML: Source/AI/MLEngine.cpp:288 (kMlTopK = sens<0.34?1 : sens<0.67?2 : 2),
+  rank gate a :304-316, resize a :355-356, kMlMargin a :259.
+- Detector euristici: detectBoxyness ~AIEngine.cpp:1738 (ref 100-8000 a :1741),
+  detectLowEndBoom ~:1840 (ref 100-5000 a :1867), detectSibilance (ref 2000-5000 a :1804).
+- Metrica octave-context del #3 (da riusare/valutare): computeOfflineMetric in
+  Source/Tests/AIBackendSweepTest.cpp, e il gate a ottava HF in detectResonances
+  (AIEngine.cpp, ramo freq>=5000) committato in 8dc1f875.
+- Harness: Source/Tests/AIBackendSweepTest.cpp (AI-Sweep matrix + robustness +
+  AI-Diag), applySteepTilt = -6 dB/decade.
+
+Commit recenti di sessione (per contesto):
+  3fb513e8 veto Muddiness tilt-robust + cap ML
+  8dc1f875 #3 prominenza tilt-invariant + gate ottava HF (la metrica da riusare)
+  b695db48 Resonance->Peak ; 6b99a289 shelf Q ; 779acef2 slope cut AI
+================================================================================

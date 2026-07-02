@@ -1,0 +1,177 @@
+================================================================================
+BRIEF DI CONTROVERIFICA — Review integrale "AI Equalizer Pro"
+Per: sessione principale Claude Code (verifica indipendente)
+Data: 2026-06-07
+================================================================================
+
+--------------------------------------------------------------------------------
+0. COSA TI CHIEDO (in una riga)
+--------------------------------------------------------------------------------
+NON fidarti di questo referto. Apri il codice e VERIFICA ogni bug qui sotto sul
+worktree reale. Per ciascuno dai un verdetto: CONFERMATO / SMENTITO / PARZIALE,
+con prova (file:riga + ragionamento). Se ho sovra-dichiarato o sbagliato, dillo.
+Output finale: tabella verdetti + eventuali bug che ho MANCATO.
+
+--------------------------------------------------------------------------------
+1. CONTESTO
+--------------------------------------------------------------------------------
+Plugin JUCE "AI Equalizer Pro" (VST3/AU/Standalone), EQ 24 bande parametrico+
+dinamico, 3 modalita di fase (Zero/Natural/Linear), M/S, analizzatore, detection
+AI dei problemi di frequenza (heuristic + ML, Hybrid default).
+Repo:    /Users/marco/Desktop/NEWWWWWWW   (remote origin GitHub, remote openclaw locale)
+WORKTREE: /Users/marco/Desktop/NEWWWWWWW/.claude/worktrees/recover-ember-core
+BRANCH:   feature/ui-polish-post-recovery   HEAD: 5770c3c2
+
+NOTA: il worktree e SPORCO di proposito. AIEngine.cpp / AIEngine.h /
+AIBackendSweepTest.cpp contengono WIP non committato (patch "detrended prominence"
+parziale + hook #if JUCE_UNIT_TESTS) di un'altra sessione (Codex). NON committare,
+NON revertare, NON toccare AIEngine.cpp (Codex ha la penna li). La verifica e
+READ-ONLY.
+
+E stata appena fatta una review INTEGRALE (ogni file, ~37.500 righe) con 7 agenti
++ tribunale. Voto complessivo dato: 6.0/10 vs top 2026 (FabFilter Pro-Q 4, DMG
+EQuilibrium, Sonnox Claro, sonible smart:EQ 4). Le dimensioni piu basse: AI
+ancillari (4), AI core (5), GUI spettro/editor (5), qualita codice (5.5).
+
+--------------------------------------------------------------------------------
+2. BUG CRITICI DA CONTROVERIFICARE (HIGH) — gia "CONFERMATI" da me, confutali se sbaglio
+--------------------------------------------------------------------------------
+
+[C1] CRASH std::terminate — captureAnalysisThread mai chiuso.
+  File: Source/PluginProcessor.cpp:4016 (assegnazione) ; .h:434 (membro)
+  Claim: `captureAnalysisThread = std::thread(...)` a 3995-4035 dentro
+    analyzeCapturedAudioSnapshot(); il thread NON viene MAI joinato ne detachato.
+    Il distruttore (~488-515) joina solo irBuilderThread e aiAnalysisThread.
+    -> 2a invocazione (riassegnazione su std::thread joinable) = std::terminate;
+       distruzione del plugin dopo una capture (thread joinable) = std::terminate.
+    Il CAS captureAnalysisInFlight (4002) previene solo la concorrenza, non
+    la riassegnazione-su-joinable ne il distruttore.
+  VERIFICA: cerca OGNI .join()/.detach() su captureAnalysisThread (grep). Conferma
+    che il distruttore non lo chiude. Conferma che operator= su thread joinable
+    chiama terminate (semantica C++). Verdetto?
+  Fix proposto: detach() nel finish-lambda, oppure join-prima-di-riassegnare,
+    oppure migrare a un task gestito. ~2 righe, in PluginProcessor.cpp (no Codex).
+
+[C2] DATA RACE spettro -> AI.
+  File: Source/PluginProcessor.cpp:1730 (lettura, thread AUDIO dentro processBlock)
+        Source/DSP/SpectrumAnalyzer.cpp:374-377 (getSpectrumDB ritorna const vector&)
+        Source/PluginEditor.cpp:1542 (processFFT, WRITER, thread GUI/messaggi)
+  Claim: `const auto& spectrum = spectrumAnalyzer.getSmoothedSpectrum();` sul
+    thread audio prende un RIFERIMENTO ai buffer dB che processFFT (thread GUI)
+    riscrive a 60Hz. Editor aperto = torn/stale read -> input AI corrotto; poi
+    enqueueAISpectrum fa memcpy (cpp:~3041). Niente crash, ma dati sporchi all'AI.
+  VERIFICA: conferma i ruoli dei thread (chi scrive processFFT? chi legge 1730?)
+    e che il getter ritorni by-reference. Il double-buffer activeBufferIndex
+    protegge GUI-vs-GUI ma NON audio-vs-GUI: confermi? Verdetto?
+
+[C3] CUT-SLOPE non-Butterworth (Q identico per stadio).
+  File: Source/DSP/ParametricEQProcessor.cpp:194-199 (e display ~888-942 stesso errore)
+  Claim: per LowCut/HighCut 24/48 dB/oct fa `for (s) coefficients[s] = coeff;` —
+    TUTTI gli stadi con lo STESSO Q. Un Butterworth N-esimo richiede Q per-stadio
+    distinti (es. 4 ord: 0.54/1.31). Risultato: passband con droop + corner spostato.
+  VERIFICA: conferma che tutti gli stadi ricevono lo stesso coeff e che non c'e
+    una tabella di Q per-stadio altrove. Verdetto? (correttezza, non crash)
+
+[C4] OSC server attivo di DEFAULT + use-after-free + fragilita parser.
+  File: Source/PluginProcessor.cpp:122 (costruzione incondizionata, porta 11100)
+        Source/Core/OSCParameterServer.h (thread in ctor ~60; callAsync ~224/240;
+        parser ~107-159; std::get<String> ~204/219/235)
+  Claim: il server OSC parte sempre (socket in ascolto) anche se non usato.
+    callAsync cattura un raw pointer a parametro -> use-after-free se il plugin
+    viene distrutto tra dispatch ed esecuzione. Un pacchetto con type-tag errato
+    fa std::get -> std::bad_variant_access -> il thread run() esce (try/catch) e
+    il server muore in silenzio.
+  VERIFICA: conferma che e costruito/avviato senza flag. Conferma il raw-pointer
+    in callAsync (manca WeakReference/SafePointer?). Conferma il throw su pacchetto
+    malformato. Verdetto + impatto reale (richiede un client che invii pacchetti).
+
+--------------------------------------------------------------------------------
+3. SOSPETTI (HIGH/MED) — NON verificati da me, verificali tu da zero
+--------------------------------------------------------------------------------
+
+[S1] LINEAR-PHASE IR mal costruita.
+  File: Source/DSP/LinearPhaseProcessor.cpp:188-204
+  Claim agente: IFFT di magnitudo reale+pari -> IR simmetrica su fftSize campioni,
+    poi rotate e finestratura SOLO su [0,irSize) con irSize=fftSize/2 -> scarta
+    meta dell'IR (clipping asimmetrico) e hannGainComp=1.0 (niente comp. energia
+    finestra) -> ripple di risposta + errore di livello + fase non perfettamente
+    lineare. VERIFICA dimensioni irSize vs fftSize e la finestratura. Verdetto?
+
+[S2] DYNEQ warm-start troppo corto.
+  File: Source/DSP/DynamicEQProcessor.cpp:294-317 ; .h:157 (dynamicWarmupHistorySamples=64)
+  Claim: il warm-start replica solo 64 campioni (1.45ms @44.1k) nel nuovo biquad;
+    per una banda bassa (50Hz, periodo 20ms) prime <1/13 di ciclo -> transiente
+    residuo a ogni rebuild = candidato del crackle sulle basse. VERIFICA il valore
+    e l'uso; e plausibile come causa di crackle? Verdetto.
+
+[S3] DYNEQ ballistics accoppiate + gain a gradini.
+  File: Source/DSP/DynamicEQProcessor.cpp:649-697
+  Claim: stessi coeff attack/release per envelope E gain (doppia costante di tempo);
+    gain applicato via coeff-swap a passi di 0.5 dB (non continuo). Verdetto.
+
+[S4] AtomicSnapshot force-store (triple buffer).
+  File: Source/Core/LockFreeStructures.h:83-87 (publish)
+  Claim: dopo 16 retry il CAS fa store incondizionato di readyIndex e scrive un
+    `expected` stale in writeIndex -> l'invariante read/write/ready distinti PUO
+    rompersi -> torn read. In SPSC reale il force-store e praticamente irraggiungibile
+    (latente, non un bug colpito in pratica). VERIFICA: e davvero solo teorico o
+    c'e un interleaving che lo innesca con 1 producer + 1 consumer? Verdetto.
+
+[S5] CaptureService stop-race.
+  File: Source/Core/CaptureService.h:113-161
+  Claim: stopManualCapture (msg thread) legge il buffer mentre un blocco audio
+    potrebbe ancora scriverlo (nessuna fence/handshake di generazione). VERIFICA.
+
+--------------------------------------------------------------------------------
+4. CODICE MORTO / SCAFFOLDING (verifica wiring reale)
+--------------------------------------------------------------------------------
+Claim: 5 dei 7 moduli AI ancillari sono morti/gated nel build macOS default:
+  - ReferenceMatcher: prepare() chiamato (PluginProcessor.cpp:~1072) ma NESSUN
+    altro caller -> orfano (eppure etichettato "SHIPPING" in AIEngine.h:~840).
+  - AdaptiveAIEngine: enableAdaptiveProcessing=false (AIEngine.h:~857), nessun caller live.
+  - NeuralNetworkWrapper: TFLite gated a Windows (CMakeLists ~783); su macOS stub no-op.
+  - OnlineLearningSystem: dipende dal NN stub -> training impossibile.
+  - MultiTrackUnmasking: toggle GUI ma nessun feed di dati per-traccia.
+  VIVI e reali: SemanticEQEngine (wired, applica bande) e MLEngine (carica ml_weights.bin).
+  UserLearning: PARZIALE (registra ma non riapplica: adjustAISuggestion senza caller).
+  VERIFICA i call-site e conferma/smentisci "5/7 morti".
+
+--------------------------------------------------------------------------------
+5. SMENTITE GIA FATTE (verifica che siano davvero smentite, non bug)
+--------------------------------------------------------------------------------
+  - "Un 'test problem' forza >=1 rilevazione sul pulito": FALSO. detectProblems
+    (AIEngine.cpp:859-882) non inietta nulla; commenti 188/882 sono stale. Floor
+    pulito misurato = 0. CONFERMA che non c'e iniezione.
+  - "Denormali nel tail del convolver": coperti da ScopedNoDenormals in processBlock
+    (PluginProcessor.cpp:1189). CONFERMA che il convolver gira in quello scope.
+
+--------------------------------------------------------------------------------
+6. COME VERIFICARE (cwd = worktree)
+--------------------------------------------------------------------------------
+  Lettura codice: leggi i file/righe citati per intero, non a grep-di-conclusione.
+  Build/test (se serve):
+    ./build_mac.sh Release
+    build-mac/Release/bin/AIEqualizerPro_AI_Tests --category=AI-Sweep
+    build-mac/Release/bin/AIEqualizerPro_AI_Tests            # suite AI, deve restare verde
+    cmake --build build-mac --target AIEqualizerPro_IntegrationTests
+    build-mac/Release/bin/AIEqualizerPro_IntegrationTests    # integrazione
+  NB: il test BlockSize "Dry/wet survives oversized block" FALLISCE gia su HEAD
+    (preesistente, "BlockSize DSP triage" differito) — non e una regressione.
+
+--------------------------------------------------------------------------------
+7. VINCOLI
+--------------------------------------------------------------------------------
+  - READ-ONLY. Non committare, non revertare il WIP, non toccare AIEngine.cpp/
+    AIBackendSweepTest.cpp (Codex ha la penna).
+  - Floor pulito AI = 0 falsi positivi: invariante sacro.
+  - Distingui CONFERMATO da SOSPETTO; non sovra-dichiarare.
+
+--------------------------------------------------------------------------------
+8. OUTPUT ATTESO
+--------------------------------------------------------------------------------
+  A) Tabella: per ogni voce [C1-C4, S1-S5, sezione 4, sezione 5] -> verdetto
+     {CONFERMATO / SMENTITO / PARZIALE} + prova (file:riga) + 1 riga di motivo.
+  B) Bug CRITICI che ho MANCATO (se ne trovi).
+  C) Per il crash C1: confermi che il fix minimo e detach()/join-before-reassign,
+     e che e isolato a PluginProcessor.cpp (zero rischio floor/Codex)?
+================================================================================

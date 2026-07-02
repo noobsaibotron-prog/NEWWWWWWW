@@ -1,0 +1,267 @@
+================================================================================
+BRIEF PER CODEX — CONTRO-ESAME N1 (gate di test onesti) + 15 FALLIMENTI ESPOSTI
+Worktree: /Users/marco/Desktop/NEWWWWWWW/.claude/worktrees/recover-ember-core
+Branch: feature/ui-polish-post-recovery  HEAD: 7621373d
+Data: 2026-06-13
+================================================================================
+
+--------------------------------------------------------------------------------
+0. COSA TI CHIEDO
+--------------------------------------------------------------------------------
+Contro-esamina READ-ONLY questa scoperta e decidi con noi la POLICY DI
+ATTERRAGGIO di N1. NON ho committato nulla: la modifica N1 a TestMain.cpp e'
+LOCALE/uncommitted nel worktree (e' l'oggetto dell'esame). I 3 binari di test
+sono gia' ricompilati con quella modifica.
+
+--------------------------------------------------------------------------------
+1. COS'E' N1 E LA MODIFICA
+--------------------------------------------------------------------------------
+Tu stesso avevi confermato N1: il run SENZA argomenti di TestMain.cpp eseguiva
+solo le categorie {DSP, Regression, Integration}, saltando silenziosamente
+TUTTE le categorie AI (AI-Sweep, AI-Knobs, AI-Diag, AI-Corpus, AI-Front,
+AI-Accuracy, AI-Calibration, AI-Integration, AI-Retrain) + Perceptual +
+Performance + ClickTests + Meta.
+
+Marco ha scelto l'opzione "runAllTests + lista gate documentata".
+MODIFICA (uncommitted, Source/Tests/TestMain.cpp): il ramo default ora chiama
+runner.runAllTests() invece del loop sulle 3 categorie hardcoded. Cosi' il run
+no-arg di OGNI binario esegue tutto cio' che ha registrato. Nient'altro toccato.
+
+--------------------------------------------------------------------------------
+2. COSA HA SCOPERCHIATO (run no-arg dei 3 binari, post-modifica)
+--------------------------------------------------------------------------------
+AI binary (AIEqualizerPro_AI_Tests):    12.463.583 assert / 0 FAIL  → TUTTO VERDE
+Performance binary:                     12.461.045 assert / 0 FAIL  → VERDE
+Integration binary:                     12.462.127 assert / 15 FAIL → 15 ESPOSTI
+
+I 15 [FAIL] del binario Integration (categorie MAI eseguite dal vecchio default):
+  [FAIL] BlockSize Regression
+  [FAIL] Perceptual TEST 1 — LP Crackling
+  [FAIL] Perceptual TEST 3 — Phase Mode Click
+  [FAIL] AI Accuracy — MLEngine Direct
+  [FAIL] AI Accuracy — AIEngine Pipeline
+  [FAIL] AI Accuracy — Retrain + Re-evaluate
+  [FAIL] AI Integration Audit — Pipeline Diagnostics
+  [FAIL] AI Integration Audit — Direct vs Pipeline
+  [FAIL] AI Threshold Calibration — Pipeline Validation
+NESSUNO causato dalla modifica N1 (cambia solo quali test girano, non il codice
+testato). Sono PRE-ESISTENTI, nascosti dal vecchio gate.
+
+--------------------------------------------------------------------------------
+3. TRIAGE IN 3 BUCKET (con evidenza — verifica tu stesso)
+--------------------------------------------------------------------------------
+BUCKET 1 — TEST ROTTI (dominio sbagliato), NON AI rotta. SMOKING GUN.
+  - AIEngine.cpp:2792-2794:
+      // FIX: AIEngine stores spectra in dB; MLEngine expects linear magnitude.
+      auto linearSpectrum = convertDbSpectrumToLinearMagnitude(scratchTemp);
+    => analyzeSpectrum() SI ASPETTA dB [-120..+12].
+  - AIAccuracyTest.cpp: i fixture sono in MAGNITUDINE LINEARE (kBaseline=0.05,
+    addPeak lineare, commento "matches training"). TEST B chiama
+    ai.analyzeSpectrum(tc.spectrum, true) (righe 657, 689) passando LINEARE.
+  - Effetto: 0.05 trattato come "0.05 dB" -> riconversione -> spettro ~piatto ->
+    ML non vede nulla -> 0% recall su TUTTI i tipi (TEST B).
+  - PROVA del fatto che e' il test e non l'AI: TEST A (MLEngine diretto, stesso
+    stimolo, dominio corretto perche' extractMelBands fa lui la conversione) da'
+    F1 medio 68.1%, clean FP 0/10. TEST B (stesso stimolo via pipeline) da' 0%
+    ovunque. L'unica differenza e' il punto d'ingresso. + AI-Corpus (audio dB
+    reale via OfflineAnalysisPipeline) mostra Hybrid che trova res3200 a c=0.76.
+  - APPARTENGONO a questo bucket: AIEngine Pipeline, AI Integration Audit
+    (Direct vs Pipeline), AI Threshold Calibration Pipeline Validation
+    (stessa sorgente/ingresso). DA VERIFICARE: che TUTTI usino l'ingresso dB-vs-
+    lineare sbagliato (controlla AIEngineIntegrationAuditTest.cpp e
+    AIThresholdCalibrationTest.cpp righe ~261-267 forwardRawProbabilities).
+  - NOTA STORICA: AIAccuracyTest.cpp era gia' segnalato "dirty/unreviewed,
+    dB-domain fixtures" e fu STASHATO in branch parked/aiaccuracytest-db-fixtures
+    in una sessione precedente; la versione committata e' HEAD.
+
+BUCKET 2 — LIMITE AI REALE, gia' nel gap ledger (scorecard sez.7 asse 4).
+  - AI Accuracy MLEngine Direct: Resonance recall 40% e Thinness recall 30%
+    (soglia test >=50%) -> FAIL. Media F1 68.1%, clean FP 0/10 (floor regge).
+  - Causa nota: modello su 64 gaussiane sintetiche. Reale, atteso, da P4.
+
+BUCKET 3 — COMPORTAMENTO DSP REALE, pre-esistente.
+  - Perceptual TEST 1 "Rapid LP toggle": dropout! 76 campioni silenti (clicks=0,
+    maxDelta 0.179). Toggle rapido Linear-Phase -> cambio latenza -> buffer
+    flush -> silenzio. TEST 3 Phase Mode cycle simile.
+  - BlockSize Regression x3 (i noti: "Tail of oversized block cleared",
+    "Tail RMS silent", "Block clamp events").
+  - DA CHIARIRE: BlockSize "Regression" e' categoria presente ANCHE nel binario
+    AI, ma li' PASSA (AI binary 0 fail) mentre nel binario Integration FALLISCE.
+    Stesso test, due binari, esito diverso -> sospetto P2-HAZARD-001 (layout/
+    build divergente per JUCE_UNIT_TESTS) o config oversampling/latency diversa
+    tra i due target. Vale la pena capirlo.
+
+--------------------------------------------------------------------------------
+4. DECISIONE: POLICY DI ATTERRAGGIO N1 (3 opzioni)
+--------------------------------------------------------------------------------
+A) N1 + fix test-dominio (Bucket 1) + registra debito (Bucket 2,3) nello
+   scorecard con soglie esplicite. Gate onesto E verde-con-debito-noto.
+B) Solo N1 ora; binario Integration resta ROSSO con i 15 documentati "esposti
+   da N1"; fix separati uno per uno.
+C) (questa) prima contro-esame Codex, poi si decide.
+
+La mia raccomandazione era A: il Bucket 1 e' un VERO bug di test (dominio), non
+una quarantena — si fixa facendo passare il dB. Ma decidiamo insieme.
+
+--------------------------------------------------------------------------------
+5. DOMANDE PER TE
+--------------------------------------------------------------------------------
+Q1. Confermi lo smoking gun del Bucket 1 (analyzeSpectrum dB vs fixture lineare)
+    leggendo AIEngine.cpp:2792 + AIAccuracyTest.cpp:657/689 + la generazione
+    fixture? E confermi che AI Integration Audit + Threshold Calibration Pipeline
+    soffrono lo STESSO mismatch?
+Q2. Il fix giusto del Bucket 1: convertire il fixture in dB prima di
+    analyzeSpectrum (linearToDb gia' esiste in AIThresholdCalibrationTest.cpp:85)
+    oppure le funzioni di test devono passare per il path FFT reale? Quale dei due
+    e' "il test giusto" e non solo "il test che passa"?
+Q3. Soglie del Bucket 2 (recall ML): le lasciamo come known-debt con i valori
+    attuali (Res 40%, Thin 30%) e target P4, o le abbassiamo a known_fail
+    espliciti? Come NON mascherare ma nemmeno bloccare?
+Q4. Bucket 3 Perceptual dropout: il toggle Linear-Phase a runtime che svuota i
+    buffer e produce silenzio breve e' un BUG da fixare (es. crossfade sul cambio
+    latenza) o un comportamento ACCETTABILE e il test va rilassato? Confronto top
+    EQ: cosa fa Pro-Q/Nova al cambio di modo fase?
+Q5. La discrepanza BlockSize (passa in AI binary, fallisce in Integration): vale
+    la pena un mini-RCA ora (potrebbe essere P2-HAZARD-001 che morde di nuovo)?
+Q6. Policy di atterraggio: A, B, o altro? E come definiamo "gate verde" d'ora in
+    poi: runAllTests per-binario deve dare 0 FAIL su QUALI binari prima di poter
+    dire "verde"?
+
+--------------------------------------------------------------------------------
+6. VINCOLI / CONTESTO
+--------------------------------------------------------------------------------
+- Floor pulito statico 0/18 INTATTO; clean FP 0/10 anche in AIAccuracy MLEngine
+  Direct. Il floor non e' in discussione.
+- P2 chiuso (checkpoint/p2-complete). Scorecard docs/AI_SCORECARD.md ha gia' i
+  ledger sez.7 (mercato) e sez.8 (GUI).
+- Niente nuovi accessor inline su processor/AIEngine (P2-HAZARD-001 aperto).
+- Un commit causale per volta, STOP ai checkpoint.
+
+--------------------------------------------------------------------------------
+7. VERIFICA (cwd = worktree; binari gia' buildati con N1 uncommitted)
+--------------------------------------------------------------------------------
+git diff Source/Tests/TestMain.cpp        # la modifica N1 in esame
+build-mac/Release/bin/AIEqualizerPro_AI_Tests              # 12.463.583/0
+build-mac/Release/bin/AIEqualizerPro_IntegrationTests      # 15 FAIL
+build-mac/Release/bin/AIEqualizerPro_IntegrationTests --category=AI-Accuracy --verbose
+build-mac/Release/bin/AIEqualizerPro_IntegrationTests --category=Perceptual  --verbose
+sed -n '2790,2796p' Source/AI/AIEngine.cpp                 # smoking gun
+sed -n '640,695p'  Source/Tests/AIAccuracyTest.cpp         # TEST B ingresso lineare
+================================================================================
+
+================================================================================
+8. CORREZIONI POST-CONTRO-ESAME CODEX (2026-06-13) — il triage sopra va EMENDATO
+================================================================================
+Codex ha contro-esaminato e corretto DUE errori miei; un terzo l'ho trovato io
+verificando. Tutto confermato leggendo CMake/codice ed eseguendo i binari.
+
+ERRORE 1 (mio census awk bacato): la membership dei target era sbagliata. REALE:
+  - Binario AIEqualizerPro_AI_Tests = SOLO 5 file: AIEngineTest, AIBackendSweep,
+    AICorpus, AIFrontEnd, TestMain. Categorie: DSP(!), AI, AI-Sweep, AI-Knobs,
+    AI-Diag, AI-Corpus, AI-Front.
+  - BlockSizeRegressionTest, AIAccuracyTest, AIEngineIntegrationAuditTest,
+    AIThresholdCalibrationTest stanno nel target INTEGRATION (CMake 1083,1095-1097),
+    NON nel binario AI.
+  => Q5 CHIUSA: NON c'e' "stesso test, due binari, esito diverso". BlockSize e'
+     compilato solo in Integration. Nessuna evidenza P2-HAZARD da li'.
+
+ERRORE 2 (Bucket 1 troppo largo): il bug di DOMINIO dB/lineare vale SOLO per
+  AIAccuracyTest TEST B (analyzeSpectrum con fixture lineare). VERIFICATO che
+  AIEngineIntegrationAuditTest e AIThresholdCalibrationTest gia' fanno linearToDb
+  prima di analyzeSpectrum: il loro fallimento e' DIVERSO →
+    "setCustomMLWeightsPathForTests() = SUCCESS" ma "isUsingMLDetection() = FALSE"
+    → poi eccezione.
+  => e' P2-HAZARD-001 (hook inline sotto JUCE_UNIT_TESTS che legge layout oggetto
+     divergente nel target Integration), NON dominio.
+
+CHIARIMENTO 3 (provenienza "1.391.262"): nel binario AI la categoria DSP da sola
+  conta 1.391.262 assert (mega-test in AIEngineTest). I vecchi "full suite
+  1.391.262/0" erano QUEL test DSP, NON le categorie AI-detection. Quelle
+  (AI-Sweep=10, AI-Corpus=17, AI-Front=17, AI=91, AI-Knobs, AI-Diag) sono sempre
+  state eseguite a parte e passano. Con N1/runAllTests il binario AI = 12.463.583/0.
+
+TRIAGE CORRETTO (4 bucket):
+  1a. AIAccuracy pipeline (TEST B): DOMAIN BUG (dB vs lineare). Fix: linearToDb
+      sul fixture prima di analyzeSpectrum (linearToDb gia' esiste in
+      AIThresholdCalibrationTest.cpp:85). Test bug, non quarantena.
+  1b. AIEngineIntegrationAudit + AIThresholdCalibration: P2-HAZARD-001 (inline
+      hook/layout). isUsingMLDetection()=FALSE dopo load SUCCESS. Bucket
+      TestHarness. Fix vero = rendere unconditional i membri dati gated o spostare
+      gli hook fuori dal layout oggetto.
+  2.  MLEngine Direct: recall Resonance 40% / Thinness 30% (soglia >=50%). Debito
+      ML reale (modello su 64 gaussiane), gap ledger asse 4. clean FP 0/10.
+  3.  DSP debt reale: Perceptual LP-toggle dropout (76 campioni silenti) + BlockSize
+      x3. Pre-esistenti.
+
+POLICY DI ATTERRAGGIO (variante A corretta, raccomandata da Codex):
+  - Commit N1 accettando esplicitamente: no-arg = "tutti i test registrati nel
+    binario".
+  - Subito dopo: fix AIAccuracy domain bug (1a).
+  - Registrare nel scorecard: KnownDebt-TestHarness {1b}, KnownDebt-ML {2},
+    KnownDebt-DSP {3} con metriche stampate, NON mascherare ma non bloccare N1.
+  - Per non rendere il default Integration ingestibile: gli assert di recall (2)
+    e i test 1b/3 vanno o convertiti da hard-fail a diagnostic/scorecard, o
+    spostati in categoria non-blocking, OPPURE fixati. Decisione da prendere.
+  - DEFINIZIONE GATE VERDE d'ora in poi:
+      BLOCKING:  AIEqualizerPro_AI_Tests no-arg = 0 fail
+                 AIEqualizerPro_PerformanceTests no-arg = 0 fail
+      FULL:      AIEqualizerPro_IntegrationTests no-arg = 0 fail SOLO dopo
+                 fix/quarantena esplicita dei known-debt.
+================================================================================
+
+================================================================================
+9. NUOVO FINDING (2026-06-14) — il fix 1a ha rivelato "debito di realismo fixture"
+   (fix 1a APPLICATO ma UNCOMMITTED — e' parte di cio' che ti chiedo di esaminare)
+================================================================================
+AZIONE FATTA (uncommitted, Source/Tests/AIAccuracyTest.cpp):
+  - aggiunto helper linearToDb() = inverso esatto di
+    AIEngine::convertDbSpectrumToLinearMagnitude (10^(dB/20)); clamp [-120,+12].
+  - i 2 call-site di TEST B (AIEngine Pipeline) e i clean ora passano
+    linearToDb(tc.spectrum) ad analyzeSpectrum (prima passavano LINEARE).
+  => bug di dominio 1a chiuso: TEST B non e' piu' 0%-su-tutto.
+
+RISULTATO DOPO IL FIX (AI-Accuracy --verbose, binario Integration):
+  - AI Accuracy MLEngine Direct (TEST A): invariato, F1 68.1%, clean FP 0/10,
+    FAIL solo Resonance recall 40% e Thinness 30% (Bucket 2, debito ML reale).
+  - AI Accuracy AIEngine Pipeline (TEST B): da 0% a NUMERI REALI ma BRUTTI:
+      Resonance recall 100% / precision 1.6% (621 FP!), Harshness 50%,
+      Muddiness/Sibilance/LowEndBoom/Boxyness 0%, ThinSound 10%.
+      Average F1 12.6%, **Clean FP rate 100%**.
+
+ROOT CAUSE del 100% clean FP (verificato leggendo generateCleanTests + makeFlat):
+  - i fixture "clean" sono DEAD-FLAT: makeFlat() = 0.05 lineare COSTANTE su tutti
+    i bin (+ rumorino + micro-band). In dB diventano ~ -26 dB PIATTI da 20Hz a
+    20kHz. NON esiste in audio reale (che ha tilt pink, HF in calo).
+  - i detector di prominenza/risonanza sono tarati su spettri realistici; su uno
+    spettro morto-piatto ogni bump di rumore sembra risonanza => 621 FP.
+
+PERCHE' NON E' UNA BRECCIA DEL FLOOR (prova incrociata):
+  - AI-Sweep clean (CleanSteep/CleanBassTilt, tilt realistico): 0/18 FP. INTATTO.
+  - AI-Corpus (audio reale pink/dark via OfflineAnalysisPipeline): 0 FP, Hybrid
+    trova res3200 a c=0.76.
+  => i gate AUTORITATIVI (tilt realistico + audio reale) sono sani. Il 100% FP
+     di TEST B e' un artefatto di fixture irrealistici, non un difetto prodotto.
+
+DISPOSIZIONE PROPOSTA:
+  - 1a domain fix: TENERE (e' corretto, 0% era sbagliato).
+  - AIEngine Pipeline su fixture flat: declassare a KnownDebt con nota
+    "AI-Sweep + AI-Corpus sono i gate autoritativi di floor/recall; questi
+    fixture flat NON lo sono". NON inseguire a verde ritoccando il motore
+    (romperebbe il floor reale tilt-robust).
+  - OPZIONALE (meglio): sostituire/aggiungere ai fixture un tilt pink realistico,
+    cosi' TEST B misura qualcosa di rappresentativo invece di flat. Ma e' lavoro
+    a se' (corpus-quality), non bloccante per N1.
+
+DOMANDE PER TE (oltre Q1-Q6):
+  Q7. Concordi che il 100% clean FP di TEST B e' fixture-unrealism e NON una
+      breccia floor, dato AI-Sweep 0/18 + AI-Corpus 0 FP? O vuoi un controllo
+      ulteriore (es. far girare TEST B con fixture pink-tilted al volo)?
+  Q8. AIEngine Pipeline test: KnownDebt "as is", oppure prima lo rendiamo
+      realistico (pink tilt) e POI decidiamo se passa? Quale ordine eviti che
+      diventi un test che insegue il motore invece di misurarlo?
+  Q9. Conferma piano landing: (a) commit 1a domain fix; (b) TestMain default =
+      "tutte le categorie tranne KnownDebt"; (c) spostare in KnownDebt: TEST B
+      Pipeline, AIIntegration(2 classi), ThresholdCalibration Pipeline,
+      MLEngine recall asserts, Perceptual TEST1/TEST3, BlockSize; (d) scorecard
+      registry. Qualcosa da cambiare in scope/ordine?
+================================================================================
