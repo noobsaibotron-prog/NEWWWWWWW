@@ -1,94 +1,79 @@
-# Known Issue — pluginval SIGSEGV in "Parameter thread safety" (seed-dependent, reproducible at s8)
+# RESOLVED — pluginval SIGSEGV in "Parameter thread safety" (was: seed-dependent, s8+)
 
 > Filename says "s10" for historical reasons (first observed at strictness 10).
-> The 2026-07-02 measurement shows the crash is NOT strictness-gated — it is
-> RANDOM-SEED-gated, and fires at strictness 8 with the seed below.
+> Resolution: 2026-07-03, commit `eb88b2a0`. History of the diagnosis kept below.
 
 ## Status
-**Open. Preexisting bug** (bisected below CRIT-1); not blocking merge of unrelated work.
-**2026-07-02 update — severity raised, workaround withdrawn:** the former claim
-"strictness levels 1-8 pass" was a lucky-seed artifact. With a pinned seed the crash
-reproduces deterministically at strictness 8.
+**RESOLVED (pending one hands-on check).** Root cause identified, fixed, and verified
+end-to-end on 2026-07-03. Remaining: a hands-on Ableton session (Stereo↔M/S flips during
+playback with NaturalPhase + oversampling) as the final program-discipline check for a
+runtime change.
 
-## Symptom
-pluginval 1.0.4 crashes with SIGSEGV (signal 11) at the start of the
-"Parameter thread safety" test, immediately after "Background thread state" completes.
+## Root cause (proven, not hypothesized)
+A deterministic **heap-buffer-overflow** — NOT a data race, and NOT the old
+AtomicBandParams/B.4 hypothesis (explicitly disproven; parameterChanged() is flags-only):
 
-Manifestation is seed-dependent, not strictness-dependent:
-- seed `0x782104d`, strictness 8 → deterministic SIGSEGV (pluginval exit code 9)
-- other seeds (e.g. `0x213600`) and typical unseeded runs → full PASS at strictness 8
-- a hang variant (multi-minute stall inside the same test, pluginval's `--timeout-ms`
-  not firing) was observed once with the crashing seed on a WIP build
-  (recover-ember-core worktree) — same trigger, different manifestation.
+- `preallocatedMaxSamples = jmax(samplesPerBlock * 4, 32768)`  (PluginProcessor.cpp:863)
+- `msModeTransitionBuffer` preallocated at that size (32768 samples)             (:886)
+- `oversampler2x/4x->initProcessing(samplesPerBlock)` → stages sized e.g. 512    (:1031)
+- The msMode crossfade **Case A** (old mode Stereo/Mid/Side) passed the transition
+  buffer RAW: `processStereoForPhaseMode(msModeTransitionBuffer, mode, false)`   (:2388)
+- `processNaturalStereo` sized its `AudioBlock` with `getNumSamples()` == 32768  (:1859)
+- → `Oversampling2TimesPolyphaseIIR::processSamplesUp` wrote 2×32768 floats into a
+  2×512-float stage buffer (ASan: WRITE of 4 at 0 bytes past the region,
+  juce_Oversampling.cpp:355), stomping neighbouring heap blocks.
 
-## Reproducer (verified 2026-07-02 — worktree p0-races-capture, Release build of 2026-07-01)
-```
-/Applications/pluginval.app/Contents/MacOS/pluginval \
-  --strictness-level 8 --timeout-ms 90000 --random-seed 0x782104d \
-  --validate "build-mac/Release/lib/AI Equalizer Pro.vst3"
-# → "pluginval received Segmentation fault: 11, exiting immediately"; exit code 9
-```
+The stomped neighbours detonate downstream — in pluginval, in the VST3 wrapper's
+`ClientRemappedBuffer` teardown (the historical backtrace); in the in-process storm test,
+in an AIEngine analysis vector. The "seed dependence" was never about strictness or
+timing races: it was whether the fuzzer produced the NaturalPhase + oversampling +
+msMode-flip combination. A single-threaded sequential flip reproduces it deterministically
+(`MSTransitionOversamplingOverflowTest`).
 
-PATH WARNING — validate the COMPLETE bundle under `build-mac/Release/lib/`.
-The bundle under `build-mac/AIEqualizerPro_artefacts/Release/VST3/` is an incomplete
-stub (no `Contents/MacOS/` binary): pluginval fails it with "Unable to load VST-3
-plug-in file", which looks like a plugin failure but is a path-selection error.
-`find build-mac -name "*.vst3" | head -1` can pick the stub — do not use it.
+## Fix (commit `eb88b2a0`)
+`PluginProcessor.cpp:2388` now passes a **blockSamples-limited view** (`oldMsView`),
+mirroring the sibling crossfades that already did this correctly (`oldModeView` :2050,
+`oldOsView` :2189). Crossfaded audio is unchanged (causal IIR: the first blockSamples
+output samples are identical); the fix also removes a 65k-samples-of-garbage CPU spike
+per transition block.
 
-## lldb backtrace (2026-07-02, read-only attach on the reproducer)
-```
-thread #7, EXC_BAD_ACCESS
-AI Equalizer Pro`juce::ClientRemappedBuffer<float>::~ClientRemappedBuffer()
-AI Equalizer Pro`juce::JuceVST3Component::processAudio<float>()
-AI Equalizer Pro`juce::JuceVST3Component::process()
-pluginval`juce::VST3PluginInstance::processBlock()
-pluginval`ParameterThreadSafetyTest::runTest()
-```
-Reading: the faulting frame is JUCE's VST3-wrapper channel-remap teardown on the
-audio-render thread (thread #7) — the point where the remapped buffer copies back to
-host buffers. That is a DOWNSTREAM-corruption signature (a dangling/stomped pointer
-produced earlier in the same `process()` call), not the root cause itself. It does
-NOT (yet) pin AtomicBandParams B.4 specifically.
+## Verification (2026-07-03, all on the fixed build)
+- `MSTransitionOversamplingOverflowTest` (ASan): deterministic overflow → **PASS**
+- `ParameterStormThreadSafetyTest`: ASan overflow + TSan race → **PASS**, TSan **0 reports**
+  (full survey, `abort_on_error=0`)
+- `build_sanitize.sh` ASan+UBSan gate (DSP/Core/Regression/AI/Integration): **PASS**
+- ctest Release 4/4: **PASS**
+- pluginval 1.0.4, pinned killer seed `0x782104d`, rebuilt VST3 (binary 2026-07-03):
+  **s8 SUCCESS and s10 SUCCESS** — "Parameter thread safety" completes; previously
+  SIGSEGV at exactly that test with that seed.
 
-## Bisection (unchanged)
-- Commit `49f2a46f` (CRIT-1, SPSCQueue fix): crashes
-- Commit `8247917c` (parent of CRIT-1): crashes identically
-- Same test, same failure point
-- Conclusion: bug preexists CRIT-1; fix is innocent
+## Reproducers (kept as regression tests, quarantined target)
+`AIEqualizerPro_ThreadSafetyTests` (EXCLUDE_FROM_ALL, no ctest yet):
+- `MSTransitionOversamplingOverflowTest` — deterministic single-thread repro (now green)
+- `ParameterStormThreadSafetyTest` — pluginval-style concurrent param storm (now green)
+Run via `build_sanitize.sh` (SAN=thread or RUN_THREADSAFETY=1).
+**Follow-up:** promote both to blocking gates (add_test / default categories) now that
+they are green, and revisit the CI pluginval gate (pinned-seed matrix incl. `0x782104d`,
+s8+s10) that was blocked on this bug.
 
-## User impact
-None observed in normal DAW use (plugin runs in Ableton Live for weeks without
-crashes). But the trigger threshold is lower than previously believed: strictness-8
-parameter fuzzing with an unlucky seed is enough — no s10-only exotic workload needed.
+## Diagnosis history (audit trail)
+- 2026-04-21: crash first documented at s10; "s1-8 passes" workaround recorded.
+- 2026-07-02: workaround WITHDRAWN — crash reproduced at s8 with seed `0x782104d`
+  (strictness-independent, seed-dependent). lldb: EXC_BAD_ACCESS in
+  `ClientRemappedBuffer` teardown (downstream-corruption signature).
+- 2026-07-02/03: static analysis cleared parameterChanged (flags-only) and demoted the
+  B.4/AtomicBandParams and setNumActiveBands/processAICommands suspects; param-storm
+  detector under TSan/ASan pinned the write (juce_Oversampling.cpp:355 from
+  PluginProcessor.cpp:1862/2388); single-thread discriminant proved it deterministic;
+  3-line view fix; full verification battery green.
+- Bisection note (historical): bug preexisted CRIT-1 (`49f2a46f`); confirmed unrelated.
 
-## Likely root cause (hypotheses — still not verified)
-The crash frame is consistent with heap/pointer corruption produced earlier in the
-same process() call, e.g. parameter-callback code mutating DSP state while
-processBlock runs. Candidates from Audit B (ChatGPT Codex):
-- B.4: torn publish of AtomicBandParams (dirty-flag pattern may let the audio reader
-  see inconsistent state during publish)
-- addBand / clearBandFilterState / wholeChainXfade races (disaggregated HIGH findings)
-The lldb frame alone cannot distinguish these; that requires the static-analysis pass
-below.
+## CI / validation guidance
+- pluginval can now be considered for a blocking CI gate again: pinned seeds including
+  `0x782104d`, strictness 8 and 10, validating the COMPLETE bundle under
+  `build-mac/Release/lib/` (the bundle under `AIEqualizerPro_artefacts/.../VST3/` is an
+  incomplete stub that fails to load — do not `find | head -1`).
+- Wire it only after the detector tests are promoted and one more multi-seed matrix run
+  is recorded.
 
-## Blocking action (updated 2026-07-02)
-1. ~~lldb backtrace of the SIGSEGV~~ **DONE** — see above. Frame = wrapper teardown;
-   downstream-corruption signature; root cause still open.
-2. Static analysis of the message/background-thread → audio-thread parameter path
-   (parameterChanged → band/DSP mutation vs processBlock) to identify the corrupting
-   write.
-3. Targeted fix(es) with a dedicated UnitTest reproducing the race.
-4. Re-run pluginval to full completion with a PINNED-SEED matrix that includes
-   `0x782104d`, at strictness 8 and 10, as the regression gate.
-
-## CI / validation guidance (SUPERSEDES the old workaround)
-- WITHDRAWN: "use `--strictness-level 8` as interim gate". s8 crashes with seed
-  `0x782104d`; an unseeded s8 gate is a coin flip (flaky red, or false green that
-  hides the bug).
-- Do NOT wire pluginval as a blocking CI gate until the race is fixed.
-- Local/manual runs: always pass an explicit `--random-seed` (reproducibility) and
-  point at the complete bundle under `build-mac/Release/lib/`.
-- After the fix: promote pluginval to a blocking gate with pinned seeds including
-  `0x782104d` (s8 + s10), per CODEBASE_EVALUATION_2026 recommendation #3.
-
-Last verified: 2026-07-02 (pluginval 1.0.4, macOS, worktree p0-races-capture)
+Last verified: 2026-07-03 (pluginval 1.0.4, macOS, worktree p0-races-capture, fix `eb88b2a0`)
