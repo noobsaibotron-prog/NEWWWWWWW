@@ -55,6 +55,7 @@
 #include "AI/ReferenceMatcher.h"
 #include "AI/UserLearning.h"
 #include "AI/SemanticEQEngine.h"
+#include "AI/DynamicCorrectionEngine.h"
 #include "Utils/Logger.h"
 #include "Utils/PresetManager.h"
 #if AIEQ_GUI_DEBUG
@@ -631,6 +632,10 @@ private:
     ReferenceMatcher referenceMatcher;
     UserLearningSystem userLearning;
     SemanticEQEngine semanticEngine;
+    // D1 (AI-evolution): per-band dynamic correction engine (opt-in, OFF by
+    // default — see setDynamicCorrectionsEnabled / publishDynamicCorrections).
+    DynamicCorrectionEngine dynamicCorrectionEngine;
+    uint32_t dynamicCorrectionsVersion = 0;   // message-thread publish counter
     // Semantic band ownership: (quality, band-ordinal) -> EQ slot.
     // A quality's definition can emit up to 3 bands (plus merged complementary
     // copies); keying by quality ALONE made every band of a multi-band quality
@@ -780,6 +785,16 @@ public:
         compiled once in SharedCode with the true layout. The underlying
         macro-gated-data landmine is tracked as a separate ticket. */
     [[nodiscard]] FrontEndDiagnostics getAIFrontEndDiagnostics() const noexcept;
+
+    /** D1 (AI-evolution): opt-in per-band dynamic correction engine.
+        Default OFF; with no published snapshot the engine is a strict no-op.
+        publishDynamicCorrectionsFromApproved converts the AI engine's current
+        APPROVED corrections (cuts only) into a dynamic snapshot — call from
+        the message thread after approve/clear operations. */
+    void setDynamicCorrectionsEnabled(bool on) noexcept { dynamicCorrectionEngine.setEnabled(on); }
+    [[nodiscard]] bool areDynamicCorrectionsEnabled() const noexcept { return dynamicCorrectionEngine.isEnabled(); }
+    [[nodiscard]] DynamicCorrectionEngine& getDynamicCorrectionEngine() noexcept { return dynamicCorrectionEngine; }
+    void publishDynamicCorrectionsFromApproved();
 private:
 
     // IR builder thread function (runs in background)

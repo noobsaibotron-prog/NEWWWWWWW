@@ -603,6 +603,8 @@ set(PLUGIN_SOURCES
     Source/AI/UserLearning.h
     Source/AI/MLEngine.cpp
     Source/AI/MLEngine.h
+    Source/AI/DynamicCorrectionEngine.cpp
+    Source/AI/DynamicCorrectionEngine.h
     Source/AI/SemanticEQEngine.cpp
     Source/AI/SemanticEQEngine.h
     Source/AI/MultiTrackUnmasking.cpp
@@ -1038,6 +1040,7 @@ if(HAVE_JUCE)
         Source/AI/ReferenceMatcher.cpp
         Source/AI/SemanticEQEngine.cpp
         Source/AI/UserLearning.cpp
+        Source/AI/DynamicCorrectionEngine.cpp
         Source/Utils/Logger.cpp
         # SpectrumAnalyzer is TEST-ONLY here: the AI-Corpus mirror-equivalence
         # gate compares the offline pipeline against the real analyzer.
@@ -1053,6 +1056,7 @@ if(HAVE_JUCE)
         Source/Tests/AIModelContractTest.cpp
         Source/Tests/MLWeightsProvenanceTest.cpp
         Source/Tests/FrameCoherenceTest.cpp
+        Source/Tests/DynamicCorrectionEngineTest.cpp
         Source/Tests/RealDataSibilanceTest.cpp
         Source/Tests/ManualClipProbeTest.cpp
         Source/Tests/TestMain.cpp

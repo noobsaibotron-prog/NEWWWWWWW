@@ -1137,6 +1137,7 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     qualityModeCached = qualityMode;
     aiEngine.prepare(sampleRate, samplesPerBlock);
     referenceMatcher.prepare(sampleRate, samplesPerBlock);
+    dynamicCorrectionEngine.prepare(sampleRate, samplesPerBlock, getTotalNumOutputChannels());
 
     // Prepare lock-free capture service (replaces old mutex-based capture)
     captureService.prepare(sampleRate, getTotalNumInputChannels(), samplesPerBlock);
@@ -2646,6 +2647,13 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         autoGainBlockCounter = 0;
     }
 
+    // D1 (AI-evolution): per-band DYNAMIC corrections — soothe-class engine on
+    // the AI's approved corrections. Gated OFF by default (engine no-ops until
+    // enabled AND a snapshot is published); runs on the WET path pre output
+    // gain, uniformly for every phase mode. Promotion to a shipped default is
+    // a separate corpus-gated decision.
+    dynamicCorrectionEngine.process(buffer);
+
     // Apply output gain (manual + auto-gain compensation) with SMOOTHING to prevent zippering
     float totalGainDB = outputGainDB;
 
@@ -3986,6 +3994,46 @@ void AIEqualizerAudioProcessor::ensureBandCount(int count)
 
     // FIX: Ensure shadow processor has same band count for thread-safe IR building
     addMissing(eqProcessorForIR);
+}
+
+//==============================================================================
+// D1 (AI-evolution): approved AI corrections -> dynamic correction snapshot
+//==============================================================================
+void AIEqualizerAudioProcessor::publishDynamicCorrectionsFromApproved()
+{
+    // Message-thread publication (the engine's double buffer makes it safe
+    // against the audio thread; getApprovedCorrections is message-thread-only
+    // by the existing AIEngine contract).
+    const auto approved = aiEngine.getApprovedCorrections();
+
+    DynamicCorrectionEngine::Snapshot snap;
+    snap.version = ++dynamicCorrectionsVersion;
+    int slot = 0;
+    for (const auto& corr : approved)
+    {
+        if (slot >= DynamicCorrectionEngine::kMaxCorrections)
+            break;
+        const auto scaled = aiEngine.getScaledCorrection(corr);
+        if (scaled.suggestedGain >= 0.0f)
+            continue;   // dynamic engine is cut-only; boosts stay in the static EQ
+
+        auto& c = snap.corrections[static_cast<size_t>(slot)];
+        c.frequencyHz = scaled.frequency;
+        c.q = juce::jlimit(0.5f, 24.0f, scaled.suggestedQ);
+        c.maxCutDb = juce::jlimit(0.5f, 18.0f, -scaled.suggestedGain);
+        // v1 threshold model: cut engages when the band rises above a fixed
+        // program-relative floor; per-correction adaptive thresholds are the
+        // documented next step (needs the band-energy statistics from P3).
+        c.thresholdDb = -35.0f;
+        c.ratio = 3.0f;
+        c.attackMs = 3.0f;
+        c.releaseMs = 60.0f;
+        c.dynamic = true;
+        c.enabled = true;
+        ++slot;
+    }
+    snap.numActive = slot;
+    dynamicCorrectionEngine.publishCorrections(snap);
 }
 
 //==============================================================================
