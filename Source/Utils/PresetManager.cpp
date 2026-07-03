@@ -1,6 +1,51 @@
 #include "PresetManager.h"
 #include <algorithm>
 
+namespace
+{
+// Preset XML schema (canonical since the schema-mismatch fix):
+//   <AIEqualizerPreset name=... category=... version=...>
+//     <State>
+//       <Parameters .../>   <- APVTS root (apvts.copyState()), type "Parameters"
+//     </State>
+//   </AIEqualizerPreset>
+// Legacy (written by the pre-fix saveUserPreset/exportPreset): <Parameters>
+// directly under the root, no <State> wrapper. Still accepted on read so
+// previously "lost" user presets reappear.
+constexpr const char* kPresetStateWrapperTag = "State";
+constexpr const char* kApvtsStateTag = "Parameters";
+
+std::unique_ptr<juce::XmlElement> wrapApvtsStateXml(const juce::ValueTree& state)
+{
+    auto paramsXml = state.createXml();
+    if (paramsXml == nullptr || !paramsXml->hasTagName(kApvtsStateTag))
+        return nullptr;
+
+    auto wrapper = std::make_unique<juce::XmlElement>(kPresetStateWrapperTag);
+    wrapper->addChildElement(paramsXml.release());
+    return wrapper;
+}
+
+// STRICT: only <State>/<Parameters> or legacy direct <Parameters>. No
+// first-child fallback — an unknown tag inside <State> must NOT reach
+// apvts.replaceState() (its root type would not be APVTS).
+const juce::XmlElement* findApvtsParamsXml(const juce::XmlElement& presetRoot)
+{
+    if (auto* stateWrapper = presetRoot.getChildByName(kPresetStateWrapperTag))
+        return stateWrapper->getChildByName(kApvtsStateTag);
+
+    return presetRoot.getChildByName(kApvtsStateTag); // legacy schema
+}
+
+juce::ValueTree parsePresetApvtsState(const juce::XmlElement& presetRoot)
+{
+    if (const auto* paramsXml = findApvtsParamsXml(presetRoot))
+        return juce::ValueTree::fromXml(*paramsXml);
+
+    return {};
+}
+} // namespace
+
 //==============================================================================
 PresetManager::PresetManager(juce::AudioProcessorValueTreeState& apvts_)
     : apvts(apvts_)
@@ -367,24 +412,17 @@ std::vector<PresetManager::Preset> PresetManager::getUserPresets() const
         if (xml == nullptr || !xml->hasTagName("AIEqualizerPreset"))
             continue;
 
-        auto* stateXml = xml->getChildByName("State");
-        if (stateXml == nullptr || !stateXml->hasTagName("State"))
-        {
-            AIEQ_LOG_WARNING("Preset skipped (invalid or missing State): " + file.getFileName());
-            continue;
-        }
-
         Preset preset;
         preset.name = xml->getStringAttribute("name", file.getFileNameWithoutExtension());
         preset.category = xml->getStringAttribute("category", "User");
         preset.description = xml->getStringAttribute("description", "");
         preset.filePath = file;
-        preset.state = juce::ValueTree::fromXml(*stateXml);
+        preset.state = parsePresetApvtsState(*xml);
 
         if (preset.state.isValid())
             result.push_back(preset);
         else
-            AIEQ_LOG_WARNING("Preset skipped (state invalid): " + file.getFileName());
+            AIEQ_LOG_WARNING("Preset skipped (missing/invalid State/Parameters): " + file.getFileName());
     }
     
     return result;
@@ -402,9 +440,15 @@ bool PresetManager::saveUserPreset(const juce::String& name, const juce::String&
         xml->setAttribute("category", category);
         xml->setAttribute("version", "2.1.0");
         
-        // Save current APVTS state
-        auto state = apvts.copyState();
-        xml->addChildElement(state.createXml().release());
+        // Save current APVTS state wrapped in <State> (canonical schema; the
+        // loaders below and getUserPresets() read <State>/<Parameters>).
+        auto stateWrapper = wrapApvtsStateXml(apvts.copyState());
+        if (stateWrapper == nullptr)
+        {
+            AIEQ_LOG_ERROR("Failed to serialize APVTS state for preset: " + name);
+            return false;
+        }
+        xml->addChildElement(stateWrapper.release());
         
         if (xml->writeTo(presetFile))
         {
@@ -428,6 +472,14 @@ bool PresetManager::loadPreset(const Preset& preset)
 {
     try
     {
+        // Guard: replaceState() must only ever receive a root of the APVTS
+        // type ("Parameters"). A badly imported/parsed preset stops here.
+        if (!preset.state.isValid() || !preset.state.hasType(apvts.state.getType()))
+        {
+            AIEQ_LOG_WARNING("Preset load skipped (invalid APVTS state): " + preset.name);
+            return false;
+        }
+
         apvts.replaceState(preset.state);
 
         // FIX: replaceState() may not trigger APVTS Listener::parameterChanged()
@@ -508,7 +560,10 @@ bool PresetManager::exportPreset(const Preset& preset, const juce::File& targetF
         xml->setAttribute("category", preset.category);
         xml->setAttribute("description", preset.description);
         xml->setAttribute("version", "2.1.0");
-        xml->addChildElement(preset.state.createXml().release());
+        auto stateWrapper = wrapApvtsStateXml(preset.state);
+        if (stateWrapper == nullptr)
+            return false;
+        xml->addChildElement(stateWrapper.release());
         return xml->writeTo(targetFile);
     }
     catch (...)
@@ -529,10 +584,10 @@ PresetManager::Preset PresetManager::importPreset(const juce::File& file) const
             return preset;
         }
 
-        auto* stateXml = xml->getChildByName("State");
-        if (stateXml == nullptr || !stateXml->hasTagName("State"))
+        auto importedState = parsePresetApvtsState(*xml);
+        if (!importedState.isValid())
         {
-            AIEQ_LOG_WARNING("Import failed: missing State in " + file.getFileName());
+            AIEQ_LOG_WARNING("Import failed: missing State/Parameters in " + file.getFileName());
             return preset;
         }
 
@@ -540,7 +595,7 @@ PresetManager::Preset PresetManager::importPreset(const juce::File& file) const
         preset.category = xml->getStringAttribute("category", "User");
         preset.description = xml->getStringAttribute("description", "");
         preset.filePath = file;
-        preset.state = juce::ValueTree::fromXml(*stateXml);
+        preset.state = importedState;
     }
     catch (...)
     {

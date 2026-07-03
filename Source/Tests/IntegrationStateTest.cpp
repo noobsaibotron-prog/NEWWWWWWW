@@ -17,6 +17,7 @@ public:
         juce::ignoreUnused(mm); // ensure MessageManager exists; current thread becomes message thread
 
         testStateRoundTrip();
+        testPresetSchemaRoundTrip();
         testDynamicABStateRoundTrip();
         testBypassPassThrough();
     }
@@ -98,6 +99,83 @@ private:
 
         expect(proc.getLatencySamples() >= 0);
         expect(proc.getLatencySamples() == origLatency); // worst-case latency should be stable across state load
+    }
+
+    void testPresetSchemaRoundTrip()
+    {
+        beginTest("Preset schema wraps APVTS Parameters and accepts legacy direct Parameters");
+        AIEqualizerAudioProcessor proc;
+        proc.prepareToPlay(48000.0, 512);
+        auto& apvts = proc.getAPVTS();
+        auto& presets = proc.getPresetManager();
+
+        setFloat(apvts, "outputGain", 4.0f);
+
+        PresetManager::Preset source;
+        source.name = "Schema Test";
+        source.category = "User";
+        source.description = "Preset schema regression";
+        source.state = apvts.copyState();
+
+        auto tempDir = juce::File::getSpecialLocation(juce::File::tempDirectory)
+            .getNonexistentChildFile("aieq-preset-schema", "", false);
+        expect(tempDir.createDirectory());
+
+        auto canonicalFile = tempDir.getChildFile("canonical.xml");
+        expect(presets.exportPreset(source, canonicalFile));
+
+        auto canonicalXml = juce::XmlDocument::parse(canonicalFile);
+        expect(canonicalXml != nullptr);
+        if (canonicalXml != nullptr)
+        {
+            expect(canonicalXml->hasTagName("AIEqualizerPreset"));
+            auto* stateXml = canonicalXml->getChildByName("State");
+            expect(stateXml != nullptr);
+            if (stateXml != nullptr)
+                expect(stateXml->getChildByName("Parameters") != nullptr);
+        }
+
+        auto importedCanonical = presets.importPreset(canonicalFile);
+        expect(importedCanonical.state.isValid());
+        expect(importedCanonical.state.hasType(apvts.state.getType()));
+
+        setFloat(apvts, "outputGain", -6.0f);
+        expect(presets.loadPreset(importedCanonical));
+        if (auto* outputGain = apvts.getRawParameterValue("outputGain"))
+            expectWithinAbsoluteError(outputGain->load(), 4.0f, 0.01f);
+
+        auto legacyRoot = std::make_unique<juce::XmlElement>("AIEqualizerPreset");
+        legacyRoot->setAttribute("name", "Legacy Direct Parameters");
+        legacyRoot->setAttribute("category", "User");
+        legacyRoot->addChildElement(source.state.createXml().release());
+        auto legacyFile = tempDir.getChildFile("legacy-direct.xml");
+        expect(legacyRoot->writeTo(legacyFile));
+
+        auto importedLegacy = presets.importPreset(legacyFile);
+        expect(importedLegacy.state.isValid());
+        expect(importedLegacy.state.hasType(apvts.state.getType()));
+
+        setFloat(apvts, "outputGain", -9.0f);
+        expect(presets.loadPreset(importedLegacy));
+        if (auto* outputGain = apvts.getRawParameterValue("outputGain"))
+            expectWithinAbsoluteError(outputGain->load(), 4.0f, 0.01f);
+
+        auto invalidRoot = std::make_unique<juce::XmlElement>("AIEqualizerPreset");
+        auto invalidState = std::make_unique<juce::XmlElement>("State");
+        invalidState->addChildElement(new juce::XmlElement("NotParameters"));
+        invalidRoot->addChildElement(invalidState.release());
+        auto invalidFile = tempDir.getChildFile("invalid-wrapper.xml");
+        expect(invalidRoot->writeTo(invalidFile));
+
+        auto importedInvalid = presets.importPreset(invalidFile);
+        expect(!importedInvalid.state.isValid());
+
+        PresetManager::Preset badPreset;
+        badPreset.name = "Bad Wrapper";
+        badPreset.state = juce::ValueTree("State");
+        expect(!presets.loadPreset(badPreset));
+
+        expect(tempDir.deleteRecursively());
     }
 
     void testDynamicABStateRoundTrip()
@@ -278,4 +356,3 @@ private:
 };
 
 static IntegrationStateTest integrationStateTest;
-
