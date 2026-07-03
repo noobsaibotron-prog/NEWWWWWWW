@@ -9,7 +9,7 @@
  * 
  * Features:
  * - Zero allocations in audio thread after prepare()
- * - Lock-free ring buffer using juce::AbstractFifo
+ * - Circular overwrite ring for retroactive "last N seconds" capture
  * - Manual capture with pre-allocated buffer
  * - Auto-capture trigger on energy peaks
  * - Thread-safe preview for waveform display
@@ -104,7 +104,9 @@ public:
         const int numSamples = buffer.getNumSamples();
         int dropped = 0;
         
-        // Push to ring buffer (always, for retroactive capture)
+        // Push to the retroactive ring (always). The ring is a circular overwrite
+        // history buffer: overwriting old history is normal and must not count as
+        // a dropped sample.
         const int written = ringBuffer.push(buffer);
         if (written < numSamples)
             dropped = numSamples - written;
@@ -286,7 +288,7 @@ public:
     
     void setEnergyThreshold(float threshold) noexcept
     {
-        energyThreshold = threshold;
+        energyThreshold.store(threshold, std::memory_order_relaxed);
     }
     
     void setCaptureLengthMs(int lengthMs) noexcept
@@ -374,7 +376,7 @@ private:
         energy = std::sqrt(energy / static_cast<float>(numChannels * numSamples));
         
         // Trigger on energy spike
-        if (energy > energyThreshold && energy > lastEnergyLevel * 1.5f)
+        if (energy > energyThreshold.load(std::memory_order_relaxed) && energy > lastEnergyLevel * 1.5f)
         {
             if (!isManualCapturing.load(std::memory_order_relaxed))
             {
@@ -414,7 +416,7 @@ private:
     
     // Auto-capture
     std::atomic<bool> autoCaptureEnabled { false };
-    float energyThreshold = 0.3f;
+    std::atomic<float> energyThreshold { 0.3f };
     float lastEnergyLevel = 0.0f;
     int autoCaptureCooldown = 0;
     int captureLengthMs = kDefaultCaptureLengthMs;
@@ -424,4 +426,3 @@ private:
 };
 
 } // namespace AIEQCore
-

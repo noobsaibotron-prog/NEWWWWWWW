@@ -230,10 +230,13 @@ private:
 
 //==============================================================================
 /**
- * LockFreeRingBuffer - Real-time safe audio capture ring buffer
- * 
- * Uses juce::AbstractFifo internally for efficient lock-free operation.
- * Pre-allocates all memory in prepare() to ensure zero allocations in push().
+ * LockFreeRingBuffer - Real-time safe retroactive audio capture ring.
+ *
+ * This is a circular overwrite buffer, not a producer/consumer FIFO. push()
+ * always keeps the newest samples, overwriting the oldest when capacity is
+ * exceeded. readMono() returns a non-consuming chronological snapshot of the
+ * most recent samples, which is the contract needed for "last N seconds" AI
+ * capture.
  */
 class LockFreeRingBuffer
 {
@@ -251,60 +254,59 @@ public:
         jassert(numSamples > 0);
         
         channels = numChannels;
-        fifo.setTotalSize(numSamples);
+        capacity = numSamples;
         
         buffer.setSize(numChannels, numSamples, false, true, false);
         buffer.clear();
+        writeCursor.store(0, std::memory_order_release);
     }
 
     /**
      * Push audio samples into the ring buffer (audio thread, real-time safe)
-     * @return Number of samples actually written (may be less if buffer full)
+     * @return Source block size. Overwrite of old history is normal, not a drop.
      */
     int push(const juce::AudioBuffer<float>& source) noexcept
     {
         const int numSamples = source.getNumSamples();
-        if (numSamples == 0)
+        const int srcChannels = source.getNumChannels();
+        if (numSamples <= 0 || capacity <= 0 || srcChannels <= 0)
             return 0;
         
-        const auto scope = fifo.write(numSamples);
+        const int toWrite = std::min(numSamples, capacity);
+        const int sourceStart = numSamples - toWrite;
+        const auto cursor = writeCursor.load(std::memory_order_relaxed);
+        const int start = static_cast<int>(cursor % capacity);
+        const int first = std::min(toWrite, capacity - start);
+        const int second = toWrite - first;
         
-        if (scope.blockSize1 > 0)
+        for (int ch = 0; ch < channels; ++ch)
         {
-            for (int ch = 0; ch < std::min(channels, source.getNumChannels()); ++ch)
-            {
-                std::memcpy(buffer.getWritePointer(ch) + scope.startIndex1,
-                           source.getReadPointer(ch),
-                           static_cast<size_t>(scope.blockSize1) * sizeof(float));
-            }
+            const float* src = source.getReadPointer(std::min(ch, srcChannels - 1)) + sourceStart;
+            float* dst = buffer.getWritePointer(ch);
+            if (first > 0)
+                std::memcpy(dst + start, src, static_cast<size_t>(first) * sizeof(float));
+            if (second > 0)
+                std::memcpy(dst, src + first, static_cast<size_t>(second) * sizeof(float));
         }
         
-        if (scope.blockSize2 > 0)
-        {
-            for (int ch = 0; ch < std::min(channels, source.getNumChannels()); ++ch)
-            {
-                std::memcpy(buffer.getWritePointer(ch) + scope.startIndex2,
-                           source.getReadPointer(ch) + scope.blockSize1,
-                           static_cast<size_t>(scope.blockSize2) * sizeof(float));
-            }
-        }
-        
-        return scope.blockSize1 + scope.blockSize2;
+        writeCursor.store(cursor + toWrite, std::memory_order_release);
+        return numSamples;
     }
 
     /**
-     * Read samples from the ring buffer (non-audio thread)
-     * Reads the most recent N samples, converting to mono if requested.
+     * Snapshot samples from the ring buffer (non-audio thread).
+     * Reads the most recent N samples without consuming them.
      * @param destMono Output vector for mono samples
      * @param numSamples Number of samples to read
      * @return Actual number of samples read
      */
     int readMono(std::vector<float>& destMono, int numSamples)
     {
-        const int available = fifo.getNumReady();
+        const auto end = writeCursor.load(std::memory_order_acquire);
+        const int available = static_cast<int>(std::min<juce::int64>(end, capacity));
         const int toRead = std::min(numSamples, available);
         
-        if (toRead == 0)
+        if (toRead <= 0)
         {
             destMono.clear();
             return 0;
@@ -312,10 +314,11 @@ public:
         
         destMono.resize(static_cast<size_t>(toRead));
         
-        // Calculate start position for most recent samples
-        const auto scope = fifo.read(toRead);
-        
-        // Read and convert to mono
+        const auto startCursor = end - toRead;
+        const int start = static_cast<int>(startCursor % capacity);
+        const int first = std::min(toRead, capacity - start);
+        const int second = toRead - first;
+        const float invChannels = 1.0f / static_cast<float>(channels);
         int outIdx = 0;
         
         auto readBlock = [&](int startIndex, int blockSize)
@@ -327,14 +330,13 @@ public:
                 {
                     sum += buffer.getSample(ch, startIndex + i);
                 }
-                destMono[static_cast<size_t>(outIdx)] = sum / static_cast<float>(channels);
+                destMono[static_cast<size_t>(outIdx)] = sum * invChannels;
             }
         };
         
-        if (scope.blockSize1 > 0)
-            readBlock(scope.startIndex1, scope.blockSize1);
-        if (scope.blockSize2 > 0)
-            readBlock(scope.startIndex2, scope.blockSize2);
+        readBlock(start, first);
+        if (second > 0)
+            readBlock(0, second);
         
         return toRead;
     }
@@ -344,7 +346,7 @@ public:
      */
     [[nodiscard]] int getNumReady() const noexcept
     {
-        return fifo.getNumReady();
+        return static_cast<int>(std::min<juce::int64>(writeCursor.load(std::memory_order_acquire), capacity));
     }
 
     /**
@@ -352,13 +354,14 @@ public:
      */
     void clear() noexcept
     {
-        fifo.reset();
+        writeCursor.store(0, std::memory_order_release);
     }
 
 private:
-    juce::AbstractFifo fifo { 1 }; // Will be resized in prepare()
     juce::AudioBuffer<float> buffer;
+    std::atomic<juce::int64> writeCursor { 0 };
     int channels = 2;
+    int capacity = 0;
 };
 
 //==============================================================================
@@ -532,4 +535,3 @@ struct AtomicBandState
 };
 
 } // namespace AIEQCore
-
