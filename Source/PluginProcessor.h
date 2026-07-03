@@ -631,7 +631,15 @@ private:
     ReferenceMatcher referenceMatcher;
     UserLearningSystem userLearning;
     SemanticEQEngine semanticEngine;
-    std::array<int, SemanticEQEngine::numQualities> semanticBandAssignments {};
+    // Semantic band ownership: (quality, band-ordinal) -> EQ slot.
+    // A quality's definition can emit up to 3 bands (plus merged complementary
+    // copies); keying by quality ALONE made every band of a multi-band quality
+    // overwrite the same slot — only the last survived (AI-evolution fix A2).
+    // Ordinals are stable because generateEQFromState returns adjustments
+    // sorted by frequency and a definition's band frequencies are fixed.
+    static constexpr int kMaxSemanticBandSlots = 4;
+    std::array<std::array<int, kMaxSemanticBandSlots>,
+               SemanticEQEngine::numQualities> semanticBandAssignments {};
     
     //==============================================================================
     // Utilities

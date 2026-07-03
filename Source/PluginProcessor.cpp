@@ -109,7 +109,8 @@ AIEqualizerAudioProcessor::AIEqualizerAudioProcessor()
         initSlot(slotD, "D");
     }
 
-    semanticBandAssignments.fill(-1);
+    for (auto& perQuality : semanticBandAssignments)
+        perQuality.fill(-1);
 
     // Initialize preset manager
     presetManager = std::make_unique<PresetManager>(apvts);
@@ -4426,24 +4427,36 @@ void AIEqualizerAudioProcessor::applySemanticAdjustments(const std::vector<Seman
     bandClaimed.fill(false);
 
     // Rebuild ownership map from current assignments (skip invalid ones)
-    for (auto& owner : semanticBandAssignments)
+    for (auto& perQuality : semanticBandAssignments)
     {
-        if (owner < 0 || owner >= maxBands)
-            owner = -1;
-        else
-            bandClaimed[static_cast<size_t>(owner)] = true;
+        for (auto& owner : perQuality)
+        {
+            if (owner < 0 || owner >= maxBands)
+                owner = -1;
+            else
+                bandClaimed[static_cast<size_t>(owner)] = true;
+        }
     }
 
-    auto claimSlotForQuality = [&](SemanticEQEngine::SemanticQuality quality) -> int
+    // A2 fix: claim one slot per (quality, band-ordinal), NOT per quality.
+    // Multi-band qualities (Air, Clarity, ... — up to 3 definition bands)
+    // previously funneled every band into the same slot; only the last
+    // adjustment survived. Ordinals arrive frequency-sorted from
+    // generateEQFromState, so (quality, ordinal) is stable across calls.
+    auto claimSlotForQualityBand = [&](SemanticEQEngine::SemanticQuality quality,
+                                       int bandOrdinal) -> int
     {
         const int qIdx = static_cast<int>(quality);
         if (qIdx < 0 || qIdx >= SemanticEQEngine::numQualities)
             return -1;
+        if (bandOrdinal < 0 || bandOrdinal >= kMaxSemanticBandSlots)
+            return -1;
 
         // Reuse existing assignment if still valid
-        const int existing = semanticBandAssignments[static_cast<size_t>(qIdx)];
-        if (existing >= 0 && existing < maxBands)
-            return existing;
+        auto& slotForOrdinal = semanticBandAssignments[static_cast<size_t>(qIdx)]
+                                                      [static_cast<size_t>(bandOrdinal)];
+        if (slotForOrdinal >= 0 && slotForOrdinal < maxBands)
+            return slotForOrdinal;
 
         int chosen = -1;
         float bestScore = std::numeric_limits<float>::max();
@@ -4473,7 +4486,7 @@ void AIEqualizerAudioProcessor::applySemanticAdjustments(const std::vector<Seman
 
         if (chosen >= 0)
         {
-            semanticBandAssignments[static_cast<size_t>(qIdx)] = chosen;
+            slotForOrdinal = chosen;
             bandClaimed[static_cast<size_t>(chosen)] = true;
         }
 
@@ -4483,9 +4496,18 @@ void AIEqualizerAudioProcessor::applySemanticAdjustments(const std::vector<Seman
     int desiredActiveBands = getNumActiveBands();
     bool anyBandStateChanged = false;
 
+    // Per-quality ordinal counter for THIS batch of adjustments
+    std::array<int, SemanticEQEngine::numQualities> ordinalCounter {};
+    ordinalCounter.fill(0);
+
     for (const auto& adj : adjustments)
     {
-        const int slot = claimSlotForQuality(adj.sourceQuality);
+        const int qIdx = static_cast<int>(adj.sourceQuality);
+        if (qIdx < 0 || qIdx >= SemanticEQEngine::numQualities)
+            continue;
+
+        const int ordinal = ordinalCounter[static_cast<size_t>(qIdx)]++;
+        const int slot = claimSlotForQualityBand(adj.sourceQuality, ordinal);
         if (slot < 0)
             continue;
 
