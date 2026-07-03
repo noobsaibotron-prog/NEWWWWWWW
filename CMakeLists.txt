@@ -1190,4 +1190,44 @@ if(HAVE_JUCE)
 
     add_test(NAME aieq_performance
              COMMAND $<TARGET_FILE:AIEqualizerPro_PerformanceTests> --category=Performance -v)
+
+    # ---------------------------------------------------------------------------
+    # Thread-safety DETECTOR (quarantined) — in-process reproducer of pluginval's
+    # "Parameter thread safety" crash (REPORTS/KNOWN_ISSUE_pluginval_s10_param_thread_safety.md).
+    # EXCLUDE_FROM_ALL + NO add_test: it is EXPECTED RED (crash / sanitizer report)
+    # while the underlying race is unfixed, so it must not enter default builds,
+    # CI, or ctest gates. Build & run it explicitly via build_sanitize.sh
+    # (SAN=thread, or RUN_THREADSAFETY=1 under ASan). Promote to a blocking gate
+    # (add_test) only after the fix lands.
+    # ---------------------------------------------------------------------------
+    add_executable(AIEqualizerPro_ThreadSafetyTests EXCLUDE_FROM_ALL
+        Source/Tests/ParameterStormThreadSafetyTest.cpp
+        Source/Tests/TestMain.cpp
+    )
+    target_compile_features(AIEqualizerPro_ThreadSafetyTests PRIVATE cxx_std_20)
+    target_compile_definitions(AIEqualizerPro_ThreadSafetyTests PRIVATE
+        JUCE_UNIT_TESTS=1
+        JUCE_GLOBAL_MODULE_SETTINGS_INCLUDED=1
+        JUCE_STRICT_REFCOUNTEDPOINTER=1
+        JUCE_STANDALONE_APPLICATION=0
+        JucePlugin_Build_VST3=0
+        JucePlugin_Build_AU=0
+        JucePlugin_Build_Standalone=0
+    )
+    target_include_directories(AIEqualizerPro_ThreadSafetyTests PRIVATE
+        Source
+        Source/DSP
+        Source/Core
+        Source/Utils
+        Source/AI
+    )
+    target_link_libraries(AIEqualizerPro_ThreadSafetyTests PRIVATE
+        AIEqualizerPro
+        juce::juce_core
+        juce::juce_audio_basics
+        juce::juce_audio_processors
+        juce::juce_dsp
+    )
+    set_target_properties(AIEqualizerPro_ThreadSafetyTests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/Tests)
 endif()
