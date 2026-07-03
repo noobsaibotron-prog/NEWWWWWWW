@@ -1201,6 +1201,9 @@ if(HAVE_JUCE)
     # (add_test) only after the fix lands.
     # ---------------------------------------------------------------------------
     add_executable(AIEqualizerPro_ThreadSafetyTests EXCLUDE_FROM_ALL
+        # Deterministic repro FIRST: registration order = run order, so under ASan the
+        # single-threaded test discriminates (spatial bug) before the storm test aborts.
+        Source/Tests/MSTransitionOversamplingOverflowTest.cpp
         Source/Tests/ParameterStormThreadSafetyTest.cpp
         Source/Tests/TestMain.cpp
     )
