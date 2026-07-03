@@ -2385,8 +2385,18 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
                 }
                 else
                 {
-                    // Old was Stereo/Mid/Side: process through stereo EQ
-                    processStereoForPhaseMode(msModeTransitionBuffer, mode, false);
+                    // Old was Stereo/Mid/Side: process through stereo EQ.
+                    // blockSamples-limited VIEW, like oldModeView/oldOsView in the sibling
+                    // crossfades: msModeTransitionBuffer is preallocated at
+                    // preallocatedMaxSamples (32768), and passing it raw made
+                    // processNaturalStereo size its AudioBlock at getNumSamples()==32768 —
+                    // driving the oversampler (initProcessing'd for samplesPerBlock) into a
+                    // heap-buffer-overflow (juce_Oversampling.cpp:355). See
+                    // MSTransitionOversamplingOverflowTest.
+                    juce::AudioBuffer<float> oldMsView(msModeTransitionBuffer.getArrayOfWritePointers(),
+                                                       buffer.getNumChannels(),
+                                                       blockSamples);
+                    processStereoForPhaseMode(oldMsView, mode, false);
                     // Apply old mode's solo encoding
                     if (totalNumInputChannels >= 2)
                     {
