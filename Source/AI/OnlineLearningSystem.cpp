@@ -85,7 +85,13 @@ void OnlineLearningSystem::startLearning(NeuralNetworkWrapper& model, const Lear
         trainConfig.useGradientClipping = config.useGradientAccumulation;
         trainConfig.gradientClipValue = config.gradientClipValue;
         
-        model.startOnlineTraining(trainingSamples, trainConfig);
+        if (!model.startOnlineTraining(trainingSamples, trainConfig))
+        {
+            // A4 fix: the training backend refused (TFLite C API cannot
+            // train). Without this reset isLearning/stats.isTraining stayed
+            // true forever, reporting a learning session that can never run.
+            stopLearning();
+        }
     }
 }
 

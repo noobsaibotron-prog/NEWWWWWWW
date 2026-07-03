@@ -340,7 +340,16 @@ bool NeuralNetworkWrapper::startOnlineTraining(const std::vector<TrainingSample>
     isTrainingActive = true;
     trainingProgress = 0.0f;
     
-    return pImpl->startTraining(samples, config);
+    const bool started = pImpl->startTraining(samples, config);
+    if (!started)
+    {
+        // A4 fix: pImpl->startTraining always returns false on the TFLite C
+        // API (no runtime backprop). Leaving the flag set wedged the entire
+        // online-learning stack — every future call bailed at the guard above.
+        isTrainingActive = false;
+        trainingProgress = 0.0f;
+    }
+    return started;
 }
 
 void NeuralNetworkWrapper::stopOnlineTraining()
