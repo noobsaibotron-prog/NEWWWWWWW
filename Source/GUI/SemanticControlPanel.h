@@ -37,6 +37,12 @@ public:
     // Callback to get generated EQ adjustments
     std::function<void(const std::vector<SemanticEQEngine::SemanticEQAdjustment>&)> onEQGenerated;
 
+    // Supplies the current smoothed dB spectrum (analyzer format: numBins,
+    // dB values) for the engine's context-aware mapping. Wired by the editor;
+    // when unset the engine falls back to context-neutral behaviour (A3 fix —
+    // previously this path ALWAYS received an empty spectrum).
+    std::function<std::vector<float>()> spectrumProvider;
+
     // Must be called when the host sample rate changes (e.g. from PluginEditor::prepareToPlay)
     void setSampleRate(double sr) { currentSampleRate = sr; }
 
@@ -597,8 +603,12 @@ private:
 #if AIEQ_GUI_DEBUG
         debugUpdateEQCount++;
 #endif
-        // Generate EQ adjustments from current semantic state
-        auto adjustments = semanticEngine.generateEQFromState({}, currentSampleRate);
+        // Generate EQ adjustments from current semantic state, feeding the
+        // live analyzer spectrum so adjustForContext() sees real content
+        // (bass/brightness proportions) instead of the neutral 0.5 fallback.
+        auto adjustments = semanticEngine.generateEQFromState(
+            spectrumProvider ? spectrumProvider() : std::vector<float>{},
+            currentSampleRate);
         
         if (onEQGenerated)
             onEQGenerated(adjustments);

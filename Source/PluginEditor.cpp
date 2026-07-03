@@ -154,6 +154,21 @@ AIEqualizerAudioProcessorEditor::AIEqualizerAudioProcessorEditor(AIEqualizerAudi
         // Apply semantic EQ adjustments without disturbing existing manual bands
         processor.applySemanticAdjustments(adjustments);
     };
+
+    // A3 fix: feed the live pre-EQ analyzer spectrum (smoothed dB) and the real
+    // sample rate into the semantic engine's context-aware path. Both were
+    // previously stuck at "empty spectrum + 44100" so adjustForContext() never
+    // saw actual program material.
+    semanticPanel->spectrumProvider = [this]() -> std::vector<float> {
+        auto& analyzer = processor.getSpectrumAnalyzer();
+        // copySmoothedSpectrumInto copies min(dst.size(), src.size()) — dst
+        // must be pre-sized or nothing is copied.
+        std::vector<float> spectrumDB(static_cast<size_t>(juce::jmax(0, analyzer.getNumBins())),
+                                      -100.0f);
+        analyzer.copySmoothedSpectrumInto(spectrumDB);
+        return spectrumDB;
+    };
+    semanticPanel->setSampleRate(processor.getSampleRate());
     
     // Tab buttons for switching between AI Detect and Semantic panels
     // [Gemma Phase 3, Point 2]: "inset" property → CNC-milled recessed look
@@ -1423,6 +1438,11 @@ void AIEqualizerAudioProcessorEditor::timerCallback()
     // Bug K fix: guard against timer firing during processor teardown
     if (!processor.isProcessorReady())
         return;
+
+    // A3: keep the semantic panel's sample rate in sync with the host
+    // (setSampleRate had no caller — the panel was stuck at 44100).
+    if (semanticPanel != nullptr)
+        semanticPanel->setSampleRate(processor.getSampleRate());
 
     // Phase 7D: single-heartbeat breathing phase for AIBreathingDot.
     // Tribunale Amendment #2 (BINDING): NO scattered timers — phase driven here
