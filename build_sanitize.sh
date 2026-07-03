@@ -20,9 +20,10 @@
 # ThreadSanitizer (the CONCURRENCY gate) is a SEPARATE run in its OWN build dir — TSan is mutually
 # exclusive with ASan:   SAN=thread ./build_sanitize.sh
 #
-# Separate from the gate, this script also runs the QUARANTINED thread-safety DETECTOR
-# (AIEqualizerPro_ThreadSafetyTests — pluginval param-storm reproducer, expected RED until the
-# known race is fixed) when SAN=thread or RUN_THREADSAFETY=1. See the block at the bottom.
+# Separate from the fixture-free gate, this script can also run the thread-safety
+# regression suite (AIEqualizerPro_ThreadSafetyTests — pluginval-style param storm
+# plus the deterministic msMode/oversampling overflow repro) when SAN=thread or
+# RUN_THREADSAFETY=1. See the block at the bottom.
 #
 # Usage:  ./build_sanitize.sh            # -fsanitize=address,undefined   -> build-san
 #         SAN=thread ./build_sanitize.sh # -fsanitize=thread              -> build-tsan
@@ -73,24 +74,22 @@ else
 fi
 
 # ---------------------------------------------------------------------------------------------------
-# Thread-safety DETECTOR (quarantined — NOT part of the correctness gate above; separate verdict,
-# does NOT change this script's exit code). In-process reproducer of pluginval's "Parameter thread
-# safety" crash (REPORTS/KNOWN_ISSUE_pluginval_s10_param_thread_safety.md): EXPECTED RED (crash or
-# sanitizer report) while that race is unfixed. Runs under SAN=thread (TSan names the racing write,
-# both stacks) or with RUN_THREADSAFETY=1 (ASan catches the OOB variant at the faulting
-# instruction). AIEQ_STORM_MS lengthens the storm (default 2000 ms) for deeper hunts.
-# A quiet run is interleaving-dependent luck, NOT proof of fix — the end-to-end judge remains
-# pluginval with pinned seed 0x782104d at strictness 8.
+# Thread-safety regression suite (separate from the fixture-free gate above, but now
+# expected GREEN after the msMode-transition overflow fix). It keeps the original
+# pluginval-style parameter storm plus the deterministic single-thread repro that
+# isolated the faulting path. AIEQ_STORM_MS lengthens the storm (default 2000 ms) for
+# deeper hunts; the end-to-end external judge remains pluginval with pinned seed
+# 0x782104d at strictness 8.
 # ---------------------------------------------------------------------------------------------------
 if [[ "$SAN" == *thread* || "${RUN_THREADSAFETY:-0}" == "1" ]]; then
     echo ""
     echo "=============== DETECTOR: AIEqualizerPro_ThreadSafetyTests --category=ThreadSafety ==============="
-    echo "(quarantined reproducer — expected RED until the pluginval param race is fixed)"
+    echo "(thread-safety regression suite — expected GREEN after the msMode overflow fix)"
     if "$BIN/AIEqualizerPro_ThreadSafetyTests" --category=ThreadSafety; then
-        echo ">> DETECTOR: quiet this run (no crash / no sanitizer report / no failed assertion)."
-        echo ">> NOTE: interleaving-dependent — a quiet run is NOT proof the race is fixed."
+        echo ">> THREADSAFETY: PASS (no crash / no sanitizer report / no failed assertion)."
     else
-        echo ">> DETECTOR: REPRODUCED (crash / sanitizer report / failed assertion) — see output above."
+        echo ">> THREADSAFETY: REGRESSION (crash / sanitizer report / failed assertion) — see output above."
+        fail=1
     fi
 fi
 

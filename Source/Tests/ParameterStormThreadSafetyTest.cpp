@@ -7,16 +7,15 @@
 #include "../PluginProcessor.h"
 
 /**
- * QUARANTINED thread-safety DETECTOR — in-process reproducer of pluginval 1.0.4
+ * Thread-safety regression — in-process reproducer of pluginval 1.0.4
  * "Parameter thread safety" (see REPORTS/KNOWN_ISSUE_pluginval_s10_param_thread_safety.md).
  *
  * pluginval crashes seed-dependently (EXC_BAD_ACCESS in the VST3 wrapper's
  * ClientRemappedBuffer teardown — a downstream-corruption signature; reproducer seed
- * 0x782104d at strictness 8). Static analysis found parameterChanged() flags-only, so the
- * corrupting write is still unidentified. This test recreates the same workload inside the
- * product harness so the sanitizers can name the culprit at the faulting access instead of
- * a downstream detonation: run it under TSan (names the racing write, both stacks) and
- * ASan (catches the OOB variant) via build_sanitize.sh.
+ * 0x782104d at strictness 8). The crash was isolated to a deterministic spatial bug:
+ * the msMode transition path sent the full preallocated transition buffer into an
+ * oversampler sized for the current block. This test keeps the pluginval-style storm in
+ * the product harness so ASan/TSan keep guarding the fixed path.
  *
  * Workload (models pluginval's test semantics):
  *  - one "audio" thread hammering processBlock()  (pluginval also drives it off-message)
@@ -25,9 +24,7 @@
  *  - one writer dedicated to the transition-machinery params (phaseMode / msMode /
  *    oversamplingFactor / qualityMode), which arm crossfades, pendingReset and IR rebuilds
  *
- * EXPECTED RED (crash or sanitizer report) while the underlying race is unfixed. Compiled
- * ONLY into AIEqualizerPro_ThreadSafetyTests (EXCLUDE_FROM_ALL, no ctest entry); must NOT
- * join blocking gates until the fix lands, then it graduates. Coverage gap (documented):
+ * Expected GREEN after the msMode-transition overflow fix. Coverage gap (documented):
  * the VST3 wrapper layer itself is not exercised here — the end-to-end judge remains
  * pluginval with the pinned seed.
  *

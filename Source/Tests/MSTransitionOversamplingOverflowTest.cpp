@@ -3,7 +3,7 @@
 #include "../PluginProcessor.h"
 
 /**
- * QUARANTINED deterministic reproducer — SINGLE-THREADED, no concurrency at all.
+ * Deterministic regression reproducer — SINGLE-THREADED, no concurrency at all.
  *
  * Discriminant experiment for the pluginval "Parameter thread safety" crash: the
  * param-storm detector (ParameterStormThreadSafetyTest) pinned a heap-buffer-overflow in
@@ -28,9 +28,9 @@
  * If it survives while the storm test still crashes -> concurrency is genuinely required
  * and the diagnosis must continue on the lifecycle/race track.
  *
- * EXPECTED RED under ASan while the bug is live. Quarantined: compiled only into
- * AIEqualizerPro_ThreadSafetyTests (EXCLUDE_FROM_ALL, no ctest). After the fix this
- * becomes the regression test and graduates to a blocking gate.
+ * Expected GREEN after the blockSamples-limited transition-view fix. Under ASan, a
+ * regression here should fail at the oversampler stage write, before any downstream
+ * pluginval-style detonation.
  */
 class MSTransitionOversamplingOverflowTest : public juce::UnitTest
 {
@@ -71,8 +71,7 @@ public:
         processBlocks(proc, buffer, midi, rng, 8);
 
         proc.releaseResources();
-        expect(true, "survived: overflow did NOT reproduce single-threaded "
-                     "(diagnosis must continue on the concurrency track)");
+        expect(true, "survived: msMode transition stayed within the current block view");
     }
 
 private:
