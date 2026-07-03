@@ -1039,6 +1039,7 @@ if(HAVE_JUCE)
         Source/Tests/AICorpusTest.cpp
         Source/Tests/AIFrontEndTest.cpp
         Source/Tests/AIModelContractTest.cpp
+        Source/Tests/MLWeightsProvenanceTest.cpp
         Source/Tests/RealDataSibilanceTest.cpp
         Source/Tests/ManualClipProbeTest.cpp
         Source/Tests/TestMain.cpp
