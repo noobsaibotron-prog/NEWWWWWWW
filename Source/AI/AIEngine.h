@@ -372,6 +372,16 @@ public:
         never written (only at cold start), so after warm-up the stale reads carry PREVIOUS real
         frames, not zeros. Calling this itself swaps the buffer — use only to characterize. */
     auto probeSnapshotVersionForTests() { return readSpectrumSnapshot().version; }
+
+    /** B2 frame-coherence contract (TEST-ONLY): count of consuming
+        readSpectrumSnapshot() calls. On a clean frame (zero detections, so the
+        documented out-of-scope FASE-2 modifiers never run) one heuristic
+        analyzeSpectrum() consumes EXACTLY TWO snapshots: detectProblems()'s
+        single B2 frame capture + detectGenre()'s own self-contained read.
+        Pre-B2 the detectors/helpers alone added ~8+ more. FrameCoherenceTest
+        pins this budget. */
+    int getSnapshotReadCountForTests() const noexcept { return snapshotReadCountForTests.load(std::memory_order_relaxed); }
+    void resetSnapshotReadCountForTests() noexcept { snapshotReadCountForTests.store(0, std::memory_order_relaxed); }
    #endif
 
     /** Last raw sigmoid outputs from the ML forward pass (8 floats, 0 if ML didn't run). */
@@ -471,14 +481,20 @@ public:
 
 private:
     void detectProblems();
-    void detectResonances(float threshold);
-    void detectHarshness(float threshold);
-    void detectMuddiness(float threshold);
-    void detectBoxyness();
-    void detectSibilance();
-    void detectLowEndBoom();
-    void detectThinSound();
-    void detectDullSound();
+    // B2 (AI-evolution): every heuristic detector receives THE SAME captured
+    // frame (one readSpectrumSnapshot per detectProblems pass). Before B2 each
+    // detector — and each helper INSIDE a detector — did its own consuming
+    // snapshot read, so one pass could mix bins from different frames under a
+    // concurrent audio-thread publish (same family as P4-BUG-001 on the ML
+    // vetoes). The frame is empty when no spectrum was ever published.
+    void detectResonances(const std::vector<float>& frame, float threshold);
+    void detectHarshness(const std::vector<float>& frame, float threshold);
+    void detectMuddiness(const std::vector<float>& frame, float threshold);
+    void detectBoxyness(const std::vector<float>& frame);
+    void detectSibilance(const std::vector<float>& frame);
+    void detectLowEndBoom(const std::vector<float>& frame);
+    void detectThinSound(const std::vector<float>& frame);
+    void detectDullSound(const std::vector<float>& frame);
     Correction::FilterType selectOptimalFilterType(
         ProblemType problem,
         float frequency,
@@ -498,6 +514,19 @@ private:
     // band from ONE frame (scratchTemp). Bin math identical to the originals (see .cpp).
     float bandEnergyFromSpectrum(const std::vector<float>& bins, float loHz, float hiHz) const;
     float findPeakInSpectrum(const std::vector<float>& bins, float loHz, float hiHz) const;
+
+    // B2: pure frame-coherent variants of the remaining detection helpers.
+    // Same math as their snapshot-reading counterparts; the only difference is
+    // the caller-supplied frame (and: none of them touches scratchTemp, which
+    // removes the aliasing where crossValidateDetection/adaptive-threshold
+    // clobbered a caller's scratchTemp-backed spectrum copy mid-loop).
+    float adaptiveThresholdFromSpectrum(const std::vector<float>& bins, float baseThreshold) const;
+    float zScoreAtFrequencyFromSpectrum(const std::vector<float>& bins, float frequency, int window = 21) const;
+    float crossValidateFromSpectrum(const std::vector<float>& bins, ProblemType type,
+                                    float frequency, float magnitude) const;
+    float bandwidthFromSpectrum(const std::vector<float>& bins, int peakBin) const;
+    float findLowestInSpectrum(const std::vector<float>& bins, float loHz, float hiHz) const;
+    float fundamentalFromSpectrum(const std::vector<float>& bins, float minFreq, float maxFreq) const;
     float binToFrequency(int bin) const;
     int frequencyToBin(float frequency) const;
     
@@ -654,6 +683,9 @@ private:
     mutable std::atomic<int> spectrumReadIndex { 0 };
     std::atomic<int> spectrumWriteIndex { 1 };
     mutable std::atomic<int> spectrumReadyIndex { 2 };
+    // B2 contract test instrumentation: consuming-read counter (incremented
+    // only in JUCE_UNIT_TESTS translation units; inert in the shipped plugin).
+    mutable std::atomic<int> snapshotReadCountForTests { 0 };
     
     // Publish new spectrum (called from AI/analysis thread)
     void publishSpectrum(const std::vector<float>& spectrum, float rms, float avgRms) noexcept
@@ -689,6 +721,9 @@ private:
     // Read latest spectrum snapshot (lock-free, can be called from any thread)
     [[nodiscard]] SpectrumSnapshot readSpectrumSnapshot() const noexcept
     {
+       #if JUCE_UNIT_TESTS
+        snapshotReadCountForTests.fetch_add(1, std::memory_order_relaxed); // B2 contract instrumentation
+       #endif
         // Swap read buffer with ready buffer to get latest
         int expected = spectrumReadyIndex.load(std::memory_order_acquire);
         int readIdx = spectrumReadIndex.load(std::memory_order_acquire);
@@ -731,6 +766,9 @@ private:
     // Preallocated scratch buffers to reduce per-frame allocations
     mutable std::vector<float> scratchMelBands;
     mutable std::vector<float> scratchTemp;
+    // B2: the ONE coherent frame captured at the top of detectProblems and
+    // passed to every heuristic detector (never aliased by helper calls).
+    std::vector<float> scratchHeuristicFrame;
     mutable std::vector<Correction> scratchCorrections;
     mutable std::vector<Correction> scratchMergedCorrections;
     mutable std::vector<float> scratchHistoryFrame;

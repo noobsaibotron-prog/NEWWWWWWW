@@ -868,6 +868,19 @@ void AIEngine::detectProblems()
     std::lock_guard<std::mutex> lock(correctionsWriteMutex);
     pendingCorrections.clear();
 
+    // B2: capture ONE coherent frame for the ENTIRE heuristic pass. Every
+    // detector and helper below reads this frame instead of doing its own
+    // consuming readSpectrumSnapshot() — a concurrent audio-thread publish can
+    // no longer mix bins from different frames inside one pass (the heuristic
+    // twin of the P4-BUG-001 fix on the ML vetoes). Empty = never published.
+    scratchHeuristicFrame.clear();
+    {
+        const auto snapshot = readSpectrumSnapshot();
+        if (snapshot.version != 0)
+            scratchHeuristicFrame.assign(snapshot.bins.begin(), snapshot.bins.end());
+    }
+    const auto& frame = scratchHeuristicFrame;
+
     // Adjust thresholds based on sensitivity (higher sensitivity = lower thresholds)
     float sensitivityFactor = 1.0f - (sensitivity * 0.5f);  // 0.5 to 1.0
     
@@ -876,14 +889,14 @@ void AIEngine::detectProblems()
     float muddinessThresh = thresholds.muddinessThreshold + (sensitivity * 5.0f);
     
     // Run all detection functions (they will add to pendingCorrections)
-    detectResonances(resonanceThresh);
-    detectHarshness(harshnessThresh);
-    detectMuddiness(muddinessThresh);
-    detectBoxyness();
-    detectSibilance();
-    detectLowEndBoom();
-    detectThinSound();
-    detectDullSound();
+    detectResonances(frame, resonanceThresh);
+    detectHarshness(frame, harshnessThresh);
+    detectMuddiness(frame, muddinessThresh);
+    detectBoxyness(frame);
+    detectSibilance(frame);
+    detectLowEndBoom(frame);
+    detectThinSound(frame);
+    detectDullSound(frame);
 
     // Shelf filters render their "Q" as corner resonance: a bell-derived Q (which
     // the broad-band detectors may set as high as ~2.5-4) overshoots into a
@@ -1005,7 +1018,7 @@ void AIEngine::applyTemporalPersistence()
     pendingCorrections.swap(stable);
 }
 
-void AIEngine::detectResonances(float threshold)
+void AIEngine::detectResonances(const std::vector<float>& frame, float threshold)
 {
    #if JUCE_UNIT_TESTS
     ResonanceDebugSnapshot resonanceDebug;
@@ -1017,24 +1030,20 @@ void AIEngine::detectResonances(float threshold)
     lastResonanceDebugForTests = {};
    #endif
 
-    // Get spectrum copy (with lock, but release quickly)
-    // LOCK-FREE: Read spectrum from triple-buffer
-    const auto snapshot = readSpectrumSnapshot();
-    
-    // Early exit if spectrum version is 0 (never written)
-    if (snapshot.version == 0)
+    // B2: the frame is captured ONCE by detectProblems (empty = never
+    // published). No consuming snapshot read here — and `spectrumCopy` no
+    // longer aliases scratchTemp, so the adaptive-threshold / cross-validate
+    // helpers can't clobber it mid-loop (pre-B2 they rewrote scratchTemp with
+    // their OWN fresh snapshot reads).
+    if (frame.empty())
     {
        #if JUCE_UNIT_TESTS
         lastResonanceDebugForTests = resonanceDebug;
        #endif
         return;
     }
-    
-    // Convert array to vector for compatibility with existing code
-    // Reuse scratch buffer to avoid per-call allocations
-    scratchTemp.resize(snapshot.bins.size());
-    std::copy(snapshot.bins.begin(), snapshot.bins.end(), scratchTemp.begin());
-    const auto& spectrumCopy = scratchTemp;
+
+    const auto& spectrumCopy = frame;
     
     // Use temporally smoothed spectrum for more stable detection
     std::vector<float> smoothedSpectrum = getTemporallySmoothedSpectrum();
@@ -1047,7 +1056,7 @@ void AIEngine::detectResonances(float threshold)
     const int spectrumSize = static_cast<int>(smoothedSpectrum.size());
     
     // Calculate adaptive threshold based on signal level
-    float adaptedThreshold = calculateAdaptiveThreshold(threshold);
+    float adaptedThreshold = adaptiveThresholdFromSpectrum(frame, threshold);
    #if JUCE_UNIT_TESTS
     resonanceDebug.adaptedThreshold = adaptedThreshold;
    #endif
@@ -1382,7 +1391,7 @@ void AIEngine::detectResonances(float threshold)
             peak.magnitude = centerMag;
             peak.peakHeight = candidateHeightDb;
             peak.prominenceDb = candidateProminenceDb;
-            peak.bandwidth = candidateBandwidth > 0.0f ? candidateBandwidth : calculateBandwidth(i);
+            peak.bandwidth = candidateBandwidth > 0.0f ? candidateBandwidth : bandwidthFromSpectrum(frame, i);
             peak.calculatedQ = bandwidthToQ(peak.frequency, peak.bandwidth);
             peak.octaveSalienceGate = octaveSalienceGate;
             detectedPeaks.push_back(peak);
@@ -1475,11 +1484,11 @@ void AIEngine::detectResonances(float threshold)
         persistConfidence += temporalBoost;
         
         // Cross-validate detection
-        float crossValidationConfidence = crossValidateDetection(ProblemType::Resonance, peak.frequency, peak.magnitude);
+        float crossValidationConfidence = crossValidateFromSpectrum(frame, ProblemType::Resonance, peak.frequency, peak.magnitude);
         persistConfidence = (persistConfidence + crossValidationConfidence) * 0.5f;
         
         // FASE 2: Harmonic Analysis - filter out harmonic peaks (legitimate, not problems)
-        float fundamentalFreq = findFundamentalFrequency(50.0f, 500.0f);
+        float fundamentalFreq = fundamentalFromSpectrum(frame, 50.0f, 500.0f);
         bool isHarmonic = false;
         if (fundamentalFreq > 0.0f)
         {
@@ -1582,23 +1591,23 @@ void AIEngine::detectResonances(float threshold)
    #endif
 }
 
-void AIEngine::detectHarshness(float threshold)
+void AIEngine::detectHarshness(const std::vector<float>& frame, float threshold)
 {
-    // Use lock-free access pattern - calculateBandEnergy already locks
-    float energy = calculateBandEnergy(thresholds.harshnessLow, thresholds.harshnessHigh);
-    float overallEnergy = calculateBandEnergy(200.0f, 15000.0f);
+    // B2: all reads share the caller-captured frame
+    float energy = bandEnergyFromSpectrum(frame, thresholds.harshnessLow, thresholds.harshnessHigh);
+    float overallEnergy = bandEnergyFromSpectrum(frame, 200.0f, 15000.0f);
     float relativeEnergy = energy - overallEnergy;
     
     // Use exponential sensitivity curve
     float sensitivityMultiplier = getSensitivityMultiplier();
     float adjustedRelativeThreshold = 3.0f * sensitivityMultiplier;
-    float adaptedThreshold = calculateAdaptiveThreshold(threshold);
+    float adaptedThreshold = adaptiveThresholdFromSpectrum(frame, threshold);
     
     // Only flag harshness when relative energy is meaningfully elevated
     if (relativeEnergy > adjustedRelativeThreshold && energy > adaptedThreshold)
     {
         // Find the peak frequency within the harshness range
-        float peakFreq = findPeakInRange(thresholds.harshnessLow, thresholds.harshnessHigh);
+        float peakFreq = findPeakInSpectrum(frame, thresholds.harshnessLow, thresholds.harshnessHigh);
         if (peakFreq <= 0.0f)
             peakFreq = 3500.0f;  // Default if not found
         
@@ -1613,7 +1622,7 @@ void AIEngine::detectHarshness(float threshold)
         
         // Base confidence with cross-validation
         float baseConfidence = 0.70f + (sensitivity * 0.20f);
-        float crossValidationConf = crossValidateDetection(ProblemType::Harshness, c.frequency, energy);
+        float crossValidationConf = crossValidateFromSpectrum(frame, ProblemType::Harshness, c.frequency, energy);
         
         // FASE 2: Spectral Coherence - pattern matching for harshness
         float coherenceScore = getSpectralPatternScore(ProblemType::Harshness, c.frequency, 0.0f);
@@ -1645,7 +1654,7 @@ void AIEngine::detectHarshness(float threshold)
             relativeEnergy);
         
         // Reliability: z-score + contextual whitelist
-        float zScore = computeZScoreAtFrequency(c.frequency, 21);
+        float zScore = zScoreAtFrequencyFromSpectrum(frame, c.frequency, 21);
         bool contextNormal = isContextuallyNormal(c.type, c.frequency);
         float zBoost = juce::jlimit(0.0f, 1.0f, (zScore - 2.0f) / 3.0f);
         c.confidence = juce::jlimit(0.0f, 1.0f, c.confidence * 0.7f + zBoost * 0.3f);
@@ -1660,22 +1669,22 @@ void AIEngine::detectHarshness(float threshold)
     }
 }
 
-void AIEngine::detectMuddiness(float threshold)
+void AIEngine::detectMuddiness(const std::vector<float>& frame, float threshold)
 {
-    float lowMidEnergy = calculateBandEnergy(thresholds.muddinessLow, thresholds.muddinessHigh);
-    float overallEnergy = calculateBandEnergy(100.0f, 10000.0f);
+    float lowMidEnergy = bandEnergyFromSpectrum(frame, thresholds.muddinessLow, thresholds.muddinessHigh);
+    float overallEnergy = bandEnergyFromSpectrum(frame, 100.0f, 10000.0f);
     float relativeEnergy = lowMidEnergy - overallEnergy;
     
     // Use exponential sensitivity curve
     float sensitivityMultiplier = getSensitivityMultiplier();
     float adjustedRelativeThreshold = 3.0f * sensitivityMultiplier;
-    float adaptedThreshold = calculateAdaptiveThreshold(threshold);
+    float adaptedThreshold = adaptiveThresholdFromSpectrum(frame, threshold);
     
     // Only flag muddiness when low-mid energy is genuinely elevated vs overall
     if (relativeEnergy > adjustedRelativeThreshold && lowMidEnergy > adaptedThreshold)
     {
         // Find the peak frequency within the muddiness range
-        float peakFreq = findPeakInRange(thresholds.muddinessLow, thresholds.muddinessHigh);
+        float peakFreq = findPeakInSpectrum(frame, thresholds.muddinessLow, thresholds.muddinessHigh);
         if (peakFreq <= 0.0f)
             peakFreq = (thresholds.muddinessLow + thresholds.muddinessHigh) / 2.0f;
         
@@ -1690,7 +1699,7 @@ void AIEngine::detectMuddiness(float threshold)
         
         // Base confidence with cross-validation
         float baseConfidence = 0.65f + (sensitivity * 0.20f);
-        float crossValidationConf = crossValidateDetection(ProblemType::Muddiness, c.frequency, lowMidEnergy);
+        float crossValidationConf = crossValidateFromSpectrum(frame, ProblemType::Muddiness, c.frequency, lowMidEnergy);
         
         // FASE 2: Spectral Coherence - pattern matching for muddiness
         float coherenceScore = getSpectralPatternScore(ProblemType::Muddiness, c.frequency, 0.0f);
@@ -1722,7 +1731,7 @@ void AIEngine::detectMuddiness(float threshold)
             relativeEnergy);
         
         // Reliability: z-score + contextual whitelist
-        float zScore = computeZScoreAtFrequency(c.frequency, 21);
+        float zScore = zScoreAtFrequencyFromSpectrum(frame, c.frequency, 21);
         bool contextNormal = isContextuallyNormal(c.type, c.frequency);
         float zBoost = juce::jlimit(0.0f, 1.0f, (zScore - 2.0f) / 3.0f);
         c.confidence = juce::jlimit(0.0f, 1.0f, c.confidence * 0.7f + zBoost * 0.3f);
@@ -1737,21 +1746,21 @@ void AIEngine::detectMuddiness(float threshold)
     }
 }
 
-void AIEngine::detectBoxyness()
+void AIEngine::detectBoxyness(const std::vector<float>& frame)
 {
-    float boxEnergy = calculateBandEnergy(thresholds.boxyLow, thresholds.boxyHigh);
-    float overallEnergy = calculateBandEnergy(100.0f, 8000.0f);
+    float boxEnergy = bandEnergyFromSpectrum(frame, thresholds.boxyLow, thresholds.boxyHigh);
+    float overallEnergy = bandEnergyFromSpectrum(frame, 100.0f, 8000.0f);
     float relativeEnergy = boxEnergy - overallEnergy;
     
     // Use exponential sensitivity curve
     float sensitivityMultiplier = getSensitivityMultiplier();
     float adjustedRelativeThreshold = 3.5f * sensitivityMultiplier;
-    float adaptedThreshold = calculateAdaptiveThreshold(thresholds.boxyThreshold);
+    float adaptedThreshold = adaptiveThresholdFromSpectrum(frame, thresholds.boxyThreshold);
     
     if (relativeEnergy > adjustedRelativeThreshold && boxEnergy > adaptedThreshold)
     {
         // Find the peak frequency within the boxyness range
-        float peakFreq = findPeakInRange(thresholds.boxyLow, thresholds.boxyHigh);
+        float peakFreq = findPeakInSpectrum(frame, thresholds.boxyLow, thresholds.boxyHigh);
         if (peakFreq <= 0.0f)
             peakFreq = (thresholds.boxyLow + thresholds.boxyHigh) / 2.0f;
         
@@ -1766,7 +1775,7 @@ void AIEngine::detectBoxyness()
         
         // Base confidence with cross-validation
         float baseConfidence = 0.60f + (sensitivity * 0.25f);
-        float crossValidationConf = crossValidateDetection(ProblemType::Boxyness, c.frequency, boxEnergy);
+        float crossValidationConf = crossValidateFromSpectrum(frame, ProblemType::Boxyness, c.frequency, boxEnergy);
         c.confidence = juce::jmax(0.2f, (baseConfidence + crossValidationConf) * 0.5f);  // MIN 0.2
         c.confidence = juce::jlimit(0.0f, 1.0f, c.confidence);
         
@@ -1785,7 +1794,7 @@ void AIEngine::detectBoxyness()
             relativeEnergy);
         
         // Reliability: z-score + contextual whitelist
-        float zScore = computeZScoreAtFrequency(c.frequency, 21);
+        float zScore = zScoreAtFrequencyFromSpectrum(frame, c.frequency, 21);
         bool contextNormal = isContextuallyNormal(c.type, c.frequency);
         float zBoost = juce::jlimit(0.0f, 1.0f, (zScore - 2.0f) / 3.0f);
         c.confidence = juce::jlimit(0.0f, 1.0f, c.confidence * 0.7f + zBoost * 0.3f);
@@ -1800,21 +1809,21 @@ void AIEngine::detectBoxyness()
     }
 }
 
-void AIEngine::detectSibilance()
+void AIEngine::detectSibilance(const std::vector<float>& frame)
 {
-    float sibilanceEnergy = calculateBandEnergy(thresholds.sibilanceLow, thresholds.sibilanceHigh);
-    float midEnergy = calculateBandEnergy(2000.0f, 5000.0f);
+    float sibilanceEnergy = bandEnergyFromSpectrum(frame, thresholds.sibilanceLow, thresholds.sibilanceHigh);
+    float midEnergy = bandEnergyFromSpectrum(frame, 2000.0f, 5000.0f);
     float relativeEnergy = sibilanceEnergy - midEnergy;
     
     // Use exponential sensitivity curve - sibilance is very sensitivity-dependent
     float sensitivityMultiplier = getSensitivityMultiplier();
     float adjustedRelativeThreshold = 2.0f * sensitivityMultiplier;
-    float adaptedThreshold = calculateAdaptiveThreshold(thresholds.sibilanceThreshold);
+    float adaptedThreshold = adaptiveThresholdFromSpectrum(frame, thresholds.sibilanceThreshold);
     
     if (relativeEnergy > adjustedRelativeThreshold && sibilanceEnergy > adaptedThreshold)
     {
         // Find the peak frequency within the sibilance range
-        float peakFreq = findPeakInRange(thresholds.sibilanceLow, thresholds.sibilanceHigh);
+        float peakFreq = findPeakInSpectrum(frame, thresholds.sibilanceLow, thresholds.sibilanceHigh);
         if (peakFreq <= 0.0f)
             peakFreq = (thresholds.sibilanceLow + thresholds.sibilanceHigh) / 2.0f;
         
@@ -1829,7 +1838,7 @@ void AIEngine::detectSibilance()
         
         // Base confidence with cross-validation
         float baseConfidence = 0.70f + (sensitivity * 0.20f);
-        float crossValidationConf = crossValidateDetection(ProblemType::Sibilance, c.frequency, sibilanceEnergy);
+        float crossValidationConf = crossValidateFromSpectrum(frame, ProblemType::Sibilance, c.frequency, sibilanceEnergy);
         c.confidence = juce::jmax(0.2f, (baseConfidence + crossValidationConf) * 0.5f);  // MIN 0.2
         c.confidence = juce::jlimit(0.0f, 1.0f, c.confidence);
         
@@ -1848,7 +1857,7 @@ void AIEngine::detectSibilance()
             relativeEnergy);
         
         // Reliability: z-score + contextual whitelist
-        float zScore = computeZScoreAtFrequency(c.frequency, 21);
+        float zScore = zScoreAtFrequencyFromSpectrum(frame, c.frequency, 21);
         bool contextNormal = isContextuallyNormal(c.type, c.frequency);
         float zBoost = juce::jlimit(0.0f, 1.0f, (zScore - 2.0f) / 3.0f);
         c.confidence = juce::jlimit(0.0f, 1.0f, c.confidence * 0.7f + zBoost * 0.3f);
@@ -1863,21 +1872,21 @@ void AIEngine::detectSibilance()
     }
 }
 
-void AIEngine::detectLowEndBoom()
+void AIEngine::detectLowEndBoom(const std::vector<float>& frame)
 {
-    float subEnergy = calculateBandEnergy(30.0f, 100.0f);
-    float overallEnergy = calculateBandEnergy(100.0f, 5000.0f);
+    float subEnergy = bandEnergyFromSpectrum(frame, 30.0f, 100.0f);
+    float overallEnergy = bandEnergyFromSpectrum(frame, 100.0f, 5000.0f);
     float relativeEnergy = subEnergy - overallEnergy;
     
     // Use exponential sensitivity curve
     float sensitivityMultiplier = getSensitivityMultiplier();
     float adjustedRelativeThreshold = 5.0f * sensitivityMultiplier;
-    float adaptedThreshold = calculateAdaptiveThreshold(thresholds.lowEndThreshold);
+    float adaptedThreshold = adaptiveThresholdFromSpectrum(frame, thresholds.lowEndThreshold);
     
     if (relativeEnergy > adjustedRelativeThreshold && subEnergy > adaptedThreshold)
     {
         // Find the peak frequency within the sub-bass range
-        float peakFreq = findPeakInRange(30.0f, 100.0f);
+        float peakFreq = findPeakInSpectrum(frame, 30.0f, 100.0f);
         if (peakFreq <= 0.0f)
             peakFreq = 60.0f;  // Default
         
@@ -1892,7 +1901,7 @@ void AIEngine::detectLowEndBoom()
         
         // Base confidence with cross-validation
         float baseConfidence = 0.60f + (sensitivity * 0.25f);
-        float crossValidationConf = crossValidateDetection(ProblemType::LowEndBoom, c.frequency, subEnergy);
+        float crossValidationConf = crossValidateFromSpectrum(frame, ProblemType::LowEndBoom, c.frequency, subEnergy);
         c.confidence = juce::jmax(0.2f, (baseConfidence + crossValidationConf) * 0.5f);  // MIN 0.2
         c.confidence = juce::jlimit(0.0f, 1.0f, c.confidence);
         
@@ -1911,7 +1920,7 @@ void AIEngine::detectLowEndBoom()
             relativeEnergy);
         
         // Reliability: z-score + contextual whitelist
-        float zScore = computeZScoreAtFrequency(c.frequency, 21);
+        float zScore = zScoreAtFrequencyFromSpectrum(frame, c.frequency, 21);
         bool contextNormal = isContextuallyNormal(c.type, c.frequency);
         float zBoost = juce::jlimit(0.0f, 1.0f, (zScore - 2.0f) / 3.0f);
         c.confidence = juce::jlimit(0.0f, 1.0f, c.confidence * 0.7f + zBoost * 0.3f);
@@ -1926,10 +1935,10 @@ void AIEngine::detectLowEndBoom()
     }
 }
 
-void AIEngine::detectThinSound()
+void AIEngine::detectThinSound(const std::vector<float>& frame)
 {
-    float lowMidEnergy = calculateBandEnergy(200.0f, 600.0f);
-    float highEnergy = calculateBandEnergy(2000.0f, 8000.0f);
+    float lowMidEnergy = bandEnergyFromSpectrum(frame, 200.0f, 600.0f);
+    float highEnergy = bandEnergyFromSpectrum(frame, 2000.0f, 8000.0f);
     float relativeEnergy = highEnergy - lowMidEnergy;
     
     // Use exponential sensitivity curve for subtle issues
@@ -1939,7 +1948,7 @@ void AIEngine::detectThinSound()
     if (relativeEnergy > adjustedRelativeThreshold)
     {
         // Find where the deficiency is most pronounced
-        float deficientFreq = findLowestInRange(200.0f, 600.0f);
+        float deficientFreq = findLowestInSpectrum(frame, 200.0f, 600.0f);
         if (deficientFreq <= 0.0f)
             deficientFreq = 350.0f;  // Default
         
@@ -1955,8 +1964,8 @@ void AIEngine::detectThinSound()
         // Base confidence with cross-validation (for boost corrections, validate deficiency)
         float baseConfidence = 0.50f + (sensitivity * 0.25f);
         // For ThinSound, validate that low-mids are actually deficient
-        float lowMidMag = calculateBandEnergy(200.0f, 600.0f);
-        float crossValidationConf = crossValidateDetection(ProblemType::ThinSound, c.frequency, lowMidMag);
+        float lowMidMag = bandEnergyFromSpectrum(frame, 200.0f, 600.0f);
+        float crossValidationConf = crossValidateFromSpectrum(frame, ProblemType::ThinSound, c.frequency, lowMidMag);
         c.confidence = juce::jmax(0.2f, (baseConfidence + crossValidationConf) * 0.5f);  // MIN 0.2
         c.confidence = juce::jlimit(0.0f, 1.0f, c.confidence);
         
@@ -1975,7 +1984,7 @@ void AIEngine::detectThinSound()
             relativeEnergy);
         
         // Reliability: z-score + contextual whitelist
-        float zScore = computeZScoreAtFrequency(c.frequency, 21);
+        float zScore = zScoreAtFrequencyFromSpectrum(frame, c.frequency, 21);
         bool contextNormal = isContextuallyNormal(c.type, c.frequency);
         float zBoost = juce::jlimit(0.0f, 1.0f, (zScore - 2.0f) / 3.0f);
         c.confidence = juce::jlimit(0.0f, 1.0f, c.confidence * 0.7f + zBoost * 0.3f);
@@ -1990,10 +1999,10 @@ void AIEngine::detectThinSound()
     }
 }
 
-void AIEngine::detectDullSound()
+void AIEngine::detectDullSound(const std::vector<float>& frame)
 {
-    float highEnergy = calculateBandEnergy(8000.0f, 16000.0f);
-    float midEnergy = calculateBandEnergy(1000.0f, 4000.0f);
+    float highEnergy = bandEnergyFromSpectrum(frame, 8000.0f, 16000.0f);
+    float midEnergy = bandEnergyFromSpectrum(frame, 1000.0f, 4000.0f);
     float relativeEnergy = midEnergy - highEnergy;
     
     // Use exponential sensitivity curve
@@ -2003,7 +2012,7 @@ void AIEngine::detectDullSound()
     if (relativeEnergy > adjustedRelativeThreshold)
     {
         // Find where to apply the boost
-        float airFreq = findLowestInRange(8000.0f, 14000.0f);
+        float airFreq = findLowestInSpectrum(frame, 8000.0f, 14000.0f);
         if (airFreq <= 0.0f)
             airFreq = 10000.0f;  // Default
         
@@ -2019,8 +2028,8 @@ void AIEngine::detectDullSound()
         // Base confidence with cross-validation (for boost corrections, validate deficiency)
         float baseConfidence = 0.45f + (sensitivity * 0.30f);
         // For DullSound, validate that highs are actually deficient
-        float highMag = calculateBandEnergy(8000.0f, 16000.0f);
-        float crossValidationConf = crossValidateDetection(ProblemType::DullSound, c.frequency, highMag);
+        float highMag = bandEnergyFromSpectrum(frame, 8000.0f, 16000.0f);
+        float crossValidationConf = crossValidateFromSpectrum(frame, ProblemType::DullSound, c.frequency, highMag);
         c.confidence = juce::jmax(0.2f, (baseConfidence + crossValidationConf) * 0.5f);  // MIN 0.2
         c.confidence = juce::jlimit(0.0f, 1.0f, c.confidence);
         
@@ -2039,7 +2048,7 @@ void AIEngine::detectDullSound()
             relativeEnergy);
         
         // Reliability: z-score + contextual whitelist
-        float zScore = computeZScoreAtFrequency(c.frequency, 21);
+        float zScore = zScoreAtFrequencyFromSpectrum(frame, c.frequency, 21);
         bool contextNormal = isContextuallyNormal(c.type, c.frequency);
         float zBoost = juce::jlimit(0.0f, 1.0f, (zScore - 2.0f) / 3.0f);
         c.confidence = juce::jlimit(0.0f, 1.0f, c.confidence * 0.7f + zBoost * 0.3f);
@@ -2359,6 +2368,268 @@ float AIEngine::findPeakInSpectrum(const std::vector<float>& bins, float loHz, f
 
     return binToFrequency(maxBin);
 }
+
+// ── B2 pure frame-coherent helpers ─────────────────────────────────────────
+// Same math as their snapshot-reading counterparts; the ONLY difference is the
+// caller-supplied frame. None of them touches scratchTemp (pre-B2, the
+// adaptive-threshold and cross-validate helpers rewrote scratchTemp with their
+// own fresh snapshot reads, silently clobbering a caller's scratchTemp-backed
+// spectrum copy mid-loop — detectResonances was exposed to exactly that).
+
+float AIEngine::adaptiveThresholdFromSpectrum(const std::vector<float>& bins, float baseThreshold) const
+{
+    if (bins.empty())
+    {
+        // Same fallback as calculateAdaptiveThresholdPercentile on version==0
+        float rmsOffset = (averageRMS - (-40.0f)) * 0.15f;
+        float adaptedThreshold = baseThreshold + rmsOffset;
+        return adaptedThreshold * getSensitivityMultiplier();
+    }
+
+    // calculatePercentile builds its own filtered copy — bins are not mutated.
+    float percentile95 = calculatePercentile(bins, 0.95f);
+    float percentile50 = calculatePercentile(bins, 0.50f);
+    float percentile5  = calculatePercentile(bins, 0.05f);
+
+    float dynamicRange   = percentile95 - percentile50;
+    float spectralSpread = percentile95 - percentile5;
+
+    float rangeFactor  = 1.0f + (dynamicRange / 20.0f) * 0.3f;
+    float spreadFactor = 1.0f - (spectralSpread < 30.0f ? (30.0f - spectralSpread) / 100.0f : 0.0f);
+    float rmsOffset    = (averageRMS - (-40.0f)) * 0.1f;
+
+    float adaptedThreshold = baseThreshold * rangeFactor * spreadFactor + rmsOffset;
+    return adaptedThreshold * getSensitivityMultiplier();
+}
+
+float AIEngine::zScoreAtFrequencyFromSpectrum(const std::vector<float>& bins, float frequency, int window) const
+{
+    if (bins.empty())
+        return 0.0f;
+    const int bin = frequencyToBin(frequency);
+    if (bin < 0 || bin >= static_cast<int>(bins.size()))
+        return 0.0f;
+    return computeZScore(bins, bin, window);
+}
+
+float AIEngine::crossValidateFromSpectrum(const std::vector<float>& bins, ProblemType type,
+                                          float frequency, float magnitude) const
+{
+    if (bins.empty())
+        return 0.5f;  // Neutral confidence if no spectrum
+
+    int bin = frequencyToBin(frequency);
+    if (bin < 0 || bin >= static_cast<int>(bins.size()))
+        return 0.5f;
+
+    float confidence = 0.5f;
+    int validationCount = 0;
+    float confidenceSum = 0.0f;
+
+    // Method 1: magnitude significantly above surrounding bins
+    float surroundAvg = 0.0f;
+    int surroundCount = 0;
+    int window = 5;
+    const int specSize = static_cast<int>(bins.size());
+    for (int i = juce::jmax(0, bin - window); i <= juce::jmin(specSize - 1, bin + window); ++i)
+    {
+        if (i != bin && std::abs(i - bin) >= 2)
+        {
+            surroundAvg += bins[static_cast<size_t>(i)];
+            surroundCount++;
+        }
+    }
+    if (surroundCount > 0)
+    {
+        surroundAvg /= static_cast<float>(surroundCount);
+        float prominence = magnitude - surroundAvg;
+        float method1Conf = juce::jlimit(0.0f, 1.0f, prominence / 6.0f);
+        confidenceSum += method1Conf;
+        validationCount++;
+    }
+
+    // Method 2: frequency in the expected range for the problem type
+    bool inExpectedRange = false;
+    switch (type)
+    {
+        case ProblemType::Resonance:  inExpectedRange = (frequency >= 50.0f    && frequency <= 15000.0f); break;
+        case ProblemType::Harshness:  inExpectedRange = (frequency >= 1000.0f  && frequency <= 8000.0f);  break;
+        case ProblemType::Muddiness:  inExpectedRange = (frequency >= 150.0f   && frequency <= 500.0f);   break;
+        case ProblemType::Sibilance:  inExpectedRange = (frequency >= 5000.0f  && frequency <= 10000.0f); break;
+        case ProblemType::LowEndBoom: inExpectedRange = (frequency >= 30.0f    && frequency <= 100.0f);   break;
+        case ProblemType::ThinSound:  inExpectedRange = (frequency >= 200.0f   && frequency <= 600.0f);   break;
+        case ProblemType::DullSound:  inExpectedRange = (frequency >= 8000.0f  && frequency <= 16000.0f); break;
+        case ProblemType::Boxyness:   inExpectedRange = (frequency >= 400.0f   && frequency <= 800.0f);   break;
+        default:                      inExpectedRange = true; break;
+    }
+    confidenceSum += inExpectedRange ? 0.8f : 0.3f;
+    validationCount++;
+
+    // Method 3: magnitude above the noise floor
+    float noiseFloor = calculatePercentile(bins, 0.10f);
+    float aboveNoise = magnitude - noiseFloor;
+    confidenceSum += juce::jlimit(0.0f, 1.0f, aboveNoise / 10.0f);
+    validationCount++;
+
+    if (validationCount > 0)
+        confidence = confidenceSum / static_cast<float>(validationCount);
+
+    return juce::jlimit(0.0f, 1.0f, confidence);
+}
+
+float AIEngine::findLowestInSpectrum(const std::vector<float>& bins, float loHz, float hiHz) const
+{
+    if (bins.empty())
+        return -1.0f;
+
+    int lowBin = frequencyToBin(loHz);
+    int highBin = frequencyToBin(hiHz);
+
+    lowBin = juce::jlimit(0, numBins - 1, lowBin);
+    highBin = juce::jlimit(0, numBins - 1, highBin);
+
+    if (highBin <= lowBin)
+        return -1.0f;
+
+    float minMag = 100.0f;
+    int minBin = lowBin;
+
+    for (int i = lowBin; i <= highBin; ++i)
+    {
+        if (i >= 0 && i < numBins && i < static_cast<int>(bins.size()))
+        {
+            if (bins[static_cast<size_t>(i)] < minMag)
+            {
+                minMag = bins[static_cast<size_t>(i)];
+                minBin = i;
+            }
+        }
+    }
+
+    return binToFrequency(minBin);
+}
+
+float AIEngine::fundamentalFromSpectrum(const std::vector<float>& bins, float minFreq, float maxFreq) const
+{
+    if (bins.empty())
+        return -1.0f;
+
+    int minBin = frequencyToBin(minFreq);
+    int maxBin = frequencyToBin(maxFreq);
+
+    const int arrSize = static_cast<int>(bins.size());
+    minBin = juce::jlimit(0, arrSize - 1, minBin);
+    maxBin = juce::jlimit(0, arrSize - 1, maxBin);
+
+    if (maxBin <= minBin || maxBin - minBin < 4)
+        return -1.0f;
+
+    // Harmonic-relationship fundamental detection (same as findFundamentalFrequency)
+    std::vector<std::pair<float, float>> peaks;  // (frequency, magnitude)
+
+    const int loopStart = std::max(2, minBin + 2);
+    const int loopEnd = std::min(arrSize - 3, maxBin - 2);
+
+    for (int i = loopStart; i < loopEnd; ++i)
+    {
+        if (bins[static_cast<size_t>(i)] > bins[static_cast<size_t>(i-1)] &&
+            bins[static_cast<size_t>(i)] > bins[static_cast<size_t>(i+1)] &&
+            bins[static_cast<size_t>(i)] > bins[static_cast<size_t>(i-2)] &&
+            bins[static_cast<size_t>(i)] > bins[static_cast<size_t>(i+2)])
+        {
+            float freq = binToFrequency(i);
+            float mag = bins[static_cast<size_t>(i)];
+            if (mag > -80.0f)
+                peaks.push_back({freq, mag});
+        }
+    }
+
+    if (peaks.empty())
+        return -1.0f;
+
+    std::sort(peaks.begin(), peaks.end(),
+              [](const std::pair<float, float>& a, const std::pair<float, float>& b) {
+                  return a.second > b.second;
+              });
+
+    for (const auto& candidate : peaks)
+    {
+        float f0 = candidate.first;
+        if (f0 < minFreq || f0 > maxFreq)
+            continue;
+
+        int harmonicCount = 0;
+
+        for (int h = 2; h <= 5; ++h)
+        {
+            float harmonicFreq = f0 * static_cast<float>(h);
+            if (harmonicFreq > maxFreq)
+                break;
+
+            float minDist = 1000.0f;
+            float closestMag = -100.0f;
+
+            for (const auto& peak : peaks)
+            {
+                float ratio = peak.first / harmonicFreq;
+                if (ratio > 0.9f && ratio < 1.1f)
+                {
+                    float dist = std::abs(peak.first - harmonicFreq);
+                    if (dist < minDist)
+                    {
+                        minDist = dist;
+                        closestMag = peak.second;
+                    }
+                }
+            }
+
+            if (closestMag > -80.0f)
+                harmonicCount++;
+        }
+
+        if (harmonicCount >= 2)
+            return f0;
+    }
+
+    return -1.0f;
+}
+
+float AIEngine::bandwidthFromSpectrum(const std::vector<float>& bins, int peakBin) const
+{
+    const int specSize = static_cast<int>(bins.size());
+    if (specSize == 0 || peakBin < 2 || peakBin >= specSize - 2)
+        return 100.0f;  // Default fallback (same as calculateBandwidth)
+
+    float peakMag = bins[static_cast<size_t>(peakBin)];
+    float threshold3dB = peakMag - 3.0f;
+
+    int leftBin = peakBin;
+    for (int i = peakBin - 1; i >= 0 && i >= peakBin - 50; --i)
+    {
+        if (i >= 0 && i < specSize && bins[static_cast<size_t>(i)] < threshold3dB)
+        {
+            leftBin = i;
+            break;
+        }
+        leftBin = i;
+    }
+
+    int rightBin = peakBin;
+    for (int i = peakBin + 1; i < specSize && i <= peakBin + 50; ++i)
+    {
+        if (bins[static_cast<size_t>(i)] < threshold3dB)
+        {
+            rightBin = i;
+            break;
+        }
+        rightBin = i;
+    }
+
+    float leftFreq = binToFrequency(leftBin);
+    float rightFreq = binToFrequency(rightBin);
+    return std::max(10.0f, rightFreq - leftFreq);
+}
+// ── end B2 pure helpers ────────────────────────────────────────────────────
 
 // Internal version - caller must hold spectrumMutex
 float AIEngine::calculateBandEnergyUnlocked(float lowFreq, float highFreq) const
