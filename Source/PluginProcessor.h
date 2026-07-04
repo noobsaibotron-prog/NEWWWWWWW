@@ -856,6 +856,7 @@ private:
     std::atomic<float>* cachedOutputGain = nullptr;
     std::atomic<float>* cachedDryWet = nullptr;
     std::atomic<float>* cachedAutoGain = nullptr;
+    std::atomic<float>* cachedDynamicCorrections = nullptr;  // D1 exposure toggle
     std::atomic<float>* cachedDynEqEnabled = nullptr;
     std::atomic<float>* cachedNumActiveBands = nullptr;
     std::atomic<float>* cachedBypass = nullptr;

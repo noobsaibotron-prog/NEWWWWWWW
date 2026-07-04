@@ -598,6 +598,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout AIEqualizerAudioProcessor::c
     params.push_back(std::make_unique<juce::AudioParameterBool>(
         juce::ParameterID{"autoGain", 1}, "Auto Gain", false));
 
+    // D1 exposure: opt-in per-band dynamic AI cuts (DynamicCorrectionEngine).
+    // Default OFF = the engine stays a bit-transparent no-op (contract-tested).
+    params.push_back(std::make_unique<juce::AudioParameterBool>(
+        juce::ParameterID{"dynamicCorrections", 1}, "Dynamic AI Cuts", false));
+
     // Quality / latency mode: 0 = Zero Latency, 1 = High Quality (lookahead on)
     params.push_back(std::make_unique<juce::AudioParameterChoice>(
         juce::ParameterID{"qualityMode", 1}, "Quality Mode",
@@ -822,6 +827,7 @@ void AIEqualizerAudioProcessor::cacheParameterPointers()
     cachedOutputGain = apvts.getRawParameterValue("outputGain");
     cachedDryWet = apvts.getRawParameterValue("dryWet");
     cachedAutoGain = apvts.getRawParameterValue("autoGain");
+    cachedDynamicCorrections = apvts.getRawParameterValue("dynamicCorrections");
     cachedDynEqEnabled = apvts.getRawParameterValue("dynEqEnabled");
     cachedNumActiveBands = apvts.getRawParameterValue("numActiveBands");
     cachedBypass = apvts.getRawParameterValue("bypass");
@@ -2652,6 +2658,10 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     // enabled AND a snapshot is published); runs on the WET path pre output
     // gain, uniformly for every phase mode. Promotion to a shipped default is
     // a separate corpus-gated decision.
+    // D1 exposure: per-block sync from the APVTS param (same cached-pointer
+    // pattern as autoGain). setEnabled is a relaxed atomic store, documented
+    // any-thread — no listener/marshaling needed.
+    dynamicCorrectionEngine.setEnabled(loadParam(cachedDynamicCorrections, 0.0f) > 0.5f);
     dynamicCorrectionEngine.process(buffer);
 
     // Apply output gain (manual + auto-gain compensation) with SMOOTHING to prevent zippering
@@ -4338,6 +4348,15 @@ void AIEqualizerAudioProcessor::applyAICorrections()
     // Trigger dry→wet crossfade only if AI application actually changed band state.
     if (anyMaterialChange)
         aiCorrectionCrossfadePending.store(true, std::memory_order_release);
+
+    // D1 exposure: convert the SAME approved set into the dynamic-correction
+    // snapshot BEFORE it is cleared below. Published unconditionally (message
+    // thread): with the "dynamicCorrections" param OFF the engine is a
+    // bit-transparent no-op, and the snapshot is simply ready if the user
+    // toggles it on. Known lifecycle gap (documented, D1-UX follow-up): a
+    // manual EQ reset does not clear the snapshot — the param toggle is the
+    // user-facing kill switch. applySingleCorrection() path: same follow-up.
+    publishDynamicCorrectionsFromApproved();
 
     // Clear ONLY approved corrections after applying (keep pending for future approval)
     // This allows user to approve more corrections later without losing pending ones
