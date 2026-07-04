@@ -788,13 +788,14 @@ public:
 
     /** D1 (AI-evolution): opt-in per-band dynamic correction engine.
         Default OFF; with no published snapshot the engine is a strict no-op.
-        publishDynamicCorrectionsFromApproved converts the AI engine's current
-        APPROVED corrections (cuts only) into a dynamic snapshot — call from
-        the message thread after approve/clear operations. */
+        publishDynamicCorrectionsFromApplied converts the exact merged/limited
+        corrections assigned by applyAICorrections (cuts only) into a dynamic
+        snapshot — call from the message thread before approved corrections are
+        cleared. */
     void setDynamicCorrectionsEnabled(bool on) noexcept { dynamicCorrectionEngine.setEnabled(on); }
     [[nodiscard]] bool areDynamicCorrectionsEnabled() const noexcept { return dynamicCorrectionEngine.isEnabled(); }
     [[nodiscard]] DynamicCorrectionEngine& getDynamicCorrectionEngine() noexcept { return dynamicCorrectionEngine; }
-    void publishDynamicCorrectionsFromApproved();
+    void publishDynamicCorrectionsFromApplied(const std::vector<AIEngine::Correction>& appliedCorrections);
 private:
 
     // IR builder thread function (runs in background)

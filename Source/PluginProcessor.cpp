@@ -598,11 +598,6 @@ juce::AudioProcessorValueTreeState::ParameterLayout AIEqualizerAudioProcessor::c
     params.push_back(std::make_unique<juce::AudioParameterBool>(
         juce::ParameterID{"autoGain", 1}, "Auto Gain", false));
 
-    // D1 exposure: opt-in per-band dynamic AI cuts (DynamicCorrectionEngine).
-    // Default OFF = the engine stays a bit-transparent no-op (contract-tested).
-    params.push_back(std::make_unique<juce::AudioParameterBool>(
-        juce::ParameterID{"dynamicCorrections", 1}, "Dynamic AI Cuts", false));
-
     // Quality / latency mode: 0 = Zero Latency, 1 = High Quality (lookahead on)
     params.push_back(std::make_unique<juce::AudioParameterChoice>(
         juce::ParameterID{"qualityMode", 1}, "Quality Mode",
@@ -795,6 +790,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout AIEqualizerAudioProcessor::c
 
     params.push_back(std::make_unique<juce::AudioParameterBool>(
         juce::ParameterID{"dynAutoMakeup", 1}, "Dynamic Auto Makeup", false));
+
+    // D1 exposure: append-only host surface addition, so existing parameter
+    // indices stay stable for old sessions/automation. Default OFF = the engine
+    // stays a bit-transparent no-op (contract-tested).
+    params.push_back(std::make_unique<juce::AudioParameterBool>(
+        juce::ParameterID{"dynamicCorrections", 1}, "Dynamic AI Cuts", false));
 
     return {params.begin(), params.end()};
 }
@@ -4009,17 +4010,18 @@ void AIEqualizerAudioProcessor::ensureBandCount(int count)
 //==============================================================================
 // D1 (AI-evolution): approved AI corrections -> dynamic correction snapshot
 //==============================================================================
-void AIEqualizerAudioProcessor::publishDynamicCorrectionsFromApproved()
+void AIEqualizerAudioProcessor::publishDynamicCorrectionsFromApplied(
+    const std::vector<AIEngine::Correction>& appliedCorrections)
 {
     // Message-thread publication (the engine's double buffer makes it safe
-    // against the audio thread; getApprovedCorrections is message-thread-only
-    // by the existing AIEngine contract).
-    const auto approved = aiEngine.getApprovedCorrections();
+    // against the audio thread). The caller passes the exact merged/limited
+    // correction list that was applied to static bands, so the dynamic snapshot
+    // cannot diverge from the user-visible AI application.
 
     DynamicCorrectionEngine::Snapshot snap;
     snap.version = ++dynamicCorrectionsVersion;
     int slot = 0;
-    for (const auto& corr : approved)
+    for (const auto& corr : appliedCorrections)
     {
         if (slot >= DynamicCorrectionEngine::kMaxCorrections)
             break;
@@ -4349,14 +4351,15 @@ void AIEqualizerAudioProcessor::applyAICorrections()
     if (anyMaterialChange)
         aiCorrectionCrossfadePending.store(true, std::memory_order_release);
 
-    // D1 exposure: convert the SAME approved set into the dynamic-correction
-    // snapshot BEFORE it is cleared below. Published unconditionally (message
-    // thread): with the "dynamicCorrections" param OFF the engine is a
+    // D1 exposure: convert the SAME merged/limited corrections actually
+    // assigned to static EQ bands into the dynamic-correction snapshot BEFORE
+    // approved corrections are cleared below. Published unconditionally
+    // (message thread): with the "dynamicCorrections" param OFF the engine is a
     // bit-transparent no-op, and the snapshot is simply ready if the user
     // toggles it on. Known lifecycle gap (documented, D1-UX follow-up): a
     // manual EQ reset does not clear the snapshot — the param toggle is the
     // user-facing kill switch. applySingleCorrection() path: same follow-up.
-    publishDynamicCorrectionsFromApproved();
+    publishDynamicCorrectionsFromApplied(merged);
 
     // Clear ONLY approved corrections after applying (keep pending for future approval)
     // This allows user to approve more corrections later without losing pending ones
