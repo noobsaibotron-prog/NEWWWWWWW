@@ -19,10 +19,129 @@ public:
         testStateRoundTrip();
         testPresetSchemaRoundTrip();
         testDynamicABStateRoundTrip();
+        testHostParameterSurfaceGoldenList();
         testBypassPassThrough();
     }
 
 private:
+    struct ExpectedParameter
+    {
+        juce::String id;
+        int versionHint = 1;
+    };
+
+    static std::vector<ExpectedParameter> expectedHostParameters()
+    {
+        std::vector<ExpectedParameter> ids;
+
+        const char* const globals[] = {
+            "outputGain",
+            "dryWet",
+            "bypass",
+            "autoGain",
+            "qualityMode",
+            "phaseMode",
+            "msMode",
+            "oversamplingFactor",
+            "aiSensitivity",
+            "aiStrength",
+            "aiEnabled",
+            "sourceProfile",
+            "showPreSpectrum",
+            "showPostSpectrum",
+            "showDeltaSpectrum",
+            "analyzerResolution",
+            "analyzerSpeed",
+            "analyzerSlope",
+            "showPeakHold",
+            "analyzerPeakHold",
+            "analyzerPeakDecay",
+            "spectrumTilt",
+            "pianoRollOverlay",
+            "highContrastMode",
+            "learningEnabled",
+            "numActiveBands",
+        };
+
+        for (const auto* id : globals)
+            ids.push_back({ id, 1 });
+
+        const char* const bandSuffixes[] = {
+            "Freq",
+            "Gain",
+            "Q",
+            "Type",
+            "Enabled",
+            "Solo",
+            "Slope",
+            "DynMode",
+            "Threshold",
+            "Ratio",
+            "Attack",
+            "Release",
+            "Range",
+            "Knee",
+        };
+
+        for (int band = 0; band < AIEqualizerAudioProcessor::maxBands; ++band)
+            for (const auto* suffix : bandSuffixes)
+                ids.push_back({ "band" + juce::String(band) + suffix, 1 });
+
+        ids.push_back({ "dynEqEnabled", 1 });
+        ids.push_back({ "dynEqMix", 1 });
+        ids.push_back({ "dynAutoMakeup", 1 });
+        ids.push_back({ "dynamicCorrections", 2 });
+
+        return ids;
+    }
+
+    void testHostParameterSurfaceGoldenList()
+    {
+        beginTest("Host parameter IDs and version hints remain append-only");
+
+        AIEqualizerAudioProcessor proc;
+        const auto expected = expectedHostParameters();
+        const auto& params = proc.getParameters();
+
+        expect(static_cast<size_t>(params.size()) == expected.size(),
+               "Host parameter count changed: expected " + juce::String(static_cast<int>(expected.size()))
+               + ", got " + juce::String(params.size()));
+
+        const auto count = std::min(static_cast<size_t>(params.size()), expected.size());
+        juce::StringArray seen;
+
+        for (size_t i = 0; i < count; ++i)
+        {
+            auto* withID = dynamic_cast<juce::AudioProcessorParameterWithID*>(params[static_cast<int>(i)]);
+            expect(withID != nullptr, "Host parameter at index " + juce::String(static_cast<int>(i))
+                                      + " has no stable ParameterID");
+
+            const juce::String actualID = withID != nullptr ? withID->getParameterID() : juce::String{};
+            expect(actualID == expected[i].id,
+                   "Host parameter ID mismatch at index " + juce::String(static_cast<int>(i))
+                   + ": expected '" + expected[i].id + "', got '" + actualID + "'");
+
+            expect(params[static_cast<int>(i)]->getVersionHint() == expected[i].versionHint,
+                   "Host parameter version mismatch for '" + expected[i].id + "': expected "
+                   + juce::String(expected[i].versionHint) + ", got "
+                   + juce::String(params[static_cast<int>(i)]->getVersionHint()));
+
+            expect(! seen.contains(actualID), "Duplicate host parameter ID: " + actualID);
+            seen.add(actualID);
+        }
+
+        if (! expected.empty())
+        {
+            expect(expected.back().id == "dynamicCorrections", "Golden list must keep D1 as the append-only tail");
+            if (! params.isEmpty())
+            {
+                auto* withID = dynamic_cast<juce::AudioProcessorParameterWithID*>(params.getLast());
+                expect(withID != nullptr && withID->getParameterID() == "dynamicCorrections",
+                       "dynamicCorrections must remain the final createParameters() entry");
+            }
+        }
+    }
+
     static void setChoice(juce::AudioProcessorValueTreeState& apvts, const juce::String& id, int index)
     {
         if (auto* p = apvts.getParameter(id))

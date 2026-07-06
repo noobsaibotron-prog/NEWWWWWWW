@@ -795,7 +795,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout AIEqualizerAudioProcessor::c
     // indices stay stable for old sessions/automation. Default OFF = the engine
     // stays a bit-transparent no-op (contract-tested).
     params.push_back(std::make_unique<juce::AudioParameterBool>(
-        juce::ParameterID{"dynamicCorrections", 1}, "Dynamic AI Cuts", false));
+        juce::ParameterID{"dynamicCorrections", 2}, "Dynamic AI Cuts", false));
 
     return {params.begin(), params.end()};
 }
