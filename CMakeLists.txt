@@ -640,6 +640,12 @@ set(PLUGIN_SOURCES
 option(AIEQ_ENABLE_TORCH "Enable Torch C++ seq2seq parser" OFF)
 set(AIEQ_TORCH_ROOT "" CACHE PATH "Path to libtorch (root directory)")
 
+# Motore v2 (RTNeural) — A0 walking skeleton. OFF in shipped builds: gates the
+# vendored RTNeural include, the AIEQ_ENABLE_MOTORE_V2 define, and the parity
+# test. When OFF the RTNeural bridge compiles to nothing (headers/test are
+# #if-guarded), so the shipped plugin stays byte-identical.
+option(AIEQ_ENABLE_MOTORE_V2 "Enable Motore v2 (RTNeural) bridge — A0 walking skeleton" OFF)
+
 if(AIEQ_ENABLE_TORCH)
     if(NOT AIEQ_TORCH_ROOT AND DEFINED ENV{TORCH_HOME})
         set(AIEQ_TORCH_ROOT "$ENV{TORCH_HOME}")
@@ -1090,6 +1096,20 @@ if(HAVE_JUCE)
 
     add_test(NAME aieq_ai_regression
              COMMAND $<TARGET_FILE:AIEqualizerPro_AI_Tests>)
+
+    # Motore v2 (A0) — RTNeural parity test, compiled ONLY when the flag is ON.
+    # Adds the vendored header-only RTNeural (STL backend) + the fixture path.
+    if(AIEQ_ENABLE_MOTORE_V2)
+        target_sources(AIEqualizerPro_AI_Tests PRIVATE
+            Source/Tests/MotoreV2ParityTest.cpp)
+        target_include_directories(AIEqualizerPro_AI_Tests PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/RTNeural)
+        target_compile_definitions(AIEqualizerPro_AI_Tests PRIVATE
+            AIEQ_ENABLE_MOTORE_V2=1
+            RTNEURAL_DEFAULT_ALIGNMENT=16
+            AIEQ_MOTORE_V2_A0_DATA="${CMAKE_CURRENT_SOURCE_DIR}/Source/Tests/data/motore_v2_a0")
+        message(STATUS "Motore v2 (RTNeural) A0 bridge: ENABLED for AI_Tests")
+    endif()
 
     # ---------------------------------------------------------------------------
     # Integration tests — full plugin processor path via SharedCode.
