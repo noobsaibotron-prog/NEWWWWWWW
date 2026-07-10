@@ -60,8 +60,14 @@ public:
     int  inSize()   const noexcept { return model ? model->layers[0]->in_size : 0; }
     int  outSize()  const noexcept { return model ? model->getOutSize() : 0; }
 
-    /** Runs one forward. Returns a pointer to outSize() raw logits owned by the
-        model (valid until the next forward). Caller must ensure isLoaded(). */
+    /** Zeroes the temporal state (Conv1D ring buffers). Call before feeding a
+        new analysis window: the A3 CNN is stateful frame-by-frame. */
+    void reset() { model->reset(); }
+
+    /** Feeds one frame. Returns a pointer to outSize() raw logits owned by the
+        model (valid until the next forward). For the A3 CNN the prediction for
+        a window is the output of the LAST frame's forward. Caller must ensure
+        isLoaded(). */
     const float* forward(const float* input)
     {
         model->forward(input);
