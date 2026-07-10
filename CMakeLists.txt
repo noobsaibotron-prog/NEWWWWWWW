@@ -1101,13 +1101,15 @@ if(HAVE_JUCE)
     # Adds the vendored header-only RTNeural (STL backend) + the fixture path.
     if(AIEQ_ENABLE_MOTORE_V2)
         target_sources(AIEqualizerPro_AI_Tests PRIVATE
-            Source/Tests/MotoreV2ParityTest.cpp)
+            Source/Tests/MotoreV2ParityTest.cpp
+            Source/Tests/MotoreV2FeatureParityTest.cpp)
         target_include_directories(AIEqualizerPro_AI_Tests PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/RTNeural)
         target_compile_definitions(AIEqualizerPro_AI_Tests PRIVATE
             AIEQ_ENABLE_MOTORE_V2=1
             RTNEURAL_DEFAULT_ALIGNMENT=16
-            AIEQ_MOTORE_V2_A3_DATA="${CMAKE_CURRENT_SOURCE_DIR}/Source/Tests/data/motore_v2_a3")
+            AIEQ_MOTORE_V2_A3_DATA="${CMAKE_CURRENT_SOURCE_DIR}/Source/Tests/data/motore_v2_a3"
+            AIEQ_MOTORE_V2_A2_DATA="${CMAKE_CURRENT_SOURCE_DIR}/Source/Tests/data/motore_v2_a2")
         message(STATUS "Motore v2 (RTNeural) bridge: ENABLED for AI_Tests")
     endif()
 
