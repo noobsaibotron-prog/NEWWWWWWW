@@ -56,6 +56,10 @@ CALIB_SINGERS = ("female7", "male9")
 
 COMMERCIAL_OK = {"CC0", "CC-BY", "CC-BY-3.0", "CC-BY-4.0"}
 
+# VocalSet primary-source attribution (CC-BY 4.0 requires it to travel with the
+# corpus): the dataset paper. VocalSet is the upstream, so upstream_license=n/a.
+VOCALSET_ATTRIBUTION = "Wilkins, Seetharaman, Wahl & Pardo — VocalSet (ISMIR 2018)"
+
 
 # ------------------------------------------------------------------ helpers
 def norm_license(raw: str) -> str:
@@ -175,15 +179,18 @@ def main() -> int:
             "duration_s": round(info["duration_s"], 3),
             "sha256": sha256_of(p),
             "license": "CC-BY-4.0", "license_ok": 1,
+            "upstream_license": "n/a", "attribution": VOCALSET_ATTRIBUTION,
             "source": "VocalSet (zenodo.org/records/1193957)",
             "hf_dead": 1 if info["sr"] and info["sr"] <= 22050 else 0,
-            "license_crosscheck": "n/a",
+            "crosscheck": "primary-source",
         })
 
     # --- tier2_train via its per-file MANIFEST ---
     fsl_meta = json.loads(FSL_METADATA.read_text()) if FSL_METADATA.exists() else {}
     perc_meta = json.loads(PERC_LICENSES.read_text()) if PERC_LICENSES.exists() else {}
-    xcheck = {"checked": 0, "match": 0, "mismatch": 0, "no_record": 0}
+    # exact = normalized license string identical manifest==upstream;
+    # commercial_ok = both commercial but versions differ (e.g. CC-BY vs CC-BY-3.0).
+    xcheck = {"checked": 0, "exact": 0, "commercial_ok": 0, "mismatch": 0, "no_record": 0}
 
     with open(TIER2_DIR / "MANIFEST.csv", newline="") as f:
         for r in csv.DictReader(f):
@@ -196,7 +203,8 @@ def main() -> int:
             if not ok:
                 problems.append(f"NON-COMMERCIAL/unknown license {lic}: {r['file']}")
 
-            xc = "n/a"
+            upstream_lic = "n/a"
+            xc = "no-upstream-record"     # non-freesound tier2 (e.g. BabySlakh)
             fsid = freesound_id(r["file"], r.get("source_url", ""))
             if fsid:
                 rec = fsl_meta.get(fsid) or perc_meta.get(fsid)
@@ -205,16 +213,20 @@ def main() -> int:
                     xc = "no-upstream-record"
                 else:
                     up = norm_license(rec["license"])
+                    upstream_lic = up
                     xcheck["checked"] += 1
-                    if up in COMMERCIAL_OK:
-                        xcheck["match"] += 1
-                        xc = f"upstream={up}:OK"
-                    else:
+                    if up not in COMMERCIAL_OK:
                         xcheck["mismatch"] += 1
-                        xc = f"upstream={up}:VIOLATION"
+                        xc = "VIOLATION"
                         problems.append(
-                            f"UPSTREAM license mismatch {r['file']}: manifest={lic} "
+                            f"UPSTREAM non-commercial {r['file']}: manifest={lic} "
                             f"upstream={up} (freesound {fsid})")
+                    elif up == lic:
+                        xcheck["exact"] += 1
+                        xc = "exact-match"
+                    else:
+                        xcheck["commercial_ok"] += 1
+                        xc = "commercial-ok"
 
             group = tier2_group(r["file"])
             info = riff_info(p)
@@ -225,9 +237,11 @@ def main() -> int:
                 "duration_s": round(info["duration_s"], 3),
                 "sha256": sha256_of(p),
                 "license": lic, "license_ok": 1 if ok else 0,
+                "upstream_license": upstream_lic,
+                "attribution": r.get("attribution", "").strip(),
                 "source": r.get("source_url", ""),
                 "hf_dead": 1 if info["sr"] and info["sr"] <= 22050 else 0,
-                "license_crosscheck": xc,
+                "crosscheck": xc,
             })
 
     # --- anti-leakage: intra-corpus duplicates ---
@@ -255,8 +269,8 @@ def main() -> int:
     # --- write manifest ---
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     fields = ["path", "domain", "group", "split", "sr", "channels", "bits",
-              "duration_s", "sha256", "license", "license_ok", "source",
-              "hf_dead", "license_crosscheck"]
+              "duration_s", "sha256", "license", "license_ok", "upstream_license",
+              "attribution", "source", "hf_dead", "crosscheck"]
     with open(MANIFEST_OUT, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=fields)
         w.writeheader()
@@ -295,9 +309,16 @@ def main() -> int:
     for lic, a in lic_tab.items():
         lines.append(f"| {lic} | {a['n']} | {'sì' if lic in COMMERCIAL_OK else '**NO**'} |")
     lines.append("")
-    lines.append(f"Cross-check upstream (freesound): {xcheck['checked']} verificati, "
-                 f"{xcheck['match']} match, **{xcheck['mismatch']} mismatch**, "
-                 f"{xcheck['no_record']} senza record locale.")
+    n_primary = sum(1 for r in rows if r["crosscheck"] == "no-upstream-record")
+    lines.append(f"Cross-check upstream (freesound per-id): **{xcheck['checked']} commercial-ok** "
+                 f"(di cui {xcheck['exact']} exact-match stringa/versione e "
+                 f"{xcheck['commercial_ok']} commercial-ok con versione diversa — "
+                 f"es. manifest CC-BY vs upstream CC-BY-3.0), "
+                 f"**{xcheck['mismatch']} non-commercial/violazioni**"
+                 + (f", {xcheck['no_record']} freesound senza record locale"
+                    if xcheck['no_record'] else "") + ". "
+                 f"I {n_primary} file BabySlakh non sono su freesound: licenza CC-BY-4.0 "
+                 f"dalla fonte primaria (Slakh/Zenodo), nessun cross-check per-id applicabile.")
     lines.append("")
     lines.append("## Sample rate")
     lines.append("")

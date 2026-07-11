@@ -33,7 +33,7 @@ Files: **4392** · durata totale: **16.35 h** · root: `/Users/marco/aieq_data`
 | CC-BY-4.0 | 3692 | sì |
 | CC0 | 343 | sì |
 
-Cross-check upstream (freesound): 700 verificati, 700 match, **0 mismatch**, 0 senza record locale.
+Cross-check upstream (freesound per-id): **700 commercial-ok** (di cui 343 exact-match stringa/versione e 357 commercial-ok con versione diversa — es. manifest CC-BY vs upstream CC-BY-3.0), **0 non-commercial/violazioni**. I 79 file BabySlakh non sono su freesound: licenza CC-BY-4.0 dalla fonte primaria (Slakh/Zenodo), nessun cross-check per-id applicabile.
 
 ## Sample rate
 
