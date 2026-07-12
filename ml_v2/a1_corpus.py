@@ -260,16 +260,33 @@ def main() -> int:
     for e in dup_cross_split:
         problems.append(f"DUPLICATE ACROSS SPLITS (leakage): {e}")
 
-    # --- anti-leakage: judge clips + vocal holdout must be OUTSIDE the corpus ---
+    # --- anti-leakage: judge clips + vocal holdout must not leak into train/calib ---
     import glob as _glob
     judge_files = sorted(JUDGE_DIR.rglob("*.wav")) if JUDGE_DIR.exists() else []
     vocal_holdout = sorted(Path(p) for p in _glob.glob(VOCAL_HOLDOUT_GLOB))
     judge_overlap = []
+    vocal_bad_overlap = []
+    vocal_test_overlap = []
     corpus_hashes = set(by_hash)
-    for jp in judge_files + vocal_holdout:
+    for jp in judge_files:
         if sha256_of(jp) in corpus_hashes:
             judge_overlap.append(str(jp))
             problems.append(f"JUDGE/HOLDOUT CLIP inside corpus (leakage): {jp}")
+    for vp in vocal_holdout:
+        hits = by_hash.get(sha256_of(vp), [])
+        if not hits:
+            continue
+        bad = [h for h in hits if h["split"] != "test"]
+        entry = f"{vp}: " + " | ".join(f"{h['split']}:{h['path']}" for h in hits)
+        if bad:
+            vocal_bad_overlap.append(entry)
+            problems.append(f"VOCAL HOLDOUT overlaps train/calib corpus: {entry}")
+        else:
+            # The clean vocal Desktop probes are exact copies of VocalSet TEST
+            # singer files (female9/male11). That is not training leakage, but
+            # it must stay visible so A4/A6 do not double-count it as an
+            # independent held-out source.
+            vocal_test_overlap.append(entry)
 
     # --- write manifest ---
     OUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -340,10 +357,16 @@ def main() -> int:
     lines.append(f"- Duplicati sha256 same-split (warning): {len(dup_same_split)}")
     for e in dup_same_split[:10]:
         lines.append(f"    - {e}")
-    lines.append(f"- Clip giudice ({len(judge_files)} wav in `{JUDGE_DIR.name}`) + "
-                 f"vocal holdout ({len(vocal_holdout)} `test_voce_*.wav`) "
+    lines.append(f"- Clip giudice Ableton ({len(judge_files)} wav in `{JUDGE_DIR.name}`) "
                  f"dentro il corpus: **{len(judge_overlap)}**"
                  + (" ← FAIL" if judge_overlap else " ✅"))
+    lines.append(f"- Vocal holdout ({len(vocal_holdout)} `test_voce_*.wav`) sovrapposti a "
+                 f"train/heldout-calib: **{len(vocal_bad_overlap)}**"
+                 + (" ← FAIL" if vocal_bad_overlap else " ✅"))
+    lines.append(f"- Vocal holdout sovrapposti solo allo split TEST VocalSet "
+                 f"(warning, non training leakage): {len(vocal_test_overlap)}")
+    for e in vocal_test_overlap[:10]:
+        lines.append(f"    - {e}")
     lines.append("")
     lines.append("## Split policy (deterministica, zero RNG)")
     lines.append("")

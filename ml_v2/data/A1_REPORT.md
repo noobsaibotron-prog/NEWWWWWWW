@@ -49,18 +49,17 @@ Cross-check upstream (freesound per-id): **700 commercial-ok** (di cui 343 exact
     - 4554c7002a5b…: real_audio/vocalset_extracted/FULL/female2/scales/slow_piano/f2_scales_f_slow_piano_u(1).wav | real_audio/vocalset_extracted/FULL/female2/scales/slow_piano/f2_scales_f_slow_piano_u.wav
     - 3ea60e668c22…: real_audio/vocalset_extracted/FULL/female2/scales/straight/f2_scales_straight_u(1).wav | real_audio/vocalset_extracted/FULL/female2/scales/straight/f2_scales_straight_u.wav
     - a261df2163a5…: real_audio/vocalset_extracted/FULL/female2/scales/vibrato/f2_scales_vibrato_a(1).wav | real_audio/vocalset_extracted/FULL/female2/scales/vibrato/f2_scales_vibrato_a.wav
-- Clip giudice (8 wav in `AIEQ_Ableton_Test_Clips`) + vocal holdout (6 `test_voce_*.wav`) dentro il corpus: **4** ← FAIL
+- Clip giudice Ableton (8 wav in `AIEQ_Ableton_Test_Clips`) dentro il corpus: **0** ✅
+- Vocal holdout (6 `test_voce_*.wav`) sovrapposti a train/heldout-calib: **0** ✅
+- Vocal holdout sovrapposti solo allo split TEST VocalSet (warning, non training leakage): 4
+    - /Users/marco/Desktop/test_voce_pulita_femmina 2.wav: test:real_audio/vocalset_extracted/FULL/female9/excerpts/straight/f9_dona_straight.wav
+    - /Users/marco/Desktop/test_voce_pulita_femmina.wav: test:real_audio/vocalset_extracted/FULL/female9/excerpts/straight/f9_dona_straight.wav
+    - /Users/marco/Desktop/test_voce_pulita_maschio 2.wav: test:real_audio/vocalset_extracted/FULL/male11/long_tones/straight/m11_long_straight_o.wav
+    - /Users/marco/Desktop/test_voce_pulita_maschio.wav: test:real_audio/vocalset_extracted/FULL/male11/long_tones/straight/m11_long_straight_o.wav
 
 ## Split policy (deterministica, zero RNG)
 
 - vocal: singer-disjoint. test = ('female9', 'female8', 'male11', 'male10') (INVARIATO dal lab M6-M9), heldout-calibrazione = ('female7', 'male9'), train = restanti.
 - tier2: group-disjoint (stems+mix stesso track = stesso gruppo), sha1(group) mod 100 → <70 train, <85 heldout, resto test.
 
-## ⚠️ VIOLAZIONI
-
-- JUDGE/HOLDOUT CLIP inside corpus (leakage): /Users/marco/Desktop/test_voce_pulita_femmina 2.wav
-- JUDGE/HOLDOUT CLIP inside corpus (leakage): /Users/marco/Desktop/test_voce_pulita_femmina.wav
-- JUDGE/HOLDOUT CLIP inside corpus (leakage): /Users/marco/Desktop/test_voce_pulita_maschio 2.wav
-- JUDGE/HOLDOUT CLIP inside corpus (leakage): /Users/marco/Desktop/test_voce_pulita_maschio.wav
-
-**ESITO: ROSSO** — risolvere prima di A4.
+**ESITO: VERDE** — nessuna violazione. Corpus certificato per A4.
