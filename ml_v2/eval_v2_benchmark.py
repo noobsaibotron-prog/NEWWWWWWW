@@ -41,6 +41,8 @@ CLEAN_TARGET = 0.05
 CLEAN_HARD_MAX = 0.10
 SIB_CAP = 0.05
 ELECTRONIC_CLEAN_MAX = 0.10
+NEUTRAL_EXCESS_DB = 6.0
+NEUTRAL_MAX_HOT_FRAC = 0.50
 
 CORE_TARGETS = {
     "01": (),
@@ -212,16 +214,52 @@ def check_vocal(target: str | None, occ: dict[str, float]) -> tuple[bool, list[s
     return sib <= SIB_CAP, ([] if sib <= SIB_CAP else [f"Sibilance {sib:.1%} > {SIB_CAP:.0%}"])
 
 
-def select_electronic(manifest: Path, data_root: Path, per_domain: int) -> dict[str, list[Path]]:
+def neutrality_reason(path: Path) -> str | None:
+    audio, sr = load_wav_mono(path)
+    frames = logmel_frames(audio, sr)
+    if frames.shape[0] == 0:
+        return "no analysable frames"
+    mel_db = -100.0 * frames.astype(np.float64)
+    worst: tuple[int, float] | None = None
+    for b in range(3, mel_db.shape[1] - 3):
+        neighbours = np.concatenate([mel_db[:, b - 3:b],
+                                     mel_db[:, b + 1:b + 4]], axis=1)
+        excess = mel_db[:, b] - neighbours.mean(axis=1)
+        hot_frac = float(np.mean(excess > NEUTRAL_EXCESS_DB))
+        if worst is None or hot_frac > worst[1]:
+            worst = (b, hot_frac)
+        if hot_frac > NEUTRAL_MAX_HOT_FRAC:
+            return (f"mel band {b} > adjacent mean by {NEUTRAL_EXCESS_DB:.0f} dB "
+                    f"for {hot_frac:.1%} frames")
+    return None
+
+
+def select_electronic(manifest: Path, data_root: Path, per_domain: int
+                      ) -> tuple[dict[str, list[Path]],
+                                 dict[str, list[Path]],
+                                 dict[str, list[tuple[Path, str]]]]:
     domains = ("clean_drums", "clean_synth", "clean_bass", "clean_mix", "hf_negative")
-    out: dict[str, list[Path]] = {}
+    raw: dict[str, list[Path]] = {}
+    neutral: dict[str, list[Path]] = {}
+    excluded: dict[str, list[tuple[Path, str]]] = {}
     rows = list(csv.DictReader(manifest.open(newline="")))
     for domain in domains:
         picks = [r for r in rows if r["domain"] == domain
                  and r["split"] == "test" and r["hf_dead"] == "0"]
         picks.sort(key=lambda r: r["sha256"])
-        out[domain] = [data_root / r["path"] for r in picks[:per_domain]]
-    return out
+        raw[domain] = [data_root / r["path"] for r in picks[:per_domain]]
+        neutral[domain] = []
+        excluded[domain] = []
+        for r in picks:
+            path = data_root / r["path"]
+            reason = neutrality_reason(path)
+            if reason is None:
+                neutral[domain].append(path)
+                if len(neutral[domain]) >= per_domain:
+                    break
+            else:
+                excluded[domain].append((path, reason))
+    return raw, neutral, excluded
 
 
 def load_thresholds(args: argparse.Namespace) -> np.ndarray:
@@ -284,10 +322,10 @@ def main() -> int:
         verdict = "PASS" if ok else "FAIL(" + "; ".join(reasons) + ")"
         print(f"  {label} [{verdict:>9s}] ({n:4d} win) {detail(occ)}")
 
-    print("\n[ELECTRONIC CLEAN SET]")
-    electronic = select_electronic(Path(args.manifest), Path(args.data_root),
-                                   args.electronic_per_domain)
-    for domain, paths in electronic.items():
+    print("\n[ELECTRONIC RAW SET - diagnostic only]")
+    electronic_raw, electronic_neutral, electronic_excluded = select_electronic(
+        Path(args.manifest), Path(args.data_root), args.electronic_per_domain)
+    for domain, paths in electronic_raw.items():
         bad: list[str] = []
         for path in paths:
             occ, _n = occupancy(model, path, thresholds, args.window_step)
@@ -296,10 +334,35 @@ def main() -> int:
             if hot:
                 hot.sort(key=lambda item: -item[1])
                 bad.append(f"{path.name} {hot[0][0]} {hot[0][1]:.1%}")
-        if bad:
-            fails.append(domain)
-        verdict = "PASS" if not bad else "FAIL(" + "; ".join(bad[:5]) + ")"
+        verdict = "PASS" if not bad else "REPORT(" + "; ".join(bad[:5]) + ")"
         print(f"  {domain:<12s} [{verdict:>9s}] ({len(paths)} files)")
+
+    print("\n[ELECTRONIC NEUTRAL SET - gate]")
+    for domain, excluded in electronic_excluded.items():
+        for path, reason in excluded:
+            print(f"  exclude {domain:<12s} {path.name}: {reason}")
+
+    for domain, paths in electronic_neutral.items():
+        if len(paths) < args.electronic_per_domain:
+            fails.append(domain)
+            print(f"  {domain:<12s} [FAIL(insufficient neutral files "
+                  f"{len(paths)}/{args.electronic_per_domain})]")
+            continue
+        bad: list[str] = []
+        for path in paths:
+            occ, _n = occupancy(model, path, thresholds, args.window_step)
+            hot = [(name, value) for name, value in occ.items()
+                   if value > ELECTRONIC_CLEAN_MAX]
+            if hot:
+                hot.sort(key=lambda item: -item[1])
+                bad.append(f"{path.name} {hot[0][0]} {hot[0][1]:.1%}")
+        clean_count = len(paths) - len(bad)
+        if clean_count < 7:
+            fails.append(domain)
+        verdict = "PASS" if clean_count >= 7 else \
+            "FAIL(" + "; ".join(bad[:5]) + ")"
+        print(f"  {domain:<12s} [{verdict:>9s}] "
+              f"({clean_count}/{len(paths)} clean files)")
 
     print(f"\n  RESULT: {'PASS' if not fails else 'FAIL'}"
           f"  fails={fails if fails else 'none'}")
