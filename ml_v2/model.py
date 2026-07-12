@@ -35,20 +35,24 @@ if HAS_TORCH:
         padding='valid' everywhere: RTNeural streams sample-by-sample causally,
         and the parity contract compares torch's LAST valid frame with
         RTNeural's output after T forward() calls.
+
+        dtype: float64 by default (bit-reproducible A3 fixture); the A4
+        trainer constructs with float32 (MPS has no float64 support).
         """
 
-        def __init__(self) -> None:
+        def __init__(self, dtype: "torch.dtype" = None) -> None:
             super().__init__()
+            dtype = dtype or torch.float64
             convs = []
             for out_ch, in_ch, k, d in CONV_SPECS:
                 convs.append(nn.Conv1d(in_ch, out_ch, k, dilation=d,
-                                       padding=0, dtype=torch.float64))
+                                       padding=0, dtype=dtype))
                 convs.append(nn.ReLU())
             self.convs = nn.Sequential(*convs)
             self.head = nn.Sequential(
-                nn.Linear(DENSE_SPECS[0][1], DENSE_SPECS[0][0], dtype=torch.float64),
+                nn.Linear(DENSE_SPECS[0][1], DENSE_SPECS[0][0], dtype=dtype),
                 nn.ReLU(),
-                nn.Linear(DENSE_SPECS[1][1], DENSE_SPECS[1][0], dtype=torch.float64),
+                nn.Linear(DENSE_SPECS[1][1], DENSE_SPECS[1][0], dtype=dtype),
             )
 
         def forward(self, x: "torch.Tensor") -> "torch.Tensor":
