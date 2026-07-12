@@ -3,7 +3,8 @@
 
 Loss = weighted class BCE + presence BCE + MASKED Smooth-L1 on freq (§2).
 Optimizer AdamW, cosine 1e-3 -> 5e-5, batch 32, 40-50 epochs (§5).
-Model selection on validation: macro_f1 - 4*max(0, clean_fp - 0.05) (§5).
+Model selection on validation: calibrated macro_f1 on a source-disjoint
+heldout_metric split - 2*max(0, calibrated clean_fp - 0.05).
 Calibration (A4.5): per-class negative-quantile thresholds @ target_fp=0.05,
 clamped [0.30, 0.95]; presence on all-clean windows, clamped [0.50, 0.95].
 Export (§6): RTNeural JSON + provenance -> /tmp/aieq_v2/candidate_s<seed>.json
@@ -23,6 +24,7 @@ Run:  python3 -m ml_v2.train --seeds 42,1337,2026
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import time
 from pathlib import Path
@@ -41,18 +43,22 @@ TARGET_FP = 0.05
 
 
 # ------------------------------------------------------------ metrics
-def evaluate(model: torch.nn.Module, X: torch.Tensor, Y: torch.Tensor,
-             batch: int = 256) -> dict:
+def predict_probs(model: torch.nn.Module, X: torch.Tensor,
+                  batch: int = 256) -> np.ndarray:
     model.eval()
     probs_all = []
     with torch.no_grad():
         for i in range(0, X.shape[0], batch):
             logits = model(X[i:i + batch].transpose(1, 2))[:, :, -1]
             probs_all.append(torch.sigmoid(logits[:, :NUM_CLASSES]).cpu())
-    probs = torch.cat(probs_all).numpy()
-    y = Y[:, :NUM_CLASSES].cpu().numpy()
+    return torch.cat(probs_all).numpy()
 
-    pred = probs > 0.5
+
+def metrics_from_probs(probs: np.ndarray, Y: np.ndarray,
+                       thresholds: np.ndarray | list[float]) -> dict:
+    y = Y[:, :NUM_CLASSES]
+    th = np.asarray(thresholds, dtype=np.float64)
+    pred = probs > th[None, :]
     f1s = []
     for c in range(NUM_CLASSES):
         tp = float(np.sum(pred[:, c] & (y[:, c] > 0.5)))
@@ -65,10 +71,20 @@ def evaluate(model: torch.nn.Module, X: torch.Tensor, Y: torch.Tensor,
 
     clean = np.where(y.sum(axis=1) == 0)[0]
     clean_fp = float(np.mean(pred[clean].any(axis=1))) if clean.size else 0.0
-    selection = macro_f1 - 4.0 * max(0.0, clean_fp - TARGET_FP)
+    selection = macro_f1 - 2.0 * max(0.0, clean_fp - TARGET_FP)
     return {"macro_f1": macro_f1, "clean_fp": clean_fp,
             "selection": selection, "per_class_f1": [round(v, 3) for v in f1s],
             "probs": probs}
+
+
+def evaluate(model: torch.nn.Module, X: torch.Tensor, Y: torch.Tensor,
+             thresholds: np.ndarray | list[float] | None = None,
+             batch: int = 256) -> dict:
+    probs = predict_probs(model, X, batch)
+    y = Y.cpu().numpy()
+    if thresholds is None:
+        thresholds = np.full(NUM_CLASSES, 0.5, dtype=np.float64)
+    return metrics_from_probs(probs, y, thresholds)
 
 
 def calibrate(probs: np.ndarray, Y: np.ndarray) -> tuple[list[float], float]:
@@ -86,8 +102,51 @@ def calibrate(probs: np.ndarray, Y: np.ndarray) -> tuple[list[float], float]:
     return ths, float(np.clip(pres, 0.50, 0.95))
 
 
+def evaluate_calibrated(model: torch.nn.Module,
+                        X_calib: torch.Tensor, Y_calib: torch.Tensor,
+                        X_metric: torch.Tensor, Y_metric: torch.Tensor,
+                        batch: int = 256) -> dict:
+    calib_probs = predict_probs(model, X_calib, batch)
+    thresholds, presence = calibrate(calib_probs, Y_calib.cpu().numpy())
+    metric_probs = predict_probs(model, X_metric, batch)
+    out = metrics_from_probs(metric_probs, Y_metric.cpu().numpy(), thresholds)
+    out["thresholds"] = thresholds
+    out["presence_threshold"] = presence
+    return out
+
+
+def heldout_calib_metric_indices(sources: list[str]
+                                 ) -> tuple[np.ndarray, np.ndarray, dict]:
+    """Split heldout windows by source file, never by individual augmented row."""
+    groups: dict[str, list[int]] = {}
+    for i, src in enumerate(sources):
+        group = src.rsplit(":", 1)[-1] if ":" in src else src
+        groups.setdefault(group, []).append(i)
+
+    calib, metric = [], []
+    for group, idxs in sorted(groups.items()):
+        h = int(hashlib.sha1(group.encode("utf-8")).hexdigest()[:8], 16)
+        (calib if (h % 100) < 50 else metric).extend(idxs)
+
+    if not calib or not metric:
+        calib, metric = [], []
+        for n, group in enumerate(sorted(groups)):
+            (calib if n % 2 == 0 else metric).extend(groups[group])
+
+    if not calib or not metric:
+        raise RuntimeError("heldout split needs at least two source groups")
+
+    meta = {"heldout_source_groups": len(groups),
+            "heldout_calib_windows": len(calib),
+            "heldout_metric_windows": len(metric)}
+    return (np.asarray(sorted(calib), dtype=np.int64),
+            np.asarray(sorted(metric), dtype=np.int64),
+            meta)
+
+
 # ------------------------------------------------------------ training
-def train_one_seed(seed: int, Xtr, Ytr, Xva, Yva, device: str,
+def train_one_seed(seed: int, Xtr, Ytr, X_calib, Y_calib, X_metric, Y_metric,
+                   device: str,
                    epochs: int, batch_size: int, lr: float, min_lr: float,
                    log=print) -> tuple[MotoreV2CNN, dict]:
     torch.manual_seed(seed)
@@ -138,7 +197,7 @@ def train_one_seed(seed: int, Xtr, Ytr, Xva, Yva, device: str,
             opt.step()
             tot += float(loss.detach()) * len(idx)
         sched.step()
-        m = evaluate(model, Xva, Yva)
+        m = evaluate_calibrated(model, X_calib, Y_calib, X_metric, Y_metric)
         marker = ""
         if m["selection"] > best["selection"]:
             best = {k: v for k, v in m.items() if k != "probs"}
@@ -148,7 +207,7 @@ def train_one_seed(seed: int, Xtr, Ytr, Xva, Yva, device: str,
             marker = "  <-- best"
         if epoch % 5 == 0 or marker:
             log(f"  ep {epoch:3d}  loss {tot / n:.4f}  "
-                f"f1 {m['macro_f1']:.3f}  cleanFP {m['clean_fp']:.3f}  "
+                f"calF1 {m['macro_f1']:.3f}  calCleanFP {m['clean_fp']:.3f}  "
                 f"sel {m['selection']:.3f}{marker}")
     log(f"  seed {seed}: best ep {best['epoch']} sel {best['selection']:.3f} "
         f"({time.time() - t0:.0f}s)")
@@ -226,32 +285,47 @@ def main() -> int:
     print("train set:")
     Xtr, Ytr, src_tr = build_or_load(tr_cfg, cache)
     print("val/calib set:")
-    Xva, Yva, _ = build_or_load(va_cfg, cache)
+    Xva, Yva, src_va = build_or_load(va_cfg, cache)
+    calib_idx, metric_idx, heldout_meta = heldout_calib_metric_indices(src_va)
+    X_calib, Y_calib = Xva[calib_idx], Yva[calib_idx]
+    X_metric, Y_metric = Xva[metric_idx], Yva[metric_idx]
     pos_frac = Ytr[:, :NUM_CLASSES].sum(axis=0) / len(Ytr)
     print(f"train {Xtr.shape}, val {Xva.shape}")
+    print("heldout split:",
+          f"calib {X_calib.shape[0]} win / metric {X_metric.shape[0]} win",
+          f"from {heldout_meta['heldout_source_groups']} source groups")
+    print("A6 external benchmark remains the final gate; "
+          "training selection only chooses checkpoints.")
     print("train pos fraction per class:",
           {PROBLEM_NAMES_V2[c][:4]: round(float(pos_frac[c]), 3)
            for c in range(NUM_CLASSES)})
 
     Xtr_t = torch.from_numpy(Xtr).to(device)
     Ytr_t = torch.from_numpy(Ytr).to(device)
-    Xva_t = torch.from_numpy(Xva).to(device)
-    Yva_t = torch.from_numpy(Yva).to(device)
+    Xcal_t = torch.from_numpy(X_calib).to(device)
+    Ycal_t = torch.from_numpy(Y_calib).to(device)
+    Xmet_t = torch.from_numpy(X_metric).to(device)
+    Ymet_t = torch.from_numpy(Y_metric).to(device)
 
     meta = {"epochs": epochs, "batch_size": args.batch_size, "lr": args.lr,
             "min_lr": args.min_lr, "train_windows": int(Xtr.shape[0]),
             "val_windows": int(Xva.shape[0]),
+            **heldout_meta,
             "dataset_train_key": tr_cfg.key(), "dataset_val_key": va_cfg.key(),
             "loss_weights": {"class": 1.0, "presence": 0.3, "freq": 0.5}}
 
     results = {}
     for seed in [int(s) for s in args.seeds.split(",")]:
         print(f"\n== seed {seed} ==")
-        model, best = train_one_seed(seed, Xtr_t, Ytr_t, Xva_t, Yva_t, device,
+        model, best = train_one_seed(seed, Xtr_t, Ytr_t,
+                                     Xcal_t, Ycal_t, Xmet_t, Ymet_t, device,
                                      epochs, args.batch_size, args.lr,
                                      args.min_lr)
-        final = evaluate(model.to(device), Xva_t, Yva_t)
-        ths, pres = calibrate(final["probs"], Yva)
+        calib_probs = predict_probs(model.to(device), Xcal_t)
+        ths, pres = calibrate(calib_probs, Y_calib)
+        final = evaluate(model.to(device), Xmet_t, Ymet_t, ths)
+        best["export_metric_f1"] = final["macro_f1"]
+        best["export_metric_clean_fp"] = final["clean_fp"]
         path = export_candidate(model, seed, best, ths, pres,
                                 Path(args.out), meta)
         print(f"  thresholds: "
