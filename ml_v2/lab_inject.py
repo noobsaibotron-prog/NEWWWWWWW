@@ -20,6 +20,7 @@ import numpy as np
 
 NUM_PROBLEMS = 8
 MEL_NUM_BANDS = 64
+SYNTH_HF_MIN_DB = -60.0  # A2 rawDb is FFT-scaled; this is audible HF content.
 
 # ---- ml/dataset.py: class bands (product-v2 order: Res, Harsh, Mud, Sib,
 # Boom, Thin, Boxy, Dull) --------------------------------------------------
@@ -155,7 +156,7 @@ def synth_harsh_sib_windows_db(win_db: np.ndarray, sr: float,
                                rng: np.random.Generator
                                ) -> list[tuple[int, np.ndarray, float]]:
     """Same-file synth axis: raw HF synth vs harsh 2-4 kHz vs sib 6-12 kHz."""
-    if float(band_series(win_db, sr, 4000.0, min(12000.0, sr * 0.45)).mean()) <= -40.0:
+    if float(band_series(win_db, sr, 4000.0, min(12000.0, sr * 0.45)).max()) <= SYNTH_HF_MIN_DB:
         return []
 
     out: list[tuple[int, np.ndarray, float]] = []

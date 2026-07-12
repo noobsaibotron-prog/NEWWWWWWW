@@ -212,6 +212,7 @@ def build_windows(cfg: BuildConfig, data_root: Path = DATA_ROOT_DEFAULT,
     clean_seen = 0
     colored_clean = 0
     synth_seen = 0
+    synth_hf_seen = 0
     synth_harsh_pairs = 0
     real_resonance = 0
 
@@ -348,16 +349,17 @@ def build_windows(cfg: BuildConfig, data_root: Path = DATA_ROOT_DEFAULT,
             w0 = chosen[0]
             if dom == "clean_synth":
                 synth_seen += 1
-                if (cfg.synth_harsh_every > 0
-                        and (synth_seen - 1) % cfg.synth_harsh_every == 0):
-                    synth_axis = li.synth_harsh_sib_windows_db(w0, sr, rng)
-                    if synth_axis:
-                        out.append(_neg(fm(w0), f"{dom}-synthaxisraw:{name}"))
-                        for p, boosted, target in synth_axis:
-                            out.append(WindowSample(
-                                fm(boosted), _make_target(p, target, ranges),
-                                f"{dom}+synthaxis{li.PROBLEM_NAMES_V2[p]}:{name}"))
-                            synth_harsh_pairs += 1
+                synth_axis = li.synth_harsh_sib_windows_db(w0, sr, rng)
+                if synth_axis:
+                    synth_hf_seen += 1
+                if (cfg.synth_harsh_every > 0 and synth_axis
+                        and (synth_hf_seen - 1) % cfg.synth_harsh_every == 0):
+                    out.append(_neg(fm(w0), f"{dom}-synthaxisraw:{name}"))
+                    for p, boosted, target in synth_axis:
+                        out.append(WindowSample(
+                            fm(boosted), _make_target(p, target, ranges),
+                            f"{dom}+synthaxis{li.PROBLEM_NAMES_V2[p]}:{name}"))
+                        synth_harsh_pairs += 1
             for _ in range(cfg.contrastive_per_file):
                 for p in axis:
                     spec_p = next(s for s in specs if s.problem == p)
@@ -384,7 +386,7 @@ def build_windows(cfg: BuildConfig, data_root: Path = DATA_ROOT_DEFAULT,
     log(f"  tier2 windows: {len(out) - n_vocal}")
     log(f"  colored-clean negatives: {colored_clean} / {clean_seen} raw-clean")
     log(f"  synth harsh/sib axis positives: {synth_harsh_pairs} "
-        f"from {synth_seen} clean_synth files")
+        f"from {synth_hf_seen}/{synth_seen} clean_synth HF-rich files")
     log(f"  real resonance positives: {real_resonance}")
     return out
 
