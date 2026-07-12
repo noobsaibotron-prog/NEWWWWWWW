@@ -100,6 +100,43 @@ def scale_band_db(frame_db: np.ndarray, sample_rate: float, lo_hz: float,
     return frame_db + delta_db * win
 
 
+def color_window_db(win_db: np.ndarray, sr: float, rng: np.random.Generator,
+                    ranges: list[tuple[float, float]],
+                    hf_dead: bool = False,
+                    gain_db_range: tuple[float, float] = (2.0, 4.0),
+                    q_range: tuple[float, float] = (0.5, 2.0)
+                    ) -> np.ndarray | None:
+    """Mild broad EQ colour for all-zero hard negatives.
+
+    Q is implemented explicitly as bandwidth = center / Q. These negatives
+    teach colour != problem, so the band is intentionally wide and low gain.
+    """
+    nyq_limit = sr * 0.45
+    hard_hi = min(nyq_limit, 8000.0) if hf_dead else nyq_limit
+    eligible: list[tuple[float, float]] = []
+    for lo, hi in ranges:
+        hi_c = min(float(hi), hard_hi)
+        lo_c = max(float(lo), 20.0)
+        if hi_c > lo_c * 1.05:
+            eligible.append((lo_c, hi_c))
+    if not eligible:
+        return None
+
+    lo, hi = eligible[int(rng.integers(0, len(eligible)))]
+    center = float(lo * (hi / lo) ** rng.uniform())
+    q = float(rng.uniform(*q_range))
+    bandwidth = max(20.0, center / max(q, 1.0e-6))
+    band_lo = max(lo, center - 0.5 * bandwidth, 20.0)
+    band_hi = min(hi, center + 0.5 * bandwidth, hard_hi)
+    if band_hi <= band_lo * 1.05:
+        band_lo, band_hi = lo, hi
+    gain = float(rng.uniform(*gain_db_range))
+    return np.stack([
+        scale_band_db(f, sr, band_lo, band_hi, gain, edge_octaves=0.5)
+        for f in win_db
+    ])
+
+
 def band_series(win_db: np.ndarray, sr: float, lo: float, hi: float) -> np.ndarray:
     """ml/temporal.py: mean dB in [lo,hi] per frame -> [W]."""
     n_bins = win_db.shape[1]

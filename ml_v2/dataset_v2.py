@@ -18,6 +18,8 @@ Recipes per domain (all deterministic given seed + manifest):
   - clean_*:    ml/tier2.py pairing — raw neg + injectable random pos; plus
                 M9.3 contrastive axis pairs (CONTRASTIVE_AXIS_PROBLEMS) and
                 ring-vs-transient pairs on clean_drums.
+  - coloured clean: mild broad EQ variants, all-zero labels, teaching
+                colour != problem.
   - hf_negative: all-zero label, oversampled x3 in train (sr >= 32k only).
 
 Split discipline: rows come from MANIFEST_V2.csv (A1-certified); sha256 dedup;
@@ -186,6 +188,7 @@ class BuildConfig:
     hf_negative_repeat: int = 3
     contrastive_per_file: int = 1
     ring_per_file: int = 1
+    colored_clean_every: int = 2      # one mild colour negative per N raw-clean windows
     max_vocal_files: int = 0          # 0 = no cap (cap applies AFTER per-singer pick)
     max_tier2_files_per_domain: int = 0
 
@@ -201,6 +204,22 @@ def build_windows(cfg: BuildConfig, data_root: Path = DATA_ROOT_DEFAULT,
     specs = li.injections_for("product-v2")
     rows = manifest_rows(cfg.split, manifest)
     out: list[WindowSample] = []
+    clean_seen = 0
+    colored_clean = 0
+
+    def add_raw_clean(win_db: np.ndarray, sr: float, fm: FastMel,
+                      source: str, hf_dead: bool = False) -> None:
+        nonlocal clean_seen, colored_clean
+        out.append(_neg(fm(win_db), source))
+        clean_seen += 1
+        if cfg.colored_clean_every <= 0:
+            return
+        if clean_seen % cfg.colored_clean_every != 0:
+            return
+        coloured = li.color_window_db(win_db, sr, rng, ranges, hf_dead=hf_dead)
+        if coloured is not None:
+            out.append(_neg(fm(coloured), f"{source}+colored"))
+            colored_clean += 1
 
     # ---------------- vocal (temporal_real recipe) ----------------
     by_singer: dict[str, list[dict]] = {}
@@ -224,7 +243,8 @@ def build_windows(cfg: BuildConfig, data_root: Path = DATA_ROOT_DEFAULT,
             name = Path(r["path"]).name
             for w in top_energy_windows(wins, sr, 100.0, 10000.0,
                                         cfg.windows_per_clip):
-                out.append(_neg(fm(w), f"vox-raw:{name}"))
+                add_raw_clean(w, sr, fm, f"vox-raw:{name}",
+                              hf_dead=(r.get("hf_dead") == "1"))
                 inj = specs[int(rng.integers(0, len(specs)))]
                 got = li.inject_window_db(w, sr, rng, inj)
                 if got is not None:
@@ -281,7 +301,8 @@ def build_windows(cfg: BuildConfig, data_root: Path = DATA_ROOT_DEFAULT,
                     for _ in range(reps):
                         out.append(_neg(mel_raw, f"hfneg:{name}"))
                     continue
-                out.append(_neg(mel_raw, f"{dom}-clean:{name}"))
+                add_raw_clean(w, sr, fm, f"{dom}-clean:{name}",
+                              hf_dead=(r.get("hf_dead") == "1"))
                 candidates = [s for s in specs if li.injectable(s, sr)]
                 if candidates:
                     inj = candidates[int(rng.integers(0, len(candidates)))]
@@ -319,6 +340,7 @@ def build_windows(cfg: BuildConfig, data_root: Path = DATA_ROOT_DEFAULT,
                             f"{dom}+ring:{name}"))
                         out.append(_neg(fm(w0), f"{dom}-ringraw:{name}"))
     log(f"  tier2 windows: {len(out) - n_vocal}")
+    log(f"  colored-clean negatives: {colored_clean} / {clean_seen} raw-clean")
     return out
 
 
