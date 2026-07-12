@@ -104,6 +104,7 @@ def scale_band_db(frame_db: np.ndarray, sample_rate: float, lo_hz: float,
 def color_window_db(win_db: np.ndarray, sr: float, rng: np.random.Generator,
                     ranges: list[tuple[float, float]],
                     hf_dead: bool = False,
+                    max_hz: float = 6000.0,
                     gain_db_range: tuple[float, float] = (2.0, 4.0),
                     q_range: tuple[float, float] = (0.5, 2.0)
                     ) -> np.ndarray | None:
@@ -112,7 +113,7 @@ def color_window_db(win_db: np.ndarray, sr: float, rng: np.random.Generator,
     Q is implemented explicitly as bandwidth = center / Q. These negatives
     teach colour != problem, so the band is intentionally wide and low gain.
     """
-    nyq_limit = sr * 0.45
+    nyq_limit = min(sr * 0.45, max_hz)
     hard_hi = min(nyq_limit, 8000.0) if hf_dead else nyq_limit
     eligible: list[tuple[float, float]] = []
     for lo, hi in ranges:
