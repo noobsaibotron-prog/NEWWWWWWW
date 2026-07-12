@@ -41,6 +41,9 @@ FSL_METADATA = DATA_ROOT / "downloads" / "extracted" / "metadata.json"
 PERC_LICENSES = DATA_ROOT / "downloads" / "percussive_licenses.txt"
 JUDGE_DIR = Path(os.environ.get("AIEQ_JUDGE_DIR",
                                 str(Path.home() / "Desktop" / "AIEQ_Ableton_Test_Clips")))
+# Vocal holdout (the V-SIB/V-CLN/V-RES triplet + male clean): judge material,
+# must be OUTSIDE the corpus exactly like the Ableton clips.
+VOCAL_HOLDOUT_GLOB = str(Path.home() / "Desktop" / "test_voce_*.wav")
 
 HERE = Path(__file__).resolve().parent
 OUT_DIR = HERE / "data"
@@ -257,14 +260,16 @@ def main() -> int:
     for e in dup_cross_split:
         problems.append(f"DUPLICATE ACROSS SPLITS (leakage): {e}")
 
-    # --- anti-leakage: judge clips must be OUTSIDE the corpus ---
+    # --- anti-leakage: judge clips + vocal holdout must be OUTSIDE the corpus ---
+    import glob as _glob
     judge_files = sorted(JUDGE_DIR.rglob("*.wav")) if JUDGE_DIR.exists() else []
+    vocal_holdout = sorted(Path(p) for p in _glob.glob(VOCAL_HOLDOUT_GLOB))
     judge_overlap = []
     corpus_hashes = set(by_hash)
-    for jp in judge_files:
+    for jp in judge_files + vocal_holdout:
         if sha256_of(jp) in corpus_hashes:
             judge_overlap.append(str(jp))
-            problems.append(f"JUDGE CLIP inside corpus (leakage): {jp}")
+            problems.append(f"JUDGE/HOLDOUT CLIP inside corpus (leakage): {jp}")
 
     # --- write manifest ---
     OUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -335,7 +340,8 @@ def main() -> int:
     lines.append(f"- Duplicati sha256 same-split (warning): {len(dup_same_split)}")
     for e in dup_same_split[:10]:
         lines.append(f"    - {e}")
-    lines.append(f"- Clip giudice ({len(judge_files)} wav in `{JUDGE_DIR.name}`) "
+    lines.append(f"- Clip giudice ({len(judge_files)} wav in `{JUDGE_DIR.name}`) + "
+                 f"vocal holdout ({len(vocal_holdout)} `test_voce_*.wav`) "
                  f"dentro il corpus: **{len(judge_overlap)}**"
                  + (" ← FAIL" if judge_overlap else " ✅"))
     lines.append("")

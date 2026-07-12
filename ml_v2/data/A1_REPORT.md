@@ -49,11 +49,18 @@ Cross-check upstream (freesound per-id): **700 commercial-ok** (di cui 343 exact
     - 4554c7002a5b…: real_audio/vocalset_extracted/FULL/female2/scales/slow_piano/f2_scales_f_slow_piano_u(1).wav | real_audio/vocalset_extracted/FULL/female2/scales/slow_piano/f2_scales_f_slow_piano_u.wav
     - 3ea60e668c22…: real_audio/vocalset_extracted/FULL/female2/scales/straight/f2_scales_straight_u(1).wav | real_audio/vocalset_extracted/FULL/female2/scales/straight/f2_scales_straight_u.wav
     - a261df2163a5…: real_audio/vocalset_extracted/FULL/female2/scales/vibrato/f2_scales_vibrato_a(1).wav | real_audio/vocalset_extracted/FULL/female2/scales/vibrato/f2_scales_vibrato_a.wav
-- Clip giudice (8 wav in `AIEQ_Ableton_Test_Clips`) dentro il corpus: **0** ✅
+- Clip giudice (8 wav in `AIEQ_Ableton_Test_Clips`) + vocal holdout (6 `test_voce_*.wav`) dentro il corpus: **4** ← FAIL
 
 ## Split policy (deterministica, zero RNG)
 
 - vocal: singer-disjoint. test = ('female9', 'female8', 'male11', 'male10') (INVARIATO dal lab M6-M9), heldout-calibrazione = ('female7', 'male9'), train = restanti.
 - tier2: group-disjoint (stems+mix stesso track = stesso gruppo), sha1(group) mod 100 → <70 train, <85 heldout, resto test.
 
-**ESITO: VERDE** — nessuna violazione. Corpus certificato per A4.
+## ⚠️ VIOLAZIONI
+
+- JUDGE/HOLDOUT CLIP inside corpus (leakage): /Users/marco/Desktop/test_voce_pulita_femmina 2.wav
+- JUDGE/HOLDOUT CLIP inside corpus (leakage): /Users/marco/Desktop/test_voce_pulita_femmina.wav
+- JUDGE/HOLDOUT CLIP inside corpus (leakage): /Users/marco/Desktop/test_voce_pulita_maschio 2.wav
+- JUDGE/HOLDOUT CLIP inside corpus (leakage): /Users/marco/Desktop/test_voce_pulita_maschio.wav
+
+**ESITO: ROSSO** — risolvere prima di A4.
