@@ -137,6 +137,48 @@ def color_window_db(win_db: np.ndarray, sr: float, rng: np.random.Generator,
     ])
 
 
+def q_band_window_db(win_db: np.ndarray, sr: float, center_hz: float,
+                     q: float, gain_db: float,
+                     edge_octaves: float = 0.25) -> np.ndarray | None:
+    bandwidth = max(20.0, center_hz / max(q, 1.0e-6))
+    lo = max(20.0, center_hz - 0.5 * bandwidth)
+    hi = min(sr * 0.45, center_hz + 0.5 * bandwidth)
+    if hi <= lo * 1.05:
+        return None
+    return np.stack([
+        scale_band_db(f, sr, lo, hi, gain_db, edge_octaves=edge_octaves)
+        for f in win_db
+    ])
+
+
+def synth_harsh_sib_windows_db(win_db: np.ndarray, sr: float,
+                               rng: np.random.Generator
+                               ) -> list[tuple[int, np.ndarray, float]]:
+    """Same-file synth axis: raw HF synth vs harsh 2-4 kHz vs sib 6-12 kHz."""
+    if float(band_series(win_db, sr, 4000.0, min(12000.0, sr * 0.45)).mean()) <= -40.0:
+        return []
+
+    out: list[tuple[int, np.ndarray, float]] = []
+    harsh_hi = min(4000.0, sr * 0.45)
+    if harsh_hi > 2000.0 * 1.05:
+        center = float(2000.0 * (harsh_hi / 2000.0) ** rng.uniform())
+        boosted = q_band_window_db(win_db, sr, center,
+                                   float(rng.uniform(1.0, 2.0)),
+                                   float(rng.uniform(6.0, 10.0)))
+        if boosted is not None:
+            out.append((1, boosted, center))
+
+    sib_hi = min(12000.0, sr * 0.45)
+    if sib_hi > 6000.0 * 1.05:
+        center = float(6000.0 * (sib_hi / 6000.0) ** rng.uniform())
+        boosted = q_band_window_db(win_db, sr, center,
+                                   float(rng.uniform(2.0, 4.0)),
+                                   float(rng.uniform(6.0, 10.0)))
+        if boosted is not None:
+            out.append((3, boosted, center))
+    return out
+
+
 def band_series(win_db: np.ndarray, sr: float, lo: float, hi: float) -> np.ndarray:
     """ml/temporal.py: mean dB in [lo,hi] per frame -> [W]."""
     n_bins = win_db.shape[1]

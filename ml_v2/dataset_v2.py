@@ -18,6 +18,7 @@ Recipes per domain (all deterministic given seed + manifest):
   - clean_*:    ml/tier2.py pairing — raw neg + injectable random pos; plus
                 M9.3 contrastive axis pairs (CONTRASTIVE_AXIS_PROBLEMS) and
                 ring-vs-transient pairs on clean_drums.
+  - clean_synth: extra same-file harsh-vs-sibilance axis on HF-rich windows.
   - coloured clean: mild broad EQ variants, all-zero labels, teaching
                 colour != problem.
   - hf_negative: all-zero label, oversampled x3 in train (sr >= 32k only).
@@ -189,6 +190,7 @@ class BuildConfig:
     contrastive_per_file: int = 1
     ring_per_file: int = 1
     colored_clean_every: int = 2      # one mild colour negative per N raw-clean windows
+    synth_harsh_every: int = 4        # one synth harsh/sib triplet per N clean_synth files
     max_vocal_files: int = 0          # 0 = no cap (cap applies AFTER per-singer pick)
     max_tier2_files_per_domain: int = 0
 
@@ -206,6 +208,8 @@ def build_windows(cfg: BuildConfig, data_root: Path = DATA_ROOT_DEFAULT,
     out: list[WindowSample] = []
     clean_seen = 0
     colored_clean = 0
+    synth_seen = 0
+    synth_harsh_pairs = 0
 
     def add_raw_clean(win_db: np.ndarray, sr: float, fm: FastMel,
                       source: str, hf_dead: bool = False) -> None:
@@ -316,6 +320,18 @@ def build_windows(cfg: BuildConfig, data_root: Path = DATA_ROOT_DEFAULT,
                 continue
             # M9.3 contrastive axis pairs on the top window
             w0 = chosen[0]
+            if dom == "clean_synth":
+                synth_seen += 1
+                if (cfg.synth_harsh_every > 0
+                        and (synth_seen - 1) % cfg.synth_harsh_every == 0):
+                    synth_axis = li.synth_harsh_sib_windows_db(w0, sr, rng)
+                    if synth_axis:
+                        out.append(_neg(fm(w0), f"{dom}-synthaxisraw:{name}"))
+                        for p, boosted, target in synth_axis:
+                            out.append(WindowSample(
+                                fm(boosted), _make_target(p, target, ranges),
+                                f"{dom}+synthaxis{li.PROBLEM_NAMES_V2[p]}:{name}"))
+                            synth_harsh_pairs += 1
             for _ in range(cfg.contrastive_per_file):
                 for p in axis:
                     spec_p = next(s for s in specs if s.problem == p)
@@ -341,6 +357,8 @@ def build_windows(cfg: BuildConfig, data_root: Path = DATA_ROOT_DEFAULT,
                         out.append(_neg(fm(w0), f"{dom}-ringraw:{name}"))
     log(f"  tier2 windows: {len(out) - n_vocal}")
     log(f"  colored-clean negatives: {colored_clean} / {clean_seen} raw-clean")
+    log(f"  synth harsh/sib axis positives: {synth_harsh_pairs} "
+        f"from {synth_seen} clean_synth files")
     return out
 
 
