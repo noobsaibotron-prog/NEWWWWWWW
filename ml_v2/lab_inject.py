@@ -385,6 +385,52 @@ def persistence_scores(win_db: np.ndarray, sr: float) -> tuple[float, float]:
     return float(pers[b]), float(mean_res[b]) / 10.0
 
 
+def _longest_true_run(mask: np.ndarray) -> int:
+    best = cur = 0
+    for v in mask:
+        cur = cur + 1 if bool(v) else 0
+        best = max(best, cur)
+    return best
+
+
+def detect_real_resonance_window_db(win_db: np.ndarray, sr: float
+                                    ) -> tuple[float, float] | None:
+    """High-confidence real resonance detector for train-time labels only.
+
+    Criteria: narrow residual peak, >=6 dB local prominence, >=5 consecutive
+    frames, 120 Hz-5 kHz, with per-frame detrending to reject broad tilt.
+    Returns (target_freq_hz, mean_prominence_db) when accepted.
+    """
+    residual = _mel_residuals_window(win_db, sr)
+    centers = mel_centers(sr)
+    zone = np.flatnonzero((centers >= 120.0) & (centers <= 5000.0))
+    best: tuple[float, float, int] | None = None
+    for b in zone:
+        if b < 3 or b + 3 >= residual.shape[1]:
+            continue
+        side = np.concatenate([residual[:, b - 3:b - 1],
+                               residual[:, b + 2:b + 4]], axis=1)
+        side_mean = side.mean(axis=1)
+        prom = residual[:, b] - side_mean
+        peak = residual[:, b]
+        immediate = np.stack([residual[:, b - 1], residual[:, b + 1]], axis=1)
+        outer = np.stack([residual[:, b - 2], residual[:, b + 2]], axis=1)
+        # Width guard: at most one immediate neighbour may be close to the peak,
+        # and the outer neighbours must already have dropped.
+        too_wide = ((immediate >= (peak[:, None] - 3.0)).sum(axis=1) > 1) \
+            | (outer.max(axis=1) >= (peak - 3.0))
+        hit = (prom >= 6.0) & ~too_wide
+        run = _longest_true_run(hit)
+        if run < 5:
+            continue
+        mean_prom = float(prom[hit].mean())
+        if best is None or mean_prom > best[1]:
+            best = (float(centers[b]), mean_prom, run)
+    if best is None:
+        return None
+    return best[0], best[1]
+
+
 def ring_window_db(win_db: np.ndarray, sr: float, rng: np.random.Generator,
                    spec: InjectionSpec) -> tuple[np.ndarray, float] | None:
     """ml/temporal.py _ring_window, dB-domain half: decaying narrow-band boost

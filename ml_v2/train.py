@@ -286,6 +286,14 @@ def main() -> int:
     Xtr, Ytr, src_tr = build_or_load(tr_cfg, cache)
     print("val/calib set:")
     Xva, Yva, src_va = build_or_load(va_cfg, cache)
+    real_res_train = sum(s.startswith("clean_drums+realres:") for s in src_tr)
+    real_res_heldout = sum(s.startswith("clean_drums+realres:") for s in src_va)
+    print(f"real resonance positives: train {real_res_train}, "
+          f"heldout {real_res_heldout}")
+    if not args.quick and real_res_train < 50:
+        raise SystemExit("A4b stop: real-resonance train positives < 50; "
+                         "provide 5-10 known real-resonance files before "
+                         "full Round 4.")
     calib_idx, metric_idx, heldout_meta = heldout_calib_metric_indices(src_va)
     X_calib, Y_calib = Xva[calib_idx], Yva[calib_idx]
     X_metric, Y_metric = Xva[metric_idx], Yva[metric_idx]
@@ -310,6 +318,8 @@ def main() -> int:
     meta = {"epochs": epochs, "batch_size": args.batch_size, "lr": args.lr,
             "min_lr": args.min_lr, "train_windows": int(Xtr.shape[0]),
             "val_windows": int(Xva.shape[0]),
+            "real_resonance_train": real_res_train,
+            "real_resonance_heldout": real_res_heldout,
             **heldout_meta,
             "dataset_train_key": tr_cfg.key(), "dataset_val_key": va_cfg.key(),
             "loss_weights": {"class": 1.0, "presence": 0.3, "freq": 0.5}}

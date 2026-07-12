@@ -19,6 +19,8 @@ Recipes per domain (all deterministic given seed + manifest):
                 M9.3 contrastive axis pairs (CONTRASTIVE_AXIS_PROBLEMS) and
                 ring-vs-transient pairs on clean_drums.
   - clean_synth: extra same-file harsh-vs-sibilance axis on HF-rich windows.
+  - clean_drums: high-confidence real resonance positives from raw resonant
+                percussive windows, never from Ableton judge clips.
   - coloured clean: mild broad EQ variants, all-zero labels, teaching
                 colour != problem.
   - hf_negative: all-zero label, oversampled x3 in train (sr >= 32k only).
@@ -191,6 +193,7 @@ class BuildConfig:
     ring_per_file: int = 1
     colored_clean_every: int = 2      # one mild colour negative per N raw-clean windows
     synth_harsh_every: int = 4        # one synth harsh/sib triplet per N clean_synth files
+    real_resonance_per_file: int = 10
     max_vocal_files: int = 0          # 0 = no cap (cap applies AFTER per-singer pick)
     max_tier2_files_per_domain: int = 0
 
@@ -210,6 +213,7 @@ def build_windows(cfg: BuildConfig, data_root: Path = DATA_ROOT_DEFAULT,
     colored_clean = 0
     synth_seen = 0
     synth_harsh_pairs = 0
+    real_resonance = 0
 
     def add_raw_clean(win_db: np.ndarray, sr: float, fm: FastMel,
                       source: str, hf_dead: bool = False) -> None:
@@ -222,7 +226,12 @@ def build_windows(cfg: BuildConfig, data_root: Path = DATA_ROOT_DEFAULT,
             return
         coloured = li.color_window_db(win_db, sr, rng, ranges, hf_dead=hf_dead)
         if coloured is not None:
-            out.append(_neg(fm(coloured), f"{source}+colored"))
+            if ":" in source:
+                prefix, name = source.rsplit(":", 1)
+                coloured_source = f"{prefix}+colored:{name}"
+            else:
+                coloured_source = f"{source}+colored"
+            out.append(_neg(fm(coloured), coloured_source))
             colored_clean += 1
 
     # ---------------- vocal (temporal_real recipe) ----------------
@@ -297,7 +306,24 @@ def build_windows(cfg: BuildConfig, data_root: Path = DATA_ROOT_DEFAULT,
             name = Path(r["path"]).name
             chosen = top_energy_windows(wins, sr, 100.0, min(10000.0, sr * 0.45),
                                         cfg.tier2_windows_per_file)
+            real_res_ids: set[int] = set()
+            if dom == "clean_drums" and cfg.real_resonance_per_file > 0:
+                candidates_res = top_energy_windows(
+                    wins, sr, 120.0, min(5000.0, sr * 0.45),
+                    cfg.real_resonance_per_file)
+                for w_res in candidates_res:
+                    detected = li.detect_real_resonance_window_db(w_res, sr)
+                    if detected is None:
+                        continue
+                    target, _prom = detected
+                    out.append(WindowSample(
+                        fm(w_res), _make_target(0, target, ranges),
+                        f"{dom}+realres:{name}"))
+                    real_res_ids.add(id(w_res))
+                    real_resonance += 1
             for w in chosen:
+                if id(w) in real_res_ids:
+                    continue
                 mel_raw = fm(w)
                 if is_hf:
                     reps = max(1, cfg.hf_negative_repeat) \
@@ -359,6 +385,7 @@ def build_windows(cfg: BuildConfig, data_root: Path = DATA_ROOT_DEFAULT,
     log(f"  colored-clean negatives: {colored_clean} / {clean_seen} raw-clean")
     log(f"  synth harsh/sib axis positives: {synth_harsh_pairs} "
         f"from {synth_seen} clean_synth files")
+    log(f"  real resonance positives: {real_resonance}")
     return out
 
 
