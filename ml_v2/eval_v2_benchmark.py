@@ -186,32 +186,44 @@ def detail(occ: dict[str, float]) -> str:
     return "; ".join(f"{name} {value:5.1%}" for name, value in hot) if hot else "(none)"
 
 
-def check_core(num: str, occ: dict[str, float]) -> tuple[bool, list[str]]:
+def check_core(num: str, occ: dict[str, float],
+               masked: frozenset = frozenset()) -> tuple[str, list[str]]:
     reasons: list[str] = []
     if num == "01":
         for name, value in occ.items():
+            if name in masked:
+                continue
             if value > CLEAN_TARGET:
                 reasons.append(f"{name} {value:.1%} > {CLEAN_TARGET:.0%}")
             if value > CLEAN_HARD_MAX:
                 reasons.append(f"HARD-CLEAN {name} {value:.1%} > {CLEAN_HARD_MAX:.0%}")
-    expected = CORE_TARGETS[num]
+        return ("FAIL" if reasons else "PASS"), reasons
+    expected = tuple(n for n in CORE_TARGETS[num] if n not in masked)
+    if CORE_TARGETS[num] and not expected:
+        return "N/A", ["target heuristic-routed"]
     if expected:
         got = max(occ.get(name, 0.0) for name in expected)
         if got < MIN_OCC:
             reasons.append(f"{'/'.join(expected)} {got:.1%} < {MIN_OCC:.0%}")
-    if num == "05" and occ.get("Sibilance", 0.0) > SIB_CAP:
+    if num == "05" and "Sibilance" not in masked and occ.get("Sibilance", 0.0) > SIB_CAP:
         reasons.append(f"Sibilance {occ['Sibilance']:.1%} > {SIB_CAP:.0%}")
-    if num == "07" and occ.get("Harshness", 0.0) >= occ.get("Thinness", 0.0):
+    if (num == "07" and "Harshness" not in masked
+            and occ.get("Harshness", 0.0) >= occ.get("Thinness", 0.0)):
         reasons.append(f"Harshness {occ.get('Harshness', 0.0):.1%} >= "
                        f"Thinness {occ.get('Thinness', 0.0):.1%}")
-    return not reasons, reasons
+    return ("FAIL" if reasons else "PASS"), reasons
 
 
-def check_vocal(target: str | None, occ: dict[str, float]) -> tuple[bool, list[str]]:
+def check_vocal(target: str | None, occ: dict[str, float],
+                masked: frozenset = frozenset()) -> tuple[str, list[str]]:
+    if target is not None and target in masked:
+        return "N/A", ["target heuristic-routed"]
     sib = occ.get("Sibilance", 0.0)
     if target == "Sibilance":
-        return sib >= MIN_OCC, ([] if sib >= MIN_OCC else [f"Sibilance {sib:.1%} < {MIN_OCC:.0%}"])
-    return sib <= SIB_CAP, ([] if sib <= SIB_CAP else [f"Sibilance {sib:.1%} > {SIB_CAP:.0%}"])
+        ok = sib >= MIN_OCC
+        return ("PASS" if ok else "FAIL"), ([] if ok else [f"Sibilance {sib:.1%} < {MIN_OCC:.0%}"])
+    ok = sib <= SIB_CAP
+    return ("PASS" if ok else "FAIL"), ([] if ok else [f"Sibilance {sib:.1%} > {SIB_CAP:.0%}"])
 
 
 def neutrality_reason(path: Path) -> str | None:
@@ -276,6 +288,16 @@ def load_thresholds(args: argparse.Namespace) -> np.ndarray:
     return np.full(len(PROBLEM_NAMES), 0.5, dtype=np.float64)
 
 
+def load_masked_names(args: argparse.Namespace) -> set[str]:
+    """Classes routed to the heuristic (hybrid-core): the CNN slot is untrained,
+    so the benchmark must NOT read it. Read from provenance masked_classes."""
+    if not args.metadata:
+        return set()
+    meta = json.loads(Path(args.metadata).read_text())
+    idx = meta.get("masked_classes") or []
+    return {PROBLEM_NAMES[i] for i in idx if 0 <= i < len(PROBLEM_NAMES)}
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--model", required=True, help="RTNeural JSON model")
@@ -291,11 +313,17 @@ def main() -> int:
 
     model = RtNeuralJsonModel(Path(args.model))
     thresholds = load_thresholds(args)
+    masked = frozenset(load_masked_names(args))
+    for i, name in enumerate(PROBLEM_NAMES):
+        if name in masked:
+            thresholds[i] = np.inf          # masked slot never fires (heuristic)
     fails: list[str] = []
 
     print("\n== V2 BENCHMARK ==")
     print(f"model={args.model}")
     print("thresholds=" + ",".join(f"{x:.3f}" for x in thresholds))
+    if masked:
+        print("hybrid: masked (heuristic-routed) = " + ", ".join(sorted(masked)))
 
     print("\n[ABLETON CORE]")
     for wav in sorted(Path(args.clips).glob("*.wav")):
@@ -303,10 +331,10 @@ def main() -> int:
         if num not in CORE_TARGETS:
             continue
         occ, n = occupancy(model, wav, thresholds, args.window_step)
-        ok, reasons = check_core(num, occ)
-        if not ok:
+        status, reasons = check_core(num, occ, masked)
+        if status == "FAIL":
             fails.append(num)
-        verdict = "PASS" if ok else "FAIL(" + "; ".join(reasons) + ")"
+        verdict = status if status != "FAIL" else "FAIL(" + "; ".join(reasons) + ")"
         print(f"  {num} [{verdict:>9s}] ({n:4d} win) {detail(occ)}")
 
     print("\n[VOCAL PROBES]")
@@ -316,10 +344,10 @@ def main() -> int:
             fails.append(label)
             continue
         occ, n = occupancy(model, wav, thresholds, args.window_step)
-        ok, reasons = check_vocal(target, occ)
-        if not ok:
+        status, reasons = check_vocal(target, occ, masked)
+        if status == "FAIL":
             fails.append(label)
-        verdict = "PASS" if ok else "FAIL(" + "; ".join(reasons) + ")"
+        verdict = status if status != "FAIL" else "FAIL(" + "; ".join(reasons) + ")"
         print(f"  {label} [{verdict:>9s}] ({n:4d} win) {detail(occ)}")
 
     print("\n[ELECTRONIC RAW SET - diagnostic only]")
