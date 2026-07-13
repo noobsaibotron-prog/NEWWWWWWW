@@ -308,6 +308,8 @@ def main() -> int:
     ap.add_argument("--data-root", default=str(DEFAULT_DATA_ROOT))
     ap.add_argument("--window-step", type=int, default=16)
     ap.add_argument("--electronic-per-domain", type=int, default=10)
+    ap.add_argument("--ablate-neutral-screening", action="store_true",
+                    help="internal ablation: gate electronic raw picks without neutral screening")
     ap.add_argument("--no-fail-exit", action="store_true")
     args = ap.parse_args()
 
@@ -353,6 +355,12 @@ def main() -> int:
     print("\n[ELECTRONIC RAW SET - diagnostic only]")
     electronic_raw, electronic_neutral, electronic_excluded = select_electronic(
         Path(args.manifest), Path(args.data_root), args.electronic_per_domain)
+    if args.ablate_neutral_screening:
+        print("  INTERNAL ABLATION ACTIVE: neutral screening disabled; "
+              "gate uses raw electronic picks")
+        electronic_neutral = {domain: paths[:args.electronic_per_domain]
+                              for domain, paths in electronic_raw.items()}
+        electronic_excluded = {domain: [] for domain in electronic_raw}
     for domain, paths in electronic_raw.items():
         bad: list[str] = []
         for path in paths:

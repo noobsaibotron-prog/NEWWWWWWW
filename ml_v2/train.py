@@ -2,7 +2,7 @@
 """Motore v2 — A4 trainer (Manus spec: CLAUDE_A4_DESIGN_SPEC.md).
 
 Loss = weighted class BCE + presence BCE + MASKED Smooth-L1 on freq (§2).
-Optimizer AdamW, cosine 1e-3 -> 5e-5, batch 32, 40-50 epochs (§5).
+Optimizer AdamW, cosine 1e-3 -> 5e-5, batch 32, 150 epochs for Round 4.
 Model selection on validation: calibrated macro_f1 on a source-disjoint
 heldout_metric split - 2*max(0, calibrated clean_fp - 0.05).
 Calibration (A4.5): per-class negative-quantile thresholds @ target_fp=0.05,
@@ -24,6 +24,7 @@ Run:  python3 -m ml_v2.train --seeds 42,1337,2026
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 import hashlib
 import json
 import time
@@ -152,6 +153,67 @@ def heldout_calib_metric_indices(sources: list[str]
             meta)
 
 
+def _source_file_id(source: str) -> str:
+    return source.rsplit(":", 1)[-1] if ":" in source else source
+
+
+def _class_positive_counts(Y: np.ndarray) -> dict[str, int]:
+    counts = Y[:, :NUM_CLASSES].sum(axis=0).astype(np.int64)
+    return {PROBLEM_NAMES_V2[c]: int(counts[c]) for c in range(NUM_CLASSES)}
+
+
+def _preflight_summary(label: str, Y: np.ndarray, sources: list[str],
+                       log=print) -> dict:
+    real_res_by_file = Counter(_source_file_id(s) for s in sources
+                               if s.startswith("clean_drums+realres:"))
+    synth_by_file: dict[str, dict[str, int]] = {}
+    for s in sources:
+        if "synthaxisraw:" in s:
+            synth_by_file.setdefault(_source_file_id(s),
+                                     {"raw": 0, "harsh": 0, "sib": 0})["raw"] += 1
+        elif "+synthaxisHarshness:" in s:
+            synth_by_file.setdefault(_source_file_id(s),
+                                     {"raw": 0, "harsh": 0, "sib": 0})["harsh"] += 1
+        elif "+synthaxisSibilance:" in s:
+            synth_by_file.setdefault(_source_file_id(s),
+                                     {"raw": 0, "harsh": 0, "sib": 0})["sib"] += 1
+    synth_triplets = sum(1 for v in synth_by_file.values()
+                         if v["raw"] > 0 and v["harsh"] > 0 and v["sib"] > 0)
+    colored_clean = sum("+colored:" in s or s.endswith("+colored")
+                        for s in sources)
+    summary = {
+        "windows": int(Y.shape[0]),
+        "class_positive_counts": _class_positive_counts(Y),
+        "colored_clean_negatives": int(colored_clean),
+        "synth_harsh_triplets": int(synth_triplets),
+        "synth_axis_files": len(synth_by_file),
+        "synth_axis_positives": int(sum(v["harsh"] + v["sib"]
+                                        for v in synth_by_file.values())),
+        "real_resonance_positives": int(sum(real_res_by_file.values())),
+        "real_resonance_files": len(real_res_by_file),
+        "real_resonance_by_file": dict(sorted(real_res_by_file.items())),
+    }
+    log(f"{label} class positive counts: "
+        f"{json.dumps(summary['class_positive_counts'], sort_keys=True)}")
+    log(f"{label} A4b counts: colored-clean={colored_clean}, "
+        f"synth-triplets={synth_triplets} "
+        f"({summary['synth_axis_positives']} synth-axis positives), "
+        f"real-resonance={summary['real_resonance_positives']} "
+        f"across {summary['real_resonance_files']} files")
+    log(f"{label} real-resonance by file: "
+        f"{json.dumps(summary['real_resonance_by_file'], sort_keys=True)}")
+    return summary
+
+
+def _apply_ablation_flags(cfg: BuildConfig, args: argparse.Namespace) -> None:
+    if args.ablate_colored_clean:
+        cfg.colored_clean_every = 0
+    if args.ablate_synth_harsh:
+        cfg.synth_harsh_every = 0
+    if args.ablate_real_resonance:
+        cfg.real_resonance_per_file = 0
+
+
 # ------------------------------------------------------------ training
 def train_one_seed(seed: int, Xtr, Ytr, X_calib, Y_calib, X_metric, Y_metric,
                    device: str,
@@ -271,7 +333,7 @@ def export_candidate(model: MotoreV2CNN, seed: int, best: dict,
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--seeds", default="42,1337,2026")
-    ap.add_argument("--epochs", type=int, default=45)
+    ap.add_argument("--epochs", type=int, default=150)
     ap.add_argument("--batch-size", type=int, default=32)
     ap.add_argument("--lr", type=float, default=1e-3)
     ap.add_argument("--min-lr", type=float, default=5e-5)
@@ -281,6 +343,12 @@ def main() -> int:
     ap.add_argument("--mask-classes", default="",
                     help="comma class indices EXCLUDED from CNN loss+metrics "
                          "(hybrid-core: '3' = Sibilance -> heuristic in C++)")
+    ap.add_argument("--ablate-colored-clean", action="store_true",
+                    help="internal ablation: disable A4b colored-clean hard negatives")
+    ap.add_argument("--ablate-synth-harsh", action="store_true",
+                    help="internal ablation: disable A4b clean_synth harsh/sib axis")
+    ap.add_argument("--ablate-real-resonance", action="store_true",
+                    help="internal ablation: disable A4b real resonance labels")
     ap.add_argument("--quick", action="store_true",
                     help="smoke run: tiny dataset caps + 6 epochs")
     args = ap.parse_args()
@@ -310,14 +378,25 @@ def main() -> int:
                              hf_negative_repeat=1,
                              max_tier2_files_per_domain=10)
         epochs = 6
+    _apply_ablation_flags(tr_cfg, args)
+    _apply_ablation_flags(va_cfg, args)
+    ablations = {
+        "colored_clean": bool(args.ablate_colored_clean),
+        "synth_harsh": bool(args.ablate_synth_harsh),
+        "real_resonance": bool(args.ablate_real_resonance),
+    }
+    if any(ablations.values()):
+        print(f"INTERNAL ABLATION ACTIVE: {json.dumps(ablations, sort_keys=True)}")
 
     cache = Path(args.cache)
     print("train set:")
     Xtr, Ytr, src_tr = build_or_load(tr_cfg, cache)
     print("val/calib set:")
     Xva, Yva, src_va = build_or_load(va_cfg, cache)
-    real_res_train = sum(s.startswith("clean_drums+realres:") for s in src_tr)
-    real_res_heldout = sum(s.startswith("clean_drums+realres:") for s in src_va)
+    train_summary = _preflight_summary("train", Ytr, src_tr)
+    heldout_summary = _preflight_summary("heldout", Yva, src_va)
+    real_res_train = train_summary["real_resonance_positives"]
+    real_res_heldout = heldout_summary["real_resonance_positives"]
     print(f"real resonance positives: train {real_res_train}, "
           f"heldout {real_res_heldout}")
     if not args.quick and real_res_train < 50:
@@ -352,6 +431,9 @@ def main() -> int:
             "real_resonance_heldout": real_res_heldout,
             **heldout_meta,
             "dataset_train_key": tr_cfg.key(), "dataset_val_key": va_cfg.key(),
+            "preflight_train": train_summary,
+            "preflight_heldout": heldout_summary,
+            "ablations": ablations,
             "loss_weights": {"class": 1.0, "presence": 0.3, "freq": 0.5},
             "masked_classes": masked,
             "masked_class_names": [PROBLEM_NAMES_V2[i] for i in masked],
