@@ -649,6 +649,8 @@ option(AIEQ_ENABLE_MOTORE_V2 "Enable Motore v2 (RTNeural) bridge" OFF)
 # v2 hybrid engine installs ALONGSIDE the shipped plugin, which stays untouched.
 # Implies the RTNeural bridge in the plugin target. OFF => shipped identity.
 option(AIEQ_MOTORE_V2_EXP "Build the Motore v2 EXP listening plugin (separate identity)" OFF)
+set(AIEQ_MOTORE_V2_MODEL_JSON "" CACHE FILEPATH
+    "Optional Motore v2 RTNeural JSON copied into the EXP plugin bundle as motore_v2.json")
 if(AIEQ_MOTORE_V2_EXP)
     set(AIEQ_ENABLE_MOTORE_V2 ON CACHE BOOL "" FORCE)
 endif()
@@ -747,6 +749,41 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/Resources/Models/ml_weights.bin")
     endforeach()
 endif()
 
+# Copy the selected Motore v2 candidate into EXP plugin bundles. The runtime
+# keeps working without it, but then the EXP build intentionally falls back to
+# the heuristic-only path.
+if(AIEQ_MOTORE_V2_EXP AND AIEQ_MOTORE_V2_MODEL_JSON)
+    if(EXISTS "${AIEQ_MOTORE_V2_MODEL_JSON}")
+        foreach(_target AIEqualizerPro_VST3 AIEqualizerPro_AU AIEqualizerPro_Standalone)
+            if(TARGET ${_target})
+                add_custom_command(TARGET ${_target} POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E make_directory
+                            "$<TARGET_FILE_DIR:${_target}>/../Resources"
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                            "${AIEQ_MOTORE_V2_MODEL_JSON}"
+                            "$<TARGET_FILE_DIR:${_target}>/motore_v2.json"
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                            "${AIEQ_MOTORE_V2_MODEL_JSON}"
+                            "$<TARGET_FILE_DIR:${_target}>/../Resources/motore_v2.json"
+                    COMMENT "Copying Motore v2 EXP model into ${_target} bundle"
+                )
+            endif()
+        endforeach()
+        if(TARGET AIEqualizerPro_VST3)
+            add_custom_command(TARGET AIEqualizerPro_VST3 POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E make_directory
+                        "${CMAKE_BINARY_DIR}/AIEqualizerPro_artefacts/$<CONFIG>/VST3/${_AIEQ_NAME}.vst3/Contents/Resources"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "${AIEQ_MOTORE_V2_MODEL_JSON}"
+                        "${CMAKE_BINARY_DIR}/AIEqualizerPro_artefacts/$<CONFIG>/VST3/${_AIEQ_NAME}.vst3/Contents/Resources/motore_v2.json"
+                COMMENT "Copying Motore v2 EXP model into VST3 artefact bundle"
+            )
+        endif()
+    else()
+        message(WARNING "AIEQ_MOTORE_V2_MODEL_JSON does not exist: ${AIEQ_MOTORE_V2_MODEL_JSON}")
+    endif()
+endif()
+
 # Only add sources if target exists
 if(TARGET AIEqualizerPro)
     target_sources(AIEqualizerPro PRIVATE ${PLUGIN_SOURCES})
@@ -761,6 +798,9 @@ if(TARGET AIEqualizerPro)
             ${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/RTNeural)
         target_compile_definitions(AIEqualizerPro PRIVATE
             AIEQ_ENABLE_MOTORE_V2=1 RTNEURAL_DEFAULT_ALIGNMENT=16)
+        if(AIEQ_MOTORE_V2_EXP)
+            target_compile_definitions(AIEqualizerPro PRIVATE AIEQ_MOTORE_V2_EXP=1)
+        endif()
         message(STATUS "Motore v2 (RTNeural) bridge: ENABLED in the PLUGIN target")
     endif()
 

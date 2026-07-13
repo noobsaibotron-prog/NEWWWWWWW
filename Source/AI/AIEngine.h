@@ -515,6 +515,11 @@ private:
         float bandwidth,
         float peakHeight) const;
     void detectGenre();
+
+#if defined(AIEQ_ENABLE_MOTORE_V2) && AIEQ_ENABLE_MOTORE_V2 \
+    && defined(AIEQ_MOTORE_V2_EXP) && AIEQ_MOTORE_V2_EXP
+    void applyMotoreV2ExpRouting();
+#endif
     
     void saveAnalysisSnapshot();
     void applyProfileThresholds();
@@ -964,6 +969,7 @@ private:
     mutable std::mutex     motoreV2OutMutex;
     std::array<float, 17>  motoreV2Outputs {};
     bool motoreV2OutFresh  = false;
+    bool motoreV2HasOutput = false;
 #endif
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AIEngine)

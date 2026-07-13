@@ -1020,7 +1020,13 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
         auto appFile = juce::File::getSpecialLocation(juce::File::currentApplicationFile);
         juce::File v2json = appFile.getSiblingFile("motore_v2.json");
         if (! v2json.existsAsFile())
-            v2json = appFile.getChildFile("Contents/Resources/motore_v2.json");
+            v2json = appFile.getParentDirectory()
+                            .getSiblingFile("Resources")
+                            .getChildFile("motore_v2.json");
+        if (! v2json.existsAsFile())
+            v2json = appFile.getChildFile("Contents")
+                            .getChildFile("Resources")
+                            .getChildFile("motore_v2.json");
         const bool ok = aiEngine.loadMotoreV2Model(v2json);
         juce::Logger::writeToLog(ok
             ? "[MotoreV2] model loaded: " + v2json.getFullPathName()

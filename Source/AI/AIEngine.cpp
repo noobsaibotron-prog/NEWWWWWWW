@@ -266,11 +266,21 @@ void AIEngine::analyzeSpectrum(const std::vector<float>& spectrum, bool force)
     
     // Perform detection — routed via shouldUseMLDetection() which respects
     // DetectionBackendMode, forceMLDetectionForTests, and useMLDetection.
-    if (shouldUseMLDetection())
+    bool usedMotoreV2ExpRouting = false;
+#if defined(AIEQ_ENABLE_MOTORE_V2) && AIEQ_ENABLE_MOTORE_V2 \
+    && defined(AIEQ_MOTORE_V2_EXP) && AIEQ_MOTORE_V2_EXP
+    if (motoreV2Loaded())
+    {
+        detectProblems();            // EXP baseline keeps heuristic Sibilance/Harshness.
+        applyMotoreV2ExpRouting();   // CNN-routes only the measured Round5 core classes.
+        usedMotoreV2ExpRouting = true;
+    }
+#endif
+    if (! usedMotoreV2ExpRouting && shouldUseMLDetection())
     {
         detectProblemsWithML();
     }
-    else
+    else if (! usedMotoreV2ExpRouting)
     {
         detectProblems();
     }
@@ -4228,6 +4238,121 @@ float AIEngine::getSpectralPatternScore(ProblemType type, float centerFreq, floa
 // window. reset() + 32 forwards per window == the A3 parity contract (the last
 // forward's [17] output is the window prediction). Fed by PerceptualFrontEnd.
 //==============================================================================
+
+#if defined(AIEQ_MOTORE_V2_EXP) && AIEQ_MOTORE_V2_EXP
+void AIEngine::applyMotoreV2ExpRouting()
+{
+    struct Route
+    {
+        int classIndex = 0;
+        ProblemType type = ProblemType::None;
+        float threshold = 0.5f;
+        float loHz = 20.0f;
+        float hiHz = 20000.0f;
+        float baseGainDb = 0.0f;
+        float baseQ = 1.0f;
+    };
+
+    // Round5 candidate_s42 class order:
+    // Res, Harsh, Mud, Sib, Boom, Thin, Boxy, Dull.
+    static constexpr std::array<Route, 4> kRoutes {{
+        { 2, ProblemType::Muddiness, 0.3881837725639343f, 100.0f, 400.0f,   -2.5f, 1.0f  },
+        { 5, ProblemType::ThinSound, 0.3000000000000000f,  80.0f, 300.0f,   +2.0f, 0.71f },
+        { 6, ProblemType::Boxyness,  0.4754117429256439f, 300.0f, 800.0f,   -2.0f, 1.2f  },
+        { 7, ProblemType::DullSound, 0.3233138024806976f, 6000.0f, 16000.0f,+3.0f, 0.71f },
+    }};
+
+    std::array<float, 17> outputs {};
+    bool hasOutput = false;
+    {
+        std::lock_guard<std::mutex> lk(motoreV2OutMutex);
+        hasOutput = motoreV2Ready && motoreV2HasOutput;
+        if (hasOutput)
+            outputs = motoreV2Outputs;
+    }
+
+    auto shouldSuppress = [](ProblemType type)
+    {
+        return type != ProblemType::Harshness
+            && type != ProblemType::Sibilance;
+    };
+
+    std::lock_guard<std::mutex> lock(correctionsWriteMutex);
+    pendingCorrections.erase(
+        std::remove_if(pendingCorrections.begin(), pendingCorrections.end(),
+                       [&](const Correction& c) { return shouldSuppress(c.type); }),
+        pendingCorrections.end());
+
+    if (! hasOutput)
+        return;
+
+    auto sigmoid = [](float x)
+    {
+        if (x >= 0.0f)
+            return 1.0f / (1.0f + std::exp(-x));
+
+        const float ex = std::exp(x);
+        return ex / (1.0f + ex);
+    };
+
+    auto targetToFrequency = [](float target, float loHz, float hiHz)
+    {
+        const float t = std::isfinite(target) ? juce::jlimit(0.0f, 1.0f, target) : 0.5f;
+        return loHz * std::pow(hiHz / loHz, t);
+    };
+
+    for (const auto& route : kRoutes)
+    {
+        const float probability = sigmoid(outputs[static_cast<size_t>(route.classIndex)]);
+        if (probability <= route.threshold)
+            continue;
+
+        const float over = (probability - route.threshold) / (1.0f - route.threshold);
+        const float severity = juce::jlimit(0.15f, 1.0f, over);
+        const float gainScale = 0.45f + 0.55f * severity;
+
+        Correction c;
+        c.type = route.type;
+        c.frequency = targetToFrequency(outputs[static_cast<size_t>(9 + route.classIndex)],
+                                        route.loHz,
+                                        route.hiHz);
+        c.suggestedGain = route.baseGainDb * gainScale;
+        c.suggestedQ = route.baseQ;
+        c.severity = severity;
+        c.confidence = probability;
+        c.approved = false;
+        c.suggestedFilter = selectOptimalFilterType(c.type,
+                                                    c.frequency,
+                                                    c.frequency / juce::jmax(0.1f, c.suggestedQ),
+                                                    std::abs(c.suggestedGain));
+        if (c.suggestedFilter == Correction::FilterType::LowShelf
+            || c.suggestedFilter == Correction::FilterType::HighShelf)
+            c.suggestedQ = std::min(c.suggestedQ, 0.71f);
+
+        c.description = juce::String::formatted(
+            "%s at %.0f Hz (%s) - MotoreV2 EXP Round5: %s %.1f dB, Q: %.1f (p=%.0f%%)",
+            getProblemTypeName(c.type).toRawUTF8(),
+            c.frequency,
+            getBandName(c.frequency).toRawUTF8(),
+            getFilterTypeName(c.suggestedFilter).toRawUTF8(),
+            c.suggestedGain,
+            c.suggestedQ,
+            c.confidence * 100.0f);
+
+        pendingCorrections.push_back(c);
+    }
+
+    std::sort(pendingCorrections.begin(), pendingCorrections.end(),
+              [](const Correction& a, const Correction& b) {
+                  float priorityA = a.severity * a.confidence;
+                  float priorityB = b.severity * b.confidence;
+                  if (std::abs(priorityA - priorityB) < 0.01f)
+                      return a.severity > b.severity;
+                  return priorityA > priorityB;
+              });
+}
+#endif
+
 bool AIEngine::loadMotoreV2Model(const juce::File& jsonFile)
 {
     motoreV2Ready = jsonFile.existsAsFile()
@@ -4238,6 +4363,7 @@ bool AIEngine::loadMotoreV2Model(const juce::File& jsonFile)
         std::lock_guard<std::mutex> lk(motoreV2OutMutex);
         motoreV2Outputs.fill(0.0f);
         motoreV2OutFresh = false;
+        motoreV2HasOutput = false;
     }
     return motoreV2Ready;
 }
@@ -4271,6 +4397,7 @@ void AIEngine::pushMotoreV2Frame(const float* mel64)
     std::lock_guard<std::mutex> lk(motoreV2OutMutex);
     std::copy(out, out + 17, motoreV2Outputs.begin());
     motoreV2OutFresh = true;
+    motoreV2HasOutput = true;
 }
 
 bool AIEngine::readMotoreV2Outputs(std::array<float, 17>& out)
