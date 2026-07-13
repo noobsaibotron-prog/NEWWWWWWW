@@ -15,6 +15,10 @@
 #include <deque>
 #include <memory>
 
+#if defined(AIEQ_ENABLE_MOTORE_V2) && AIEQ_ENABLE_MOTORE_V2
+#include "MotoreV2Model.h"   // EXP hybrid CNN (RTNeural, header-only) — gated
+#endif
+
 //==============================================================================
 /**
  * AI Engine - Enhanced Intelligent frequency problem detection and correction
@@ -149,6 +153,16 @@ public:
     //==============================================================================
     AIEngine();
     ~AIEngine() = default;
+
+#if defined(AIEQ_ENABLE_MOTORE_V2) && AIEQ_ENABLE_MOTORE_V2
+    // Motore v2 (EXP hybrid): the CNN runs OFF the audio thread on a rolling
+    // 32-frame log-mel window fed by the plugin's PerceptualFrontEnd. All gated
+    // — the shipped build compiles none of this.
+    bool loadMotoreV2Model(const juce::File& jsonFile);
+    bool motoreV2Loaded() const noexcept { return motoreV2Ready; }
+    void pushMotoreV2Frame(const float* mel64);            // analysis thread
+    bool readMotoreV2Outputs(std::array<float, 17>& out);  // latest [17], if fresh
+#endif
 
     void prepare(double sampleRate, int samplesPerBlock);
     void analyzeSpectrum(const std::vector<float>& spectrum, bool force = false);
@@ -939,6 +953,18 @@ private:
 
     // Pre-allocated buffer for analyzeSpectrum — avoids heap allocation on each call
     std::vector<float> normalizedBuffer;
+
+#if defined(AIEQ_ENABLE_MOTORE_V2) && AIEQ_ENABLE_MOTORE_V2
+    // EXP hybrid: 32-frame log-mel ring (circular) + latest CNN outputs.
+    aieq::MotoreV2Model motoreV2Model;
+    std::array<std::array<float, 64>, 32> motoreV2Ring {};
+    int  motoreV2RingCount = 0;
+    int  motoreV2RingHead  = 0;
+    bool motoreV2Ready     = false;
+    mutable std::mutex     motoreV2OutMutex;
+    std::array<float, 17>  motoreV2Outputs {};
+    bool motoreV2OutFresh  = false;
+#endif
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AIEngine)
 };

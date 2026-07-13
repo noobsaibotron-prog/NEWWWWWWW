@@ -4221,3 +4221,65 @@ float AIEngine::getSpectralPatternScore(ProblemType type, float centerFreq, floa
     // Combine scores (weighted average)
     return (coherenceScore * 0.7f) + (frequencyScore * 0.3f);
 }
+
+#if defined(AIEQ_ENABLE_MOTORE_V2) && AIEQ_ENABLE_MOTORE_V2
+//==============================================================================
+// Motore v2 (EXP hybrid) — off-audio-thread CNN on a rolling 32-frame log-mel
+// window. reset() + 32 forwards per window == the A3 parity contract (the last
+// forward's [17] output is the window prediction). Fed by PerceptualFrontEnd.
+//==============================================================================
+bool AIEngine::loadMotoreV2Model(const juce::File& jsonFile)
+{
+    motoreV2Ready = jsonFile.existsAsFile()
+        && motoreV2Model.loadFromJsonFile(jsonFile.getFullPathName().toStdString());
+    motoreV2RingCount = 0;
+    motoreV2RingHead  = 0;
+    {
+        std::lock_guard<std::mutex> lk(motoreV2OutMutex);
+        motoreV2Outputs.fill(0.0f);
+        motoreV2OutFresh = false;
+    }
+    return motoreV2Ready;
+}
+
+void AIEngine::pushMotoreV2Frame(const float* mel64)
+{
+    if (! motoreV2Ready || mel64 == nullptr)
+        return;
+
+    std::copy(mel64, mel64 + 64,
+              motoreV2Ring[static_cast<size_t>(motoreV2RingHead)].begin());
+    motoreV2RingHead = (motoreV2RingHead + 1) % 32;
+    if (motoreV2RingCount < 32)
+    {
+        ++motoreV2RingCount;
+        return;                                   // window not full yet
+    }
+
+    // Window full: stream oldest-first through the stateful CNN.
+    motoreV2Model.reset();
+    const float* out = nullptr;
+    for (int t = 0; t < 32; ++t)
+    {
+        const int idx = (motoreV2RingHead + t) % 32;  // head == oldest slot
+        out = motoreV2Model.forward(
+            motoreV2Ring[static_cast<size_t>(idx)].data());
+    }
+    if (out == nullptr)
+        return;
+
+    std::lock_guard<std::mutex> lk(motoreV2OutMutex);
+    std::copy(out, out + 17, motoreV2Outputs.begin());
+    motoreV2OutFresh = true;
+}
+
+bool AIEngine::readMotoreV2Outputs(std::array<float, 17>& out)
+{
+    std::lock_guard<std::mutex> lk(motoreV2OutMutex);
+    if (! motoreV2OutFresh)
+        return false;
+    out = motoreV2Outputs;
+    motoreV2OutFresh = false;                      // consumed
+    return true;
+}
+#endif // AIEQ_ENABLE_MOTORE_V2

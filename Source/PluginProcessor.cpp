@@ -1,6 +1,9 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 #include "Utils/Logger.h"
+#if defined(AIEQ_ENABLE_MOTORE_V2) && AIEQ_ENABLE_MOTORE_V2
+#include "AI/MotoreV2Features.h"   // EXP hybrid: rawDb -> 64 log-mel (gated)
+#endif
 #include <limits>
 #include <algorithm>
 #include <complex>
@@ -488,7 +491,20 @@ void AIEqualizerAudioProcessor::aiAnalysisThreadFunc()
                 while ((pulled = aiFrontEndFifo.pullAudioBlock(aiFrontEndScratch.data(),
                                                                aiFrontEndScratch.size())) > 0)
                 {
+#if defined(AIEQ_ENABLE_MOTORE_V2) && AIEQ_ENABLE_MOTORE_V2
+                    // EXP hybrid: feed each rawDb frame as 64 log-mel bands into
+                    // the CNN ring (A2 parity-locked feature). Analysis thread.
+                    const double v2sr = getSampleRate();
+                    aiFrontEnd.pushMono(aiFrontEndScratch.data(), static_cast<int>(pulled),
+                        [this, v2sr](const PerceptualFrontEnd::Frame& f)
+                        {
+                            const auto mel = aieq::melBandsFromDb(
+                                f.rawDb.data(), static_cast<int>(f.rawDb.size()), v2sr, 64);
+                            aiEngine.pushMotoreV2Frame(mel.data());
+                        });
+#else
                     aiFrontEnd.pushMono(aiFrontEndScratch.data(), static_cast<int>(pulled), nullptr);
+#endif
                     if (stopAIAnalysis.load())
                         break;
                 }
@@ -997,6 +1013,20 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     aiFrontEndFifo.prepare(32768);   // dedicated SPSC: audio producer, AI consumer
     aiFrontEnd.prepare(sampleRate);
     aiFrontEndScratch.assign(4096, 0.0f);
+#if defined(AIEQ_ENABLE_MOTORE_V2) && AIEQ_ENABLE_MOTORE_V2
+    {
+        // EXP hybrid: load the v2 CNN next to the plugin binary (or its bundle
+        // Resources). Absent => motoreV2 stays inert, shipped path unchanged.
+        auto appFile = juce::File::getSpecialLocation(juce::File::currentApplicationFile);
+        juce::File v2json = appFile.getSiblingFile("motore_v2.json");
+        if (! v2json.existsAsFile())
+            v2json = appFile.getChildFile("Contents/Resources/motore_v2.json");
+        const bool ok = aiEngine.loadMotoreV2Model(v2json);
+        juce::Logger::writeToLog(ok
+            ? "[MotoreV2] model loaded: " + v2json.getFullPathName()
+            : "[MotoreV2] model NOT found — heuristic-only fallback");
+    }
+#endif
     aiFrontEndFrames.store(0, std::memory_order_relaxed);
     aiFrontEndMeanNs.store(0.0, std::memory_order_relaxed);
     aiFrontEndMaxNs.store(0, std::memory_order_relaxed);
