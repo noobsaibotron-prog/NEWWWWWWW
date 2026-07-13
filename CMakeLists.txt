@@ -683,14 +683,17 @@ if(HAVE_JUCE)
     if(AIEQ_MOTORE_V2_EXP)
         set(_AIEQ_CODE "AIQ2")
         set(_AIEQ_NAME "AI Equalizer Pro v2 EXP")
+        set(_AIEQ_BUNDLE_ID "com.AIAudio.AIEqualizerProV2EXP")
     else()
         set(_AIEQ_CODE "AIEQ")
         set(_AIEQ_NAME "AI Equalizer Pro")
+        set(_AIEQ_BUNDLE_ID "com.AIAudio.AIEqualizerPro")
     endif()
     juce_add_plugin(AIEqualizerPro
         COMPANY_NAME "AIAudio"
         PLUGIN_MANUFACTURER_CODE AIAU
         PLUGIN_CODE ${_AIEQ_CODE}
+        BUNDLE_ID ${_AIEQ_BUNDLE_ID}
         FORMATS ${AIEQ_PLUGIN_FORMATS}
         PRODUCT_NAME "${_AIEQ_NAME}"
         IS_SYNTH FALSE
