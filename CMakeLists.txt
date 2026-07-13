@@ -645,6 +645,13 @@ set(AIEQ_TORCH_ROOT "" CACHE PATH "Path to libtorch (root directory)")
 # RTNeural bridge compiles to nothing (headers/test are #if-guarded), so the
 # shipped plugin stays byte-identical.
 option(AIEQ_ENABLE_MOTORE_V2 "Enable Motore v2 (RTNeural) bridge" OFF)
+# EXP listening build: separate plugin identity (name + AU/VST3 code) so the
+# v2 hybrid engine installs ALONGSIDE the shipped plugin, which stays untouched.
+# Implies the RTNeural bridge in the plugin target. OFF => shipped identity.
+option(AIEQ_MOTORE_V2_EXP "Build the Motore v2 EXP listening plugin (separate identity)" OFF)
+if(AIEQ_MOTORE_V2_EXP)
+    set(AIEQ_ENABLE_MOTORE_V2 ON CACHE BOOL "" FORCE)
+endif()
 
 if(AIEQ_ENABLE_TORCH)
     if(NOT AIEQ_TORCH_ROOT AND DEFINED ENV{TORCH_HOME})
@@ -669,12 +676,21 @@ if(HAVE_JUCE)
     endif()
 
     # Create the plugin using JUCE helper
+    # Motore v2 EXP uses a DISTINCT plugin code + name so macOS/Ableton treat it
+    # as a separate plugin installed next to the shipped one (untouched).
+    if(AIEQ_MOTORE_V2_EXP)
+        set(_AIEQ_CODE "AIQ2")
+        set(_AIEQ_NAME "AI Equalizer Pro v2 EXP")
+    else()
+        set(_AIEQ_CODE "AIEQ")
+        set(_AIEQ_NAME "AI Equalizer Pro")
+    endif()
     juce_add_plugin(AIEqualizerPro
         COMPANY_NAME "AIAudio"
         PLUGIN_MANUFACTURER_CODE AIAU
-        PLUGIN_CODE AIEQ
+        PLUGIN_CODE ${_AIEQ_CODE}
         FORMATS ${AIEQ_PLUGIN_FORMATS}
-        PRODUCT_NAME "AI Equalizer Pro"
+        PRODUCT_NAME "${_AIEQ_NAME}"
         IS_SYNTH FALSE
         NEEDS_MIDI_INPUT FALSE
         NEEDS_MIDI_OUTPUT FALSE
@@ -737,6 +753,16 @@ if(TARGET AIEqualizerPro)
 
     # Require C++20 at target level
     target_compile_features(AIEqualizerPro PRIVATE cxx_std_20)
+
+    # Motore v2 (RTNeural) in the PLUGIN target — header-only, gated. When OFF
+    # the plugin has zero RTNeural references (shipped byte-identical).
+    if(AIEQ_ENABLE_MOTORE_V2)
+        target_include_directories(AIEqualizerPro PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/RTNeural)
+        target_compile_definitions(AIEqualizerPro PRIVATE
+            AIEQ_ENABLE_MOTORE_V2=1 RTNEURAL_DEFAULT_ALIGNMENT=16)
+        message(STATUS "Motore v2 (RTNeural) bridge: ENABLED in the PLUGIN target")
+    endif()
 
     if(HAVE_JUCE)
         # Compile definitions
