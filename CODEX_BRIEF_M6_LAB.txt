@@ -1,0 +1,149 @@
+M6 LAB HANDOFF - 2026-07-07
+
+Scope:
+- Worktree: /Users/marco/Desktop/NEWWWWWWW/.claude/worktrees/m6-lab
+- Branch: feature/model-recall-realclips-m6-lab
+- Ship line untouched. Do not copy any blob to Resources/Models/ml_weights.bin.
+
+Commits added by Codex:
+- 6982be0b test(ml): harden M6 clean realclip gate
+- 713011bc feat(ml): add M6 thinness balancing and bias calibration
+
+Data status:
+- Tier-2 now includes FSLD-routed HF negatives.
+- Counts after routing: hf_negative=220, clean_drums=170, clean_bass=109,
+  clean_synth=170, clean_mix=110.
+- MANIFEST.csv rows: 779 audio rows + header.
+- Bad licenses found in manifest: 0.
+- Ableton holdout hash overlap: 0.
+- Freesound one_shot_percussive_sounds was inspected but not useful for
+  hf_negative because all extracted WAVs are 16 kHz.
+
+Useful lab code now available:
+- ml.eval_realclips now treats clip 01 as a hard clean floor for every class
+  <= 10%, not only Sibilance <= 10%.
+- ml.tier2 supports:
+  --thinness-tonal-only
+  --thinness-bass-repeat N
+- ml.train supports post-training per-class negative bias calibration:
+  --calibrate-negative-fp-target X
+  --calibrate-thinness-negative-fp-target Y
+
+Best single-seed result found:
+Command:
+python3 -m ml.train \
+  --out /tmp/aieq_m6/candidate_m6_seed22_tonal_bass1_h3_tw8_cal.bin \
+  --feature-version 1 \
+  --problem-schema product-v2 \
+  --epochs 20 \
+  --samples-per-problem 24 \
+  --seed 22 \
+  --vocalset /Users/marco/aieq_data/real_audio/vocalset_extracted/FULL \
+  --clips-per-singer 3 \
+  --tier2-real /Users/marco/aieq_data/real_audio/tier2_train \
+  --tier2-frames-per-file 2 \
+  --hf-negative-repeat 3 \
+  --pos-weight 12 \
+  --fp-weight 1.5 \
+  --harshness-weight 3 \
+  --sibilance-neg-weight 8 \
+  --thinness-weight 8 \
+  --thinness-tonal-only \
+  --thinness-bass-repeat 1 \
+  --calibrate-negative-fp-target 0.07 \
+  --calibrate-thinness-negative-fp-target 0.06 \
+  --also-v1
+
+Gate result for seed 22:
+python3 -m ml.eval_realclips --blob /tmp/aieq_m6/candidate_m6_seed22_tonal_bass1_h3_tw8_cal.bin
+=> RESULT: 7/7 gated clips PASS (08 report-only). FAIL: none
+
+Important no-go:
+- This is NOT yet a robust 3-seed candidate.
+- Same recipe:
+  seed 23 => 6/7, fails 07 because Harshness 46.8% >= Thinness 44.0%.
+  seed 24 => 5/7, fails 02 and 06.
+- pos_weight 16 did not fix robustness:
+  seed 23 still fails 07.
+  seed 24 still fails 02.
+
+Interpretation:
+- The main "few detections" issue is solvable for seed 22 by adding bass-derived
+  Thinness positives and post-training negative bias calibration.
+- The current recipe is still seed-sensitive. Do not ship/promote a blob from
+  this lab until the 3-seed gate is stable.
+
+Suggested next step:
+- Keep the existing lab-only levers, then add/expose class-specific positive
+  weights for the remaining unstable classes (at minimum Boominess, Muddiness,
+  DullSound, BoxyMidrange) instead of using global pos_weight.
+- Re-run 3 seeds with the hard clean gate. Stop if the fix needs runtime/veto
+  changes; M6 should remain a model/training lab.
+
+================================================================================
+M6 CLOSE-OUT (Claude Fable 5, 2026-07-07 evening) — KILL-CRITERION HONOURED
+================================================================================
+
+DECISIVE FINDING — the raw gate was NOT product-faithful.
+C++ cross-check (shipped test binary, AIEQ_PROBE_WEIGHTS=<candidate v1compat>,
+execute-only) showed the 7/7 "raw" candidate collapses to ~nothing in the real
+engine. Root cause read from MLEngine.cpp:289-404: emission requires
+  prob > threshold  AND  (prob - threshold) >= margin (0.10; Resonance 0.02)
+  AND top-2 rank per frame (sensitivity 0.5), capped at 2.
+GenreType::Unknown adds no adjustment. eval_realclips now replicates this
+(--emission product, DEFAULT; commit 62ab3509). Raw mode kept for recall work.
+
+RE-SCORE of all existing blobs under the product gate:
+  - Codex's calibrated blobs: 1-3/7 (negative-bias calibration soft-lands
+    probs below the margin — it optimized the wrong operating point).
+  - BEST = sweep_pw12_h4_sn8.bin (pw12, harshness-weight 4, sib-neg 8, tw1.3,
+    no tonal/bass/dull levers, seed 22): 5/7, fails only 06 (DullSound
+    outranked by Boxy) and 07 (Thinness under Harshness).
+
+FINAL BOUNDED ROUND (3 runs, all NEGATIVE -> STOP):
+  A: h3 tw4 dw4 +tonal+bass1 -> 3/7 (Thin 82% on clean — devours everything)
+  B: h4 tw4 dw6 +tonal+bass1 -> 3/7 (same)
+  C: h4 tw2 dw2, no tonal    -> 3/7 (Dull 81% on bass, 13% on clean/kick)
+  Every weight nudge swings the whole 8-class balance: tw 1.3->4 flips clean-
+  Thinness 0%->82%; dw 1->2 flips bass-DullSound 0.6%->81%. Same structural
+  instability V2 measured (4/12 seeds) — third independent confirmation, now
+  at the product operating point. NO further weight-grinding is justified.
+
+3-SEED VARIANCE of the best recipe: seed22 5/7, seed23 4/7 (adds a clean-01
+miss), seed24 5/7 — common fails 06/07. Far more stable than the calibrated
+recipe (1/7 product).
+
+C++ CROSS-CHECK OF THE BEST BLOB (real engine: pre-veto -> veto -> LIVE 0.60;
+shipped model today = silence on ALL clips):
+  01 clean : LIVE (none)                       [correct silence]
+  02 kick  : LIVE (none)   [Boom 19.9% pre-veto, pruned by the Boom trend veto]
+  03 bass  : LIVE Boxyness 67.9%               [PANEL SHOWS IT — stable]
+  04 tom   : LIVE Boxyness 46.8%               [PANEL SHOWS IT]
+  05 harsh : LIVE Harshness 86.2%              [PANEL SHOWS IT — correct class,
+             and the 99.1% false-Sibilance of the shipped model is GONE]
+  06 dull  : LIVE Harshness(slot7) 8.3%        [weak; label needs C++ mapping]
+  07 thin  : LIVE Harshness(slot7+1) 53.2%     [shows, mislabeled until mapping]
+  08 reso  : LIVE (none)                       [expected-fail debt, no false]
+Note: slot 7 = DullSound displays as "Harshness" until the C++ mapping ticket;
+the >100% pre-veto figure on 07 is a probe accounting artifact (two same-type
+detections in one frame are double-counted in that column only).
+
+DELIVERABLE = /tmp/aieq_m6/sweep_pw12_h4_sn8.bin (+_v1compat.bin), seed 22,
+dataset_hash da7f12dce9001ffe, provenance embedded. NOT promoted anywhere.
+
+WHAT THIS BUYS THE USER (the original complaint "AI proposes almost nothing"):
+with this blob the panel actually surfaces problems on 4-5 of 7 problem clips
+and stays silent on clean — versus TOTAL silence today. Sibilance over-fire is
+fixed at the source (hard negatives), so the model no longer needs the veto to
+mask it.
+
+REMAINING GAPS (owned by FUTURE tickets, each with its own sign-off):
+  1. Ship integration: C++ v2-blob loader OR v1 blob + slot-7 -> DullSound
+     mapping + thresholds row + Ableton hands-on. Runtime change => Codex
+     counter-exam first.
+  2. Clip 02: the LowEndBoom trend veto prunes the model's genuine Boom on
+     kick material (19.9% -> 0). Veto tuning is explicitly out of M6 scope.
+  3. 06/07 class dominance + 3-seed robustness: capacity/architecture work
+     (the bounded-decision point already framed in the real-data program:
+     vetted-single-blob pragmatism vs net redesign).
+  4. Resonance (08): known debt, unchanged (R1-R4/RA1 receipts).

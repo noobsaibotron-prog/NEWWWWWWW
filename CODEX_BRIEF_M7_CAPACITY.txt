@@ -1,0 +1,86 @@
+CODEX BRIEF — M7 (model-recall capacity lab) — FINAL REPORT
+============================================================
+Date: 2026-07-07/08   Branch: feature/model-recall-realclips-m7-capacity
+Base: 6b88099a (M6 close-out). Ship line untouched. No blob promoted.
+All outputs in /tmp/aieq_m7/. Feature contract 24/24 green throughout.
+
+MANDATE (Codex): really solve 06 DullSound, 07 Thinness, true vocal Sibilance,
+3-seed robustness, under the PRODUCT emission gate (threshold+margin+top-2).
+Max 3 strategic rounds: (A) product-aware loss, (B) capacity, (C) targeted data.
+
+PHASE 3 DIAGNOSIS (ml/diag_emission.py — loss attribution per class):
+  06 DullSound : lost@MARGIN (288/327 frames in the 0.40-0.50 band)
+  03 Muddiness : lost@RANK   (228/327 above margin but outside top-2)
+  07 Thinness  : lost@THRESHOLD (p90 0.47 < 0.50) + Harshness domination
+  V-SIB        : DEAD at threshold (p50 0.008 — crushed by M6 sn8 pressure)
+  clean/vocals : protected by the margin (Harshness p50 0.46 on clean = tight)
+
+ROUND 1 — product-ranking loss (commit 485e4fd0): WIN +1
+  Emission hinge (positive target pushed above threshold+margin+slack) +
+  top-2 rank hinge (vs 2nd competitor). rw=0 proven BYTE-IDENTICAL to M6 best.
+  rw0.7 = 6/7 (fixes 06: Dull 3.4%->16.2% emitted; clean stays quiet).
+  rw>=1.0 fixes 06 but leaks clean (Boom 10.4%). 07 and V-SIB unmoved.
+
+ROUND 2 — capacity 256/128 and 192/96 (commit f3a20f81): NEGATIVE
+  Both 5/7: Thin/Dull rise but the clean floor breaks (01 fails ~10-15%).
+  V-SIB still dead. Capacity alone is not the lever at this data regime.
+  (Infra kept: v2 blobs are self-describing; v1 export guarded.)
+
+ROUND 3 — targeted data/balance (commit b7e5a2f6): PARTIAL
+  r3a (sn8->3 + sib-focus 2): 6/7, fails 07 only. V-SIB revived to p90 0.32
+      but NOT selective within vocals (V-CLN emits ~= V-SIB; downstream
+      veto/persistence contain it).
+  r3b (+bass1 +tw2): 6/7, fails 01 (Thin sprays 62% on clean).
+  r3c (+bass1, tw default): 6/7, fails 01 (Thin 20.5%, Boom 14.7%); 07 FIXED
+      (Thin 63.3% > Harsh 26.9%).
+  r3e/r3f (targeted neg-weights to converge the clean floor): 4/7 and 3/7 —
+      the negative pressure swings globally, reopening 03/06/07.
+
+3-SEED ROBUSTNESS (mandate bar: 3x >=6/7, or 2x 7/7 + 1 explained): NOT MET
+  rw07 recipe : seeds 22/23/24 = 6/7, 4/7, 5/7
+  r3a recipe  : seeds 22/23/24 = 6/7, 4/7, 4/7
+  (M6 best baseline: 5/7, 4/7, 5/7)
+
+CANDIDATE TABLE (product gate, seed 22 unless noted)
+----------------------------------------------------
+  blob (/tmp/aieq_m7/)      | gate | fails | note
+  r1_rw07.bin  (+v1compat)  | 6/7  | 07    | PRIMARY interim: clean-safe,
+                            |      |       | strictly better than M6 best
+                            |      |       | (same costs, +clip06); Sib dead
+  r3a_sib.bin               | 6/7  | 07    | Sib revived p90 0.32, unselective
+  r3c_bass1.bin             | 6/7  | 01    | 07 fixed; clean leaks Thin/Boom
+  r2_h256.bin / r2_h192.bin | 5/7  | 01,07 | capacity negative
+  (M6 sweep_pw12_h4_sn8)    | 5/7  | 06,07 | previous best, baseline
+
+C++ CROSS-CHECK of r1_rw07 (real engine LIVE @0.60, Generic, execute-only):
+  01 (none) | 02 (none) | 03 Boxy 25.7% | 04 Boxy 48.6% | 05 Harsh 86.2%
+  06 slot7 11.9% | 07 48.6% | 08 (none)
+  => same user-visible profile as M6 best, slightly better on 06; the Python
+  gate improvement (5/7 -> 6/7) lives at the emission level (margin cleared).
+
+VERDICT
+-------
+NO-GO as the robust final solution: the mandate's own 3-seed bar is not met,
+and this is now confirmed from FIVE independent angles (V2 4/12; M6 A/B/C
+weight see-saw; M7 capacity; M7 neg-weight convergence; M7 3-seed spread).
+The 24k-param MLP cannot hold all 8 product classes simultaneously stable
+across seeds under the product emission rule. Per-seed ceiling ~6/7; robust
+ceiling ~5/7. NO further weight/recipe grinding is justified — every lever
+moves the hole, none closes it.
+
+GO as INTERIM VETTED SINGLE BLOB (if Marco/Codex choose the pragmatic route):
+r1_rw07.bin seed 22 — 6/7 product gate, clean-safe, C++-verified, provenance
+embedded, strictly dominates the M6 candidate. Same integration path as the
+M6 brief (v2 loader schema-keyed; CODEX_BRIEF_M6_SHIP_INTEGRATION.txt applies
+with the blob swapped and the Sibilance cost unchanged).
+
+WHAT ACTUALLY FIXES 07/robustness (separate ticket, out of lab scope):
+architecture redesign — per-class calibrated heads or a 2-stage detector
+(presence -> class), possibly per-class thresholds learned jointly with the
+emission rule. This is the real-data-program's long-deferred "option B",
+now with five receipts saying option-A-style tuning is exhausted.
+
+PERMANENT ASSETS delivered by M7 (regardless of ship decision):
+  ml/diag_emission.py (loss attribution) | product-ranking loss (off-default,
+  parity-proven) | configurable capacity + self-describing v2 loader |
+  sib-focus recovery lever | product-emission gate as the lab standard.

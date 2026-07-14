@@ -1,0 +1,211 @@
+CODEX BRIEF — M8 ARCHITECTURE REDESIGN (lab)
+=============================================
+Started: 2026-07-08   Branch: feature/model-recall-m8-redesign (from c262b363)
+Target (Marco, verbatim intent): detection quality on common/important problems
+indistinguishable from top-tier EQs (July 2026), focus electronic production
+(techno/house/breakbeat) but solid on general material.
+Decision (Codex): M6/M7 tuning is exhausted (five receipts). M8 = new
+architecture. Lab-only: NO ship code, NO ml_weights.bin, NO C2. C++ v3 loader
+is a SEPARATE later ticket, only after a robust candidate.
+
+BASELINE (verified at branch point; feature contract 24/24)
+  M6 best  /tmp/aieq_m6/sweep_pw12_h4_sn8.bin : 5/7 product gate (fail 06,07)
+  M7 best  /tmp/aieq_m7/r1_rw07.bin           : 6/7 product gate (fail 07)
+  M7 vocal Sibilance: dead (raw p90 0.010). Clip 08 Resonance: never emitted.
+
+ACCEPTANCE BAR (M8 core gate — hard, no relaxation):
+  01 clean <=5% (hard fail >10%) | 02 Boom/Mud | 03 Mud/Boom | 04 Boxy
+  05 Harsh AND Sib<=5% | 06 DullSound | 07 Thin AND Harsh<Thin
+  08 Resonance HARD GATE (no longer report-only)
+  V-SIB: Sibilance EMITTED | V-CLN: no Sib | V-RES: no Sib
+  hf_negative heldout: no Sibilance | clean generic: per-class FP<=3%, any<=5%
+  ROBUSTNESS: seeds 22,23,24,33,44 — at least 4/5 pass the full core gate;
+  NO seed may fail clean, false-Sibilance, or clip 05. Max 3 rounds, then stop.
+
+ARCHITECTURE (M8): TwoStageEQNet — shared trunk inputDim->192->96 (ReLU),
+presence head (any-problem gate), 8 INDEPENDENT class heads, 8 freq heads.
+Emission = presence gate + per-class CALIBRATED thresholds (target FP on
+held-out calibration negatives, disjoint from benchmark negatives) + UI cap
+top-3 AFTER thresholds. No top-2 competitive gate in training or emission.
+
+Round log follows at the bottom as work proceeds.
+
+ROUND LOG / CHECKPOINT (Codex continuation, 2026-07-08)
+-------------------------------------------------------
+Commits added on feature/model-recall-m8-redesign:
+  62919b63 feat(ml): add M8 two-stage per-class network
+  e09bf764 feat(ml): add M8 v3 lab blob format
+  a976515c feat(ml): route training through M8 two-stage architecture
+  b5da8214 test(ml): cover M8 v3 roundtrip and emission contract
+  9f0ecfc2 feat(ml): add M8 benchmark gate
+  5dd10b2a fix(ml): map M8 legacy ranking weight to margin loss
+  1f94ace4 feat(ml): add posthoc M8 threshold calibration
+  71d1539b fix(ml): benchmark M8 with blob feature version
+  30f8c90a feat(ml): add M8 lab feature v4 descriptors
+
+Guard tests run after code changes:
+  python3 -m ml.tests.test_feature_contract  -> 24/24
+  python3 -m ml.tests.test_m8_contract       -> 11/11 after v4
+
+Round 1 — feature v1, threshold target FP 0.03:
+  Blob: /tmp/aieq_m8/m8_round1_seed22.bin
+  Result: FAIL. Clean was safe but model emitted almost nothing. Diagnosis:
+  presence threshold 0.875 and class thresholds too high for real clips.
+
+Round 2 — same weights, target FP 0.10:
+  Blob: /tmp/aieq_m8/m8_round2_cal10_seed22.bin
+  Result: FAIL. 05 passed, 01/V-CLN/V-RES clean enough, but 02/03/04/06/07/08
+  and V-SIB failed. Posthoc sweeps:
+    cal06: too strict, almost all silent.
+    cal15: 04/05 pass, near misses on 02/03/06/07, 08 dead, V-SIB 2.1%.
+    cal20: 03/04/05/06/V-SIB pass, 01 pass, but 02/07/08 fail.
+  Important bug found here: earlier commands passed --ranking-loss-weight 0.7,
+  but M8 used --m8-margin-loss-weight default 0.5. Fixed in 5dd10b2a.
+
+Round 3 — feature v1, true M8 margin 0.7, target FP 0.20:
+  Blob: /tmp/aieq_m8/m8_round3_margin07_cal20_seed22.bin
+  Result: BEST CURRENT LAB BASELINE but still NO-GO.
+  Benchmark:
+    PASS: 03,04,05,06,07,V-SIB,V-CLN,V-RES
+    FAIL: 01 clean overfires Boominess/Thinness/DullSound at 7.0%;
+          02 Boom/Mud only 2.1%;
+          08 Resonance 0.0%.
+  Posthoc cal18 keeps same three fails. Posthoc cal15 cleans 01, but loses
+  03/04/V-SIB and still fails 02/08.
+  Diagnosis on raw scores:
+    02 has Boominess/Muddiness class scores, but presence is low; 01 clean and
+    02 boomy kick have very similar Boom/Mud frame-score distributions, so
+    threshold tuning cannot separate them robustly.
+    08 has presence below 0.5 on all frames and Resonance max only about 0.288;
+    the model tends to score it as Boominess/DullSound, not Resonance.
+
+Round 4 — feature v3 (detrended shape), margin 0.7:
+  Blob: /tmp/aieq_m8/m8_round4_featurev3_margin07_cal20_seed22.bin
+  Result: NO-GO. 01 cleaned up, but Sibilance FP appeared on V-CLN/V-RES and
+  07 regressed. cal15 removes some FP but loses 02/03/05/06/07/08. Not better
+  than Round 3.
+
+Round 5 — feature v4 lab descriptors (explicit low/HF/prominence), margin 0.7:
+  Blob: /tmp/aieq_m8/m8_round5_featurev4_margin07_cal20_seed22.bin
+  Result: NO-GO. Internal validation improves, but benchmark worsens:
+  Sibilance FP on clean/resonant vocals and 04/05/07 regress. cal15 remains
+  worse than Round 3.
+
+CURRENT VERDICT
+---------------
+No M8 blob is shippable. Do NOT promote any /tmp/aieq_m8 blob to
+Resources/Models/ml_weights.bin. Do NOT start C2. Do NOT add a production v3/v4
+loader yet.
+
+Best evidence-backed checkpoint is Round 3 feature-v1:
+  /tmp/aieq_m8/m8_round3_margin07_cal20_seed22.bin
+It proves the two-stage architecture can recover most of the hard gate, but it
+also proves the remaining failure is not a simple threshold problem:
+  01 vs 02 low-end separation is weak at frame level.
+  08 tom resonance is not learned as Resonance.
+
+NEXT ACTION (not another blind sweep)
+-------------------------------------
+Build a non-leaky clip-level/temporal low-end + resonance lab before more
+training:
+  1. Keep Round 3 as baseline.
+  2. Add a report-only clip aggregator that logs mean/p90/max class logits,
+     presence occupancy, low-band relative energy, and resonance prominence for
+     01/02/08 plus a clean drum/kick/tom validation pack NOT sourced from the
+     Ableton holdout.
+  3. Create/route more non-holdout electronic drums/kicks/toms into Tier2 with
+     explicit labels for clean kick, boomy kick, clean tom, resonant tom/ring.
+     Current random per-frame injection is not enough for these clip-level
+     distinctions.
+  4. Only after the report shows separation on non-holdout clips, train a new
+     model/aggregator. Acceptance remains the same M8 gate above.
+
+--------------------------------------------------------------------------------
+ROUND 6 (Claude Fable 5) — TEMPORAL LAB (feature v5), targeting 01/02/08
+--------------------------------------------------------------------------------
+Verification of Codex rounds 1-5: reproduced exactly (round3 = best: passes
+03-07 + full vocal triplet incl. Sibilance EMITTED; fails 01 7%>5%, 02 2.1%,
+08 0%). Code review: train_batch math correct; calibration sources leak-free
+(synth-val + heldout only); benchmark gates faithful to the plan. One honest
+note for the record: several PASSING clips pass with noisy co-fire and a
+wrong-ish top label (05: Muddiness 90.2% above Harshness 88.4%; 07: DullSound
+50.2% above Thinness 41.3%) — the gate does not measure top-1 correctness yet.
+
+WHY TEMPORAL: the three residual fails are temporal signatures per-frame
+features cannot express (boom SUSTAINS between hits; a resonant ring keeps ONE
+band high across frames; the same ambiguity is what leaks onto clean 01).
+MEASURED ON RAW CLIPS BEFORE TRAINING (window descriptors, medians):
+              boomRel  boomSust  flux  persFrac  persRes
+  01 clean     +1.46    -2.40    0.76    0.67     0.68
+  02 boomy     +2.52    -2.52    0.71    0.75     1.01
+  08 resonant  +4.24    -0.67    0.34    1.00     2.28   <- unmistakable
+The separation the model needed now EXISTS in feature space.
+
+feature v5 = v1(center frame) + 10 window descriptors; injections applied to
+EVERY frame of a window (persistent by construction). Builders in ml/temporal.py
+(v1-v4 and legacy paths untouched); train/calibrate/benchmark dispatch on
+feature_version==5. Contract extended to 15/15 (v5 shape/determinism +
+persistence-separates check). Round 6 training (seed 22, margin 0.7, cal 20%)
+in flight; results follow.
+
+--------------------------------------------------------------------------------
+M8 FINAL VERDICT (Claude Fable 5, 2026-07-08) — NO-GO redesign-v1; M9 spec below
+--------------------------------------------------------------------------------
+ROUND 6 RESULT (temporal v5, seed 22, margin 0.7, cal 20%):
+  blob /tmp/aieq_m8/m8_round6_v5_margin07_cal20_seed22.bin
+  PASS: 02 (FIRST TIME EVER: Boom 7.6% + Mud 26.6% — the temporal sustain
+        descriptor unlocked it), 03, 04, 06, V-SIB (Sibilance 45.6% emitted)
+  FAIL: 01 (Boxy 25%/Mud 20%/Dull 18% — head precision on clean drums),
+        05 (ZERO emission), 07 (Harsh 66% >= Thin 37%), 08 (Res 0%),
+        V-CLN/V-RES (false Sib 28%/23%)
+
+DECISIVE DIAGNOSIS (measured):
+  05: the Harshness HEAD is healthy (p50 0.761 >> thr 0.30) but the GLOBAL
+      PRESENCE gate blinds it (presence max 0.433 < thr 0.502) — a stationary
+      harsh synth does not look "problematic" to a temporally-trained presence
+      head. OVERRIDE EXPERIMENT (emit when class clears thr+delta even below
+      presence): 05 -> Harshness 94-99%. Landed as opt-in emitted(override_delta)
+      (commit 5f559a8c). The presence-gate design is measurably harmful for
+      static problems; per-class presence or no-presence is the M9 direction.
+  01/07/08/V-CLN: NOT emission — HEAD PRECISION. Boxy/Mud/Dull heads read
+      clean 44.1k drum loops as problems; the Sib head reads every vocal as
+      sibilant (within-vocal discrimination collapsed at sib_focus=1); the Res
+      head does not use the persistence descriptors (the ring is absorbed by
+      Dull/Harsh). These are CONTRASTIVE-DATA gaps, not feature gaps: the v5
+      descriptors demonstrably carry the signal (08: persFrac 1.00, persRes
+      2.28 vs clean 0.67/0.68).
+
+FULL ROUND TABLE (benchmark core, seed 22):
+  M6 best (per-frame, product emission)   : 5/7 clips, Sib dead
+  M7 best (ranking loss)                  : 6/7 clips, Sib dead, 08 never
+  M8 r1-r3 (two-stage v1 feats, Codex)    : best 03-07+vocal triplet; fail 01/02/08
+  M8 r4-r5 (feature v3/v4, Codex)         : no improvement over r3
+  M8 r6 (temporal v5, Fable)              : UNLOCKS 02 + strong V-SIB; regresses
+                                            01/05/07; 08 heads still blind
+  No configuration reaches the core gate; 5-seed robustness never applicable.
+
+VERDICT: NO-GO redesign-v1 (mandate bar not met). Blocker classification per
+the mandate: NOT front-end features anymore (v5 proven to carry the temporal
+signal); PARTLY architecture (global presence gate measurably blinds static
+problems — fix designed and landed as opt-in); MOSTLY DATA — contrastive pairs
+per confusion axis are too few/weak:
+  clean-drum-loop vs boxy/muddy-drum   (01 precision)
+  vocal-clean vs vocal-sibilant        (V-CLN/V-RES false Sib)
+  resonant-ring vs dull/boomy          (08 mapping)
+  thin-synth vs harsh-synth            (07 dominance)
+
+M9 SPEC (next ticket, in order):
+  1. Emission: drop the global presence gate (or per-class presence); adopt
+     class-thresholds + override as the baseline emission; recalibrate.
+  2. Data: scale CONTRASTIVE WINDOW PAIRS per confusion axis above (same-file
+     pairs: raw vs injected, at 5-10x current counts; add real 44.1k clean
+     drum loops beyond FSLD if needed).
+  3. Model: give the Res head direct access to persistence descriptors
+     (skip connection or dedicated sub-head); consider learned temporal
+     aggregation to replace hand-crafted descriptors once pairs exist.
+  4. Only then: 5-seed robustness + Ableton listen.
+INTERIM for any beta remains M7 r1_rw07 (6/7 product gate, clean-safe,
+C++-verified) per CODEX_BRIEF_M6_SHIP_INTEGRATION.txt.
+
+Tests green throughout: feature contract 24/24, M8 contract 15/15.
+Ship line untouched; blobs only in /tmp/aieq_m8/; no ml_weights.bin change.
