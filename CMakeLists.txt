@@ -655,6 +655,19 @@ if(AIEQ_MOTORE_V2_EXP)
     set(AIEQ_ENABLE_MOTORE_V2 ON CACHE BOOL "" FORCE)
 endif()
 
+function(aieq_enable_motore_v2_for_target target_name)
+    if(AIEQ_ENABLE_MOTORE_V2 AND TARGET ${target_name})
+        target_include_directories(${target_name} PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/RTNeural)
+        target_compile_definitions(${target_name} PRIVATE
+            AIEQ_ENABLE_MOTORE_V2=1 RTNEURAL_DEFAULT_ALIGNMENT=16)
+        if(AIEQ_MOTORE_V2_EXP)
+            target_compile_definitions(${target_name} PRIVATE AIEQ_MOTORE_V2_EXP=1)
+        endif()
+        message(STATUS "Motore v2 (RTNeural) bridge: ENABLED for ${target_name}")
+    endif()
+endfunction()
+
 if(AIEQ_ENABLE_TORCH)
     if(NOT AIEQ_TORCH_ROOT AND DEFINED ENV{TORCH_HOME})
         set(AIEQ_TORCH_ROOT "$ENV{TORCH_HOME}")
@@ -796,16 +809,7 @@ if(TARGET AIEqualizerPro)
 
     # Motore v2 (RTNeural) in the PLUGIN target — header-only, gated. When OFF
     # the plugin has zero RTNeural references (shipped byte-identical).
-    if(AIEQ_ENABLE_MOTORE_V2)
-        target_include_directories(AIEqualizerPro PRIVATE
-            ${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/RTNeural)
-        target_compile_definitions(AIEqualizerPro PRIVATE
-            AIEQ_ENABLE_MOTORE_V2=1 RTNEURAL_DEFAULT_ALIGNMENT=16)
-        if(AIEQ_MOTORE_V2_EXP)
-            target_compile_definitions(AIEqualizerPro PRIVATE AIEQ_MOTORE_V2_EXP=1)
-        endif()
-        message(STATUS "Motore v2 (RTNeural) bridge: ENABLED in the PLUGIN target")
-    endif()
+    aieq_enable_motore_v2_for_target(AIEqualizerPro)
 
     if(HAVE_JUCE)
         # Compile definitions
@@ -1172,14 +1176,10 @@ if(HAVE_JUCE)
         target_sources(AIEqualizerPro_AI_Tests PRIVATE
             Source/Tests/MotoreV2ParityTest.cpp
             Source/Tests/MotoreV2FeatureParityTest.cpp)
-        target_include_directories(AIEqualizerPro_AI_Tests PRIVATE
-            ${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/RTNeural)
+        aieq_enable_motore_v2_for_target(AIEqualizerPro_AI_Tests)
         target_compile_definitions(AIEqualizerPro_AI_Tests PRIVATE
-            AIEQ_ENABLE_MOTORE_V2=1
-            RTNEURAL_DEFAULT_ALIGNMENT=16
             AIEQ_MOTORE_V2_A3_DATA="${CMAKE_CURRENT_SOURCE_DIR}/Source/Tests/data/motore_v2_a3"
             AIEQ_MOTORE_V2_A2_DATA="${CMAKE_CURRENT_SOURCE_DIR}/Source/Tests/data/motore_v2_a2")
-        message(STATUS "Motore v2 (RTNeural) bridge: ENABLED for AI_Tests")
     endif()
 
     # ---------------------------------------------------------------------------
@@ -1229,6 +1229,7 @@ if(HAVE_JUCE)
         Source/Utils
         Source/AI
     )
+    aieq_enable_motore_v2_for_target(AIEqualizerPro_IntegrationTests)
     target_link_libraries(AIEqualizerPro_IntegrationTests PRIVATE
         AIEqualizerPro
         juce::juce_core
@@ -1268,6 +1269,7 @@ if(HAVE_JUCE)
         Source/AI
         Source/GUI
     )
+    aieq_enable_motore_v2_for_target(AIEqualizerPro_PerformanceTests)
     target_link_libraries(AIEqualizerPro_PerformanceTests PRIVATE
         AIEqualizerPro
         AIEQ_Assets
@@ -1319,6 +1321,7 @@ if(HAVE_JUCE)
         Source/Utils
         Source/AI
     )
+    aieq_enable_motore_v2_for_target(AIEqualizerPro_ThreadSafetyTests)
     target_link_libraries(AIEqualizerPro_ThreadSafetyTests PRIVATE
         AIEqualizerPro
         juce::juce_core
