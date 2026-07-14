@@ -1,5 +1,6 @@
 #include "MLEngine.h"
 #include <algorithm>
+#include <cstring>
 #include <numeric>
 #include "../Utils/Logger.h"
 
@@ -1169,16 +1170,34 @@ bool MLEngine::loadWeights(const juce::File& modelFile)
     loadedWeightsPath.clear();
     loadedWeightsBytes = 0;
     loadedWeightsChecksum.clear();
+    // Schema witness resets with the weights: a failed load or a legacy blob
+    // must never inherit "product-v2" slot-7 semantics from a previous load.
+    applySlot7Schema("legacy-v1");
 
     if (!modelFile.existsAsFile())
         return false;
-    
+
     try
     {
         juce::FileInputStream stream(modelFile);
         if (!stream.openedOk())
             return false;
 
+        // Version dispatch FIRST (M7 interim): the v1 size pre-check below
+        // assumes the fixed v1 layout and would wrongly reject smaller
+        // self-describing v2 blobs. Reading magic+version before the size
+        // checks keeps every v1 accept/reject outcome identical (the checks
+        // only use file length, not stream position).
+        const uint32_t magic = static_cast<uint32_t>(stream.readInt());
+        if (magic != 0x4D4C4551) // "MLEQ"
+            return false;
+        const uint32_t version = static_cast<uint32_t>(stream.readInt());
+        if (version == 2)
+            return loadWeightsV2(modelFile);
+        if (version != 1)
+            return false;
+
+        // ── v1 path: behaviour byte-identical to the pre-v2 loader ──
         // Quick sanity check on expected size (weights + bias) before reading
         auto expectedLengthFloats = [&]() -> size_t
         {
@@ -1212,16 +1231,6 @@ bool MLEngine::loadWeights(const juce::File& modelFile)
                              + juce::String(expectedTotalBytes) + " (~" + juce::String((double) totalBytes / (double) expectedTotalBytes, 1)
                              + " concatenated records). Loading the FIRST record only; re-save to clean it.");
         }
-        
-        // Read magic number
-        uint32_t magic = static_cast<uint32_t>(stream.readInt());
-        if (magic != 0x4D4C4551) // "MLEQ"
-            return false;
-        
-        // Read version
-        uint32_t version = static_cast<uint32_t>(stream.readInt());
-        if (version != 1)
-            return false;
         
         auto readVector = [&stream](std::vector<float>& vec, size_t size) {
             vec.resize(size);
@@ -1297,6 +1306,169 @@ bool MLEngine::loadWeights(const juce::File& modelFile)
     {
         return false;
     }
+}
+
+void MLEngine::applySlot7Schema(const juce::String& schema)
+{
+    loadedProblemSchema = schema;
+    if (schema == "product-v2")
+    {
+        // Slot 7 = DullSound (M7 interim, Codex-agreed defaults): dullness is
+        // a LACK of highs, so the correction is a conservative wide BOOST —
+        // AIEngine::selectOptimalFilterType(DullSound) renders it as HighShelf.
+        problemFreqRanges[7] = { 6000.0f, 16000.0f };
+        defaultGains[7] = +2.5f;   // +2..+3 dB band, raise only after listening
+        defaultQs[7]    = 0.7f;    // wide shelf slope
+        // baseThresholds[7] stays 0.40: the operating point both gates measured.
+    }
+    else
+    {
+        // Legacy slot 7 = Clipping (constructor values, byte-identical).
+        problemFreqRanges[7] = { 20.0f, 20000.0f };
+        defaultGains[7] = -6.0f;
+        defaultQs[7]    = 0.7f;
+    }
+}
+
+bool MLEngine::loadWeightsV2(const juce::File& modelFile)
+{
+    // Self-describing v2 blob (format shared with ml/blob_io.py):
+    //   u32 magic, u32 version=2, u32 featureVersion, u32 numLayers(5)
+    //   per layer: u32 out, u32 in, f32 w[out*in], f32 b[out]
+    //     (order: problem fc1/fc2/fc3, freq fc1/fc2 — genreNet dropped)
+    //   u32 provenanceLen, u8 provenanceJson[...]
+    //   u64 fnv1a64 over ALL preceding bytes
+    // INTEGRITY FIRST: any checksum/shape/provenance mismatch rejects the whole
+    // file and leaves the engine on its previous (or random-fallback) weights.
+    juce::MemoryBlock raw;
+    if (!modelFile.loadFileAsData(raw))
+        return false;
+    const auto* bytes = static_cast<const juce::uint8*>(raw.getData());
+    const size_t total = raw.getSize();
+    if (total < 16 + 4 + 8)
+        return false;
+
+    // FNV-1a 64 with the repo's shared quirk basis (one digit short of the
+    // standard offset — kept in lockstep with blob_io.py and the provenance
+    // test; do NOT "fix" it here alone).
+    juce::uint64 h = 1469598103934665603ULL;
+    for (size_t i = 0; i < total - 8; ++i)
+    {
+        h ^= bytes[i];
+        h *= 1099511628211ULL;
+    }
+    juce::uint64 stored = 0;
+    for (int i = 0; i < 8; ++i)
+        stored |= static_cast<juce::uint64>(bytes[total - 8 + static_cast<size_t>(i)]) << (8 * i);
+    if (h != stored)
+    {
+        AIEQ_LOG_ERROR("ML v2 blob checksum mismatch — rejecting corrupt file");
+        return false;
+    }
+
+    auto rdU32 = [bytes](size_t off) -> uint32_t
+    {
+        return static_cast<uint32_t>(bytes[off])
+             | (static_cast<uint32_t>(bytes[off + 1]) << 8)
+             | (static_cast<uint32_t>(bytes[off + 2]) << 16)
+             | (static_cast<uint32_t>(bytes[off + 3]) << 24);
+    };
+    if (rdU32(0) != 0x4D4C4551 || rdU32(4) != 2)
+        return false;
+    const uint32_t featureVersion = rdU32(8);
+    if (featureVersion != 1)
+    {
+        AIEQ_LOG_ERROR("ML v2 blob has featureVersion " + juce::String((int) featureVersion)
+                       + " but this runtime computes v1 features — rejecting");
+        return false;
+    }
+    const uint32_t numLayers = rdU32(12);
+    if (numLayers != 5)
+        return false;
+
+    struct Shape { uint32_t out, in; };
+    const Shape expected[5] = {
+        { 128, static_cast<uint32_t>(melNumBands) },
+        { 64, 128 },
+        { static_cast<uint32_t>(numProblemTypes), 64 },
+        { 32, static_cast<uint32_t>(melNumBands) },
+        { static_cast<uint32_t>(numProblemTypes), 32 },
+    };
+    std::vector<float> w[5], b[5];
+    size_t off = 16;
+    for (int l = 0; l < 5; ++l)
+    {
+        if (off + 8 > total - 8)
+            return false;
+        const uint32_t outSize = rdU32(off), inSize = rdU32(off + 4);
+        off += 8;
+        if (outSize != expected[l].out || inSize != expected[l].in)
+        {
+            AIEQ_LOG_ERROR("ML v2 blob layer " + juce::String(l) + " shape "
+                           + juce::String((int) outSize) + "x" + juce::String((int) inSize)
+                           + " does not match this runtime — rejecting");
+            return false;
+        }
+        const size_t nw = static_cast<size_t>(outSize) * inSize;
+        const size_t need = (nw + outSize) * sizeof(float);
+        if (off + need > total - 8)
+            return false;
+        w[l].resize(nw);
+        std::memcpy(w[l].data(), bytes + off, nw * sizeof(float));
+        off += nw * sizeof(float);
+        b[l].resize(outSize);
+        std::memcpy(b[l].data(), bytes + off, outSize * sizeof(float));
+        off += outSize * sizeof(float);
+    }
+
+    if (off + 4 > total - 8)
+        return false;
+    const uint32_t provLen = rdU32(off);
+    off += 4;
+    if (off + provLen + 8 != total)   // exact layout: nothing hidden, nothing missing
+        return false;
+    const juce::String provJson = juce::String::fromUTF8(
+        reinterpret_cast<const char*>(bytes + off), static_cast<int>(provLen));
+    const juce::var prov = juce::JSON::parse(provJson);
+    if (!prov.isObject())
+    {
+        AIEQ_LOG_ERROR("ML v2 blob provenance is not valid JSON — rejecting");
+        return false;
+    }
+    const juce::String schema = prov.getProperty("problem_schema", "legacy-v1").toString();
+
+    // All validation passed — commit the weights.
+    problemNet_fc1->setWeights(w[0]); problemNet_fc1->setBias(b[0]);
+    problemNet_fc2->setWeights(w[1]); problemNet_fc2->setBias(b[1]);
+    problemNet_fc3->setWeights(w[2]); problemNet_fc3->setBias(b[2]);
+    freqNet_fc1->setWeights(w[3]);    freqNet_fc1->setBias(b[3]);
+    freqNet_fc2->setWeights(w[4]);    freqNet_fc2->setBias(b[4]);
+    // v2 blobs carry no genre net (never used in production inference);
+    // zero it so the engine state is fully defined by the loaded file.
+    {
+        std::vector<float> gz1(static_cast<size_t>(melNumBands) * 64, 0.0f), gzb1(64, 0.0f);
+        std::vector<float> gz2(static_cast<size_t>(numGenreTypes) * 64, 0.0f), gzb2(static_cast<size_t>(numGenreTypes), 0.0f);
+        genreNet_fc1->setWeights(gz1); genreNet_fc1->setBias(gzb1);
+        genreNet_fc2->setWeights(gz2); genreNet_fc2->setBias(gzb2);
+    }
+
+    applySlot7Schema(schema == "product-v2" ? schema : juce::String("legacy-v1"));
+
+    weightsLoadedFromFile = true;
+    loadedWeightsPath = modelFile.getFullPathName();
+    loadedWeightsBytes = static_cast<juce::int64>(total);
+    {
+        juce::uint64 hc = 1469598103934665603ULL;
+        for (size_t i = 0; i < total; ++i)
+        {
+            hc ^= bytes[i];
+            hc *= 1099511628211ULL;
+        }
+        loadedWeightsChecksum = juce::String::toHexString(static_cast<juce::int64>(hc));
+    }
+    AIEQ_LOG_INFO("ML v2 blob loaded (" + juce::String((juce::int64) total) + " bytes, schema "
+                  + loadedProblemSchema + ")");
+    return true;
 }
 
 bool MLEngine::saveWeights(const juce::File& modelFile) const

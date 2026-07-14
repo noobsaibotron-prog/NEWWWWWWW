@@ -359,6 +359,14 @@ public:
     void getManualCapturePreview(std::vector<float>& outMono, size_t maxSamples = 1024) const;
     [[nodiscard]] double getCapturedSampleRate() const noexcept { return captureService.getCapturedSampleRate(); }
     [[nodiscard]] bool analyzeCapturedAudioSnapshot();
+    // UX "Diagnosi Stabile" (counter-check Finding #1): dedicated capture-completion
+    // signal for the GUI freeze trigger. The generic aiProblemsChanged flag is also
+    // posted by the live analysis loop (see aiAnalysisThreadFunc), so a freeze keyed
+    // on it can capture the LIVE state instead of the capture result while the
+    // transport is running. This consume-style accessor reads the flag set exclusively
+    // by the capture-analysis finish() path in analyzeCapturedAudioSnapshot().
+    [[nodiscard]] bool consumeCaptureAnalysisCompleted() noexcept { return captureAnalysisCompleted.exchange(false, std::memory_order_acq_rel); }
+    [[nodiscard]] bool getCaptureAnalysisResult() const noexcept { return captureAnalysisResult.load(std::memory_order_acquire); }
     void setCaptureLengthMs(int lengthMs) noexcept { captureService.setCaptureLengthMs(lengthMs); }
     [[nodiscard]] int getCaptureLengthMs() const noexcept { return captureService.getCaptureLengthMs(); }
     

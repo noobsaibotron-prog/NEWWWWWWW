@@ -117,6 +117,13 @@ public:
     juce::String getLoadedWeightsPath() const { return loadedWeightsPath; }
     juce::int64 getLoadedWeightsBytes() const { return loadedWeightsBytes; }
     juce::String getLoadedWeightsChecksum() const { return loadedWeightsChecksum; }
+
+    /** Slot-7 semantics of the LOADED blob (M7 interim integration).
+        "legacy-v1" (default, and for every v1 blob): slot 7 = Clipping, which
+        AIEngine maps to Harshness — byte-identical historical behaviour.
+        "product-v2" (self-describing v2 blobs only): slot 7 = DullSound.
+        AIEngine keys its slot-7 mapping on this value. */
+    juce::String getLoadedProblemSchema() const { return loadedProblemSchema; }
     
     //==========================================================================
     // Basic training / fine-tuning
@@ -186,6 +193,10 @@ public:
     { return extractMelBands(spectrum, sampleRate, melNumBands); }
     std::pair<float, float> problemFreqRangeForTests(ProblemType t) const
     { const auto& r = problemFreqRanges[static_cast<size_t>(t)]; return { r.minHz, r.maxHz }; }
+    float defaultGainForTests(ProblemType t) const
+    { return defaultGains[static_cast<size_t>(t)]; }
+    float defaultQForTests(ProblemType t) const
+    { return defaultQs[static_cast<size_t>(t)]; }
     // Test-only: like initializeRandomWeights() but with a CALLER seed — production init (fixed seed 42)
     // is UNCHANGED. Mirrors the production layer order + hand-tuned biases; only the seed differs. Lets a
     // diagnostic estimate seed/initialisation variance (the production training is otherwise deterministic).
@@ -242,6 +253,13 @@ private:
     juce::String loadedWeightsPath;
     juce::int64 loadedWeightsBytes = 0;
     juce::String loadedWeightsChecksum;
+    juce::String loadedProblemSchema { "legacy-v1" };
+
+    /** v2 blob branch of loadWeights (self-describing: checksum + layer shapes
+        + provenance JSON carrying problem_schema). Rejects anything malformed;
+        never falls through to a partial load. */
+    bool loadWeightsV2(const juce::File& modelFile);
+    void applySlot7Schema(const juce::String& schema);
 
     //==========================================================================
     // Simple Dense Layer

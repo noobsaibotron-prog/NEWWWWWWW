@@ -72,6 +72,27 @@ public:
         problemList.setTooltip(tr("Keyboard: Up/Down to navigate • Enter to apply • Space to highlight",
                                   "Keyboard: Up/Down to navigate • Enter to apply • Space to highlight"));
         addAndMakeVisible(problemList);
+
+        // UX "Diagnosi Stabile": visible capture strip — surfaces the (previously hidden)
+        // CaptureService with clear state feedback and a frozen-diagnosis mode.
+        captureStripBtn.setButtonText(tr("CAPTURE", "CAPTURE"));
+        captureStripBtn.setColour(juce::TextButton::buttonColourId, ModernLookAndFeel::Colors::bgLight);
+        captureStripBtn.setColour(juce::TextButton::textColourOffId, ModernLookAndFeel::Colors::accentBlue);
+        captureStripBtn.setTooltip(tr("Record a snippet of audio and freeze the diagnosis on it",
+                                      "Record a snippet of audio and freeze the diagnosis on it"));
+        captureStripBtn.setTitle(tr("Capture and diagnose", "Capture and diagnose"));
+        captureStripBtn.setDescription(tr("Start or stop an audio capture, then freeze the analysis results",
+                                          "Start or stop an audio capture, then freeze the analysis results"));
+        captureStripBtn.onClick = [this]() { onCaptureStripClicked(); };
+        addAndMakeVisible(captureStripBtn);
+
+        captureStripLabel.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
+        captureStripLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textSecondary);
+        captureStripLabel.setJustificationType(juce::Justification::centredLeft);
+        captureStripLabel.setTitle(tr("Capture status", "Capture status"));
+        captureStripLabel.setDescription(tr("Shows the current capture and freeze state",
+                                            "Shows the current capture and freeze state"));
+        addAndMakeVisible(captureStripLabel);
         
         // Action buttons
         autoFixBtn.setButtonText(tr("FIX ALL", "FIX ALL"));
@@ -96,6 +117,8 @@ public:
         clearBtn.setDescription(tr("Dismiss every detected problem without applying fixes",
                                    "Dismiss every detected problem without applying fixes"));
         clearBtn.onClick = [this]() { 
+            if (isFrozen)
+                return;   // frozen diagnosis: CLEAR disabled (button is greyed out too)
             transientVisualHolds.clear();
             processor.getAIEngine().clearCorrections();
             updateProblemList();
@@ -203,6 +226,24 @@ public:
             genreLabel.setJustificationType(juce::Justification::centredLeft);
         }
 
+        // UX "Diagnosi Stabile": capture strip (22px) below the title row
+        bounds.removeFromTop(2);
+        auto captureRow = bounds.removeFromTop(22);
+        if (rtl)
+        {
+            captureStripBtn.setBounds(captureRow.removeFromRight(112).reduced(1));
+            captureRow.removeFromRight(6);
+            captureStripLabel.setBounds(captureRow);
+            captureStripLabel.setJustificationType(juce::Justification::centredRight);
+        }
+        else
+        {
+            captureStripBtn.setBounds(captureRow.removeFromLeft(112).reduced(1));
+            captureRow.removeFromLeft(6);
+            captureStripLabel.setBounds(captureRow);
+            captureStripLabel.setJustificationType(juce::Justification::centredLeft);
+        }
+
         bounds.removeFromTop(1); // tiny gap before list
 
         // Bottom buttons (24px)
@@ -226,6 +267,54 @@ public:
             return;
             
         auto& ai = processor.getAIEngine();
+
+        // UX "Diagnosi Stabile": capture strip state machine.
+        // Freeze trigger (re-counter-check fix, Finding #1): keyed on the DEDICATED
+        // capture-completion signal (captureAnalysisCompleted, set exclusively by the
+        // finish() path of analyzeCapturedAudioSnapshot), NOT on the generic
+        // aiProblemsChanged/needsUpdate flag — the live analysis loop posts that flag
+        // on every analyzed frame while the transport runs, which could freeze the
+        // LIVE state before the capture analysis had finished.
+        if (captureAwaitingResult
+            && processor.consumeCaptureAnalysisCompleted())
+        {
+            captureAwaitingResult = false;
+
+            if (! processor.getCaptureAnalysisResult())
+            {
+                // Analysis ran but failed (e.g. buffer unreadable): back to idle, no freeze
+                captureStripBtn.setEnabled(true);
+                captureStripBtn.setButtonText(tr("CAPTURE", "CAPTURE"));
+                captureStripLabel.setText(tr("Capture analysis failed — try again", "Capture analysis failed — try again"),
+                                          juce::dontSendNotification);
+                captureStripLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textSecondary);
+                return;
+            }
+
+            isFrozen = true;
+            frozenProblems = ai.getPendingCorrections();
+            transientVisualHolds.clear();     // diagnosis mode: no ghosts, data is static
+            captureStripBtn.setEnabled(true);
+            captureStripBtn.setButtonText(tr("BACK TO LIVE", "BACK TO LIVE"));
+            captureStripBtn.setColour(juce::TextButton::textColourOffId, ModernLookAndFeel::Colors::accentGreen);
+            captureStripLabel.setText(tr("DIAGNOSIS FROZEN — results locked", "DIAGNOSIS FROZEN — results locked"),
+                                      juce::dontSendNotification);
+            captureStripLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::accentGreen);
+            clearBtn.setEnabled(false);       // don't clear the engine while inspecting a frozen diagnosis
+            juce::AccessibilityHandler::postAnnouncement(
+                tr("Diagnosi congelata sui risultati della cattura", "Diagnosis frozen on capture results"),
+                juce::AccessibilityHandler::AnnouncementPriority::high);
+            needsUpdate.store(false, std::memory_order_release);   // consume any pending live refresh
+            updateProblemList();              // show frozen results immediately
+            updateButtons();
+            return;
+        }
+
+        if (isFrozen)
+            return;   // frozen: skip all live refresh paths (no flicker possible)
+
+        if (processor.isCapturing())
+            captureStripLabel.setText(tr("Recording...", "Recording..."), juce::dontSendNotification);
         
         // Update info labels (lightweight)
         genreLabel.setText(tr("Genre:", "Genre:") + " " + AIEngine::getGenreName(ai.getDetectedGenre()), 
@@ -310,7 +399,11 @@ public:
             rowComp = new ProblemRowComponent(*this);
 
         if (rowNumber >= 0 && rowNumber < static_cast<int>(problems.size()))
-            rowComp->updateFromProblem(problems[static_cast<size_t>(rowNumber)], rowNumber, isRowSelected, isRightToLeft());
+        {
+            const auto idx = static_cast<size_t>(rowNumber);
+            const bool ghost = idx < problemIsGhost.size() && problemIsGhost[idx];
+            rowComp->updateFromProblem(problems[idx], rowNumber, isRowSelected, isRightToLeft(), ghost);
+        }
 
         return rowComp;
     }
@@ -535,11 +628,14 @@ private:
             addAndMakeVisible(hintLabel);
         }
 
-        void updateFromProblem(const AIEngine::Correction& p, int rowIndex, bool isSelected, bool rtlFlag)
+        void updateFromProblem(const AIEngine::Correction& p, int rowIndex, bool isSelected, bool rtlFlag, bool isGhost = false)
         {
             currentIndex = rowIndex;
             rtl = rtlFlag;
             selected = isSelected;
+            // UX "Diagnosi Stabile": ghost rows (visual exit hold, no longer live in the
+            // engine) fade instead of vanishing. Flag pre-computed in updateProblemList().
+            setAlpha(isGhost ? 0.45f : 1.0f);
             severityColour = owner.getSeverityColor(p.severity);
             confidenceValue = p.confidence;
 
@@ -885,23 +981,44 @@ private:
     
     void updateProblemList()
     {
-        auto raw = processor.getAIEngine().getPendingCorrections();
+        // Frozen diagnosis mode: display the captured snapshot, ignore live updates
+        // (they otherwise overwrite capture results within ~100-200ms of playback).
+        auto raw = isFrozen ? frozenProblems : processor.getAIEngine().getPendingCorrections();
         const auto liveProblemCount = raw.size();
-        mergeTransientVisualHolds(raw);
-        problems = raw;
-        
-        // Sort by priority (severity * confidence) for display
-        std::sort(problems.begin(), problems.end(), [](const AIEngine::Correction& a, const AIEngine::Correction& b) {
-            float priorityA = a.severity * a.confidence;
-            float priorityB = b.severity * b.confidence;
+        if (! isFrozen)
+            mergeTransientVisualHolds(raw);   // appends ghost entries AFTER the live ones
+
+        // Ghost flag computed ONCE here (counter-exam fix A/B: never call isProblemLive()
+        // per row — it locks + copies the corrections vector on every visible row).
+        // Entries at index >= liveProblemCount were appended by mergeTransientVisualHolds
+        // and are therefore no longer live in the engine.
+        std::vector<std::pair<AIEngine::Correction, bool>> merged;
+        merged.reserve(raw.size());
+        for (size_t i = 0; i < raw.size(); ++i)
+            merged.emplace_back(raw[i], i >= liveProblemCount);
+
+        // Sort by priority (severity * confidence) for display — ghost flag travels with row
+        std::sort(merged.begin(), merged.end(), [](const auto& a, const auto& b) {
+            float priorityA = a.first.severity * a.first.confidence;
+            float priorityB = b.first.severity * b.first.confidence;
             if (std::abs(priorityA - priorityB) < 0.01f)
-                return a.severity > b.severity;
+                return a.first.severity > b.first.severity;
             return priorityA > priorityB;
         });
-        
+
         // Limit to top 50 for performance (but show ALL if less than 50)
-        if (problems.size() > 50)
-            problems.resize(50);
+        if (merged.size() > 50)
+            merged.resize(50);
+
+        problems.clear();
+        problems.reserve(merged.size());
+        problemIsGhost.clear();
+        problemIsGhost.reserve(merged.size());
+        for (const auto& [corr, ghost] : merged)
+        {
+            problems.push_back(corr);
+            problemIsGhost.push_back(ghost);
+        }
         problemList.updateContent();
         if (auto* h = problemList.getAccessibilityHandler())
             h->notifyAccessibilityEvent(juce::AccessibilityEvent::structureChanged);
@@ -926,12 +1043,19 @@ private:
             statusLabel.setText(juce::String::formatted(fmt.toRawUTF8(), n), juce::dontSendNotification);
         }
         
-        autoFixBtn.setEnabled(liveProblemCount > 0);
+        // Finding #2 (counter-check): frozen diagnosis is read-only. FIX/FIX ALL would
+        // route through the isProblemLive() guards, which compare against the LIVE
+        // engine state — not the frozen snapshot on screen — so the action could be a
+        // silent no-op or apply to data different from what is displayed. Disable it.
+        autoFixBtn.setEnabled(! isFrozen && liveProblemCount > 0);
     }
 
-    static bool shouldHoldVisually(const AIEngine::Correction& c) noexcept
+    static bool shouldHoldVisually(const AIEngine::Correction&) noexcept
     {
-        return c.type == AIEngine::ProblemType::Sibilance;
+        // UX "Diagnosi Stabile": every problem type benefits from the visual exit hold
+        // (was Sibilance-only). Safety guards (isProblemLive before apply) are unchanged,
+        // so FIX on a ghost that vanished from the engine remains a safe no-op.
+        return true;
     }
 
     static bool isSameDisplayedProblem(const AIEngine::Correction& a,
@@ -1041,7 +1165,10 @@ private:
             tr("Apply AI Corrections", "Apply AI Corrections"), msg, tr("Apply", "Apply"), tr("Cancel", "Cancel"), nullptr,
             juce::ModalCallbackFunction::create([this](int result) {
                 fixAllInProgress = false;
-                autoFixBtn.setEnabled(true);
+                // Finding #2: do not re-enable unconditionally — updateProblemList()
+                // re-applies the frozen-aware enable logic
+                // ("autoFixBtn.setEnabled(!isFrozen && liveProblemCount > 0)").
+                updateProblemList();
                 if (result == 1) {
                     if (!canApplyNow()) { updateProblemList(); return; }
                     processor.getAIEngine().approveAllCorrections();
@@ -1216,12 +1343,24 @@ private:
     static constexpr bool kMultiTrackUIEnabled = false;
     
     std::vector<AIEngine::Correction> problems;
+    std::vector<bool> problemIsGhost;        // parallel to `problems`: true = exit-hold ghost
+
+    // UX "Diagnosi Stabile" — capture strip + frozen diagnosis mode.
+    // Message-thread-only state (timer + clicks): no atomics needed.
+    juce::TextButton captureStripBtn;
+    juce::Label captureStripLabel;
+    bool isFrozen { false };                 // panel shows frozenProblems, ignores live updates
+    bool captureAwaitingResult { false };    // between STOP+ANALYZE and async results arrival
+    std::vector<AIEngine::Correction> frozenProblems;
     struct TransientVisualHold
     {
         AIEngine::Correction correction;
         juce::int64 expiresAtMs = 0;
     };
-    static constexpr juce::int64 kTransientVisualHoldMs = 900;
+    // UX "Diagnosi Stabile": exit hold-time so problems fade out instead of vanishing
+    // the instant the engine drops them (engine persistence is asymmetric: slow-in ~0.8s,
+    // instant-out). Engine gates (60%/8-frame) are UNTOUCHED — AIAccuracyTest depends on them.
+    static constexpr juce::int64 kTransientVisualHoldMs = 3500;
     std::vector<TransientVisualHold> transientVisualHolds;
     std::atomic<bool> needsUpdate { true };
     juce::int64 lastApplyTimeMs { 0 };      // throttle rapid apply clicks (300ms window)
@@ -1230,9 +1369,75 @@ private:
     float lastSensitivity { -1.0f };         // detect sensitivity changes for re-analyze feedback
     int lastAnnouncedProblemCount { -1 };
 
-    /** Returns true if enough time has passed since the last apply (300ms). */
+    /** UX "Diagnosi Stabile": capture strip click handler (start / stop+analyze / unfreeze). */
+    void onCaptureStripClicked()
+    {
+        if (isFrozen)
+        {
+            // BACK TO LIVE: unfreeze and resume live updates
+            isFrozen = false;
+            frozenProblems.clear();
+            captureStripBtn.setButtonText(tr("CAPTURE", "CAPTURE"));
+            captureStripBtn.setColour(juce::TextButton::textColourOffId, ModernLookAndFeel::Colors::accentBlue);
+            captureStripLabel.setText("", juce::dontSendNotification);
+            captureStripLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textSecondary);
+            clearBtn.setEnabled(true);
+            juce::AccessibilityHandler::postAnnouncement(
+                tr("Tornato all'analisi live", "Back to live analysis"),
+                juce::AccessibilityHandler::AnnouncementPriority::medium);
+            updateProblemList();      // re-applies frozen-aware FIX ALL enable state now
+            refreshFromProcessor();   // and schedule a fresh live refresh on next tick
+            return;
+        }
+
+        if (! processor.isCapturing())
+        {
+            // START: lock-free CAS in CaptureService — safe from the message thread
+            if (processor.startManualCapture())
+            {
+                captureStripBtn.setButtonText(tr("STOP + ANALYZE", "STOP + ANALYZE"));
+                captureStripLabel.setText(tr("Recording...", "Recording..."), juce::dontSendNotification);
+                captureStripLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::accentYellow);
+            }
+            return;
+        }
+
+        // STOP + ANALYZE: async analysis on the processor's dedicated thread;
+        // completion posts aiProblemsChanged → freeze trigger in timerCallback().
+        processor.stopManualCapture();
+        if (processor.analyzeCapturedAudioSnapshot())
+        {
+            captureAwaitingResult = true;
+            captureStripBtn.setEnabled(false);
+            captureStripLabel.setText(tr("Analyzing...", "Analyzing..."), juce::dontSendNotification);
+            captureStripLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::accentYellow);
+        }
+        else
+        {
+            captureStripBtn.setButtonText(tr("CAPTURE", "CAPTURE"));
+            captureStripLabel.setText(tr("Capture too short — try again", "Capture too short — try again"),
+                                      juce::dontSendNotification);
+            captureStripLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textSecondary);
+        }
+    }
+
+    /** Returns true if applying is currently allowed: not in frozen-diagnosis mode
+        and enough time has passed since the last apply (300ms debounce).
+        Finding #2 (counter-check): while frozen, the list shows the capture snapshot
+        but the apply guards (isProblemLive) compare against the LIVE engine state —
+        applying could silently no-op or act on data different from what is shown.
+        All apply paths (single FIX, double-click, keyboard activate, FIX ALL) funnel
+        through this gate, so blocking here makes frozen mode consistently read-only. */
     bool canApplyNow()
     {
+        if (isFrozen)
+        {
+            juce::AccessibilityHandler::postAnnouncement(
+                tr("Diagnosi congelata: torna a LIVE per applicare le correzioni",
+                   "Diagnosis frozen: go back to LIVE to apply fixes"),
+                juce::AccessibilityHandler::AnnouncementPriority::medium);
+            return false;
+        }
         const juce::int64 now = juce::Time::currentTimeMillis();
         if (now - lastApplyTimeMs < 300)
             return false;

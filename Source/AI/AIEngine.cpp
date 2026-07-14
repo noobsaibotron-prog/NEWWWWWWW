@@ -3407,7 +3407,13 @@ void AIEngine::detectProblemsWithML()
                 c.type = ProblemType::Boxyness;
                 break;
             case MLEngine::ProblemType::Clipping:
-                c.type = ProblemType::Harshness; // Map clipping to harshness for now
+                // Slot-7 semantics are keyed to the LOADED blob schema (M7
+                // interim, v2 loader): self-describing product-v2 blobs define
+                // slot 7 = DullSound; every legacy/v1 blob keeps the historical
+                // Clipping->Harshness mapping byte-identically.
+                c.type = (mlEngine.getLoadedProblemSchema() == "product-v2")
+                             ? ProblemType::DullSound
+                             : ProblemType::Harshness;
                 break;
             default:
                 c.type = ProblemType::None;

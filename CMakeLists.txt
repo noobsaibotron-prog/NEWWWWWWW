@@ -1134,6 +1134,7 @@ if(HAVE_JUCE)
         Source/Tests/AIFrontEndTest.cpp
         Source/Tests/AIModelContractTest.cpp
         Source/Tests/MLWeightsProvenanceTest.cpp
+        Source/Tests/MLBlobV2LoaderTest.cpp
         Source/Tests/FrameCoherenceTest.cpp
         Source/Tests/DynamicCorrectionEngineTest.cpp
         Source/Tests/RealDataSibilanceTest.cpp
