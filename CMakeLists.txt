@@ -1247,7 +1247,9 @@ if(HAVE_JUCE)
 
     # ---------------------------------------------------------------------------
     # Performance tests — GUI paint fluidity under aggressive scenarios.
-    # Benchmarks paint() with 23 bands, drag, spectrum, LOD, adaptive timer.
+    # The only current benchmark is intentionally quarantined as KnownDebt. Do not
+    # register a blocking "Performance" ctest until a stable benchmark category is
+    # restored; otherwise ctest can report a false green with zero assertions.
     # ---------------------------------------------------------------------------
     add_executable(AIEqualizerPro_PerformanceTests
         Source/Tests/EQGraphFluidityTest.cpp
@@ -1287,8 +1289,11 @@ if(HAVE_JUCE)
     set_target_properties(AIEqualizerPro_PerformanceTests PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/Tests)
 
-    add_test(NAME aieq_performance
-             COMMAND $<TARGET_FILE:AIEqualizerPro_PerformanceTests> --category=Performance -v)
+    add_test(NAME aieq_performance_known_debt
+             COMMAND $<TARGET_FILE:AIEqualizerPro_PerformanceTests> --category=KnownDebt -v)
+    set_tests_properties(aieq_performance_known_debt PROPERTIES
+        DISABLED TRUE
+        LABELS "KnownDebt;Performance")
 
     # ---------------------------------------------------------------------------
     # Thread-safety DETECTOR (quarantined) — in-process reproducer of pluginval's

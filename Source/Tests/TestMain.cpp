@@ -10,6 +10,7 @@ public:
     void runTest() override
     {
         beginTest("Failure propagation sanity check");
+        expect(true, "Harness reports at least one assertion on healthy runs");
 
         if (juce::SystemStats::getEnvironmentVariable("AIEQ_HARNESS_SELFTEST", "0") == "1")
             expect(false, "Synthetic failure to verify harness reporting");
@@ -33,6 +34,7 @@ public:
 
     struct Summary
     {
+        int totalTests = 0;
         int totalAssertions = 0;
         int totalPasses = 0;
         int totalFailures = 0;
@@ -52,6 +54,79 @@ public:
                 opts.runAll = true;
         }
         return opts;
+    }
+
+    static bool isDefaultBlockingCategory(const juce::String& category)
+    {
+        static constexpr const char* categories[] = {
+            "AI",
+            "AI-Calibration",
+            "AI-Contract",
+            "AI-Corpus",
+            "AI-Diag",
+            "AI-Front",
+            "AI-Integration",
+            "AI-Knobs",
+            "AI-Sweep",
+            "ClickTests",
+            "Core",
+            "DSP",
+            "Integration",
+            "Perceptual",
+            "Performance",
+            "RealData",
+            "Regression",
+            "ThreadSafety",
+        };
+
+        for (const auto* projectCategory : categories)
+            if (category == projectCategory)
+                return true;
+
+        return false;
+    }
+
+    static bool isAieqProjectTestName(const juce::String& name)
+    {
+        static constexpr const char* prefixes[] = {
+            "AI",
+            "AIEqualizer",
+            "Anti-Pop",
+            "Band Drag",
+            "BiquadCoeffs",
+            "BlockSize",
+            "Bypass",
+            "CaptureService",
+            "D1 ",
+            "DynEQ",
+            "Dynamic",
+            "EQ Graph",
+            "Frame coherence",
+            "Freq Drag",
+            "Fuzz BlockSize",
+            "Host Session",
+            "Integration",
+            "LinearPhase",
+            "ML ",
+            "Motore",
+            "MS ",
+            "Oversampling",
+            "ParametricEQProcessor",
+            "Perceptual",
+            "Phase Mode",
+            "RB",
+            "Real ",
+            "Real-data",
+            "SmoothedValue",
+            "Solo Mode",
+            "Spectrum",
+        };
+
+        for (const auto* prefix : prefixes)
+            if (name.startsWith(prefix))
+                return true;
+
+        return false;
     }
 
     static int run(const Options& opts)
@@ -81,32 +156,46 @@ public:
         else
         {
             // N1 FIX (honest gates): the no-arg run executes EVERY registered
-            // category EXCEPT "KnownDebt". Rationale:
+            // project category. Rationale:
             //  - The old default ran only {DSP, Regression, Integration},
             //    silently skipping every AI-* category + Perceptual/Performance/
-            //    ClickTests/Meta. The default-run count must mean "all BLOCKING
-            //    tests in this binary", never a hidden subset.
+            //    ClickTests/Meta. A later broad default also picked up JUCE's
+            //    built-in self-tests, which can make a binary with no project
+            //    tests look green. The default-run count must mean "all BLOCKING
+            //    project tests in this binary", never a hidden or framework-only
+            //    subset.
             //  - "KnownDebt" is the documented, non-blocking quarantine for
             //    pre-existing failures (test-harness layout hazards, synthetic-
             //    fixture realism, real ML/DSP debt). It is excluded here so the
             //    default gate is green-with-known-debt, and run explicitly via
             //    `--category=KnownDebt`. `--all` still runs EVERYTHING including
             //    KnownDebt (exhaustive, may be red while debt is real).
+            //  - "Meta" is a harness self-test. It is useful for explicit
+            //    `--category=Meta` checks, but it must not make a binary with no
+            //    product tests look green.
+            juce::Array<juce::UnitTest*> tests;
             juce::StringArray categories;
+
             for (auto* t : juce::UnitTest::getAllTests())
-                if (t != nullptr && t->getCategory() != "KnownDebt")
+            {
+                if (t == nullptr)
+                    continue;
+
+                if (isDefaultBlockingCategory(t->getCategory()) && isAieqProjectTestName(t->getName()))
+                {
+                    tests.add(t);
                     categories.addIfNotAlreadyThere(t->getCategory());
+                }
+            }
+
             categories.sort(true);
 
-            std::cout << "Running all registered categories except KnownDebt: "
+            std::cout << "Running blocking AIEQ project tests in categories: "
                       << categories.joinIntoString(", ") << std::endl;
 
-            for (const auto& category : categories)
-            {
-                juce::UnitTestRunner runner;
-                runner.runTestsInCategory(category);
-                accumulateResults(runner, summary, opts.verbose);
-            }
+            juce::UnitTestRunner runner;
+            runner.runTests(tests);
+            accumulateResults(runner, summary, opts.verbose);
         }
 
         std::cout << std::endl;
@@ -116,10 +205,23 @@ public:
 
         std::cout << std::endl;
         std::cout << "----------------------------------------" << std::endl;
+        std::cout << "Total tests:      " << summary.totalTests << std::endl;
         std::cout << "Total assertions: " << summary.totalAssertions << std::endl;
         std::cout << "Passed:           " << summary.totalPasses << std::endl;
         std::cout << "Failed:           " << summary.totalFailures << std::endl;
         std::cout << "----------------------------------------" << std::endl;
+
+        if (summary.totalTests == 0)
+        {
+            std::cout << "FAILED: no tests were executed" << std::endl;
+            return 1;
+        }
+
+        if (summary.totalAssertions == 0)
+        {
+            std::cout << "FAILED: tests executed without assertions" << std::endl;
+            return 1;
+        }
 
         if (summary.totalFailures == 0)
         {
@@ -140,6 +242,7 @@ private:
         {
             if (const auto* result = runner.getResult(i))
             {
+                ++summary.totalTests;
                 summary.totalPasses += result->passes;
                 summary.totalFailures += result->failures;
                 summary.totalAssertions += result->passes + result->failures;

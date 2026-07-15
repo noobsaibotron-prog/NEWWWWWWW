@@ -2,9 +2,9 @@
 
 > **READ THIS FILE FIRST.** This is the single source of truth for any AI platform working on the AI Equalizer Pro (AIEQ) project. It declares the canonical state of the codebase, the AIEQ+ framework, the last audit verdict, and the current priority.
 
-**Last Updated:** 2026-04-04 (Post-Tribunal v4.2 Hardening)
-**Updated By:** Manus (for Marco)
-**Governance State of This File:** Reviewed
+**Last Updated:** 2026-07-15 (Audit reconciliation)
+**Updated By:** Codex (for Marco)
+**Governance State of This File:** Reconciled with live `feature/unified-exp-best` worktree
 
 ---
 
@@ -24,20 +24,30 @@
 
 | Branch | Role | Status |
 |---|---|---|
-| **`review/codex-2026-04-01`** | **CANONICAL.** | Active — contains latest T-6, P1, P2, D1 fixes + GUI/OpenGL hardening. |
+| **`feature/unified-exp-best`** | **EXP consolidation branch.** | Active for isolated Motore v2 / UX / M9 lab consolidation. Not a release branch. |
+| **`feature/motore-v2-a0`** | Checkpoint source. | Must remain fixed at `5c9cb3290f87b62a339c6b2c49645b2b25524712`. |
+| **`review/codex-2026-04-01`** | Historical release-audit branch. | Historical reference only; its release-safe verdict is superseded by this reconciliation. |
 
-**Current HEAD:** [Local Update Pending Push]
+**Current HEAD:** `59135db2571a9346aca357747ed54adc5647504a` at the time of reconciliation.
 
 ---
 
-## 3. Current Audit Verdict: RELEASE-SAFE
+## 3. Current Audit Verdict: EXPERIMENTAL / NOT RELEASE-SAFE
 
 | Metric | Value |
 |---|---|
-| **Verdict** | **RELEASE-SAFE** |
-| **Commercial Rating** | **9.25 / 10.0** (Threshold: 7.0) |
-| **Previous Verdict** | RELEASE-CANDIDATE (Verified) |
-| **Status** | Tutti i 4 Gate Finali (Host Matrix, Recall, Stress Harness, DynEQ Runtime) sono stati superati e verificati tramite test automatizzati. Il plugin è pronto per il rilascio commerciale. |
+| **Verdict** | **NOT RELEASE-SAFE** |
+| **Commercial Rating** | **Deferred**. Previous `9.25 / 10.0` verdict is historical and no longer authoritative. |
+| **Previous Verdict** | RELEASE-SAFE (historical, superseded) |
+| **Status** | The live worktree builds and the current blocking ctest suite is green, but release readiness is blocked by documented runtime, test-governance, AI/ML, and product-packaging gaps. |
+
+### 3.0 Why The Verdict Changed
+
+The earlier release-safe verdict was based on a historical remediation audit. A deeper
+2026-07 counter-audit found that several green gates were narrower than their labels:
+performance debt was quarantined, thread-safety detectors were excluded, and some release
+documents claimed more than the current scorecard and test matrix could prove. This file now
+tracks the live branch as an experimental consolidation branch, not as a commercial release.
 
 ### 3.1 Recent Hardening (Post-Tribunal v4.2)
 
@@ -59,16 +69,25 @@
 
 ---
 
-## 4. Current Priority: Post-Release Maintenance & Feature Uplift
+## 4. Current Priority: Audit Reconciliation And Blocking-Debt Burn-Down
 
-The project has reached the **RELEASE-SAFE** status. The focus is now on monitoring user feedback and planning the next feature uplift (Wave 4).
+The immediate priority is to make gates and documents truthful before any release claim:
 
-### 4.1 Completed Gates for RELEASE-SAFE
+1. no test target may pass with zero executed tests or zero assertions;
+2. quarantined KnownDebt must stay visible and non-blocking, not mislabeled as a green gate;
+3. runtime/audio-thread P0s must be fixed or explicitly excluded from release scope;
+4. Motore v2 / M9 work remains experimental until A6/A7 gates are green and integrated with provenance.
 
-1. **Host Matrix Validation:** ✅ Verified in Reaper, Ableton Live, Logic Pro, Cubase, and Pro Tools.
-2. **Recall Determinism:** ✅ Automated state save/load tests passed (RecallDeterminismTest.cpp).
-3. **Randomized Stress Harness:** ✅ Test with variable block-size and sample-rate passed (RandomizedStressHarness.cpp).
-4. **DynEQ Runtime Validation:** ✅ Real-time lookahead stability verification passed (DynEQRuntimeValidation.cpp).
+### 4.1 Historical Gates Requiring Revalidation
+
+The following were previously cited as final release gates, but they are not accepted as
+current release proof until they are present in the active branch, wired into the current
+test matrix, and reproduced from a clean checkout/release package:
+
+1. **Host Matrix Validation**
+2. **Recall Determinism**
+3. **Randomized Stress Harness**
+4. **DynEQ Runtime Validation**
 
 ---
 
@@ -85,6 +104,7 @@ The project has reached the **RELEASE-SAFE** status. The focus is now on monitor
 
 ## 10. Instructions for AI Platforms
 
-- **The project is now officially RELEASE-SAFE.**
-- All 4 Final Gates have been passed and documented in the FINAL_RELEASE_READINESS_REPORT.md.
-- The codebase in the branch `review/codex-2026-04-01` is the canonical version for release.
+- **Do not describe the current project as release-safe.**
+- Treat `feature/unified-exp-best` as an isolated experimental consolidation branch.
+- Do not promote Motore v2, M9 assets, or any model blob into a product release without a separate A6/A7 sign-off.
+- Keep KnownDebt visible. Do not convert a disabled/quarantined test into a green release claim.
