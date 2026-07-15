@@ -1,5 +1,6 @@
 #include "DynamicEQProcessor.h"
 #include <algorithm>
+#include <cmath>
 
 namespace
 {
@@ -111,16 +112,61 @@ DynamicEQProcessor::DynamicEQProcessor()
 //==============================================================================
 void DynamicEQProcessor::prepare(double sampleRate, int samplesPerBlock, int channels)
 {
-    currentSampleRate.store(sampleRate, std::memory_order_relaxed);
-    currentBlockSize.store(samplesPerBlock, std::memory_order_relaxed);
-    numChannels = channels;
-    
     // Pre-allocate dry buffer with generous headroom so process() never needs to resize.
     // 8x block size covers Reaper dynamic block sizes and any host that delivers
     // larger-than-expected blocks without hitting the RT-unsafe setSize path.
     dryBuffer.setSize(channels, samplesPerBlock * 8, false, false, true);
     dryBuffer.clear();
-    
+
+    // RB-4 FIX: always allocate lookahead buffer for the maximum possible delay (20ms)
+    // so that runtime mode changes (setLookahead) never need heap allocation.
+    static constexpr float kMaxLookaheadMs = 20.0f;
+    const int maxLaSamples = static_cast<int>(
+        std::ceil((kMaxLookaheadMs / 1000.0f) * sampleRate));
+    lookaheadBuffer.setSize(channels, maxLaSamples + samplesPerBlock);
+
+    resetRuntimeStateNoAllocation(sampleRate, samplesPerBlock, channels);
+}
+
+bool DynamicEQProcessor::canReconfigureWithoutAllocation(double sampleRate,
+                                                         int samplesPerBlock,
+                                                         int channels) const noexcept
+{
+    if (sampleRate <= 0.0 || samplesPerBlock <= 0 || channels <= 0)
+        return false;
+
+    static constexpr double kMaxLookaheadSeconds = 0.020;
+    const int requiredLookahead =
+        static_cast<int>(std::ceil(kMaxLookaheadSeconds * sampleRate)) + samplesPerBlock;
+
+    return dryBuffer.getNumChannels() >= channels
+        && dryBuffer.getNumSamples() >= samplesPerBlock
+        && lookaheadBuffer.getNumChannels() >= channels
+        && lookaheadBuffer.getNumSamples() >= requiredLookahead;
+}
+
+bool DynamicEQProcessor::reconfigureNoAllocation(double sampleRate,
+                                                 int samplesPerBlock,
+                                                 int channels) noexcept
+{
+    if (!canReconfigureWithoutAllocation(sampleRate, samplesPerBlock, channels))
+    {
+        jassertfalse;
+        return false;
+    }
+
+    resetRuntimeStateNoAllocation(sampleRate, samplesPerBlock, channels);
+    return true;
+}
+
+void DynamicEQProcessor::resetRuntimeStateNoAllocation(double sampleRate,
+                                                       int samplesPerBlock,
+                                                       int channels) noexcept
+{
+    currentSampleRate.store(sampleRate, std::memory_order_relaxed);
+    currentBlockSize.store(samplesPerBlock, std::memory_order_relaxed);
+    numChannels = channels;
+
     // Prepare all band filters and calculate coefficients
     constexpr double smoothingSeconds = 0.02; // 20 ms ramp for dynamic params
     for (int i = 0; i < maxBands; ++i)
@@ -184,19 +230,13 @@ void DynamicEQProcessor::prepare(double sampleRate, int samplesPerBlock, int cha
 
     lastAppliedMakeupGain = 1.0f;
 
-    // RB-4 FIX: always allocate lookahead buffer for the maximum possible delay (20ms)
-    // so that runtime mode changes (setLookahead) never need heap allocation.
-    {
-        static constexpr float kMaxLookaheadMs = 20.0f;
-        const int maxLaSamples = static_cast<int>((kMaxLookaheadMs / 1000.0f) * sampleRate);
-        lookaheadBuffer.setSize(channels, maxLaSamples + samplesPerBlock);
+    // Full-clear intentionally preserves the existing lookahead ring semantics.
+    if (lookaheadBuffer.getNumSamples() > 0)
         lookaheadBuffer.clear();
 
-        // Set actual current lookahead from the stored ms value
-        const float laMsVal = lookaheadMs.load(std::memory_order_relaxed);
-        const int laSamples = static_cast<int>((laMsVal / 1000.0f) * sampleRate);
-        lookaheadSamples.store(laSamples, std::memory_order_relaxed);
-    }
+    const float activeLookaheadMs = lookaheadMs.load(std::memory_order_relaxed);
+    const int activeLookaheadSamples = static_cast<int>(activeLookaheadMs * 0.001f * static_cast<float>(sampleRate));
+    lookaheadSamples.store(activeLookaheadSamples, std::memory_order_relaxed);
     lookaheadWritePos = 0;
     
     isPrepared.store(true, std::memory_order_release);

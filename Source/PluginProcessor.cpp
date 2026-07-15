@@ -1082,16 +1082,29 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     oversampler4x->reset();
     oversampler4x->initProcessing(static_cast<size_t>(samplesPerBlock));
 
-    // HQ (NaturalPhase) processors prepared to match effective selection (Off/2x -> 2x, 4x -> 4x)
+    // HQ (NaturalPhase) processors: allocate DynEQ for the worst-case 4x capacity
+    // outside the audio callback, then retune to the active rate without resizing.
     // "Off" intentionally shares the same 2x HQ path as 2x to keep the Natural-phase chain coherent.
-    const int osMultiplier = (osFactor == 2 ? 4 : 2); // 0,1 -> 2x ; 2 -> 4x ; 3(Auto) -> prepare for 4x worst-case
-    const double hqSampleRate = sampleRate * static_cast<double>(osMultiplier);
-    const int hqBlockSize = samplesPerBlock * osMultiplier;
-    eqProcessorHQ.prepare(hqSampleRate, hqBlockSize, getTotalNumInputChannels());
-    dynamicEQProcessorHQ.prepare(hqSampleRate, hqBlockSize, getTotalNumInputChannels());
+    const int activeHqMultiplier = (osFactor == 2 ? 4 : 2); // 0,1 -> 2x ; 2 -> 4x ; 3(Auto) starts 2x
+    constexpr int maxHqMultiplier = 4;
+    const int channels = getTotalNumInputChannels();
+    const int maxHqBlockCapacity = preallocatedMaxSamples * maxHqMultiplier;
+    const int activeHqBlockCapacity = preallocatedMaxSamples * activeHqMultiplier;
+    const double activeHqSampleRate = sampleRate * static_cast<double>(activeHqMultiplier);
+
+    hqReconfigureFailures.store(0, std::memory_order_relaxed);
+    dynamicEQProcessorHQ.prepare(sampleRate * static_cast<double>(maxHqMultiplier),
+                                 maxHqBlockCapacity,
+                                 channels);
+    eqProcessorHQ.prepare(activeHqSampleRate, activeHqBlockCapacity, channels);
+    const bool dynHqReady = dynamicEQProcessorHQ.reconfigureNoAllocation(activeHqSampleRate,
+                                                                          activeHqBlockCapacity,
+                                                                          channels);
+    hqRuntimeReady.store(dynHqReady, std::memory_order_release);
+    jassert(dynHqReady);
 
     naturalPhaseLatency = static_cast<int>(oversampler2x->getLatencyInSamples());
-    const int maxHQSamples = juce::jmax(hqBlockSize * 4, preallocatedMaxSamples * osMultiplier);
+    const int maxHQSamples = maxHqBlockCapacity;
     naturalOversampledBuffer.setSize(getTotalNumInputChannels(), maxHQSamples, false, false, true);
     naturalOversampledBuffer.clear();
 
@@ -1341,9 +1354,9 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
             triggerLinearPhaseIRUpdate();
         }
 
-        // Re-prepare eqProcessorHQ / dynamicEQProcessorHQ at the correct oversampled rate.
-        // prepare() is zero-allocation (stores atomics, resets POD, recalculates biquad
-        // coefficients) — safe to call on the audio thread.
+        // Retune eqProcessorHQ / dynamicEQProcessorHQ at the correct oversampled rate.
+        // This must not call prepare(): DynamicEQProcessor::prepare() owns buffer
+        // sizing and is not audio-thread safe.
         // Without this, switching oversampling factor at runtime leaves HQ EQ coefficients
         // calculated for the wrong sample rate (e.g. still sr*2 while oversampler is now
         // feeding sr*4), causing wrong frequency response until the next prepareToPlay.
@@ -1354,8 +1367,19 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
                                       * static_cast<double>(newOsMult);
             const int newHqBlock    = preallocatedMaxSamples * newOsMult;
             const int numChs        = getTotalNumInputChannels();
-            eqProcessorHQ.prepare(newHqRate, newHqBlock, numChs);
-            dynamicEQProcessorHQ.prepare(newHqRate, newHqBlock, numChs);
+            if (!dynamicEQProcessorHQ.canReconfigureWithoutAllocation(newHqRate, newHqBlock, numChs))
+            {
+                hqReconfigureFailures.fetch_add(1, std::memory_order_relaxed);
+                hqRuntimeReady.store(false, std::memory_order_release);
+            }
+            else
+            {
+                const bool dynOk = dynamicEQProcessorHQ.reconfigureNoAllocation(newHqRate, newHqBlock, numChs);
+                const bool eqOk = dynOk && eqProcessorHQ.reconfigureNoAllocation(newHqRate, newHqBlock, numChs);
+                hqRuntimeReady.store(dynOk && eqOk, std::memory_order_release);
+                if (!dynOk || !eqOk)
+                    hqReconfigureFailures.fetch_add(1, std::memory_order_relaxed);
+            }
         }
 
         // Trigger a dry→wet crossfade to cover the reset transient.
@@ -1893,6 +1917,22 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
                                     int osEffective,
                                     bool updateMeters)
     {
+        if (!hqRuntimeReady.load(std::memory_order_acquire))
+        {
+            oversamplingEffectiveFactor.store(0, std::memory_order_relaxed);
+
+            eqProcessor.process(targetBuffer);
+
+            if (dynEqEnabledLocal)
+            {
+                dynamicEQProcessor.process(targetBuffer);
+                if (updateMeters)
+                    updateDynamicMeterCacheFrom(dynamicEQProcessor);
+            }
+
+            return;
+        }
+
         oversamplingEffectiveFactor.store(osEffective, std::memory_order_relaxed);
 
         juce::dsp::Oversampling<float>* activeOversampler = (osEffective == 2 && oversampler4x)

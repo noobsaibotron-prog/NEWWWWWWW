@@ -597,6 +597,8 @@ private:
     int naturalPhaseLatency = 64;
     std::atomic<int> oversamplingFactor { 0 };          // user choice
     std::atomic<int> oversamplingEffectiveFactor { 0 }; // resolved (auto/off/2x/4x)
+    std::atomic<bool> hqRuntimeReady { true };
+    std::atomic<uint32_t> hqReconfigureFailures { 0 };
     
     //==============================================================================
     // Linear Phase (partitioned convolution)

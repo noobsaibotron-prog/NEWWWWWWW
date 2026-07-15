@@ -1070,6 +1070,7 @@ if(HAVE_JUCE)
         Source/Tests/DynamicEQCurveEvaluatorTest.cpp
         Source/Tests/DynamicEQSpectralArtifactTest.cpp
         Source/Tests/DynamicEQGainModelContractTest.cpp
+        Source/Tests/HQReconfigureNoAllocationTest.cpp
         Source/Tests/FuzzBlockSizeTest.cpp
         Source/Tests/LinearPhaseBehavioralTest.cpp
         Source/Tests/DynamicEQBehavioralTest.cpp

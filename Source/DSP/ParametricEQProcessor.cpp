@@ -29,6 +29,21 @@ ParametricEQProcessor::ParametricEQProcessor()
 //==============================================================================
 void ParametricEQProcessor::prepare(double sampleRate, int samplesPerBlock, int channels)
 {
+    resetRuntimeStateNoAllocation(sampleRate, samplesPerBlock, channels);
+}
+
+bool ParametricEQProcessor::reconfigureNoAllocation(double sampleRate,
+                                                    int samplesPerBlock,
+                                                    int channels) noexcept
+{
+    resetRuntimeStateNoAllocation(sampleRate, samplesPerBlock, channels);
+    return true;
+}
+
+void ParametricEQProcessor::resetRuntimeStateNoAllocation(double sampleRate,
+                                                          int samplesPerBlock,
+                                                          int channels) noexcept
+{
     // Store sample rate atomically
     currentSampleRate.store(sampleRate, std::memory_order_relaxed);
     currentBlockSize.store(samplesPerBlock, std::memory_order_relaxed);

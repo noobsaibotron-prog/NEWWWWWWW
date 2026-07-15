@@ -108,6 +108,9 @@ public:
 
     //==============================================================================
     void prepare(double sampleRate, int samplesPerBlock, int numChannels);
+    [[nodiscard]] bool reconfigureNoAllocation(double sampleRate,
+                                               int samplesPerBlock,
+                                               int numChannels) noexcept;
     void reset();
     void process(juce::AudioBuffer<float>& buffer);
     
@@ -209,6 +212,7 @@ private:
 
     //==============================================================================
     void updateCoefficientsForBand(int index);
+    void resetRuntimeStateNoAllocation(double sampleRate, int samplesPerBlock, int channels) noexcept;
     
     [[nodiscard]] BiquadCoeffs makeCoefficients(
         FilterType type, float freq, float gain, float q, double sampleRate) const;

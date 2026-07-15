@@ -111,6 +111,12 @@ public:
     ~DynamicEQProcessor() = default;
 
     void prepare(double sampleRate, int samplesPerBlock, int numChannels);
+    [[nodiscard]] bool canReconfigureWithoutAllocation(double sampleRate,
+                                                       int samplesPerBlock,
+                                                       int numChannels) const noexcept;
+    [[nodiscard]] bool reconfigureNoAllocation(double sampleRate,
+                                               int samplesPerBlock,
+                                               int numChannels) noexcept;
     void reset();
     void process(juce::AudioBuffer<float>& buffer);
     
@@ -133,6 +139,10 @@ public:
     [[nodiscard]] float getLookahead() const { return lookaheadMs.load(std::memory_order_relaxed); }
 
     void updateLookaheadBuffer(double sampleRate, int samplesPerBlock, int channels);
+
+    [[nodiscard]] int getDryBufferCapacityForTests() const noexcept { return dryBuffer.getNumSamples(); }
+    [[nodiscard]] int getLookaheadBufferCapacityForTests() const noexcept { return lookaheadBuffer.getNumSamples(); }
+    [[nodiscard]] int getLookaheadSamplesForTests() const noexcept { return lookaheadSamples.load(std::memory_order_relaxed); }
     
     //==============================================================================
     // Metering
@@ -215,6 +225,7 @@ private:
     void updateDynamicTargets(int bandIndex);
     void updateSidechainState(int bandIndex);
     void updateAttackReleaseCoeffs(int bandIndex);
+    void resetRuntimeStateNoAllocation(double sampleRate, int samplesPerBlock, int channels) noexcept;
     void pushBandInputHistory(BandState& state, float inputL, float inputR) noexcept;
     void warmBandFiltersFromHistory(BandState& state, const BiquadCoeffs& coeffs) noexcept;
     [[nodiscard]] float calculateDynamicGain(float inputLevelDb,
