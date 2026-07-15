@@ -39,6 +39,7 @@
 #include <juce_dsp/juce_dsp.h>
 #include <array>
 #include <atomic>
+#include <mutex>
 #include <thread>  // std::thread and std::stop flags are in <thread> in C++20
 
 #include "Core/LockFreeStructures.h"
@@ -359,6 +360,29 @@ public:
     void getManualCapturePreview(std::vector<float>& outMono, size_t maxSamples = 1024) const;
     [[nodiscard]] double getCapturedSampleRate() const noexcept { return captureService.getCapturedSampleRate(); }
     [[nodiscard]] bool analyzeCapturedAudioSnapshot();
+    void resetAIAnalysisConcurrencyCountersForTests() noexcept
+    {
+        aiConcurrentAnalyses.store(0, std::memory_order_relaxed);
+        aiMaxConcurrentAnalyses.store(0, std::memory_order_relaxed);
+        aiAnalysisCallAttemptsForTests.store(0, std::memory_order_relaxed);
+        aiAnalysisEnteredForTests.store(0, std::memory_order_relaxed);
+    }
+    [[nodiscard]] int getMaxConcurrentAIAnalysesForTests() const noexcept
+    {
+        return aiMaxConcurrentAnalyses.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] int getAIAnalysisEnteredForTests() const noexcept
+    {
+        return aiAnalysisEnteredForTests.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] int getAIAnalysisCallAttemptsForTests() const noexcept
+    {
+        return aiAnalysisCallAttemptsForTests.load(std::memory_order_relaxed);
+    }
+    void setAIAnalysisBlockForTests(bool shouldBlock) noexcept
+    {
+        aiAnalysisBlockForTests.store(shouldBlock, std::memory_order_release);
+    }
     // UX "Diagnosi Stabile" (counter-check Finding #1): dedicated capture-completion
     // signal for the GUI freeze trigger. The generic aiProblemsChanged flag is also
     // posted by the live analysis loop (see aiAnalysisThreadFunc), so a freeze keyed
@@ -405,6 +429,7 @@ private:
     void updateReportedLatency();
     void cacheParameterPointers();
     bool runCapturedAudioAnalysis();
+    void analyzeSpectrumSerialized(const std::vector<float>& spectrum, bool force = false);
     void aiAnalysisThreadFunc();
     void enqueueAISpectrum(const std::vector<float>& spectrum);
     void clearDynamicMeterCache() noexcept;
@@ -442,6 +467,12 @@ private:
     std::atomic<bool> captureAnalysisCompleted { false };
     std::atomic<bool> captureAnalysisResult { false };
     std::thread captureAnalysisThread;
+    std::mutex aiAnalysisMutex;
+    std::atomic<int> aiConcurrentAnalyses { 0 };
+    std::atomic<int> aiMaxConcurrentAnalyses { 0 };
+    std::atomic<int> aiAnalysisCallAttemptsForTests { 0 };
+    std::atomic<int> aiAnalysisEnteredForTests { 0 };
+    std::atomic<bool> aiAnalysisBlockForTests { false };
     
     //==============================================================================
     // APVTS (thread-safe parameter management)

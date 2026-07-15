@@ -1212,6 +1212,7 @@ if(HAVE_JUCE)
         Source/Tests/FreqDragClickTest.cpp
         Source/Tests/SensitivityKnobLiveTest.cpp
         Source/Tests/AISensitivityTransportStopTest.cpp
+        Source/Tests/AIAnalysisSerializationTest.cpp
         Source/Tests/AIFrontEndWiringTest.cpp
         Source/Tests/TestMain.cpp
     )

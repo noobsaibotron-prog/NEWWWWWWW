@@ -35,6 +35,37 @@ namespace
     // Score multiplier applied when a band is within reuse threshold — even
     // stronger preference for merging near-frequency corrections.
     constexpr float kReuseThresholdScoreMult = 0.2f;
+
+    class AnalysisConcurrencyGuard
+    {
+    public:
+        AnalysisConcurrencyGuard(std::atomic<int>& currentIn,
+                                 std::atomic<int>& maximumIn) noexcept
+            : current(currentIn), maximum(maximumIn)
+        {
+            const int now = current.fetch_add(1, std::memory_order_acq_rel) + 1;
+            int observed = maximum.load(std::memory_order_relaxed);
+            while (now > observed
+                   && !maximum.compare_exchange_weak(observed,
+                                                     now,
+                                                     std::memory_order_release,
+                                                     std::memory_order_relaxed))
+            {
+            }
+        }
+
+        ~AnalysisConcurrencyGuard()
+        {
+            current.fetch_sub(1, std::memory_order_acq_rel);
+        }
+
+        AnalysisConcurrencyGuard(const AnalysisConcurrencyGuard&) = delete;
+        AnalysisConcurrencyGuard& operator=(const AnalysisConcurrencyGuard&) = delete;
+
+    private:
+        std::atomic<int>& current;
+        std::atomic<int>& maximum;
+    };
 }
 
 //==============================================================================
@@ -465,6 +496,30 @@ AIEqualizerAudioProcessor::getAIFrontEndDiagnostics() const noexcept
     return d;
 }
 
+void AIEqualizerAudioProcessor::analyzeSpectrumSerialized(const std::vector<float>& spectrum,
+                                                          bool force)
+{
+    // All productive AIEngine::analyzeSpectrum() entry points must pass here:
+    // live AI thread, transport-stop forced reanalysis, and capture analysis.
+    // The mutex is deliberately outside processBlock; the audio thread only
+    // enqueues spectra and never waits on this lock.
+    aiAnalysisCallAttemptsForTests.fetch_add(1, std::memory_order_acq_rel);
+    std::lock_guard<std::mutex> lock(aiAnalysisMutex);
+    AnalysisConcurrencyGuard guard(aiConcurrentAnalyses, aiMaxConcurrentAnalyses);
+
+    if (aiAnalysisBlockForTests.load(std::memory_order_acquire))
+    {
+        aiAnalysisEnteredForTests.fetch_add(1, std::memory_order_acq_rel);
+        while (aiAnalysisBlockForTests.load(std::memory_order_acquire)
+               && !stopAIAnalysis.load(std::memory_order_acquire))
+        {
+            juce::Thread::yield();
+        }
+    }
+
+    aiEngine.analyzeSpectrum(spectrum, force);
+}
+
 void AIEqualizerAudioProcessor::aiAnalysisThreadFunc()
 {
     try
@@ -529,7 +584,7 @@ void AIEqualizerAudioProcessor::aiAnalysisThreadFunc()
             {
                 if (!spectrum.empty())
                 {
-                    aiEngine.analyzeSpectrum(spectrum, /*force=*/true);
+                    analyzeSpectrumSerialized(spectrum, /*force=*/true);
                     aiProblemsChanged.store(true, std::memory_order_release);
                 }
                 continue; // re-check the queue immediately
@@ -543,7 +598,7 @@ void AIEqualizerAudioProcessor::aiAnalysisThreadFunc()
         // Convert fixed-size frame to vector for AIEngine API
         spectrum.assign(frame.begin(), frame.end());
 
-        aiEngine.analyzeSpectrum(spectrum);
+        analyzeSpectrumSerialized(spectrum);
         aiProblemsChanged.store(true, std::memory_order_release);
     }
     }
@@ -4196,7 +4251,7 @@ bool AIEqualizerAudioProcessor::runCapturedAudioAnalysis()
         const auto& spectrum = analyzer.getSmoothedSpectrum();
         if (!spectrum.empty())
         {
-            aiEngine.analyzeSpectrum(spectrum, true);
+            analyzeSpectrumSerialized(spectrum, true);
             return true;
         }
     }
