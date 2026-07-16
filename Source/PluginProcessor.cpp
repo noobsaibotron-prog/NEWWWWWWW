@@ -1017,20 +1017,29 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     {
         // EXP hybrid: load the v2 CNN next to the plugin binary (or its bundle
         // Resources). Absent => motoreV2 stays inert, shipped path unchanged.
+        // Locate the CNN next to the plugin's OWN binary. Use currentExecutableFile
+        // (the running .vst3/.component binary), NOT currentApplicationFile — the
+        // latter resolves to the HOST app (e.g. Ableton) when hosted, so the model
+        // was never found in-DAW (only Standalone happened to work). That was the
+        // "detects nothing in the DAW" bug.
+        auto exeFile = juce::File::getSpecialLocation(juce::File::currentExecutableFile);
         auto appFile = juce::File::getSpecialLocation(juce::File::currentApplicationFile);
-        juce::File v2json = appFile.getSiblingFile("motore_v2.json");
-        if (! v2json.existsAsFile())
-            v2json = appFile.getParentDirectory()
-                            .getSiblingFile("Resources")
-                            .getChildFile("motore_v2.json");
-        if (! v2json.existsAsFile())
-            v2json = appFile.getChildFile("Contents")
-                            .getChildFile("Resources")
-                            .getChildFile("motore_v2.json");
-        const bool ok = aiEngine.loadMotoreV2Model(v2json);
-        juce::Logger::writeToLog(ok
-            ? "[MotoreV2] model loaded: " + v2json.getFullPathName()
-            : "[MotoreV2] model NOT found — heuristic-only fallback");
+        const juce::File candidates[] = {
+            exeFile.getSiblingFile("motore_v2.json"),                                                 // Contents/MacOS/
+            exeFile.getParentDirectory().getSiblingFile("Resources").getChildFile("motore_v2.json"),  // Contents/Resources/
+            appFile.getSiblingFile("motore_v2.json"),                                                 // Standalone next-to-app
+            appFile.getChildFile("Contents").getChildFile("Resources").getChildFile("motore_v2.json")
+        };
+        juce::File v2json;
+        for (auto& c : candidates)
+            if (c.existsAsFile()) { v2json = c; break; }
+        const bool ok = v2json.existsAsFile() && aiEngine.loadMotoreV2Model(v2json);
+        juce::File(juce::File::getSpecialLocation(juce::File::userHomeDirectory))
+            .getChildFile("Library/Logs/AIEQ_MotoreV2.log")
+            .appendText(juce::Time::getCurrentTime().toString(true, true) + "  "
+                        + (ok ? "[MotoreV2] model loaded: " + v2json.getFullPathName()
+                              : "[MotoreV2] model NOT found — heuristic-only fallback")
+                        + "\n");
     }
 #endif
     aiFrontEndFrames.store(0, std::memory_order_relaxed);
