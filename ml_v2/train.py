@@ -34,7 +34,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from .dataset_v2 import BuildConfig, build_or_load
+from .dataset_v2 import BuildConfig, build_or_load, split_contract_sha256
 from .export_rtneural import export_torch_model
 from .model import MotoreV2CNN
 from .lab_inject import PROBLEM_NAMES_V2
@@ -408,6 +408,7 @@ def main() -> int:
             "real_resonance_heldout": real_res_heldout,
             **heldout_meta,
             "dataset_train_key": tr_cfg.key(), "dataset_val_key": va_cfg.key(),
+            "split_contract_sha256": split_contract_sha256(),
             "preflight_train": train_summary,
             "preflight_heldout": heldout_summary,
             "ablations": ablations,

@@ -259,6 +259,11 @@ def load_split_contract(path: Path = SPLIT_ROLES_PATH
     return roles, set(legacy)
 
 
+def split_contract_sha256(path: Path = SPLIT_ROLES_PATH) -> str:
+    """Stable provenance identifier for the exact split contract in force."""
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
 def validate_split_contract(manifest: Path = MANIFEST,
                             contract_path: Path = SPLIT_ROLES_PATH) -> None:
     """Gate check (corpus integration): every manifest group is either legacy
@@ -623,17 +628,22 @@ def _load_cache(cache: Path, log=print):
 
 
 def build_or_load(cfg: BuildConfig, cache_dir: Path,
-                  data_root: Path = DATA_ROOT_DEFAULT, log=print
+                  data_root: Path = DATA_ROOT_DEFAULT, log=print,
+                  manifest: Path = MANIFEST,
+                  contract_path: Path = SPLIT_ROLES_PATH
                   ) -> tuple[np.ndarray, np.ndarray, list[str]]:
+    # This must precede the cache lookup. Otherwise a valid cache can mask an
+    # invalid new-corpus assignment and let training continue unchecked.
+    validate_split_contract(manifest, contract_path)
     cache_dir.mkdir(parents=True, exist_ok=True)
-    cache = cache_path(cfg, cache_dir)
+    cache = cache_path(cfg, cache_dir, manifest)
     if cache.exists():
         got = _load_cache(cache, log)
         if got is not None:
             log(f"  [cache] {cache.name}: X{got[0].shape}")
             return got
     log(f"  building {cfg.split} windows (seed {cfg.seed})…")
-    samples = build_windows(cfg, data_root=data_root, log=log)
+    samples = build_windows(cfg, data_root=data_root, manifest=manifest, log=log)
     X, Y, sources = to_arrays(samples)
     # atomic publish with a PER-PROCESS unique temp name: two concurrent
     # trainings building the same cache must not interleave writes into one

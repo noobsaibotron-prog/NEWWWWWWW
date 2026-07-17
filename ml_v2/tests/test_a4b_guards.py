@@ -57,6 +57,14 @@ def test_cache_path_embeds_fingerprint_and_config():
     assert cache_path(cfg2, Path("/tmp/aieq_v2_test_cache")).name != p.name
 
 
+def test_contract_digest_is_stable_and_content_sensitive():
+    from ml_v2.dataset_v2 import split_contract_sha256
+    p1 = _write_contract({"pack:a": "train"}, [])
+    p2 = _write_contract({"pack:a": "metric"}, [])
+    assert split_contract_sha256(p1) == split_contract_sha256(p1)
+    assert split_contract_sha256(p1) != split_contract_sha256(p2)
+
+
 # ------------------------------------------------------------------ 0b
 def _expect_valueerror(manifest: Path, needle: str):
     try:
@@ -231,6 +239,24 @@ def test_role_split_mismatch_rejected():
         assert "no contract role" in str(e)
     else:
         raise AssertionError("group outside roles+legacy must be rejected")
+
+
+def test_build_or_load_validates_contract_before_cache_lookup():
+    from ml_v2.dataset_v2 import build_or_load
+    manifest = _write_manifest([_row(group="new:unroled", split="train")])
+    contract = _write_contract({}, [])
+    cache_dir = Path(tempfile.mkdtemp())
+    cfg = BuildConfig(split="train", seed=42)
+    cache = cache_path(cfg, cache_dir, manifest)
+    sentinel = b"this cache must never be read or deleted"
+    cache.write_bytes(sentinel)
+    try:
+        build_or_load(cfg, cache_dir, manifest=manifest, contract_path=contract)
+    except ValueError as e:
+        assert "no contract role" in str(e)
+    else:
+        raise AssertionError("un-roled new train group must abort before cache lookup")
+    assert cache.read_bytes() == sentinel, "cache lookup ran before contract validation"
 
 
 def test_real_contract_loads_and_validates():
