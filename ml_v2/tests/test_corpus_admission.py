@@ -84,6 +84,24 @@ def test_fma_is_eval_only() -> None:
     _expect_error(lambda: load_ledger(ledger, root), "restricted")
 
 
+def test_fsld_allows_only_eval_wav() -> None:
+    root = Path(tempfile.mkdtemp())
+    source = root / "fixture.wav"
+    _make_wav(source)
+    valid = _write_ledger(root, _row(
+        source, source_id="fsld", source_path=source.name,
+        source_sha256=_sha(source), group="fsld:fixture-01",
+        license="CC-BY", upstream_license="CC-BY-3.0",
+        usage="eval_only"))
+    assert len(load_ledger(valid, root)) == 1
+    invalid = _write_ledger(root, _row(
+        source, source_id="fsld", source_path=source.name,
+        source_sha256=_sha(source), group="fsld:fixture-01",
+        license="CC-BY", upstream_license="CC-BY-3.0",
+        usage="train_candidate"))
+    _expect_error(lambda: load_ledger(invalid, root), "restricted")
+
+
 def test_ledger_rejects_path_escape() -> None:
     root = Path(tempfile.mkdtemp())
     source = root / "fixture.wav"

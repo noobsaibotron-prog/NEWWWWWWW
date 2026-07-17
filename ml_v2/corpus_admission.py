@@ -44,6 +44,7 @@ ALLOWED_DOMAINS = {
 }
 SOURCE_POLICIES = {
     "fma": {"suffixes": {".mp3"}, "usages": {"eval_only"}},
+    "fsld": {"suffixes": {".wav"}, "usages": {"eval_only"}},
     "slakh": {"suffixes": {".flac", ".wav"},
               "usages": {"eval_only", "train_candidate"}},
     "owned": {"suffixes": {".flac", ".mp3", ".wav"},
