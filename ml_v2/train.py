@@ -42,6 +42,7 @@ from .lab_inject import PROBLEM_NAMES_V2
 
 NUM_CLASSES = 8
 TARGET_FP = 0.05
+DEFAULT_WEIGHT_DECAY = 1e-2
 
 
 # ------------------------------------------------------------ metrics
@@ -196,6 +197,7 @@ def _apply_ablation_flags(cfg: BuildConfig, args: argparse.Namespace) -> None:
 def train_one_seed(seed: int, Xtr, Ytr, X_calib, Y_calib, X_metric, Y_metric,
                    device: str,
                    epochs: int, batch_size: int, lr: float, min_lr: float,
+                   weight_decay: float,
                    active: list[int] | None = None,
                    log=print) -> tuple[MotoreV2CNN, dict]:
     torch.manual_seed(seed)
@@ -219,7 +221,8 @@ def train_one_seed(seed: int, Xtr, Ytr, X_calib, Y_calib, X_metric, Y_metric,
                        for c in range(NUM_CLASSES))
     log(f"  pos_weight: {pw_str}")
 
-    opt = torch.optim.AdamW(model.parameters(), lr=lr)
+    opt = torch.optim.AdamW(model.parameters(), lr=lr,
+                            weight_decay=weight_decay)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=epochs,
                                                        eta_min=min_lr)
     n = Xtr.shape[0]
@@ -315,6 +318,9 @@ def main() -> int:
     ap.add_argument("--batch-size", type=int, default=32)
     ap.add_argument("--lr", type=float, default=1e-3)
     ap.add_argument("--min-lr", type=float, default=5e-5)
+    ap.add_argument("--weight-decay", type=float, default=DEFAULT_WEIGHT_DECAY,
+                    help="AdamW weight decay (default: %(default)g; explicit "
+                         "equivalent of the prior PyTorch default)")
     ap.add_argument("--out", default="/tmp/aieq_v2")
     ap.add_argument("--cache", default="/tmp/aieq_v2/cache")
     ap.add_argument("--device", default=None)
@@ -330,6 +336,9 @@ def main() -> int:
     ap.add_argument("--quick", action="store_true",
                     help="smoke run: tiny dataset caps + 6 epochs")
     args = ap.parse_args()
+
+    if args.weight_decay < 0.0:
+        ap.error("--weight-decay must be non-negative")
 
     masked = [int(x) for x in args.mask_classes.split(",") if x.strip() != ""]
     active = [c for c in range(NUM_CLASSES) if c not in masked]
@@ -407,7 +416,8 @@ def main() -> int:
     Ymet_t = torch.from_numpy(Y_metric).to(device)
 
     meta = {"epochs": epochs, "batch_size": args.batch_size, "lr": args.lr,
-            "min_lr": args.min_lr, "train_windows": int(Xtr.shape[0]),
+            "min_lr": args.min_lr, "weight_decay": args.weight_decay,
+            "train_windows": int(Xtr.shape[0]),
             "val_windows": int(Xva.shape[0]),
             "real_resonance_train": real_res_train,
             "real_resonance_heldout": real_res_heldout,
@@ -433,7 +443,8 @@ def main() -> int:
         model, best = train_one_seed(seed, Xtr_t, Ytr_t,
                                      Xcal_t, Ycal_t, Xmet_t, Ymet_t, device,
                                      epochs, args.batch_size, args.lr,
-                                     args.min_lr, active=active)
+                                     args.min_lr, args.weight_decay,
+                                     active=active)
         calib_probs = predict_probs(model.to(device), Xcal_t)
         ths, pres = calibrate(calib_probs, Y_calib)
         final = evaluate(model.to(device), Xmet_t, Ymet_t, ths, active=active)
