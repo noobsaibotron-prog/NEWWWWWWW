@@ -1,7 +1,9 @@
 # Baseline Round5 (hybrid-core, 2026-07-13) — riferimento STORICO
 
 Candidati + provenance + eval dei 3 seed (42/1337/2026). Il candidato spedito
-nell'EXP e' `candidate_s42.json` (sha 3e1fd372...).
+nell'EXP e' `candidate_s42.json`
+(SHA-1 `3e1fd3721954...`, SHA-256 `3ed7f35d6337...` — due algoritmi, stesso file;
+il manifest usa SHA-256).
 
 **PROVENANCE LEGACY INCOMPLETA** (A4b 0c): NON registra il weight_decay
 effettivo (= default AdamW 1e-2, train.py:244 senza parametro), l'hash del
