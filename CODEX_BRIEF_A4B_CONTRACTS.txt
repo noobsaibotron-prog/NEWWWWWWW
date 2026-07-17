@@ -226,6 +226,10 @@ P2.0 — INVENTARIO QUARANTENA, SOLA LETTURA (nessun commit di codice/manifest)
     stem mono 44.1 kHz/16-bit, 2.100 mix con bass/drums/piano/guitar; la versione redux
     isola i MIDI duplicati in `omitted/`, da escludere. Costa 104,3 GB download e quasi
     500 GB estratto: serve autorizzazione esplicita di spazio/rete prima del download.
+    Verifica locale 2026-07-17: restano solo 121 GiB liberi, quindi il download non e'
+    materialmente eseguibile su questo disco. Richiede un volume esterno con almeno
+    ~650 GiB liberi per download, estrazione e staging sicuri; non avviare tentativi
+    parziali sulla root disk.
     I Track00001-00020 gia' legacy sono bloccati: la lista dei nuovi TrackID deve essere
     deterministica, disgiunta dal legacy e committata prima della materializzazione.
     Non sostituisce materiale reale elettronico.
