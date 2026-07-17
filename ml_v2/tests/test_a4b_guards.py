@@ -97,6 +97,42 @@ def test_real_manifest_passes_fail_closed():
         assert all(r["license"] in ALLOWED_LICENSES for r in rows)
 
 
+def test_owned_requires_ledger():
+    _expect_valueerror(
+        _write_manifest([_row(license="OWNED", upstream_license="n/a")]),
+        "ledger")
+    m = _write_manifest([_row(license="OWNED", upstream_license="Loop Pack EULA",
+                              attribution="VendorX", crosscheck="receipt#123")])
+    assert len(manifest_rows("train", m)) == 1
+
+
+def test_corrupt_cache_is_deleted_and_rebuilt():
+    from ml_v2.dataset_v2 import _load_cache
+    bad = Path(tempfile.mkdtemp()) / "windows_train_dead_beef.npz"
+    bad.write_bytes(b"this is not an npz")
+    msgs = []
+    assert _load_cache(bad, log=msgs.append) is None
+    assert not bad.exists(), "corrupt cache must be deleted"
+    assert any("corrupt" in m for m in msgs)
+
+
+def test_calib_metric_split_is_group_level():
+    from ml_v2.dataset_v2 import heldout_calib_metric_indices
+    # 40 windows: 4 groups x 5 files x 2 windows; same-group files MUST land
+    # on the same side of the calibration/metric split.
+    sources = [f"dom-clean:g{g}/file{f}.wav"
+               for g in range(4) for f in range(5) for _ in range(2)]
+    calib, metric, meta = heldout_calib_metric_indices(sources)
+    assert meta["heldout_source_groups"] == 4, meta
+    side = {}
+    for idx in calib:
+        side.setdefault(sources[idx].rsplit(":", 1)[-1].split("/", 1)[0], set()).add("c")
+    for idx in metric:
+        side.setdefault(sources[idx].rsplit(":", 1)[-1].split("/", 1)[0], set()).add("m")
+    for g, s in side.items():
+        assert len(s) == 1, f"group {g} straddles calib/metric: {s}"
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for fn in fns:

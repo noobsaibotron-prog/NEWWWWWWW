@@ -124,33 +124,10 @@ def evaluate_calibrated(model: torch.nn.Module,
     return out
 
 
-def heldout_calib_metric_indices(sources: list[str]
-                                 ) -> tuple[np.ndarray, np.ndarray, dict]:
-    """Split heldout windows by source file, never by individual augmented row."""
-    groups: dict[str, list[int]] = {}
-    for i, src in enumerate(sources):
-        group = src.rsplit(":", 1)[-1] if ":" in src else src
-        groups.setdefault(group, []).append(i)
-
-    calib, metric = [], []
-    for group, idxs in sorted(groups.items()):
-        h = int(hashlib.sha1(group.encode("utf-8")).hexdigest()[:8], 16)
-        (calib if (h % 100) < 50 else metric).extend(idxs)
-
-    if not calib or not metric:
-        calib, metric = [], []
-        for n, group in enumerate(sorted(groups)):
-            (calib if n % 2 == 0 else metric).extend(groups[group])
-
-    if not calib or not metric:
-        raise RuntimeError("heldout split needs at least two source groups")
-
-    meta = {"heldout_source_groups": len(groups),
-            "heldout_calib_windows": len(calib),
-            "heldout_metric_windows": len(metric)}
-    return (np.asarray(sorted(calib), dtype=np.int64),
-            np.asarray(sorted(metric), dtype=np.int64),
-            meta)
+# A4b 0d: the calibration/metric split is GROUP-level and torch-free; it lives
+# in dataset_v2 next to the gid semantics it depends on. Re-exported here for
+# existing call sites.
+from .dataset_v2 import heldout_calib_metric_indices  # noqa: E402,F401
 
 
 def _source_file_id(source: str) -> str:

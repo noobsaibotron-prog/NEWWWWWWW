@@ -34,6 +34,8 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
+import os
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -170,7 +172,11 @@ def _neg(mel: np.ndarray, source: str) -> WindowSample:
 # missing/unknown license or no source-group must abort the build, never be
 # silently skipped — silent skips are how an unlicensed file ends up in a
 # commercial training set.
-ALLOWED_LICENSES = {"CC0", "CC-BY", "CC-BY-4.0"}
+# "OWNED" = commercially licensed / owned material (the plan admits it), but it
+# is only valid WITH a provenance ledger: upstream_license, attribution and
+# crosscheck must all be filled in, else the row is rejected.
+ALLOWED_LICENSES = {"CC0", "CC-BY", "CC-BY-4.0", "OWNED"}
+OWNED_LEDGER_FIELDS = ("upstream_license", "attribution", "crosscheck")
 
 
 def manifest_rows(split: str, manifest: Path = MANIFEST) -> list[dict]:
@@ -186,6 +192,12 @@ def manifest_rows(split: str, manifest: Path = MANIFEST) -> list[dict]:
                 raise ValueError(
                     f"{manifest.name}:{lineno}: license {r.get('license')!r} not in "
                     f"whitelist {sorted(ALLOWED_LICENSES)} for {r.get('path')}")
+            if r.get("license", "").strip() == "OWNED":
+                for fld in OWNED_LEDGER_FIELDS:
+                    if not r.get(fld, "").strip() or r.get(fld, "").strip() == "n/a":
+                        raise ValueError(
+                            f"{manifest.name}:{lineno}: OWNED license requires a "
+                            f"non-empty {fld} ledger entry for {r.get('path')}")
             if not r.get("group", "").strip():
                 raise ValueError(
                     f"{manifest.name}:{lineno}: empty group for {r.get('path')}")
@@ -197,6 +209,49 @@ def manifest_rows(split: str, manifest: Path = MANIFEST) -> list[dict]:
             seen.add(r["sha256"])
             rows.append(r)
     return rows
+
+
+def _gid(row: dict) -> str:
+    """Sanitized manifest group for embedding as the tail ':'-segment of a
+    window source string. Manifest groups CONTAIN ':' (e.g. 'singer:female1'),
+    which is the source-string separator, so ':' is mapped to '='; '/' (our
+    gid/name separator) is mapped to '_'. The trainer splits calibration vs
+    metric BY THIS GID (A4b 0d: group-level isolation, not per-file)."""
+    return row["group"].strip().replace(":", "=").replace("/", "_")
+
+
+def heldout_calib_metric_indices(sources: list[str]
+                                 ) -> tuple[np.ndarray, np.ndarray, dict]:
+    """Split heldout windows by manifest source-GROUP (artist/pack/session),
+    never by file or row (A4b 0d: files of the same artist must not straddle
+    calibration and metric). Source tails are 'gid/name' (see _gid); legacy
+    plain-name tails degrade to per-file grouping. Torch-free on purpose: the
+    guard tests exercise this without the training stack."""
+    groups: dict[str, list[int]] = {}
+    for i, src in enumerate(sources):
+        tail = src.rsplit(":", 1)[-1] if ":" in src else src
+        group = tail.split("/", 1)[0]
+        groups.setdefault(group, []).append(i)
+
+    calib, metric = [], []
+    for group, idxs in sorted(groups.items()):
+        h = int(hashlib.sha1(group.encode("utf-8")).hexdigest()[:8], 16)
+        (calib if (h % 100) < 50 else metric).extend(idxs)
+
+    if not calib or not metric:
+        calib, metric = [], []
+        for n, group in enumerate(sorted(groups)):
+            (calib if n % 2 == 0 else metric).extend(groups[group])
+
+    if not calib or not metric:
+        raise RuntimeError("heldout split needs at least two source groups")
+
+    meta = {"heldout_source_groups": len(groups),
+            "heldout_calib_windows": len(calib),
+            "heldout_metric_windows": len(metric)}
+    return (np.asarray(sorted(calib), dtype=np.int64),
+            np.asarray(sorted(metric), dtype=np.int64),
+            meta)
 
 
 def verify_manifest_files(split: str, data_root: Path = DATA_ROOT_DEFAULT,
@@ -294,7 +349,7 @@ def build_windows(cfg: BuildConfig, data_root: Path = DATA_ROOT_DEFAULT,
             if not wins:
                 continue
             fm = fast_mel_for(sr)
-            name = Path(r["path"]).name
+            name = f"{_gid(r)}/{Path(r['path']).name}"
             for w in top_energy_windows(wins, sr, 100.0, 10000.0,
                                         cfg.windows_per_clip):
                 add_raw_clean(w, sr, fm, f"vox-raw:{name}",
@@ -344,7 +399,7 @@ def build_windows(cfg: BuildConfig, data_root: Path = DATA_ROOT_DEFAULT,
             if not wins:
                 continue
             fm = fast_mel_for(sr)
-            name = Path(r["path"]).name
+            name = f"{_gid(r)}/{Path(r['path']).name}"
             chosen = top_energy_windows(wins, sr, 100.0, min(10000.0, sr * 0.45),
                                         cfg.tier2_windows_per_file)
             real_res_ids: set[int] = set()
@@ -444,7 +499,7 @@ def to_arrays(samples: list[WindowSample]
 # changed between builds. The fingerprint hashes the ACTUAL BYTES of the
 # manifest and of every pipeline module, plus a schema version; a stale cache
 # can then never be loaded as fresh (its filename simply no longer matches).
-CACHE_SCHEMA = "a4b-cache-1"
+CACHE_SCHEMA = "a4b-cache-2"   # -2: source strings now carry gid/name tails
 
 
 def pipeline_fingerprint(manifest: Path = MANIFEST) -> str:
@@ -463,22 +518,41 @@ def cache_path(cfg: BuildConfig, cache_dir: Path,
                         f"_{pipeline_fingerprint(manifest)}.npz")
 
 
+def _load_cache(cache: Path, log=print):
+    """Load a cache npz; on ANY failure treat it as corrupt: delete and return
+    None so the caller rebuilds (a half-written or truncated file must never
+    poison a run)."""
+    try:
+        z = np.load(cache, allow_pickle=True)
+        return z["X"], z["Y"], list(z["sources"])
+    except Exception as e:
+        log(f"  [cache] corrupt {cache.name} ({e.__class__.__name__}) — rebuilding")
+        cache.unlink(missing_ok=True)
+        return None
+
+
 def build_or_load(cfg: BuildConfig, cache_dir: Path,
                   data_root: Path = DATA_ROOT_DEFAULT, log=print
                   ) -> tuple[np.ndarray, np.ndarray, list[str]]:
     cache_dir.mkdir(parents=True, exist_ok=True)
     cache = cache_path(cfg, cache_dir)
     if cache.exists():
-        z = np.load(cache, allow_pickle=True)
-        log(f"  [cache] {cache.name}: X{z['X'].shape}")
-        return z["X"], z["Y"], list(z["sources"])
+        got = _load_cache(cache, log)
+        if got is not None:
+            log(f"  [cache] {cache.name}: X{got[0].shape}")
+            return got
     log(f"  building {cfg.split} windows (seed {cfg.seed})…")
     samples = build_windows(cfg, data_root=data_root, log=log)
     X, Y, sources = to_arrays(samples)
-    # atomic publish: a crash mid-write must never leave a half-written file
-    # that a later run would load as a valid cache.
-    tmp = cache.with_name(cache.stem + ".tmp.npz")
-    np.savez_compressed(tmp, X=X, Y=Y, sources=np.array(sources, dtype=object))
-    tmp.replace(cache)
+    # atomic publish with a PER-PROCESS unique temp name: two concurrent
+    # trainings building the same cache must not interleave writes into one
+    # temp file (a fixed ".tmp" name would); last rename wins, both contents
+    # are identical by construction (same fingerprinted inputs).
+    fd, tmpname = tempfile.mkstemp(dir=cache_dir,
+                                   prefix=cache.stem + ".", suffix=".tmp.npz")
+    os.close(fd)
+    np.savez_compressed(tmpname, X=X, Y=Y,
+                        sources=np.array(sources, dtype=object))
+    Path(tmpname).replace(cache)
     log(f"  built X{X.shape} -> {cache.name}")
     return X, Y, sources
