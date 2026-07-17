@@ -1,4 +1,4 @@
-CODEX BRIEF — A4b CONTRATTI (0d split + G3d gold set) — REV 6
+CODEX BRIEF — A4b CONTRATTI (0d split + G3d gold set) — REV 7
 Data: 2026-07-17. Questo file e la mappa split sono versionati insieme. Vocabolario ruoli
 CANONICO: train / calibration / metric / g3-external. Qualunque sinonimo viene rifiutato.
 Riferimento: piano A4b in ~/.claude/plans/ml-recipe-ticket-for-warm-kazoo.md (3 giri già integrati).
@@ -151,9 +151,102 @@ STATO F0 AL MOMENTO DI QUESTO BRIEF (per il tuo contesto)
   materiale strumentale. La colonna del manifest per il low-end non esiste: il gate va
   fatto a build-time sulla finestra (band_series 40-150 > soglia), come per l'HF.
 
-STATO: contratto e guardie sono pronti; corpus admission resta NO-GO. La tranche dati
-inizia solo con batch pianificato/revisionato, audit licenze, manifest candidate e
-`verify_manifest_files(deep=True)` su tutti gli split.
+STATO (REV 7):
+- contratto e guardie sono pronti;
+- l'unica ammissione eseguita e' `fsld:46593`, `g3-external`, TEST-ONLY
+  (`c80bd386`): ripara il quota A6 `clean_synth`, non entra mai in train o heldout;
+- il trainer ora misura la varianza `seed modello x seed dataset` senza collisioni
+  di artefatti (`cb9cf585`); il default singolo seed conserva il naming storico;
+- una NUOVA ammissione DI TRAINING resta NO-GO. Non esiste ancora un batch
+  strumentale revisionato, ne' una policy che permetta FSLD in train.
+
+La tranche dati training inizia solo con batch pianificato/revisionato, audit licenze,
+manifest candidate e `verify_manifest_files(deep=True)` su tutti gli split.
+
+════════════════════════════════════════════════════════════════════════
+PIANO ESECUTIVO SUCCESSIVO — P2 → P5 (BLOCCATO FINO A COUNTER-EXAM)
+════════════════════════════════════════════════════════════════════════
+
+Principio: prima si misura l'effetto dei dati, poi si cambia UNA ricetta alla volta.
+Nessun modello JSON di questi round va in `Resources/Models/`, nel runtime C++ o in una
+installazione plugin. La selezione checkpoint usa solo heldout source-disjoint; A6/G3
+sono giudici esterni e non ottimizzatori.
+
+P2.0 — INVENTARIO QUARANTENA, SOLA LETTURA (nessun commit di codice/manifest)
+  - Produrre un ledger candidato per bass, drums, synth e mix a 44.1 kHz o
+    canonicalizzabili a 44.1 kHz. Ogni riga deve avere hash raw, URL per-file,
+    licenza testuale upstream, attribuzione, username e pack/sessione.
+  - Per FSLD il group A4b e' l'UPLOADER, non il file e non il pack: un uploader puo'
+    lasciare impronte timbriche su pack diversi. Il nome group deve essere stabile e
+    derivabile dal ledger. Prima della selezione si costruisce una identity registry
+    dagli ID FSLD gia' nel manifest legacy, risolti contro i metadata per-file. Un
+    uploader gia' presente in QUALUNQUE split legacy o `g3-external` e' escluso
+    integralmente dal nuovo batch: il contratto vecchio per-file non puo' da solo
+    rilevare questa forma di leakage. `chipfork` e' gia' bloccato per il fixture test
+    `fsld:46593`.
+  - Non riusare `ml/route_fsld.py` per l'ammissione A4b: instrada per file secondo il
+    vecchio schema M6 e non costruisce group/ruoli immutabili A4b.
+  - Rifiutare prima del rendering: NC, Sampling+, licenza assente/ambigua, metadata
+    senza username oppure senza pack/sessione, hash duplicato, qualsiasi match con
+    holdout Ableton/vocali, con l'identity registry legacy o con un group gia'
+    g3-external.
+  - Output richiesto: tabella `dominio x uploader-group` con numero file, durata,
+    sample rate, licenza e motivi di esclusione. Nessuna policy e nessun audio vengono
+    promossi in questa fase.
+
+P2.1 — REVIEW DEL BATCH (ancora nessuna scrittura nel manifest)
+  - Per ciascun dominio prioritario servono almeno 12 group sorgente indipendenti e,
+    dopo l'assegnazione cieca proposta, almeno 30 minuti train, 10 calibration,
+    10 metric e 10 g3-external. Se un dominio non raggiunge queste soglie, resta in
+    quarantena: non si compensa duplicando file o allargando artificialmente un group.
+  - Il batch spec dichiara `source_id`, dominio primario, group id ordinati e hash
+    della lista. `contract_tools --plan-batch` deve essere eseguito sul contratto
+    committato corrente e il piano risultante e' contro-esaminato PRIMA di materializzare.
+  - Solo qui si decide se FSLD diventa fonte training. La modifica di
+    `SOURCE_POLICIES["fsld"]` e' un commit separato, con test che provano: CC0/CC-BY
+    per-file, group per uploader, blocco degli uploader nell'identity registry e
+    rifiuto fail-closed delle forme non ammesse. Se questi test non sono
+    realizzabili, FSLD resta eval-only e si usa un'altra fonte con ledger migliore.
+
+P2.2 — AMMISSIONE ATOMICA DI UN SOLO BATCH
+  - Canonicalizzare fuori dal worktree, PCM mono 44.1 kHz s16le bitexact; conservare
+    report ffmpeg, hash raw/canonical e ledger sorgente.
+  - In un singolo commit: righe manifest, delta append-only del contratto, ricevuta
+    batch. Mai editare assegnazioni esistenti.
+  - Gate prima del commit: `--validate-delta`, `--validate-admission`, rehash profondo
+    train/heldout/test, guardie A4b e admission, conteggio minuti per ruolo/dominio.
+    Un solo errore = rollback del candidate non committato, non fallback permissivo.
+
+P3 — ABLAZIONE DATI-ONLY
+  - Prima run: A4b CONTROL e corpus+batch con ricette identiche, maschera [1,3],
+    3 seed modello x 2 seed dataset (42,1337), output esclusivamente `/tmp/aieq_v2/`.
+  - Congelare tutte le provenance, confrontare heldout per distribuzione (mediana e
+    worst seed) e poi A6 per tutti i 6 artefatti. Non scegliere il seed dal benchmark.
+  - Criterio di avanzamento pre-dichiarato: contro il CONTROL appaiato per
+    `(model_seed,dataset_seed)`, il corpus nuovo deve (a) non abbassare la mediana
+    heldout selection ne' aumentare il worst clean-FP; (b) fare passare 02
+    (Boominess oppure Muddiness >=5%) E 04 (BoxyMidrange >=5%) in almeno 4/6
+    candidati A6; (c) non introdurre un nuovo FAIL su clip 01, vocal clean o un
+    dominio electronic-neutral rispetto al CONTROL appaiato. Ogni risultato va
+    mostrato, non solo il migliore.
+  - Stop: se uno dei tre punti non regge, non passare alle ricette. Documentare
+    NO-GO e tornare all'inventario, senza soglie piu' permissive.
+
+P4 — ABLazioni DI RICETTA, UNA CAUSA PER COMMIT
+  1. content-gate Boom: positivi solo con energia 40-150 Hz misurabile;
+  2. coppie contrastive Boom-vs-Mud sullo stesso frame;
+  3. pos_weight/oversampling per Boom e Resonance;
+  4. espansione ring-vs-transient Resonance.
+  Ogni voce ripete P3 sulla stessa griglia e puo' avanzare solo se conserva i tre
+  criteri P3, non peggiora clean worst-case o classi gia' verdi e migliora la mediana
+  heldout della propria classe target. Niente combinazioni di leve per inseguire un seed.
+
+P5 — GENERALIZZAZIONE E PROPOSTA PRODOTTO
+  - Costruire il G3d naturale eval-only, group-disjoint, con protocollo annotazioni
+    del Contratto 2. Il pilota interno non va chiamato benchmark top-tier.
+  - Solo un candidato verde su heldout, A6, G3d e 3x2 seed apre una proposal A5/A7.
+    La proposal e' separata: parity Python/C++, flag OFF, fallback no-model, CTest,
+    pluginval e ascolto. Non e' autorizzato nessun cambiamento runtime prima di allora.
 
 ════════════════════════════════════════════════════════════════════════
 APPENDICE QUARANTENA (REV 5)
