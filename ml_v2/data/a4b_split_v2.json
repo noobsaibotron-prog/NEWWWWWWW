@@ -1,8 +1,10 @@
 {
- "schema": "a4b-split-v1",
+ "schema": "a4b-split-v2",
  "salt": "a4b-split-v1",
- "comment": "Contratto split A4b (0d). roles: group RAW -> ruolo canonico {train, calibration, metric, g3-external}; APPEND-ONLY, riassegnare un group esistente e' VIETATO. legacy_groups: baseline CONGELATA dei group pre-contratto (manifest 2026-07-17, 4392 righe) — SOLO questi possono usare il fallback hash 50/50 in heldout; ogni group NUOVO deve avere un ruolo qui, o il build ABORTISCE.",
+ "comment": "Contratto split A4b (0d), schema v2. Ogni group ammesso dopo la baseline ha ruolo, metadati e batch immutabili; ruoli derivati da sha256-rank-v1. legacy_groups: baseline congelata del manifest 2026-07-17 (4392 righe), soli ammessi al fallback hash heldout.",
  "roles": {},
+ "group_metadata": {},
+ "batches": {},
  "legacy_groups": [
   "fsld:100902",
   "fsld:101121",

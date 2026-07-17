@@ -1,10 +1,6 @@
-CODEX BRIEF — A4b CONTRATTI (0d split + G3d gold set) — PER COUNTER-EXAM
-Data: 2026-07-17, REV 4 (post tuo counter-exam round-3) — QUESTO FILE E' COMMITTATO
-insieme alla mappa split (commit unico di contratto, tua direttiva). Vocabolario ruoli
-CANONICO e allineato al codice: train / calibration / metric / g3-external
-(la dicitura 'train-expansion' e' RITIRATA ovunque; il loader la RIFIUTA).
-Al sign-off questo file viene COMMITTATO (tua richiesta: il contratto non deve poter mutare
-senza traccia).
+CODEX BRIEF — A4b CONTRATTI (0d split + G3d gold set) — REV 5
+Data: 2026-07-17. Questo file e la mappa split sono versionati insieme. Vocabolario ruoli
+CANONICO: train / calibration / metric / g3-external. Qualunque sinonimo viene rifiutato.
 Riferimento: piano A4b in ~/.claude/plans/ml-recipe-ticket-for-warm-kazoo.md (3 giri già integrati).
 
 ════════════════════════════════════════════════════════════════════════
@@ -14,38 +10,35 @@ CONTRATTO 1 — SPLIT DEI NUOVI CORPUS (0d)
 UNITÀ DI ASSEGNAZIONE: la SORGENTE (colonna `group` del manifest: artista/pack/sessione),
 mai il singolo file. Motivo: leakage cross-split via stesso artista/pack.
 
-ALGORITMO (REV 3 — strato corretto + arrotondamento esplicito):
+ALGORITMO (REV 5 — batch immutabili, riproducibili):
   1. salt = "a4b-split-v1" (CONGELATO; cambiarlo = nuovo programma).
-  2. STRATO = il DOMINIO PRIMARIO dichiarato del group alla registrazione (il pack È
-     il group: non è una dimensione dello strato — tuo fix). Group multi-dominio:
-     un solo dominio primario → un solo ruolo.
-  3. Dentro ogni strato: ordina i group per h = sha256(salt || group_id) crescente.
-     Conteggi ruolo = floor(quota × N) con quote 50/15/15/20 (train /
-     calibration / metric / g3-external); i RESTI si assegnano in ordine di hash
-     alla coda dei ruoli in priorità g3-external > metric > calibration > train.
-     MINIMI: se N ≥ 4, ogni ruolo riceve ≥1 group; se N < 4, si assegnano nella
-     priorità g3-external > metric > calibration > train (con N=1 il group va a
-     g3-external: uno strato così piccolo serve prima da eval unseen che da train).
-  4. Output = `ml_v2/data/a4b_split_v1.json` COMMITTATO (fatto): schema a4b-split-v1,
-     mappa roles {group RAW → ruolo canonico} APPEND-ONLY + `legacy_groups` = baseline
-     CONGELATA dei 740 group del manifest 2026-07-17 — SOLI ammessi al fallback hash.
-     Loader FAIL-CLOSED (load_split_contract): schema ignoto/ruolo non canonico → ABORT;
-     group NUOVO senza ruolo in heldout → ABORT; ruolo↔split incoerente → ABORT
-     (validate_split_contract, gate d'integrazione). Test: rifiuto 'train-expansion',
-     rifiuto ruolo ignoto, rifiuto group nuovo senza ruolo, rifiuto mismatch ruolo/split,
-     + contratto e manifest REALI validati (19/19 guard, entry ctest aieq_a4b_guards).
+  2. Un BATCH DI AMMISSIONE è l'unità di assegnazione: una sorgente/versione e un
+     dominio primario dichiarato. Tutti i group di quel batch ricevono un ruolo una
+     volta sola. Group multi-dominio conserva un unico dominio primario e un ruolo.
+  3. Dentro ogni batch, i group sono ordinati per sha256(salt || batch_id || group_id).
+     Con N >= 4 si riserva un group per ogni ruolo, poi si completa per deficit verso
+     le quote 50/15/15/20 (train/calibration/metric/g3-external). Con N < 4 non si
+     assegna train: il batch resta eval-only oppure viene accorpato esplicitamente a
+     un batch della stessa sorgente/versione.
+  4. Output = `ml_v2/data/a4b_split_v2.json`, schema a4b-split-v2: `roles`,
+     `group_metadata` (primary_domain, admission_batch, source_id), `batches` con
+     hash della lista group, e `legacy_groups` congelato. Un batch esistente, un group
+     assegnato, il salt e la baseline legacy sono immutabili.
+  5. Prima di ogni ammissione: si salva la mappa precedente, si genera il piano con
+     `python3 -m ml_v2.contract_tools --plan-batch`, si applica solo dopo review, e
+     si esegue `--validate-delta` sul candidato. Nessuna riassegnazione automatica.
 
 ASSERTION AUTOMATICHE (test, estensione di test_a4b_guards.py):
-  - zero sha256 condivisi cross-ruolo; zero group condivisi cross-ruolo;
-  - ogni riga nuova del manifest ha un ruolo in a4b_split_v1.json PRIMA di entrare in build;
-  - i ruoli G3-external non compaiono MAI in train/calibration (fail-closed nel loader).
+  - zero sha256 condivisi cross-group, cross-split o cross-ruolo; zero group cross-split;
+  - ogni riga nuova del manifest ha un ruolo nella mappa PRIMA di entrare in build;
+  - il builder valida il contratto PRIMA di ogni cache hit; i ruoli G3-external non
+    compaiono MAI in train/calibration.
 
-MAPPATURA (REV 3 — RUOLI FIRST-CLASS, tuo finding sostanziale round-2, GIÀ NEL CODICE
-commit 084a1384): heldout_calib_metric_indices ora CONSULTA a4b_split_v1.json — un group
+MAPPATURA: heldout_calib_metric_indices consulta a4b_split_v2.json — un group
 con ruolo 'calibration' o 'metric' finisce ESATTAMENTE su quel lato (l'hash 50/50 resta
 solo per i group legacy pre-contratto, dichiarato nel meta come heldout_role_forced_groups);
 un group 'train'/'g3-external' che compare in heldout = ABORT per contaminazione (test).
-In manifest: train-expansion → split=train; calibration+metric → split=heldout (lato deciso
+In manifest: train → split=train; calibration+metric → split=heldout (lato deciso
 dal ruolo, non dall'hash); g3-external → split=test + ruolo nel json. _gid ora è INIETTIVO
 e reversibile (percent-encoding — la sostituzione di caratteri poteva far collidere group
 diversi; tuo finding minore) con CACHE_SCHEMA→a4b-cache-3. Guard test nel gate ctest
@@ -146,21 +139,16 @@ STATO F0 AL MOMENTO DI QUESTO BRIEF (per il tuo contesto)
   materiale strumentale. La colonna del manifest per il low-end non esiste: il gate va
   fatto a build-time sulla finestra (band_series 40-150 > soglia), come per l'HF.
 
-RICHIESTA (REV 2): counter-exam dei contratti aggiornati — in particolare: (a) l'algoritmo
-split a quote garantite per strato (punto 3) e la regola multi-dominio (punto 4); (b) lo
-status PILOTA del gold set con hit per-classe; (c) resta aperta la tua domanda
-1-umano-2-passate (accettabile come pilota dichiarato?). VERIFICA anche i 4 fix del tuo
-round-1 nel codice (f97c0da4: concorrenza, OWNED ledger, group-split; f1a3f201: README).
-Dopo il tuo sign-off: commit di questo contratto + assertion split nel test + SOLO POI
-integrazione manifest dei nuovi corpus (previa verify_manifest_files deep=True su tutti
-gli split).
+STATO: contratto e guardie sono pronti; corpus admission resta NO-GO. La tranche dati
+inizia solo con batch pianificato/revisionato, audit licenze, manifest candidate e
+`verify_manifest_files(deep=True)` su tutti gli split.
 
 ════════════════════════════════════════════════════════════════════════
-APPENDICE QUARANTENA (REV 4 — tue note round-3, recepite nel DOWNLOAD_LOG)
+APPENDICE QUARANTENA (REV 5)
 ════════════════════════════════════════════════════════════════════════
 - FMA: "Public Domain" NON normalizzato a CC0 — l'audit d'integrazione conserva
   URL/licenza ESATTA per file + attribuzione (fonte: raw_tracks.csv license_url).
 - Slakh: la selezione FINALE sarà una lista DETERMINISTICA di TrackID committata
   (non "i primi N"), con esclusione di omitted/ (avviso del record Zenodo su MIDI
   duplicati) e hash per ogni file estratto. Il materiale parziale attuale (18 track,
-  34 flac) è SOLO campione pilota. Download FERMI fino a tuo sign-off su questo REV 4.
+  34 flac) è SOLO campione pilota. Download FERMI fino all'ammissione dati separata.

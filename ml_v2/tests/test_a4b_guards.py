@@ -6,6 +6,7 @@ Run:  python3 -m ml_v2.tests.test_a4b_guards        (plain, no pytest needed)
 from __future__ import annotations
 
 import csv
+import json
 import tempfile
 from pathlib import Path
 
@@ -167,10 +168,26 @@ def test_contract_roles_win_over_hash():
     assert gB in metric_gids and gB not in calib_gids
 
 
-def _write_contract(roles: dict, legacy: list) -> Path:
-    import json
+def _write_contract(roles: dict, legacy: list,
+                    metadata: dict | None = None,
+                    batches: dict | None = None) -> Path:
+    from ml_v2.dataset_v2 import BATCH_ALLOCATION, batch_group_ids_sha256
+    if metadata is None:
+        metadata = {
+            group: {"primary_domain": "full-mix", "admission_batch": "test-batch",
+                    "source_id": "test-source"}
+            for group in roles
+        }
+    if batches is None:
+        groups = sorted(roles)
+        batches = ({"test-batch": {
+            "source_id": "test-source", "primary_domain": "full-mix",
+            "allocation": BATCH_ALLOCATION, "group_ids": groups,
+            "group_ids_sha256": batch_group_ids_sha256(groups),
+        }} if groups else {})
     f = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
-    json.dump({"schema": "a4b-split-v1", "roles": roles,
+    json.dump({"schema": "a4b-split-v2", "salt": "test-salt", "roles": roles,
+               "group_metadata": metadata, "batches": batches,
                "legacy_groups": legacy}, f)
     f.close()
     return Path(f.name)
@@ -205,6 +222,101 @@ def test_contract_rejects_unknown_role_and_schema():
         assert "schema" in str(e)
     else:
         raise AssertionError("unknown schema must be rejected")
+
+
+def test_contract_requires_complete_immutable_batch_metadata():
+    from ml_v2.dataset_v2 import BATCH_ALLOCATION, batch_group_ids_sha256, \
+        load_split_contract
+    group = "pack:new"
+    bad = Path(tempfile.mktemp(suffix=".json"))
+    bad.write_text(json.dumps({
+        "schema": "a4b-split-v2", "salt": "test", "roles": {group: "train"},
+        "group_metadata": {}, "legacy_groups": [], "batches": {},
+    }))
+    try:
+        load_split_contract(bad)
+    except ValueError as e:
+        assert "identical keys" in str(e)
+    else:
+        raise AssertionError("role assignment must carry immutable metadata")
+
+    bad_hash = Path(tempfile.mktemp(suffix=".json"))
+    bad_hash.write_text(json.dumps({
+        "schema": "a4b-split-v2", "salt": "test", "roles": {group: "train"},
+        "group_metadata": {group: {"primary_domain": "full-mix",
+                                    "admission_batch": "batch-a",
+                                    "source_id": "source-a"}},
+        "legacy_groups": [], "batches": {"batch-a": {
+            "source_id": "source-a", "primary_domain": "full-mix",
+            "allocation": BATCH_ALLOCATION, "group_ids": [group],
+            "group_ids_sha256": (
+                batch_group_ids_sha256([group])[:-1]
+                + ("0" if batch_group_ids_sha256([group])[-1] != "0" else "1")),
+        }},
+    }))
+    try:
+        load_split_contract(bad_hash)
+    except ValueError as e:
+        assert "hash mismatch" in str(e)
+    else:
+        raise AssertionError("batch group hash must be verified")
+
+
+def test_contract_delta_is_append_only():
+    from ml_v2.dataset_v2 import validate_split_contract_delta
+    base_roles = {"old:group": "g3-external"}
+    base_metadata = {"old:group": {
+        "primary_domain": "full-mix", "admission_batch": "batch-old",
+        "source_id": "source-old"}}
+    from ml_v2.dataset_v2 import BATCH_ALLOCATION, batch_group_ids_sha256
+    base_batches = {"batch-old": {
+        "source_id": "source-old", "primary_domain": "full-mix",
+        "allocation": BATCH_ALLOCATION, "group_ids": ["old:group"],
+        "group_ids_sha256": batch_group_ids_sha256(["old:group"]),
+    }}
+    previous = _write_contract(base_roles, [], base_metadata, base_batches)
+
+    candidate_roles = {**base_roles, "new:group": "g3-external"}
+    candidate_metadata = {**base_metadata, "new:group": {
+        "primary_domain": "full-mix", "admission_batch": "batch-new",
+        "source_id": "source-new"}}
+    candidate_batches = {**base_batches, "batch-new": {
+        "source_id": "source-new", "primary_domain": "full-mix",
+        "allocation": BATCH_ALLOCATION, "group_ids": ["new:group"],
+        "group_ids_sha256": batch_group_ids_sha256(["new:group"]),
+    }}
+    candidate = _write_contract(candidate_roles, [], candidate_metadata,
+                                candidate_batches)
+    validate_split_contract_delta(previous, candidate)
+
+    reassigned = _write_contract({**candidate_roles, "old:group": "metric"}, [],
+                                 candidate_metadata, candidate_batches)
+    try:
+        validate_split_contract_delta(previous, reassigned)
+    except ValueError as e:
+        assert "role" in str(e)
+    else:
+        raise AssertionError("existing groups must remain immutable")
+
+    mutated_legacy = _write_contract(candidate_roles, ["legacy:new"],
+                                     candidate_metadata, candidate_batches)
+    try:
+        validate_split_contract_delta(previous, mutated_legacy)
+    except ValueError as e:
+        assert "legacy_groups" in str(e)
+    else:
+        raise AssertionError("legacy baseline must remain immutable")
+
+
+def test_batch_assignment_is_deterministic_and_small_batches_are_eval_only():
+    from ml_v2.contract_tools import assign_batch_roles
+    groups = ["source:g1", "source:g2", "source:g3", "source:g4"]
+    first = assign_batch_roles("salt", "batch", groups)
+    assert first == assign_batch_roles("salt", "batch", list(reversed(groups)))
+    assert set(first.values()) == {"train", "calibration", "metric", "g3-external"}
+    small = assign_batch_roles("salt", "small", groups[:3])
+    assert "train" not in small.values()
+    assert set(assign_batch_roles("salt", "one", groups[:1]).values()) == {"g3-external"}
 
 
 def test_new_group_without_role_aborts_in_heldout():
@@ -257,12 +369,16 @@ def test_contract_rejects_cross_split_group_and_sha_leakage():
     else:
         raise AssertionError("one group must never cross manifest splits")
 
+    from ml_v2.dataset_v2 import ROLE_TO_SPLIT, assign_batch_roles
+    assigned = assign_batch_roles("test-salt", "test-batch",
+                                  ["new:left", "new:right"])
+    names = sorted(assigned)
     sha_leak = _write_manifest([
-        _row(group="new:train", split="train", sha256="c" * 64),
-        _row(path="real_audio/y.wav", group="new:test", split="test",
-             sha256="c" * 64),
+        _row(group=names[0], split=ROLE_TO_SPLIT[assigned[names[0]]], sha256="c" * 64),
+        _row(path="real_audio/y.wav", group=names[1],
+             split=ROLE_TO_SPLIT[assigned[names[1]]], sha256="c" * 64),
     ])
-    roles = _write_contract({"new:train": "train", "new:test": "g3-external"}, [])
+    roles = _write_contract(assigned, [])
     try:
         validate_split_contract(sha_leak, roles)
     except ValueError as e:
@@ -273,10 +389,11 @@ def test_contract_rejects_cross_split_group_and_sha_leakage():
 
 def test_contract_rejects_invalid_manifest_identity_before_build():
     from ml_v2.dataset_v2 import validate_split_contract
-    contract = _write_contract({"new:train": "train"}, [])
+    contract = _write_contract({"new:g3": "g3-external"}, [])
     for bad, needle in [({"group": "", "sha256": "a" * 64}, "empty group"),
-                        ({"group": "new:train", "sha256": ""}, "empty sha256"),
-                        ({"group": "new:train", "split": "unknown"}, "unknown split")]:
+                        ({"group": "new:g3", "split": "test", "sha256": ""},
+                         "empty sha256"),
+                        ({"group": "new:g3", "split": "unknown"}, "unknown split")]:
         manifest = _write_manifest([_row(**bad)])
         try:
             validate_split_contract(manifest, contract)
@@ -289,11 +406,11 @@ def test_contract_rejects_invalid_manifest_identity_before_build():
 def test_contract_allows_duplicate_sha_only_within_one_group_and_split():
     from ml_v2.dataset_v2 import validate_split_contract
     manifest = _write_manifest([
-        _row(group="new:train", split="train", sha256="d" * 64),
-        _row(path="real_audio/y.wav", group="new:train", split="train",
+        _row(group="new:g3", split="test", sha256="d" * 64),
+        _row(path="real_audio/y.wav", group="new:g3", split="test",
              sha256="d" * 64),
     ])
-    contract = _write_contract({"new:train": "train"}, [])
+    contract = _write_contract({"new:g3": "g3-external"}, [])
     validate_split_contract(manifest, contract)
 
 

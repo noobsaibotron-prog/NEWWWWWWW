@@ -228,41 +228,172 @@ def _gid(row: dict) -> str:
 # contract file lands on exactly that side of the heldout split. The hash
 # fallback is reserved for the FROZEN legacy_groups baseline (pre-contract
 # manifest groups); a new group without a contract role ABORTS the build.
-SPLIT_ROLES_PATH = HERE / "data" / "a4b_split_v1.json"
+SPLIT_ROLES_PATH = HERE / "data" / "a4b_split_v2.json"
 CANONICAL_ROLES = {"train", "calibration", "metric", "g3-external"}
 ROLE_TO_SPLIT = {"train": "train", "calibration": "heldout",
                  "metric": "heldout", "g3-external": "test"}
+SPLIT_CONTRACT_SCHEMA = "a4b-split-v2"
+BATCH_ALLOCATION = "sha256-rank-v1"
+SPLIT_ROLE_QUOTAS = {"train": 0.50, "calibration": 0.15,
+                     "metric": 0.15, "g3-external": 0.20}
+_SMALL_BATCH_ORDER = ("g3-external", "metric", "calibration")
+_QUOTA_TIE_ORDER = ("train", "g3-external", "metric", "calibration")
 
 
-def load_split_contract(path: Path = SPLIT_ROLES_PATH
-                        ) -> tuple[dict[str, str], set[str] | None]:
-    """FAIL-CLOSED contract load. Returns (roles, legacy_groups); legacy is
-    None only when the contract file does not exist at all (pure pre-contract
-    mode). Unknown schema or non-canonical role values (e.g. the retired
-    'train-expansion' spelling) ABORT."""
+def batch_group_ids_sha256(groups: list[str]) -> str:
+    """Hash the canonical group list stored in one immutable admission batch."""
+    payload = json.dumps(sorted(groups), ensure_ascii=False,
+                         separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def assign_batch_roles(salt: str, batch_id: str,
+                       groups: list[str]) -> dict[str, str]:
+    """Derive the only permitted role assignment for an admission batch."""
+    if not salt or not batch_id:
+        raise ValueError("salt and batch_id must be non-empty")
+    if not groups or any(not isinstance(g, str) or not g.strip() for g in groups):
+        raise ValueError("groups must be non-empty strings")
+    if len(set(groups)) != len(groups):
+        raise ValueError("groups must be unique within an admission batch")
+
+    ranked = sorted(
+        groups,
+        key=lambda group: hashlib.sha256(
+            f"{salt}\0{batch_id}\0{group}".encode("utf-8")).hexdigest())
+    if len(ranked) < 4:
+        return {group: _SMALL_BATCH_ORDER[i] for i, group in enumerate(ranked)}
+
+    counts = {role: 1 for role in CANONICAL_ROLES}
+    while sum(counts.values()) < len(ranked):
+        role = max(
+            CANONICAL_ROLES,
+            key=lambda candidate: (
+                SPLIT_ROLE_QUOTAS[candidate] * len(ranked) - counts[candidate],
+                -_QUOTA_TIE_ORDER.index(candidate)))
+        counts[role] += 1
+
+    ordered_roles = []
+    for role in ("train", "calibration", "metric", "g3-external"):
+        ordered_roles.extend([role] * counts[role])
+    return dict(zip(ranked, ordered_roles, strict=True))
+
+
+def load_split_contract_document(path: Path = SPLIT_ROLES_PATH) -> dict:
+    """Load and validate the full, immutable A4b split-contract document."""
     if not path.exists():
-        return {}, None
+        raise FileNotFoundError(f"split contract missing: {path}")
     data = json.loads(path.read_text())
-    if data.get("schema") != "a4b-split-v1":
+    if data.get("schema") != SPLIT_CONTRACT_SCHEMA:
         raise ValueError(f"{path.name}: unknown schema {data.get('schema')!r}")
+    if not isinstance(data.get("salt"), str) or not data["salt"]:
+        raise ValueError(f"{path.name}: missing non-empty 'salt'")
+
     roles = data.get("roles", {})
     if not isinstance(roles, dict):
         raise ValueError(f"{path.name}: 'roles' must be a mapping")
     for g, r in roles.items():
+        if not isinstance(g, str) or not g.strip():
+            raise ValueError(f"{path.name}: role assignment has an empty group")
         if r not in CANONICAL_ROLES:
             raise ValueError(
                 f"{path.name}: unknown role {r!r} for group {g!r} "
                 f"(canonical: {sorted(CANONICAL_ROLES)})")
+
     legacy = data.get("legacy_groups", [])
     if not isinstance(legacy, list):
         raise ValueError(f"{path.name}: 'legacy_groups' must be a list")
     legacy_set = set(legacy)
+    if len(legacy_set) != len(legacy) or any(not isinstance(g, str) or not g.strip()
+                                             for g in legacy):
+        raise ValueError(f"{path.name}: legacy_groups must be unique non-empty strings")
     overlap = sorted(set(roles) & legacy_set)
     if overlap:
         raise ValueError(
             f"{path.name}: groups cannot be both role-assigned and frozen legacy: "
             f"{overlap[:3]}")
-    return roles, legacy_set
+
+    metadata = data.get("group_metadata", {})
+    batches = data.get("batches", {})
+    if not isinstance(metadata, dict) or not isinstance(batches, dict):
+        raise ValueError(f"{path.name}: group_metadata and batches must be mappings")
+    if set(metadata) != set(roles):
+        raise ValueError(
+            f"{path.name}: role assignments and group_metadata must have identical keys")
+
+    for batch_id, batch in batches.items():
+        if not isinstance(batch_id, str) or not batch_id or not isinstance(batch, dict):
+            raise ValueError(f"{path.name}: invalid admission batch {batch_id!r}")
+        for field in ("source_id", "primary_domain"):
+            if not isinstance(batch.get(field), str) or not batch[field].strip():
+                raise ValueError(f"{path.name}: batch {batch_id!r} missing {field!r}")
+        if batch.get("allocation") != BATCH_ALLOCATION:
+            raise ValueError(
+                f"{path.name}: batch {batch_id!r} must use {BATCH_ALLOCATION!r}")
+        groups = batch.get("group_ids")
+        if (not isinstance(groups, list) or not groups
+                or any(not isinstance(g, str) or not g.strip() for g in groups)
+                or len(set(groups)) != len(groups)):
+            raise ValueError(f"{path.name}: batch {batch_id!r} has invalid group_ids")
+        if batch.get("group_ids_sha256") != batch_group_ids_sha256(groups):
+            raise ValueError(f"{path.name}: batch {batch_id!r} group_ids hash mismatch")
+        expected_roles = assign_batch_roles(data["salt"], batch_id, groups)
+        for group, expected_role in expected_roles.items():
+            if roles.get(group) != expected_role:
+                raise ValueError(
+                    f"{path.name}: batch {batch_id!r} role for group {group!r} "
+                    f"must be {expected_role!r} by {BATCH_ALLOCATION}")
+
+    for group, meta in metadata.items():
+        if not isinstance(meta, dict):
+            raise ValueError(f"{path.name}: group {group!r} metadata must be a mapping")
+        for field in ("primary_domain", "admission_batch", "source_id"):
+            if not isinstance(meta.get(field), str) or not meta[field].strip():
+                raise ValueError(f"{path.name}: group {group!r} metadata missing {field!r}")
+        batch_id = meta["admission_batch"]
+        batch = batches.get(batch_id)
+        if batch is None or group not in batch["group_ids"]:
+            raise ValueError(
+                f"{path.name}: group {group!r} is not recorded by batch {batch_id!r}")
+        if (meta["primary_domain"] != batch["primary_domain"]
+                or meta["source_id"] != batch["source_id"]):
+            raise ValueError(
+                f"{path.name}: group {group!r} metadata disagrees with batch {batch_id!r}")
+
+    for batch_id, batch in batches.items():
+        recorded = {group for group, meta in metadata.items()
+                    if meta["admission_batch"] == batch_id}
+        if recorded != set(batch["group_ids"]):
+            raise ValueError(
+                f"{path.name}: batch {batch_id!r} group_ids disagree with metadata")
+    return data
+
+
+def load_split_contract(path: Path = SPLIT_ROLES_PATH
+                        ) -> tuple[dict[str, str], set[str] | None]:
+    """FAIL-CLOSED compatibility view returning (roles, frozen legacy groups)."""
+    if not path.exists():
+        return {}, None
+    data = load_split_contract_document(path)
+    return data["roles"], set(data["legacy_groups"])
+
+
+def validate_split_contract_delta(previous_path: Path,
+                                  candidate_path: Path) -> None:
+    """Reject any mutation of an admitted group, batch, salt, or legacy baseline."""
+    previous = load_split_contract_document(previous_path)
+    candidate = load_split_contract_document(candidate_path)
+    for field in ("salt", "legacy_groups"):
+        if previous[field] != candidate[field]:
+            raise ValueError(f"split-contract delta mutates immutable {field!r}")
+    for group, role in previous["roles"].items():
+        if candidate["roles"].get(group) != role:
+            raise ValueError(f"split-contract delta reassigns or removes group {group!r}")
+        if candidate["group_metadata"].get(group) != previous["group_metadata"][group]:
+            raise ValueError(f"split-contract delta mutates metadata for group {group!r}")
+    for batch_id, batch in previous["batches"].items():
+        if candidate["batches"].get(batch_id) != batch:
+            raise ValueError(f"split-contract delta mutates or removes batch {batch_id!r}")
 
 
 def split_contract_sha256(path: Path = SPLIT_ROLES_PATH) -> str:
@@ -362,7 +493,7 @@ def heldout_calib_metric_indices(sources: list[str],
             raise ValueError(
                 f"new group {raw!r} appears in heldout data without a contract "
                 f"role (legacy baseline is frozen; assign a role in "
-                f"a4b_split_v1.json)")
+                f"a4b_split_v2.json)")
         h = int(hashlib.sha1(group.encode("utf-8")).hexdigest()[:8], 16)
         (calib if (h % 100) < 50 else metric).extend(idxs)
 
