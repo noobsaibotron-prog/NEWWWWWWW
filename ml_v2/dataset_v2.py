@@ -166,17 +166,57 @@ def _neg(mel: np.ndarray, source: str) -> WindowSample:
 
 
 # ------------------------------------------------------------ manifest rows
+# A4b 0b: the loader is FAIL-CLOSED. A manifest row that reaches training with a
+# missing/unknown license or no source-group must abort the build, never be
+# silently skipped — silent skips are how an unlicensed file ends up in a
+# commercial training set.
+ALLOWED_LICENSES = {"CC0", "CC-BY", "CC-BY-4.0"}
+
+
 def manifest_rows(split: str, manifest: Path = MANIFEST) -> list[dict]:
     rows, seen = [], set()
     with open(manifest, newline="") as f:
-        for r in csv.DictReader(f):
+        for lineno, r in enumerate(csv.DictReader(f), start=2):
             if r["split"] != split:
                 continue
+            if r.get("license_ok", "").strip() != "1":
+                raise ValueError(
+                    f"{manifest.name}:{lineno}: license_ok != 1 for {r.get('path')}")
+            if r.get("license", "").strip() not in ALLOWED_LICENSES:
+                raise ValueError(
+                    f"{manifest.name}:{lineno}: license {r.get('license')!r} not in "
+                    f"whitelist {sorted(ALLOWED_LICENSES)} for {r.get('path')}")
+            if not r.get("group", "").strip():
+                raise ValueError(
+                    f"{manifest.name}:{lineno}: empty group for {r.get('path')}")
+            if not r.get("sha256", "").strip():
+                raise ValueError(
+                    f"{manifest.name}:{lineno}: empty sha256 for {r.get('path')}")
             if r["sha256"] in seen:                  # dataloader dedup (A1c)
                 continue
             seen.add(r["sha256"])
             rows.append(r)
     return rows
+
+
+def verify_manifest_files(split: str, data_root: Path = DATA_ROOT_DEFAULT,
+                          manifest: Path = MANIFEST, deep: bool = False,
+                          log=print) -> None:
+    """A4b 0b deep check: every manifest row's file exists; with deep=True the
+    sha256 is re-hashed and must match. Heavy (reads every file) — run as an
+    explicit gate step (new-corpus integration, F1), not on every build."""
+    for r in manifest_rows(split, manifest):
+        p = data_root / r["path"]
+        if not p.is_file():
+            raise FileNotFoundError(f"manifest row missing on disk: {p}")
+        if deep:
+            h = hashlib.sha256()
+            with open(p, "rb") as f:
+                for chunk in iter(lambda: f.read(1 << 20), b""):
+                    h.update(chunk)
+            if h.hexdigest() != r["sha256"]:
+                raise ValueError(f"sha256 mismatch for {p}")
+    log(f"  verify_manifest_files({split!r}, deep={deep}): OK")
 
 
 # ------------------------------------------------------------ builders
@@ -398,11 +438,36 @@ def to_arrays(samples: list[WindowSample]
     return X, Y, [s.source for s in samples]
 
 
+# A4b 0a: the cache key must change whenever ANYTHING that shapes the built
+# dataset changes — not just BuildConfig. Bug this fixes (proven): caches with
+# the same BuildConfig key but different contents, because manifest/recipes had
+# changed between builds. The fingerprint hashes the ACTUAL BYTES of the
+# manifest and of every pipeline module, plus a schema version; a stale cache
+# can then never be loaded as fresh (its filename simply no longer matches).
+CACHE_SCHEMA = "a4b-cache-1"
+
+
+def pipeline_fingerprint(manifest: Path = MANIFEST) -> str:
+    h = hashlib.sha256()
+    h.update(CACHE_SCHEMA.encode())
+    for p in (manifest, Path(__file__), HERE / "lab_inject.py",
+              HERE / "feature.py"):
+        h.update(p.name.encode())
+        h.update(p.read_bytes())
+    return h.hexdigest()[:16]
+
+
+def cache_path(cfg: BuildConfig, cache_dir: Path,
+               manifest: Path = MANIFEST) -> Path:
+    return cache_dir / (f"windows_{cfg.split}_{cfg.key()}"
+                        f"_{pipeline_fingerprint(manifest)}.npz")
+
+
 def build_or_load(cfg: BuildConfig, cache_dir: Path,
                   data_root: Path = DATA_ROOT_DEFAULT, log=print
                   ) -> tuple[np.ndarray, np.ndarray, list[str]]:
     cache_dir.mkdir(parents=True, exist_ok=True)
-    cache = cache_dir / f"windows_{cfg.split}_{cfg.key()}.npz"
+    cache = cache_path(cfg, cache_dir)
     if cache.exists():
         z = np.load(cache, allow_pickle=True)
         log(f"  [cache] {cache.name}: X{z['X'].shape}")
@@ -410,6 +475,10 @@ def build_or_load(cfg: BuildConfig, cache_dir: Path,
     log(f"  building {cfg.split} windows (seed {cfg.seed})…")
     samples = build_windows(cfg, data_root=data_root, log=log)
     X, Y, sources = to_arrays(samples)
-    np.savez_compressed(cache, X=X, Y=Y, sources=np.array(sources, dtype=object))
+    # atomic publish: a crash mid-write must never leave a half-written file
+    # that a later run would load as a valid cache.
+    tmp = cache.with_name(cache.stem + ".tmp.npz")
+    np.savez_compressed(tmp, X=X, Y=Y, sources=np.array(sources, dtype=object))
+    tmp.replace(cache)
     log(f"  built X{X.shape} -> {cache.name}")
     return X, Y, sources
