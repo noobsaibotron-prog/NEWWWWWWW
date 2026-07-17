@@ -11,9 +11,11 @@ Export (§6): RTNeural JSON + provenance -> /tmp/aieq_v2/candidate_s<seed>.json
 (NEVER touches Resources/Models/ml_weights.bin). 3 seeds mandatory (§7).
 
 Round-1 choices documented for the counter-check:
-  - dataset seed FIXED at 42 for every model seed (vary the INIT, not the
-    data — the M8 lesson: per-class swings from data resampling mask init
-    instability); validation/calibration built from split='heldout' seed 43.
+  - the default dataset seed is 42, preserving the historical A4b CONTROL
+    recipe. ``--data-seeds`` can add independently cached data realisations;
+    the final protocol uses the Cartesian product of model and dataset seeds.
+    Validation/calibration uses ``dataset_seed + 1`` so it is deterministic
+    but not the same draw as training.
   - loss head weights: class 1.0, presence 0.3, freq 0.5.
   - class pos_weight = clamp(sqrt(n_neg/n_pos), 1, 6) per class (spec §2
     "pesi per classe" — square root keeps rare-class gradients sane).
@@ -39,6 +41,8 @@ from .dataset_v2 import (BuildConfig, build_or_load, split_contract_sha256,
 from .export_rtneural import export_torch_model
 from .model import MotoreV2CNN
 from .lab_inject import PROBLEM_NAMES_V2
+from .run_grid import (DEFAULT_DATASET_SEED, candidate_stem,
+                       parse_seed_csv)
 
 NUM_CLASSES = 8
 TARGET_FP = 0.05
@@ -279,12 +283,13 @@ def train_one_seed(seed: int, Xtr, Ytr, X_calib, Y_calib, X_metric, Y_metric,
     return model, best
 
 
-def export_candidate(model: MotoreV2CNN, seed: int, best: dict,
+def export_candidate(model: MotoreV2CNN, model_seed: int, dataset_seed: int,
+                     artifact_stem: str, best: dict,
                      thresholds: list[float], presence_th: float,
                      out_dir: Path, meta: dict, log=print) -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
     model_cpu = model.to("cpu")
-    json_path = out_dir / f"candidate_s{seed}.json"
+    json_path = out_dir / f"{artifact_stem}.json"
     export_torch_model(model_cpu, str(json_path))
 
     # Export self-check with the REAL weights (A3 caveat): torch forward vs
@@ -300,20 +305,46 @@ def export_candidate(model: MotoreV2CNN, seed: int, best: dict,
     log(f"  export self-check (trained weights): max|delta| = {delta:.2e}")
 
     prov = {
-        "schema": "motore-v2-a4", "seed": seed,
+        "schema": "motore-v2-a4", "seed": model_seed,
+        "model_seed": model_seed, "dataset_seed": dataset_seed,
         "class_order": list(PROBLEM_NAMES_V2),
         "class_thresholds": thresholds, "presence_threshold": presence_th,
         "target_fp": TARGET_FP, "best": best, "export_selfcheck_delta": delta,
         **meta,
     }
-    prov_path = out_dir / f"candidate_s{seed}.provenance.json"
+    prov_path = out_dir / f"{artifact_stem}.provenance.json"
     prov_path.write_text(json.dumps(prov, indent=1))
     return json_path
+
+
+def _build_configs(dataset_seed: int, quick: bool) -> tuple[BuildConfig, BuildConfig, int]:
+    """Build deterministic train/heldout configs for one dataset realisation."""
+    tr_cfg = BuildConfig(split="train", seed=dataset_seed)
+    va_cfg = BuildConfig(split="heldout", seed=dataset_seed + 1,
+                         clips_per_singer=16, hf_negative_repeat=1)
+    epochs = 150
+    if quick:
+        tr_cfg = BuildConfig(split="train", seed=dataset_seed,
+                             clips_per_singer=3, windows_per_clip=1,
+                             tier2_windows_per_file=1,
+                             contrastive_per_file=0, ring_per_file=0,
+                             max_tier2_files_per_domain=10)
+        va_cfg = BuildConfig(split="heldout", seed=dataset_seed + 1,
+                             clips_per_singer=3, windows_per_clip=1,
+                             tier2_windows_per_file=1,
+                             contrastive_per_file=0, ring_per_file=0,
+                             hf_negative_repeat=1,
+                             max_tier2_files_per_domain=10)
+        epochs = 6
+    return tr_cfg, va_cfg, epochs
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--seeds", default="42,1337,2026")
+    ap.add_argument("--data-seeds", default=str(DEFAULT_DATASET_SEED),
+                    help="comma-separated dataset/injection RNG seeds; each is "
+                    "crossed with every --seeds model initialisation")
     ap.add_argument("--epochs", type=int, default=150)
     ap.add_argument("--batch-size", type=int, default=32)
     ap.add_argument("--lr", type=float, default=1e-3)
@@ -340,6 +371,13 @@ def main() -> int:
     if args.weight_decay < 0.0:
         ap.error("--weight-decay must be non-negative")
 
+    try:
+        model_seeds = parse_seed_csv(args.seeds, "--seeds")
+        dataset_seeds = parse_seed_csv(args.data_seeds, "--data-seeds")
+    except ValueError as exc:
+        ap.error(str(exc))
+    legacy_artifact_names = dataset_seeds == [DEFAULT_DATASET_SEED]
+
     masked = [int(x) for x in args.mask_classes.split(",") if x.strip() != ""]
     active = [c for c in range(NUM_CLASSES) if c not in masked]
     if masked:
@@ -350,23 +388,6 @@ def main() -> int:
                              else "cpu")
     print(f"device={device}  torch={torch.__version__}")
 
-    tr_cfg = BuildConfig(split="train", seed=42)
-    va_cfg = BuildConfig(split="heldout", seed=43, clips_per_singer=16,
-                         hf_negative_repeat=1)
-    epochs = args.epochs
-    if args.quick:
-        tr_cfg = BuildConfig(split="train", seed=42, clips_per_singer=3,
-                             windows_per_clip=1, tier2_windows_per_file=1,
-                             contrastive_per_file=0, ring_per_file=0,
-                             max_tier2_files_per_domain=10)
-        va_cfg = BuildConfig(split="heldout", seed=43, clips_per_singer=3,
-                             windows_per_clip=1, tier2_windows_per_file=1,
-                             contrastive_per_file=0, ring_per_file=0,
-                             hf_negative_repeat=1,
-                             max_tier2_files_per_domain=10)
-        epochs = 6
-    _apply_ablation_flags(tr_cfg, args)
-    _apply_ablation_flags(va_cfg, args)
     ablations = {
         "colored_clean": bool(args.ablate_colored_clean),
         "synth_harsh": bool(args.ablate_synth_harsh),
@@ -380,87 +401,109 @@ def main() -> int:
     print("  verified rows:", corpus_preflight["verified_rows"])
 
     cache = Path(args.cache)
-    print("train set:")
-    Xtr, Ytr, src_tr = build_or_load(tr_cfg, cache)
-    print("val/calib set:")
-    Xva, Yva, src_va = build_or_load(va_cfg, cache)
-    train_summary = _preflight_summary("train", Ytr, src_tr)
-    heldout_summary = _preflight_summary("heldout", Yva, src_va)
-    real_res_train = train_summary["real_resonance_positives"]
-    real_res_heldout = heldout_summary["real_resonance_positives"]
-    print(f"real resonance positives: train {real_res_train}, "
-          f"heldout {real_res_heldout}")
-    if not args.quick and real_res_train < 50:
-        raise SystemExit("A4b stop: real-resonance train positives < 50; "
-                         "provide 5-10 known real-resonance files before "
-                         "full Round 4.")
-    calib_idx, metric_idx, heldout_meta = heldout_calib_metric_indices(src_va)
-    X_calib, Y_calib = Xva[calib_idx], Yva[calib_idx]
-    X_metric, Y_metric = Xva[metric_idx], Yva[metric_idx]
-    pos_frac = Ytr[:, :NUM_CLASSES].sum(axis=0) / len(Ytr)
-    print(f"train {Xtr.shape}, val {Xva.shape}")
-    print("heldout split:",
-          f"calib {X_calib.shape[0]} win / metric {X_metric.shape[0]} win",
-          f"from {heldout_meta['heldout_source_groups']} source groups")
-    print("A6 external benchmark remains the final gate; "
-          "training selection only chooses checkpoints.")
-    print("train pos fraction per class:",
-          {PROBLEM_NAMES_V2[c][:4]: round(float(pos_frac[c]), 3)
-           for c in range(NUM_CLASSES)})
+    results: list[dict] = []
+    for dataset_seed in dataset_seeds:
+        tr_cfg, va_cfg, quick_epochs = _build_configs(dataset_seed, args.quick)
+        epochs = quick_epochs if args.quick else args.epochs
+        _apply_ablation_flags(tr_cfg, args)
+        _apply_ablation_flags(va_cfg, args)
+        print(f"\n== dataset seed {dataset_seed} "
+              f"(heldout seed {dataset_seed + 1}) ==")
+        print("train set:")
+        Xtr, Ytr, src_tr = build_or_load(tr_cfg, cache)
+        print("val/calib set:")
+        Xva, Yva, src_va = build_or_load(va_cfg, cache)
+        train_summary = _preflight_summary("train", Ytr, src_tr)
+        heldout_summary = _preflight_summary("heldout", Yva, src_va)
+        real_res_train = train_summary["real_resonance_positives"]
+        real_res_heldout = heldout_summary["real_resonance_positives"]
+        print(f"real resonance positives: train {real_res_train}, "
+              f"heldout {real_res_heldout}")
+        if not args.quick and real_res_train < 50:
+            raise SystemExit("A4b stop: real-resonance train positives < 50; "
+                             "provide 5-10 known real-resonance files before "
+                             "full Round 4.")
+        calib_idx, metric_idx, heldout_meta = heldout_calib_metric_indices(src_va)
+        X_calib, Y_calib = Xva[calib_idx], Yva[calib_idx]
+        X_metric, Y_metric = Xva[metric_idx], Yva[metric_idx]
+        pos_frac = Ytr[:, :NUM_CLASSES].sum(axis=0) / len(Ytr)
+        print(f"train {Xtr.shape}, val {Xva.shape}")
+        print("heldout split:",
+              f"calib {X_calib.shape[0]} win / metric {X_metric.shape[0]} win",
+              f"from {heldout_meta['heldout_source_groups']} source groups")
+        print("A6 external benchmark remains the final gate; "
+              "training selection only chooses checkpoints.")
+        print("train pos fraction per class:",
+              {PROBLEM_NAMES_V2[c][:4]: round(float(pos_frac[c]), 3)
+               for c in range(NUM_CLASSES)})
 
-    Xtr_t = torch.from_numpy(Xtr).to(device)
-    Ytr_t = torch.from_numpy(Ytr).to(device)
-    Xcal_t = torch.from_numpy(X_calib).to(device)
-    Ycal_t = torch.from_numpy(Y_calib).to(device)
-    Xmet_t = torch.from_numpy(X_metric).to(device)
-    Ymet_t = torch.from_numpy(Y_metric).to(device)
-
-    meta = {"epochs": epochs, "batch_size": args.batch_size, "lr": args.lr,
-            "min_lr": args.min_lr, "weight_decay": args.weight_decay,
-            "train_windows": int(Xtr.shape[0]),
-            "val_windows": int(Xva.shape[0]),
-            "real_resonance_train": real_res_train,
-            "real_resonance_heldout": real_res_heldout,
-            **heldout_meta,
-            "dataset_train_key": tr_cfg.key(), "dataset_val_key": va_cfg.key(),
-            "split_contract_sha256": split_contract_sha256(),
-            "corpus_preflight": corpus_preflight,
-            "preflight_train": train_summary,
-            "preflight_heldout": heldout_summary,
-            "ablations": ablations,
-            "loss_weights": {"class": 1.0, "presence": 0.3, "freq": 0.5},
-            "masked_classes": masked,
-            "masked_class_names": [PROBLEM_NAMES_V2[i] for i in masked],
-            "active_classes": active,
-            "hybrid_routing": ("masked-class CNN outputs must be IGNORED at "
-                               "inference and routed to the heuristic excess "
-                               "detector (Sibilance -> AIEngine::detectSibilance "
-                               "with the M4 HF-local reference)")}
-
-    results = {}
-    for seed in [int(s) for s in args.seeds.split(",")]:
-        print(f"\n== seed {seed} ==")
-        model, best = train_one_seed(seed, Xtr_t, Ytr_t,
-                                     Xcal_t, Ycal_t, Xmet_t, Ymet_t, device,
-                                     epochs, args.batch_size, args.lr,
-                                     args.min_lr, args.weight_decay,
-                                     active=active)
-        calib_probs = predict_probs(model.to(device), Xcal_t)
-        ths, pres = calibrate(calib_probs, Y_calib)
-        final = evaluate(model.to(device), Xmet_t, Ymet_t, ths, active=active)
-        best["export_metric_f1"] = final["macro_f1"]
-        best["export_metric_clean_fp"] = final["clean_fp"]
-        path = export_candidate(model, seed, best, ths, pres,
-                                Path(args.out), meta)
-        print(f"  thresholds: "
-              f"{[f'{PROBLEM_NAMES_V2[c][:4]}={ths[c]:.2f}' for c in range(8)]}")
-        print(f"  exported -> {path}")
-        results[seed] = best
+        Xtr_t = torch.from_numpy(Xtr).to(device)
+        Ytr_t = torch.from_numpy(Ytr).to(device)
+        Xcal_t = torch.from_numpy(X_calib).to(device)
+        Ycal_t = torch.from_numpy(Y_calib).to(device)
+        Xmet_t = torch.from_numpy(X_metric).to(device)
+        Ymet_t = torch.from_numpy(Y_metric).to(device)
+        meta = {"epochs": epochs, "batch_size": args.batch_size, "lr": args.lr,
+                "min_lr": args.min_lr, "weight_decay": args.weight_decay,
+                "train_windows": int(Xtr.shape[0]),
+                "val_windows": int(Xva.shape[0]),
+                "real_resonance_train": real_res_train,
+                "real_resonance_heldout": real_res_heldout,
+                **heldout_meta,
+                "dataset_train_key": tr_cfg.key(), "dataset_val_key": va_cfg.key(),
+                "split_contract_sha256": split_contract_sha256(),
+                "corpus_preflight": corpus_preflight,
+                "preflight_train": train_summary,
+                "preflight_heldout": heldout_summary,
+                "ablations": ablations,
+                "loss_weights": {"class": 1.0, "presence": 0.3, "freq": 0.5},
+                "masked_classes": masked,
+                "masked_class_names": [PROBLEM_NAMES_V2[i] for i in masked],
+                "active_classes": active,
+                "hybrid_routing": ("masked-class CNN outputs must be IGNORED at "
+                                   "inference and routed to the heuristic excess "
+                                   "detector (Sibilance -> AIEngine::detectSibilance "
+                                   "with the M4 HF-local reference)")}
+        for model_seed in model_seeds:
+            artifact_stem = candidate_stem(model_seed, dataset_seed,
+                                            legacy_artifact_names)
+            print(f"\n== model seed {model_seed}; dataset seed {dataset_seed} ==")
+            model, best = train_one_seed(model_seed, Xtr_t, Ytr_t,
+                                         Xcal_t, Ycal_t, Xmet_t, Ymet_t, device,
+                                         epochs, args.batch_size, args.lr,
+                                         args.min_lr, args.weight_decay,
+                                         active=active)
+            calib_probs = predict_probs(model.to(device), Xcal_t)
+            ths, pres = calibrate(calib_probs, Y_calib)
+            final = evaluate(model.to(device), Xmet_t, Ymet_t, ths, active=active)
+            best["export_metric_f1"] = final["macro_f1"]
+            best["export_metric_clean_fp"] = final["clean_fp"]
+            path = export_candidate(model, model_seed, dataset_seed,
+                                    artifact_stem, best, ths, pres,
+                                    Path(args.out), meta)
+            print(f"  thresholds: "
+                  f"{[f'{PROBLEM_NAMES_V2[c][:4]}={ths[c]:.2f}' for c in range(8)]}")
+            print(f"  exported -> {path}")
+            results.append({"model_seed": model_seed,
+                            "dataset_seed": dataset_seed,
+                            "artifact": path.name,
+                            "best": best})
 
     print("\n== SUMMARY ==")
-    for seed, b in results.items():
-        print(f"  seed {seed}: sel {b['selection']:.3f}  f1 {b['macro_f1']:.3f}"
+    for run in results:
+        b = run["best"]
+        print(f"  model {run['model_seed']} / data {run['dataset_seed']}: "
+              f"sel {b['selection']:.3f}  f1 {b['macro_f1']:.3f}"
               f"  cleanFP {b['clean_fp']:.3f}  ep {b['epoch']}")
+    if not legacy_artifact_names:
+        out_dir = Path(args.out)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "grid_summary.json").write_text(json.dumps({
+            "schema": "motore-v2-a4-grid-v1",
+            "model_seeds": model_seeds,
+            "dataset_seeds": dataset_seeds,
+            "runs": results,
+        }, indent=1))
     return 0
 
 

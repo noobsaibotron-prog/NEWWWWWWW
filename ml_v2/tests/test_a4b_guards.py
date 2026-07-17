@@ -58,6 +58,21 @@ def test_cache_path_embeds_fingerprint_and_config():
     assert cache_path(cfg2, Path("/tmp/aieq_v2_test_cache")).name != p.name
 
 
+def test_experiment_grid_seed_parsing_and_artifact_identity():
+    from ml_v2.run_grid import candidate_stem, parse_seed_csv
+    assert parse_seed_csv("42, 1337,2026", "--seeds") == [42, 1337, 2026]
+    assert candidate_stem(42, 42, legacy_names=True) == "candidate_s42"
+    assert candidate_stem(42, 42, legacy_names=False) == "candidate_s42_d42"
+    assert candidate_stem(42, 1337, legacy_names=False) == "candidate_s42_d1337"
+    for bad in ("", "42,", "42,42", "-1", "not-a-seed"):
+        try:
+            parse_seed_csv(bad, "--data-seeds")
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"invalid seed list accepted: {bad!r}")
+
+
 def test_contract_digest_is_stable_and_content_sensitive():
     from ml_v2.dataset_v2 import split_contract_sha256
     p1 = _write_contract({"pack:a": "train"}, [])
