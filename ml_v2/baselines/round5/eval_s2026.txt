@@ -1,0 +1,59 @@
+
+== V2 BENCHMARK ==
+model=/tmp/aieq_v2/round5/candidate_s2026.json
+thresholds=0.402,0.300,0.341,0.603,0.300,0.300,0.300,0.300
+
+[ABLETON CORE]
+  01 [     PASS] (  19 win) (none)
+  02 [FAIL(Boominess/Muddiness 0.0% < 5%)] (  19 win) (none)
+  03 [     PASS] (  19 win) BoxyMidrange 42.1%; Harshness 15.8%; DullSound 15.8%; Muddiness 10.5%; Thinness  5.3%
+  04 [     PASS] (  19 win) BoxyMidrange 26.3%
+  05 [FAIL(Harshness 0.0% < 5%)] (  19 win) (none)
+  06 [     PASS] (  19 win) Thinness 73.7%; BoxyMidrange 26.3%; Harshness 10.5%; DullSound 10.5%
+  07 [     PASS] (  19 win) Thinness 78.9%; BoxyMidrange 78.9%; DullSound 73.7%; Harshness 57.9%
+  08 [FAIL(Resonance 0.0% < 5%)] (  19 win) (none)
+
+[VOCAL PROBES]
+  V-SIB [FAIL(Sibilance 0.0% < 5%)] (  25 win) (none)
+  V-CLN-F [     PASS] (  25 win) (none)
+  V-CLN-M [     PASS] (   9 win) (none)
+  V-RES [     PASS] (  25 win) (none)
+
+[ELECTRONIC RAW SET - diagnostic only]
+  clean_drums  [REPORT(fsld_151352.wav Resonance 66.7%; fsld_108147.wav Muddiness 75.0%; fsld_140833.wav Muddiness 100.0%; fsld_156082.wav Resonance 26.7%)] (10 files)
+  clean_synth  [REPORT(fsld_144865.wav Thinness 40.0%)] (10 files)
+  clean_bass   [REPORT(fsld_239076.wav Muddiness 100.0%; fsld_104382.wav Muddiness 37.5%; fsld_271020.wav Resonance 40.0%; fsld_151007.wav Thinness 100.0%; fsld_120320.wav BoxyMidrange 96.0%)] (10 files)
+  clean_mix    [REPORT(fsld_203099.wav Muddiness 74.1%; fsld_19878.wav Muddiness 77.8%)] (10 files)
+  hf_negative  [     PASS] (10 files)
+
+[ELECTRONIC NEUTRAL SET - gate]
+  exclude clean_drums  fsld_102481.wav: mel band 3 > adjacent mean by 6 dB for 53.8% frames
+  exclude clean_synth  fsld_269556.wav: mel band 6 > adjacent mean by 6 dB for 59.9% frames
+  exclude clean_synth  fsld_269552.wav: mel band 5 > adjacent mean by 6 dB for 53.4% frames
+  exclude clean_synth  fsld_177816.wav: mel band 8 > adjacent mean by 6 dB for 53.4% frames
+  exclude clean_synth  fsld_144865.wav: mel band 5 > adjacent mean by 6 dB for 100.0% frames
+  exclude clean_synth  fsld_238748.wav: mel band 6 > adjacent mean by 6 dB for 57.1% frames
+  exclude clean_synth  fsld_240971.wav: mel band 4 > adjacent mean by 6 dB for 79.4% frames
+  exclude clean_synth  fsld_127879.wav: mel band 5 > adjacent mean by 6 dB for 68.6% frames
+  exclude clean_synth  fsld_121981.wav: mel band 3 > adjacent mean by 6 dB for 68.9% frames
+  exclude clean_synth  fsld_249178.wav: mel band 7 > adjacent mean by 6 dB for 97.6% frames
+  exclude clean_synth  fsld_246075.wav: mel band 5 > adjacent mean by 6 dB for 63.7% frames
+  exclude clean_synth  fsld_269598.wav: mel band 4 > adjacent mean by 6 dB for 56.2% frames
+  exclude clean_bass   fsld_239076.wav: mel band 3 > adjacent mean by 6 dB for 67.4% frames
+  exclude clean_bass   fsld_104382.wav: mel band 4 > adjacent mean by 6 dB for 71.9% frames
+  exclude clean_bass   fsld_151007.wav: mel band 3 > adjacent mean by 6 dB for 66.4% frames
+  exclude clean_bass   fsld_189599.wav: mel band 36 > adjacent mean by 6 dB for 59.1% frames
+  exclude clean_mix    fsld_203099.wav: mel band 3 > adjacent mean by 6 dB for 64.6% frames
+  exclude clean_mix    fsld_121984.wav: mel band 5 > adjacent mean by 6 dB for 80.0% frames
+  exclude hf_negative  fsld_34117.wav: mel band 7 > adjacent mean by 6 dB for 65.7% frames
+  exclude hf_negative  fsld_167182.wav: mel band 3 > adjacent mean by 6 dB for 62.6% frames
+  exclude hf_negative  fsld_456132.wav: mel band 45 > adjacent mean by 6 dB for 92.0% frames
+  exclude hf_negative  fsld_113624.wav: mel band 18 > adjacent mean by 6 dB for 57.9% frames
+  exclude hf_negative  fsld_52742.wav: mel band 54 > adjacent mean by 6 dB for 79.5% frames
+  clean_drums  [FAIL(fsld_151352.wav Resonance 66.7%; fsld_108147.wav Muddiness 75.0%; fsld_140833.wav Muddiness 100.0%; fsld_156082.wav Resonance 26.7%)] (6/10 clean files)
+  clean_synth  [FAIL(insufficient neutral files 9/10)]
+  clean_bass   [FAIL(fsld_271020.wav Resonance 40.0%; fsld_120320.wav BoxyMidrange 96.0%; fsld_362755.wav Resonance 44.4%; fsld_406809.wav Muddiness 71.9%)] (6/10 clean files)
+  clean_mix    [     PASS] (9/10 clean files)
+  hf_negative  [     PASS] (10/10 clean files)
+
+  RESULT: FAIL  fails=['02', '05', '08', 'V-SIB', 'clean_drums', 'clean_synth', 'clean_bass']
