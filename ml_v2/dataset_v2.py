@@ -256,7 +256,13 @@ def load_split_contract(path: Path = SPLIT_ROLES_PATH
     legacy = data.get("legacy_groups", [])
     if not isinstance(legacy, list):
         raise ValueError(f"{path.name}: 'legacy_groups' must be a list")
-    return roles, set(legacy)
+    legacy_set = set(legacy)
+    overlap = sorted(set(roles) & legacy_set)
+    if overlap:
+        raise ValueError(
+            f"{path.name}: groups cannot be both role-assigned and frozen legacy: "
+            f"{overlap[:3]}")
+    return roles, legacy_set
 
 
 def split_contract_sha256(path: Path = SPLIT_ROLES_PATH) -> str:
@@ -272,21 +278,48 @@ def validate_split_contract(manifest: Path = MANIFEST,
     roles, legacy = load_split_contract(contract_path)
     if legacy is None:
         raise FileNotFoundError(f"split contract missing: {contract_path}")
+    group_splits: dict[str, tuple[str, int]] = {}
+    sha_provenance: dict[str, tuple[str, str, str, int]] = {}
     with open(manifest, newline="") as f:
         for lineno, r in enumerate(csv.DictReader(f), start=2):
             g = r["group"].strip()
+            split = r["split"].strip()
+            sha = r["sha256"].strip()
+            if not g:
+                raise ValueError(f"{manifest.name}:{lineno}: empty group")
+            if split not in {"train", "heldout", "test"}:
+                raise ValueError(
+                    f"{manifest.name}:{lineno}: unknown split {split!r}")
+            if not sha:
+                raise ValueError(f"{manifest.name}:{lineno}: empty sha256")
             role = roles.get(g)
             if role is None:
                 if g not in legacy:
                     raise ValueError(
                         f"{manifest.name}:{lineno}: group {g!r} has no contract "
                         f"role and is not in the frozen legacy baseline")
-                continue
-            want = ROLE_TO_SPLIT[role]
-            if r["split"].strip() != want:
+                effective_role = f"legacy:{split}"
+            else:
+                effective_role = role
+                want = ROLE_TO_SPLIT[role]
+                if split != want:
+                    raise ValueError(
+                        f"{manifest.name}:{lineno}: group {g!r} role {role!r} "
+                        f"requires split={want!r}, found {split!r}")
+
+            old_split = group_splits.setdefault(g, (split, lineno))
+            if old_split[0] != split:
                 raise ValueError(
-                    f"{manifest.name}:{lineno}: group {g!r} role {role!r} "
-                    f"requires split={want!r}, found {r['split']!r}")
+                    f"{manifest.name}:{lineno}: group {g!r} spans splits "
+                    f"{old_split[0]!r} (line {old_split[1]}) and {split!r}")
+
+            old_sha = sha_provenance.setdefault(
+                sha, (g, split, effective_role, lineno))
+            if old_sha[:3] != (g, split, effective_role):
+                raise ValueError(
+                    f"{manifest.name}:{lineno}: sha256 {sha!r} is reused across "
+                    f"group/split/role boundaries; first seen for group {old_sha[0]!r}, "
+                    f"split {old_sha[1]!r}, role {old_sha[2]!r} on line {old_sha[3]}")
 
 
 def heldout_calib_metric_indices(sources: list[str],

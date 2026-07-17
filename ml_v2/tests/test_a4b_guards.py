@@ -241,6 +241,73 @@ def test_role_split_mismatch_rejected():
         raise AssertionError("group outside roles+legacy must be rejected")
 
 
+def test_contract_rejects_cross_split_group_and_sha_leakage():
+    from ml_v2.dataset_v2 import validate_split_contract
+
+    group_leak = _write_manifest([
+        _row(group="legacy:shared", split="train", sha256="a" * 64),
+        _row(path="real_audio/y.wav", group="legacy:shared", split="heldout",
+             sha256="b" * 64),
+    ])
+    legacy = _write_contract({}, ["legacy:shared"])
+    try:
+        validate_split_contract(group_leak, legacy)
+    except ValueError as e:
+        assert "spans splits" in str(e)
+    else:
+        raise AssertionError("one group must never cross manifest splits")
+
+    sha_leak = _write_manifest([
+        _row(group="new:train", split="train", sha256="c" * 64),
+        _row(path="real_audio/y.wav", group="new:test", split="test",
+             sha256="c" * 64),
+    ])
+    roles = _write_contract({"new:train": "train", "new:test": "g3-external"}, [])
+    try:
+        validate_split_contract(sha_leak, roles)
+    except ValueError as e:
+        assert "sha256" in str(e) and "boundaries" in str(e)
+    else:
+        raise AssertionError("one sha256 must never cross group/split/role boundaries")
+
+
+def test_contract_rejects_invalid_manifest_identity_before_build():
+    from ml_v2.dataset_v2 import validate_split_contract
+    contract = _write_contract({"new:train": "train"}, [])
+    for bad, needle in [({"group": "", "sha256": "a" * 64}, "empty group"),
+                        ({"group": "new:train", "sha256": ""}, "empty sha256"),
+                        ({"group": "new:train", "split": "unknown"}, "unknown split")]:
+        manifest = _write_manifest([_row(**bad)])
+        try:
+            validate_split_contract(manifest, contract)
+        except ValueError as e:
+            assert needle in str(e)
+        else:
+            raise AssertionError(f"invalid identity must reject: {bad}")
+
+
+def test_contract_allows_duplicate_sha_only_within_one_group_and_split():
+    from ml_v2.dataset_v2 import validate_split_contract
+    manifest = _write_manifest([
+        _row(group="new:train", split="train", sha256="d" * 64),
+        _row(path="real_audio/y.wav", group="new:train", split="train",
+             sha256="d" * 64),
+    ])
+    contract = _write_contract({"new:train": "train"}, [])
+    validate_split_contract(manifest, contract)
+
+
+def test_contract_rejects_roles_overlapping_legacy_baseline():
+    from ml_v2.dataset_v2 import load_split_contract
+    contract = _write_contract({"legacy:x": "train"}, ["legacy:x"])
+    try:
+        load_split_contract(contract)
+    except ValueError as e:
+        assert "role-assigned" in str(e)
+    else:
+        raise AssertionError("frozen legacy group must not gain a new role")
+
+
 def test_build_or_load_validates_contract_before_cache_lookup():
     from ml_v2.dataset_v2 import build_or_load
     manifest = _write_manifest([_row(group="new:unroled", split="train")])
