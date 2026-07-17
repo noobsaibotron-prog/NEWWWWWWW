@@ -194,19 +194,68 @@ P2.0 — INVENTARIO QUARANTENA, SOLA LETTURA (nessun commit di codice/manifest)
     sample rate, licenza e motivi di esclusione. Nessuna policy e nessun audio vengono
     promossi in questa fase.
 
+  ESITO FSLD 2026-07-17 — NO-GO per training, policy invariata:
+  - report read-only: `/tmp/aieq_v2/quarantine_fsld_p2_inventory_20260717.json`
+    (SHA-256 `f9c890eb8d09742e7761e6e5d91b2a1e44550a5ced2d8886597e081dda81cf05`);
+  - i 701 ID FSLD gia' in manifest risolvono a 267 uploader bloccati, senza metadata
+    mancanti. L'esclusione rimuove 1.078 candidati: e' il costo corretto per non
+    mascherare leakage storico per-autore;
+  - pool residuo commercial-CC e non-vocale: bass 9 group / 4,84 min, drums 131 /
+    44,84 min, synth 73 / 41,85 min, mix 81 / 44,43 min. Neppure l'intero pool
+    soddisfa le soglie P2.1 dopo l'assegnazione cieca;
+  - decisione: NON cambiare `SOURCE_POLICIES["fsld"]`; FSLD rimane eval-only.
+    Il prossimo inventario deve usare una fonte con piu' minuti strumentali e gruppi
+    nuovi (stems/loop pack con ledger commerciale o altra fonte per-file verificabile).
+
+  ESITO FMA gia' in quarantena 2026-07-17 — NO-GO per training, policy invariata:
+  - report read-only: `/tmp/aieq_v2/quarantine_fma_p2_inventory_20260717.json`
+    (SHA-256 `0c3e3193f54d9f3a7d4a4c59c042f3c1cdefa0ef3ec01ef9d5191a230f99a678`);
+  - dei 456 audio locali, soltanto 80 sono sia esplicitamente strumentali sia CC0/CC-BY
+    verificabile da `raw_tracks.csv`: 220,2 minuti ma concentrati in 10 artist group;
+  - l'assegnazione cieca produce train 105,1 min ma calibration 8,7 min (<10), quindi
+    fallisce sia il minimo 12 group sia le quote. E' anche solo `clean_mix`, non copre
+    bass/drums/synth. Le esclusioni sono 318 non-instrumental e 58 licenze non CC esplicite;
+  - decisione: NON cambiare `SOURCE_POLICIES["fma"]`. Un download FMA piu' grande e'
+    una nuova proposta da auditare, non un'estensione automatica di questo mini-pool.
+
+  TRIAGE FONTI SUCCESSIVE (ricerca 2026-07-17, nessun download avviato):
+  - MTG-Jamendo: NO-GO. Il sito ufficiale dichiara il dataset disponibile solo per
+    ricerca/uso accademico non commerciale; le licenze per-file non risolvono tale
+    vincolo di distribuzione.
+  - Slakh2100-redux: CANDIDATO per la sola copertura sintetica controllata. E' CC-BY-4.0,
+    stem mono 44.1 kHz/16-bit, 2.100 mix con bass/drums/piano/guitar; la versione redux
+    isola i MIDI duplicati in `omitted/`, da escludere. Costa 104,3 GB download e quasi
+    500 GB estratto: serve autorizzazione esplicita di spazio/rete prima del download.
+    I Track00001-00020 gia' legacy sono bloccati: la lista dei nuovi TrackID deve essere
+    deterministica, disgiunta dal legacy e committata prima della materializzazione.
+    Non sostituisce materiale reale elettronico.
+  - NSynth: CANDIDATO secondario CC-BY-4.0 per diversificare note synth/bass, ma 16 kHz:
+    non e' fonte per hard-negative HF o per il gate 44.1k.
+  - Freesound diretto: potenzialmente utile solo con API credential, CC0/CC-BY per-file,
+    identity registry per uploader e rispetto delle preferenze AI/commerciali esposte
+    dalla piattaforma. Non riusare automaticamente FSLD, gia' NO-GO per pool residuo.
+  - PRIORITA' REALE: loop/stem pack elettronici con licenza commerciale o materiale
+    owned di Marco, ricevuta/EULA e ledger completo. Sono necessari per coprire bass,
+    drum, synth e mix REALI; Slakh puo' solo affiancarli.
+
 P2.1 — REVIEW DEL BATCH (ancora nessuna scrittura nel manifest)
-  - Per ciascun dominio prioritario servono almeno 12 group sorgente indipendenti e,
-    dopo l'assegnazione cieca proposta, almeno 30 minuti train, 10 calibration,
-    10 metric e 10 g3-external. Se un dominio non raggiunge queste soglie, resta in
-    quarantena: non si compensa duplicando file o allargando artificialmente un group.
-  - Il batch spec dichiara `source_id`, dominio primario, group id ordinati e hash
+  - Il batch e' UNICO per fonte/versione e puo' essere multi-dominio: un uploader
+    compare una sola volta nella lista group e riceve un solo ruolo per tutti i suoi
+    file. `primary_domain` del contratto vale `instrumental-multi`; i domini effettivi
+    restano sulle righe manifest. Non creare batch separati che riusano lo stesso autore.
+  - Ogni dominio prioritario deve avere almeno 12 group sorgente indipendenti nel pool
+    candidato e, dopo l'assegnazione cieca proposta del batch unico, almeno 30 minuti
+    train, 10 calibration, 10 metric e 10 g3-external. Se un dominio non raggiunge
+    queste soglie, resta in quarantena: non si compensa duplicando file o allargando
+    artificialmente un group.
+  - Il batch spec dichiara `source_id`, `instrumental-multi`, group id ordinati e hash
     della lista. `contract_tools --plan-batch` deve essere eseguito sul contratto
     committato corrente e il piano risultante e' contro-esaminato PRIMA di materializzare.
-  - Solo qui si decide se FSLD diventa fonte training. La modifica di
-    `SOURCE_POLICIES["fsld"]` e' un commit separato, con test che provano: CC0/CC-BY
-    per-file, group per uploader, blocco degli uploader nell'identity registry e
-    rifiuto fail-closed delle forme non ammesse. Se questi test non sono
-    realizzabili, FSLD resta eval-only e si usa un'altra fonte con ledger migliore.
+  - FSLD e' gia' NO-GO da P2.0 e non viene riaperto in questa tranche. Per qualunque
+    nuova fonte, la policy di ammissione e' un commit separato con test per licenza
+    per-file, group identity, blocco delle identita' gia' presenti e rifiuto
+    fail-closed delle forme non ammesse. Se questi test non sono realizzabili, la
+    fonte resta quarantena/eval-only e si passa a un ledger migliore.
 
 P2.2 — AMMISSIONE ATOMICA DI UN SOLO BATCH
   - Canonicalizzare fuori dal worktree, PCM mono 44.1 kHz s16le bitexact; conservare
