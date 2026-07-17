@@ -2,9 +2,27 @@
  "schema": "a4b-split-v2",
  "salt": "a4b-split-v1",
  "comment": "Contratto split A4b (0d), schema v2. Ogni group ammesso dopo la baseline ha ruolo, metadati e batch immutabili; ruoli derivati da sha256-rank-v1. legacy_groups: baseline congelata del manifest 2026-07-17 (4392 righe), soli ammessi al fallback hash heldout.",
- "roles": {},
- "group_metadata": {},
- "batches": {},
+ "roles": {
+  "fsld:46593": "g3-external"
+ },
+ "group_metadata": {
+  "fsld:46593": {
+   "primary_domain": "clean_synth",
+   "admission_batch": "fsld-synth-fixture-20260717",
+   "source_id": "fsld"
+  }
+ },
+ "batches": {
+  "fsld-synth-fixture-20260717": {
+   "source_id": "fsld",
+   "primary_domain": "clean_synth",
+   "allocation": "sha256-rank-v1",
+   "group_ids": [
+    "fsld:46593"
+   ],
+   "group_ids_sha256": "17bcca1ef122f408515e61f7e2b473520acab2da7f7e4ce8b2a3ba8677af743f"
+  }
+ },
  "legacy_groups": [
   "fsld:100902",
   "fsld:101121",
