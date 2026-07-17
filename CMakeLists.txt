@@ -1172,6 +1172,16 @@ if(HAVE_JUCE)
     add_test(NAME aieq_ai_regression
              COMMAND $<TARGET_FILE:AIEqualizerPro_AI_Tests>)
 
+    # A4b Pilastro 0 guard tests (python, torch-free): cache fingerprint,
+    # fail-closed manifest loader, group-level calib/metric split. Explicit
+    # ctest entry because plain unittest discovery finds zero tests here.
+    find_program(AIEQ_PYTHON3 python3)
+    if(AIEQ_PYTHON3)
+        add_test(NAME aieq_a4b_guards
+                 COMMAND ${AIEQ_PYTHON3} -m ml_v2.tests.test_a4b_guards
+                 WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+    endif()
+
     # Motore v2 — RTNeural parity test, compiled ONLY when the flag is ON.
     # Adds the vendored header-only RTNeural (STL backend) + the fixture path.
     if(AIEQ_ENABLE_MOTORE_V2)

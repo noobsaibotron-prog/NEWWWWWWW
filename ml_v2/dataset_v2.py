@@ -38,6 +38,7 @@ import os
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import quote, unquote
 
 import numpy as np
 
@@ -212,21 +213,42 @@ def manifest_rows(split: str, manifest: Path = MANIFEST) -> list[dict]:
 
 
 def _gid(row: dict) -> str:
-    """Sanitized manifest group for embedding as the tail ':'-segment of a
-    window source string. Manifest groups CONTAIN ':' (e.g. 'singer:female1'),
-    which is the source-string separator, so ':' is mapped to '='; '/' (our
-    gid/name separator) is mapped to '_'. The trainer splits calibration vs
-    metric BY THIS GID (A4b 0d: group-level isolation, not per-file)."""
-    return row["group"].strip().replace(":", "=").replace("/", "_")
+    """INJECTIVE, reversible encoding of the manifest group for embedding as
+    the tail ':'-segment of a window source string (groups contain ':', the
+    source separator; '/' is our gid/name separator). Percent-encoding with
+    safe='' quotes ':', '/', '%', so distinct groups can never collide (a
+    plain char substitution could: 'a:b' vs 'a=b') and unquote() recovers the
+    raw group for role lookups. The trainer splits calibration vs metric BY
+    THIS GID (A4b 0d: group-level isolation, not per-file)."""
+    return quote(row["group"].strip(), safe="")
 
 
-def heldout_calib_metric_indices(sources: list[str]
+# A4b 0d: contract role assignments (group -> role) for NEW corpora. Roles are
+# FIRST-CLASS: a group assigned 'calibration' or 'metric' by the committed
+# contract file lands on exactly that side of the heldout split — the hash
+# fallback below only covers legacy groups that predate the contract.
+SPLIT_ROLES_PATH = HERE / "data" / "a4b_split_v1.json"
+
+
+def load_split_roles(path: Path = SPLIT_ROLES_PATH) -> dict[str, str]:
+    if not path.exists():
+        return {}
+    return {k: v for k, v in json.loads(path.read_text()).items()}
+
+
+def heldout_calib_metric_indices(sources: list[str],
+                                 roles: dict[str, str] | None = None
                                  ) -> tuple[np.ndarray, np.ndarray, dict]:
     """Split heldout windows by manifest source-GROUP (artist/pack/session),
     never by file or row (A4b 0d: files of the same artist must not straddle
-    calibration and metric). Source tails are 'gid/name' (see _gid); legacy
-    plain-name tails degrade to per-file grouping. Torch-free on purpose: the
-    guard tests exercise this without the training stack."""
+    calibration and metric). Source tails are 'gid/name' (see _gid; gid is
+    percent-encoded, unquote() recovers the raw group); legacy plain-name
+    tails degrade to per-file grouping. Contract roles WIN over the hash
+    fallback; a 'train' or 'g3-external' group found in heldout data is a
+    contamination and aborts. Torch-free on purpose: the guard tests exercise
+    this without the training stack."""
+    if roles is None:
+        roles = load_split_roles()
     groups: dict[str, list[int]] = {}
     for i, src in enumerate(sources):
         tail = src.rsplit(":", 1)[-1] if ":" in src else src
@@ -234,7 +256,19 @@ def heldout_calib_metric_indices(sources: list[str]
         groups.setdefault(group, []).append(i)
 
     calib, metric = [], []
+    role_forced = 0
     for group, idxs in sorted(groups.items()):
+        role = roles.get(unquote(group))
+        if role in ("train", "g3-external"):
+            raise ValueError(
+                f"contamination: group {unquote(group)!r} has contract role "
+                f"{role!r} but appears in heldout data")
+        if role == "calibration":
+            calib.extend(idxs); role_forced += 1
+            continue
+        if role == "metric":
+            metric.extend(idxs); role_forced += 1
+            continue
         h = int(hashlib.sha1(group.encode("utf-8")).hexdigest()[:8], 16)
         (calib if (h % 100) < 50 else metric).extend(idxs)
 
@@ -247,6 +281,7 @@ def heldout_calib_metric_indices(sources: list[str]
         raise RuntimeError("heldout split needs at least two source groups")
 
     meta = {"heldout_source_groups": len(groups),
+            "heldout_role_forced_groups": role_forced,
             "heldout_calib_windows": len(calib),
             "heldout_metric_windows": len(metric)}
     return (np.asarray(sorted(calib), dtype=np.int64),
@@ -499,7 +534,7 @@ def to_arrays(samples: list[WindowSample]
 # changed between builds. The fingerprint hashes the ACTUAL BYTES of the
 # manifest and of every pipeline module, plus a schema version; a stale cache
 # can then never be loaded as fresh (its filename simply no longer matches).
-CACHE_SCHEMA = "a4b-cache-2"   # -2: source strings now carry gid/name tails
+CACHE_SCHEMA = "a4b-cache-3"   # -3: gid percent-encoded (injective); -2: gid/name tails
 
 
 def pipeline_fingerprint(manifest: Path = MANIFEST) -> str:

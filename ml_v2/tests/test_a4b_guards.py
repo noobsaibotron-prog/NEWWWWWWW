@@ -122,7 +122,7 @@ def test_calib_metric_split_is_group_level():
     # on the same side of the calibration/metric split.
     sources = [f"dom-clean:g{g}/file{f}.wav"
                for g in range(4) for f in range(5) for _ in range(2)]
-    calib, metric, meta = heldout_calib_metric_indices(sources)
+    calib, metric, meta = heldout_calib_metric_indices(sources, roles={})
     assert meta["heldout_source_groups"] == 4, meta
     side = {}
     for idx in calib:
@@ -131,6 +131,46 @@ def test_calib_metric_split_is_group_level():
         side.setdefault(sources[idx].rsplit(":", 1)[-1].split("/", 1)[0], set()).add("m")
     for g, s in side.items():
         assert len(s) == 1, f"group {g} straddles calib/metric: {s}"
+
+
+def test_gid_is_injective():
+    from ml_v2.dataset_v2 import _gid
+    # plain char substitution would collide these; percent-encoding must not
+    pairs = [("a:b", "a=b"), ("a:b", "a_b"), ("x/y", "x_y"), ("p%q", "p_q")]
+    for g1, g2 in pairs:
+        assert _gid({"group": g1}) != _gid({"group": g2}), (g1, g2)
+    from urllib.parse import unquote
+    assert unquote(_gid({"group": "singer:fem/1%x"})) == "singer:fem/1%x"
+
+
+def test_contract_roles_win_over_hash():
+    from ml_v2.dataset_v2 import _gid, heldout_calib_metric_indices
+    gA, gB, gC = (_gid({"group": "pack:A"}), _gid({"group": "pack:B"}),
+                  _gid({"group": "legacy"}))
+    sources = ([f"dom-clean:{gA}/f{i}.wav" for i in range(4)]
+               + [f"dom-clean:{gB}/f{i}.wav" for i in range(4)]
+               + [f"dom-clean:{gC}/f{i}.wav" for i in range(4)])
+    roles = {"pack:A": "calibration", "pack:B": "metric"}
+    calib, metric, meta = heldout_calib_metric_indices(sources, roles=roles)
+    assert meta["heldout_role_forced_groups"] == 2, meta
+    calib_gids = {sources[i].rsplit(":", 1)[-1].split("/", 1)[0] for i in calib}
+    metric_gids = {sources[i].rsplit(":", 1)[-1].split("/", 1)[0] for i in metric}
+    assert gA in calib_gids and gA not in metric_gids
+    assert gB in metric_gids and gB not in calib_gids
+
+
+def test_contamination_role_in_heldout_aborts():
+    from ml_v2.dataset_v2 import _gid, heldout_calib_metric_indices
+    g = _gid({"group": "pack:X"})
+    sources = [f"dom-clean:{g}/f{i}.wav" for i in range(4)] \
+        + [f"dom-clean:other/f{i}.wav" for i in range(4)]
+    for bad_role in ("train", "g3-external"):
+        try:
+            heldout_calib_metric_indices(sources, roles={"pack:X": bad_role})
+        except ValueError as e:
+            assert "contamination" in str(e)
+        else:
+            raise AssertionError(f"role {bad_role} in heldout must abort")
 
 
 if __name__ == "__main__":
