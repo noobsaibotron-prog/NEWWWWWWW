@@ -92,6 +92,16 @@ def test_loader_fail_closed_empty_sha():
     _expect_valueerror(_write_manifest([_row(sha256="")]), "sha256")
 
 
+def test_loader_canonicalizes_sha_and_rejects_malformed_digest():
+    upper = _write_manifest([_row(sha256="A" * 64)])
+    rows = manifest_rows("train", upper)
+    assert rows[0]["sha256"] == "a" * 64
+    _expect_valueerror(_write_manifest([_row(sha256="a" * 63)]),
+                       "64 hexadecimal")
+    _expect_valueerror(_write_manifest([_row(sha256="g" * 64)]),
+                       "64 hexadecimal")
+
+
 def test_loader_accepts_valid_rows_and_dedups():
     m = _write_manifest([_row(), _row(path="real_audio/y.wav"),  # same sha -> dedup
                          _row(path="real_audio/z.wav", sha256="b" * 64)])
@@ -386,6 +396,20 @@ def test_contract_rejects_cross_split_group_and_sha_leakage():
     else:
         raise AssertionError("one sha256 must never cross group/split/role boundaries")
 
+    # The digest spelling must not become a leakage bypass.
+    case_leak = _write_manifest([
+        _row(group="legacy:left", split="train", sha256="d" * 64),
+        _row(path="real_audio/y.wav", group="legacy:right", split="test",
+             sha256="D" * 64),
+    ])
+    case_contract = _write_contract({}, ["legacy:left", "legacy:right"])
+    try:
+        validate_split_contract(case_leak, case_contract)
+    except ValueError as e:
+        assert "boundaries" in str(e)
+    else:
+        raise AssertionError("SHA case variants must not cross split boundaries")
+
 
 def test_contract_rejects_invalid_manifest_identity_before_build():
     from ml_v2.dataset_v2 import validate_split_contract
@@ -441,6 +465,65 @@ def test_build_or_load_validates_contract_before_cache_lookup():
     else:
         raise AssertionError("un-roled new train group must abort before cache lookup")
     assert cache.read_bytes() == sentinel, "cache lookup ran before contract validation"
+
+
+def test_committed_contract_lineage_rejects_rewrite_and_current_checkout_passes():
+    from ml_v2.dataset_v2 import (SPLIT_ROLES_PATH,
+                                  _validate_committed_contract_bytes,
+                                  enforce_committed_split_contract)
+
+    current = SPLIT_ROLES_PATH.read_bytes()
+    # This exercises the real Git-worktree gate used by train.py.
+    enforce_committed_split_contract(SPLIT_ROLES_PATH)
+
+    mutated = json.loads(current)
+    mutated["salt"] = "rewritten-without-append-only-review"
+    candidate = Path(tempfile.mkstemp(suffix=".json")[1])
+    candidate.write_text(json.dumps(mutated))
+    try:
+        try:
+            _validate_committed_contract_bytes(candidate, candidate.read_bytes(), current)
+        except ValueError as e:
+            assert "immutable 'salt'" in str(e)
+        else:
+            raise AssertionError("a self-consistent contract rewrite must be rejected")
+    finally:
+        candidate.unlink(missing_ok=True)
+
+
+def test_admission_preflight_rehashes_every_split():
+    from ml_v2.dataset_v2 import validate_admission_preflight
+    import hashlib
+
+    root = Path(tempfile.mkdtemp())
+    rows = []
+    for split in ("train", "heldout", "test"):
+        rel = f"real_audio/{split}.wav"
+        p = root / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(f"fixture-{split}".encode())
+        rows.append(_row(path=rel, group=f"legacy:{split}", split=split,
+                         sha256=hashlib.sha256(p.read_bytes()).hexdigest()))
+    manifest = _write_manifest(rows)
+    previous = _write_contract({}, [r["group"] for r in rows])
+    candidate = Path(tempfile.mkstemp(suffix=".json")[1])
+    candidate.write_bytes(previous.read_bytes())
+    try:
+        report = validate_admission_preflight(previous, candidate, manifest, root,
+                                               log=lambda _: None)
+        assert report["verified_rows"] == {"train": 1, "heldout": 1, "test": 1}
+        (root / "real_audio/test.wav").write_bytes(b"tampered")
+        try:
+            validate_admission_preflight(previous, candidate, manifest, root,
+                                         log=lambda _: None)
+        except ValueError as e:
+            assert "sha256 mismatch" in str(e)
+        else:
+            raise AssertionError("preflight must reject changed audio bytes")
+    finally:
+        previous.unlink(missing_ok=True)
+        candidate.unlink(missing_ok=True)
+        manifest.unlink(missing_ok=True)
 
 
 def test_real_contract_loads_and_validates():

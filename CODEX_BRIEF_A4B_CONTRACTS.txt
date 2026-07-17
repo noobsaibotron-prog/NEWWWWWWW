@@ -1,4 +1,4 @@
-CODEX BRIEF — A4b CONTRATTI (0d split + G3d gold set) — REV 5
+CODEX BRIEF — A4b CONTRATTI (0d split + G3d gold set) — REV 6
 Data: 2026-07-17. Questo file e la mappa split sono versionati insieme. Vocabolario ruoli
 CANONICO: train / calibration / metric / g3-external. Qualunque sinonimo viene rifiutato.
 Riferimento: piano A4b in ~/.claude/plans/ml-recipe-ticket-for-warm-kazoo.md (3 giri già integrati).
@@ -10,7 +10,7 @@ CONTRATTO 1 — SPLIT DEI NUOVI CORPUS (0d)
 UNITÀ DI ASSEGNAZIONE: la SORGENTE (colonna `group` del manifest: artista/pack/sessione),
 mai il singolo file. Motivo: leakage cross-split via stesso artista/pack.
 
-ALGORITMO (REV 5 — batch immutabili, riproducibili):
+ALGORITMO (REV 6 — batch immutabili, riproducibili):
   1. salt = "a4b-split-v1" (CONGELATO; cambiarlo = nuovo programma).
   2. Un BATCH DI AMMISSIONE è l'unità di assegnazione: una sorgente/versione e un
      dominio primario dichiarato. Tutti i group di quel batch ricevono un ruolo una
@@ -26,13 +26,22 @@ ALGORITMO (REV 5 — batch immutabili, riproducibili):
      assegnato, il salt e la baseline legacy sono immutabili.
   5. Prima di ogni ammissione: si salva la mappa precedente, si genera il piano con
      `python3 -m ml_v2.contract_tools --plan-batch`, si applica solo dopo review, e
-     si esegue `--validate-delta` sul candidato. Nessuna riassegnazione automatica.
+     si esegue il comando OBBLIGATORIO `--validate-admission` sul candidato. Questo
+     unisce `--validate-delta`, validazione ruolo↔manifest e SHA-256 profondo di
+     train/heldout/test. Nessuna riassegnazione automatica.
+  6. `train.py` accetta soltanto il contratto identico a `HEAD`: ogni revisione dopo
+     il genesis v2 viene confrontata automaticamente con `HEAD^` tramite il delta
+     append-only. Un contratto non committato, riscritto o fuori da un worktree Git
+     interrompe il training prima della cache.
 
 ASSERTION AUTOMATICHE (test, estensione di test_a4b_guards.py):
-  - zero sha256 condivisi cross-group, cross-split o cross-ruolo; zero group cross-split;
+  - SHA-256 valido (64 hex) e canonico lower-case; zero sha256 condivisi cross-group,
+    cross-split o cross-ruolo; zero group cross-split;
   - ogni riga nuova del manifest ha un ruolo nella mappa PRIMA di entrare in build;
   - il builder valida il contratto PRIMA di ogni cache hit; i ruoli G3-external non
     compaiono MAI in train/calibration.
+  - il preflight di admission ricalcola gli hash di TUTTI gli split e il trainer lo
+    ricalcola prima di produrre qualunque candidato.
 
 MAPPATURA: heldout_calib_metric_indices consulta a4b_split_v2.json — un group
 con ruolo 'calibration' o 'metric' finisce ESATTAMENTE su quel lato (l'hash 50/50 resta
@@ -43,7 +52,10 @@ dal ruolo, non dall'hash); g3-external → split=test + ruolo nel json. _gid ora
 e reversibile (percent-encoding — la sostituzione di caratteri poteva far collidere group
 diversi; tuo finding minore) con CACHE_SCHEMA→a4b-cache-3. Guard test nel gate ctest
 ufficiale (aieq_a4b_guards, entry esplicita — unittest discovery non li trova).
-PRE-INTEGRAZIONE OBBLIGATORIA (tuo finding #4): `verify_manifest_files(split, deep=True)`
+PRE-INTEGRAZIONE OBBLIGATORIA (tuo finding #4): eseguire, dalla worktree candidata:
+`python3 -m ml_v2.contract_tools --validate-admission --previous <contract-precedente>
+--candidate ml_v2/data/a4b_split_v2.json --manifest ml_v2/data/MANIFEST_V2.csv
+--data-root ~/aieq_data`. Il comando ricalcola `verify_manifest_files(..., deep=True)`
 su TUTTI gli split prima di ogni integrazione corpus. Licenze: whitelist ora
 CC0/CC-BY/CC-BY-4.0/OWNED, con OWNED valido SOLO con ledger completo
 (upstream_license+attribution+crosscheck non vuoti, fail-closed).

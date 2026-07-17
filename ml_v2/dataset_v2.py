@@ -35,6 +35,8 @@ import csv
 import hashlib
 import json
 import os
+import re
+import subprocess
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -178,6 +180,22 @@ def _neg(mel: np.ndarray, source: str) -> WindowSample:
 # crosscheck must all be filled in, else the row is rejected.
 ALLOWED_LICENSES = {"CC0", "CC-BY", "CC-BY-4.0", "OWNED"}
 OWNED_LEDGER_FIELDS = ("upstream_license", "attribution", "crosscheck")
+SHA256_HEX = re.compile(r"[0-9a-fA-F]{64}\Z")
+
+
+def canonical_sha256(value: str, context: str) -> str:
+    """Validate and canonicalize a manifest content hash before any dedup gate.
+
+    Treating a digest as an arbitrary non-empty string lets the same content use
+    upper-case in one split and lower-case in another, bypassing leakage checks.
+    Canonical lower-case keeps the manifest and deep verifier on one identity.
+    """
+    digest = value.strip()
+    if not digest:
+        raise ValueError(f"{context}: empty sha256")
+    if not SHA256_HEX.fullmatch(digest):
+        raise ValueError(f"{context}: sha256 must be exactly 64 hexadecimal characters")
+    return digest.lower()
 
 
 def manifest_rows(split: str, manifest: Path = MANIFEST) -> list[dict]:
@@ -202,9 +220,9 @@ def manifest_rows(split: str, manifest: Path = MANIFEST) -> list[dict]:
             if not r.get("group", "").strip():
                 raise ValueError(
                     f"{manifest.name}:{lineno}: empty group for {r.get('path')}")
-            if not r.get("sha256", "").strip():
-                raise ValueError(
-                    f"{manifest.name}:{lineno}: empty sha256 for {r.get('path')}")
+            r["sha256"] = canonical_sha256(
+                r.get("sha256", ""),
+                f"{manifest.name}:{lineno} ({r.get('path')})")
             if r["sha256"] in seen:                  # dataloader dedup (A1c)
                 continue
             seen.add(r["sha256"])
@@ -238,6 +256,10 @@ SPLIT_ROLE_QUOTAS = {"train": 0.50, "calibration": 0.15,
                      "metric": 0.15, "g3-external": 0.20}
 _SMALL_BATCH_ORDER = ("g3-external", "metric", "calibration")
 _QUOTA_TIE_ORDER = ("train", "g3-external", "metric", "calibration")
+# The first v2 document is a sealed migration point: it contains no admissions.
+# A later document must be validated against its committed Git parent instead.
+SPLIT_CONTRACT_V2_GENESIS_SHA256 = (
+    "d37de0836b3568695bf5c1c78de6011057fa5c9fa0422e17a9f01a09acde0b6b")
 
 
 def batch_group_ids_sha256(groups: list[str]) -> str:
@@ -401,6 +423,63 @@ def split_contract_sha256(path: Path = SPLIT_ROLES_PATH) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _validate_committed_contract_bytes(contract_path: Path, head_bytes: bytes,
+                                       parent_bytes: bytes | None) -> None:
+    """Ensure the checked-out contract is immutable relative to Git history.
+
+    The internal batch rules prevent accidental reassignment, but are not enough
+    on their own: a self-consistent rewrite of both an old batch and its roles
+    would otherwise pass. The trainer therefore accepts only the exact HEAD
+    file and validates every non-genesis revision against HEAD^.
+    """
+    current = contract_path.read_bytes()
+    if current != head_bytes:
+        raise ValueError(
+            "split contract differs from committed HEAD; commit an admission "
+            "only after the append-only preflight")
+    if parent_bytes is None:
+        if hashlib.sha256(current).hexdigest() != SPLIT_CONTRACT_V2_GENESIS_SHA256:
+            raise ValueError(
+                "split contract has no committed v2 parent and is not the sealed "
+                "v2 genesis document")
+        return
+
+    with tempfile.NamedTemporaryFile("wb", suffix=".json", delete=False) as f:
+        f.write(parent_bytes)
+        parent_path = Path(f.name)
+    try:
+        validate_split_contract_delta(parent_path, contract_path)
+    finally:
+        parent_path.unlink(missing_ok=True)
+
+
+def enforce_committed_split_contract(contract_path: Path = SPLIT_ROLES_PATH) -> None:
+    """Fail closed unless the active contract is a committed append-only revision.
+
+    This gate intentionally applies to the trainer rather than generic dataset
+    helpers, which accept temporary fixtures in guard tests. It requires a Git
+    worktree so a full model candidate can never be trained from an ad-hoc
+    contract rewrite.
+    """
+    contract_path = contract_path.resolve()
+    repo_hint = HERE.parent
+    try:
+        root = Path(subprocess.run(
+            ["git", "-C", str(repo_hint), "rev-parse", "--show-toplevel"],
+            check=True, text=True, capture_output=True).stdout.strip())
+        rel = contract_path.relative_to(root).as_posix()
+        head = subprocess.run(
+            ["git", "-C", str(root), "show", f"HEAD:{rel}"],
+            check=True, capture_output=True).stdout
+        parent = subprocess.run(
+            ["git", "-C", str(root), "show", f"HEAD^:{rel}"],
+            check=False, capture_output=True).stdout
+    except (OSError, subprocess.CalledProcessError, ValueError) as e:
+        raise RuntimeError(
+            "A4b training requires a committed split contract inside a Git worktree") from e
+    _validate_committed_contract_bytes(contract_path, head, parent or None)
+
+
 def validate_split_contract(manifest: Path = MANIFEST,
                             contract_path: Path = SPLIT_ROLES_PATH) -> None:
     """Gate check (corpus integration): every manifest group is either legacy
@@ -415,14 +494,12 @@ def validate_split_contract(manifest: Path = MANIFEST,
         for lineno, r in enumerate(csv.DictReader(f), start=2):
             g = r["group"].strip()
             split = r["split"].strip()
-            sha = r["sha256"].strip()
+            sha = canonical_sha256(r["sha256"], f"{manifest.name}:{lineno}")
             if not g:
                 raise ValueError(f"{manifest.name}:{lineno}: empty group")
             if split not in {"train", "heldout", "test"}:
                 raise ValueError(
                     f"{manifest.name}:{lineno}: unknown split {split!r}")
-            if not sha:
-                raise ValueError(f"{manifest.name}:{lineno}: empty sha256")
             role = roles.get(g)
             if role is None:
                 if g not in legacy:
@@ -532,6 +609,56 @@ def verify_manifest_files(split: str, data_root: Path = DATA_ROOT_DEFAULT,
             if h.hexdigest() != r["sha256"]:
                 raise ValueError(f"sha256 mismatch for {p}")
     log(f"  verify_manifest_files({split!r}, deep={deep}): OK")
+
+
+def _deep_verify_all_splits(manifest: Path, data_root: Path, log=print) -> dict:
+    """Verify every admitted audio object, including the external-only split."""
+    counts = {}
+    for split in ("train", "heldout", "test"):
+        verify_manifest_files(split, data_root=data_root, manifest=manifest,
+                              deep=True, log=log)
+        counts[split] = len(manifest_rows(split, manifest))
+    return counts
+
+
+def validate_admission_preflight(previous_contract: Path, candidate_contract: Path,
+                                 manifest: Path = MANIFEST,
+                                 data_root: Path = DATA_ROOT_DEFAULT,
+                                 log=print) -> dict:
+    """Heavy one-shot gate for a proposed corpus admission.
+
+    The caller supplies the previously committed contract explicitly. This makes
+    append-only validation, manifest/role validation, and byte-level audio hash
+    verification one inseparable operation before a new batch is committed.
+    """
+    validate_split_contract_delta(previous_contract, candidate_contract)
+    validate_split_contract(manifest, candidate_contract)
+    counts = _deep_verify_all_splits(manifest, data_root, log=log)
+    return {
+        "candidate_contract_sha256": split_contract_sha256(candidate_contract),
+        "manifest_sha256": hashlib.sha256(manifest.read_bytes()).hexdigest(),
+        "verified_rows": counts,
+    }
+
+
+def validate_training_preflight(manifest: Path = MANIFEST,
+                                data_root: Path = DATA_ROOT_DEFAULT,
+                                contract_path: Path = SPLIT_ROLES_PATH,
+                                log=print) -> dict:
+    """Mandatory deep gate immediately before any model training.
+
+    Re-hashing the corpus is intentionally expensive. It is still required here:
+    model candidates must not be produced from content that changed underneath a
+    manifest or from an uncommitted rewrite of the split contract.
+    """
+    enforce_committed_split_contract(contract_path)
+    validate_split_contract(manifest, contract_path)
+    counts = _deep_verify_all_splits(manifest, data_root, log=log)
+    return {
+        "contract_sha256": split_contract_sha256(contract_path),
+        "manifest_sha256": hashlib.sha256(manifest.read_bytes()).hexdigest(),
+        "verified_rows": counts,
+    }
 
 
 # ------------------------------------------------------------ builders

@@ -34,7 +34,8 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from .dataset_v2 import BuildConfig, build_or_load, split_contract_sha256
+from .dataset_v2 import (BuildConfig, build_or_load, split_contract_sha256,
+                         validate_training_preflight)
 from .export_rtneural import export_torch_model
 from .model import MotoreV2CNN
 from .lab_inject import PROBLEM_NAMES_V2
@@ -365,6 +366,10 @@ def main() -> int:
     if any(ablations.values()):
         print(f"INTERNAL ABLATION ACTIVE: {json.dumps(ablations, sort_keys=True)}")
 
+    print("A4b corpus preflight (committed contract + deep hashes):")
+    corpus_preflight = validate_training_preflight()
+    print("  verified rows:", corpus_preflight["verified_rows"])
+
     cache = Path(args.cache)
     print("train set:")
     Xtr, Ytr, src_tr = build_or_load(tr_cfg, cache)
@@ -409,6 +414,7 @@ def main() -> int:
             **heldout_meta,
             "dataset_train_key": tr_cfg.key(), "dataset_val_key": va_cfg.key(),
             "split_contract_sha256": split_contract_sha256(),
+            "corpus_preflight": corpus_preflight,
             "preflight_train": train_summary,
             "preflight_heldout": heldout_summary,
             "ablations": ablations,
