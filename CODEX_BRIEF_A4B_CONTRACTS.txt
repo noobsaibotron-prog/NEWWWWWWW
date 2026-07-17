@@ -1,0 +1,166 @@
+CODEX BRIEF — A4b CONTRATTI (0d split + G3d gold set) — PER COUNTER-EXAM
+Data: 2026-07-17, REV 4 (post tuo counter-exam round-3) — QUESTO FILE E' COMMITTATO
+insieme alla mappa split (commit unico di contratto, tua direttiva). Vocabolario ruoli
+CANONICO e allineato al codice: train / calibration / metric / g3-external
+(la dicitura 'train-expansion' e' RITIRATA ovunque; il loader la RIFIUTA).
+Al sign-off questo file viene COMMITTATO (tua richiesta: il contratto non deve poter mutare
+senza traccia).
+Riferimento: piano A4b in ~/.claude/plans/ml-recipe-ticket-for-warm-kazoo.md (3 giri già integrati).
+
+════════════════════════════════════════════════════════════════════════
+CONTRATTO 1 — SPLIT DEI NUOVI CORPUS (0d)
+════════════════════════════════════════════════════════════════════════
+
+UNITÀ DI ASSEGNAZIONE: la SORGENTE (colonna `group` del manifest: artista/pack/sessione),
+mai il singolo file. Motivo: leakage cross-split via stesso artista/pack.
+
+ALGORITMO (REV 3 — strato corretto + arrotondamento esplicito):
+  1. salt = "a4b-split-v1" (CONGELATO; cambiarlo = nuovo programma).
+  2. STRATO = il DOMINIO PRIMARIO dichiarato del group alla registrazione (il pack È
+     il group: non è una dimensione dello strato — tuo fix). Group multi-dominio:
+     un solo dominio primario → un solo ruolo.
+  3. Dentro ogni strato: ordina i group per h = sha256(salt || group_id) crescente.
+     Conteggi ruolo = floor(quota × N) con quote 50/15/15/20 (train /
+     calibration / metric / g3-external); i RESTI si assegnano in ordine di hash
+     alla coda dei ruoli in priorità g3-external > metric > calibration > train.
+     MINIMI: se N ≥ 4, ogni ruolo riceve ≥1 group; se N < 4, si assegnano nella
+     priorità g3-external > metric > calibration > train (con N=1 il group va a
+     g3-external: uno strato così piccolo serve prima da eval unseen che da train).
+  4. Output = `ml_v2/data/a4b_split_v1.json` COMMITTATO (fatto): schema a4b-split-v1,
+     mappa roles {group RAW → ruolo canonico} APPEND-ONLY + `legacy_groups` = baseline
+     CONGELATA dei 740 group del manifest 2026-07-17 — SOLI ammessi al fallback hash.
+     Loader FAIL-CLOSED (load_split_contract): schema ignoto/ruolo non canonico → ABORT;
+     group NUOVO senza ruolo in heldout → ABORT; ruolo↔split incoerente → ABORT
+     (validate_split_contract, gate d'integrazione). Test: rifiuto 'train-expansion',
+     rifiuto ruolo ignoto, rifiuto group nuovo senza ruolo, rifiuto mismatch ruolo/split,
+     + contratto e manifest REALI validati (19/19 guard, entry ctest aieq_a4b_guards).
+
+ASSERTION AUTOMATICHE (test, estensione di test_a4b_guards.py):
+  - zero sha256 condivisi cross-ruolo; zero group condivisi cross-ruolo;
+  - ogni riga nuova del manifest ha un ruolo in a4b_split_v1.json PRIMA di entrare in build;
+  - i ruoli G3-external non compaiono MAI in train/calibration (fail-closed nel loader).
+
+MAPPATURA (REV 3 — RUOLI FIRST-CLASS, tuo finding sostanziale round-2, GIÀ NEL CODICE
+commit 084a1384): heldout_calib_metric_indices ora CONSULTA a4b_split_v1.json — un group
+con ruolo 'calibration' o 'metric' finisce ESATTAMENTE su quel lato (l'hash 50/50 resta
+solo per i group legacy pre-contratto, dichiarato nel meta come heldout_role_forced_groups);
+un group 'train'/'g3-external' che compare in heldout = ABORT per contaminazione (test).
+In manifest: train-expansion → split=train; calibration+metric → split=heldout (lato deciso
+dal ruolo, non dall'hash); g3-external → split=test + ruolo nel json. _gid ora è INIETTIVO
+e reversibile (percent-encoding — la sostituzione di caratteri poteva far collidere group
+diversi; tuo finding minore) con CACHE_SCHEMA→a4b-cache-3. Guard test nel gate ctest
+ufficiale (aieq_a4b_guards, entry esplicita — unittest discovery non li trova).
+PRE-INTEGRAZIONE OBBLIGATORIA (tuo finding #4): `verify_manifest_files(split, deep=True)`
+su TUTTI gli split prima di ogni integrazione corpus. Licenze: whitelist ora
+CC0/CC-BY/CC-BY-4.0/OWNED, con OWNED valido SOLO con ledger completo
+(upstream_license+attribution+crosscheck non vuoti, fail-closed).
+
+NOTA ANTI-CONTAMINAZIONE: l'assegnazione avviene alla REGISTRAZIONE nel manifest
+(quarantena → manifest), PRIMA di qualunque build/eval. Nessuna promozione successiva.
+
+════════════════════════════════════════════════════════════════════════
+CONTRATTO 2 — GOLD SET NATURALE (G3d)
+════════════════════════════════════════════════════════════════════════
+
+SCOPO (REV 2, ridimensionato dal tuo verdetto): BENCHMARK INTERNO PILOTA su difetti
+NATURALI, mai iniettati. NON è di per sé la prova "top-tier": quella richiederà set più
+ampio, sorgenti group-disjoint dal training e confronto competitor per EFFETTO/correzione
+applicata (non "fira/non fira") — dichiarato nel report ogni volta.
+EVAL-ONLY PER SEMPRE (ruolo goldset, mai in train/calibration a nessun titolo;
+sorgenti group-disjoint da qualunque materiale di training).
+
+ITEM: clip reale 10–30 s. Target iniziale: ≥40 item con difetto + **≥60 clean espliciti
+distribuiti tra i domini** (tuo fix: 20 clean non sostengono un gate al 5% — con 60 il
+bound binomiale è ancora largo ma onesto per un PILOTA, e va dichiarato nel report),
+copertura ≥5 item per classe CNN attiva {Mud, Thin, Boxy, Dull, Boom, Res} e domini
+{vocal, drums, bass, synth, full-mix}.
+ASSERTION GROUP-DISJOINT NEL CODICE (non solo dichiarata): il goldset vive nel manifest
+con ruolo dedicato e il test di guardia verifica zero group e zero sha condivisi con
+train / calibration / metric / g3-external.
+
+SCHEMA ANNOTAZIONE (per item):
+  - problema primario (una delle 8) + secondario opzionale; oppure CLEAN esplicito;
+  - freq centrale stimata + tolleranza fissa ±1/3 di ottava per il criterio di hit;
+  - severità {lieve, media, grave};
+  - dominio; sorgente/licenza (stesse regole manifest: CC0/CC-BY/owned).
+
+VALUTATORI: l'orecchio disponibile è UNO (Marco). Nomenclatura onesta (tuo round-3):
+questo protocollo misura la RIPETIBILITÀ INTRA-VALUTATORE, NON è validazione
+indipendente — pilota interno dichiarato tale in ogni report. Protocollo:
+  - 2 passate INDIPENDENTI a distanza ≥5 giorni, ordine clip rimescolato, senza rivedere
+    le annotazioni della prima passata;
+  - disaccordo tra le due passate → adjudication documentata: item riascoltato una terza
+    volta con nota scritta; se resta ambiguo → marcato AMBIGUO ed escluso dal computo hit
+    (resta nel set come materiale note);
+  - se si aggiunge un secondo umano, sostituisce la seconda passata.
+  DOMANDA APERTA per te: questo degrado (1 umano × 2 passate vs 2 umani) è accettabile
+  come v1 del gold set, dichiarandolo nel report?
+
+PROTOCOLLO CIECO:
+  - le predizioni del modello sul gold set si generano e COMMITTANO (file con hash) PRIMA
+    di aprire il file annotazioni nel processo di confronto; il confronto è uno script
+    deterministico (predizioni.json + annotazioni.json → report), mai a mano;
+  - confronto competitor (REV 3, per EFFETTO OSSERVABILE — tuo fix alla contraddizione):
+    stessa clip in soothe/Gullfoss/Ozone sul Mac di Marco; si trascrive la CORREZIONE
+    APPLICATA: banda interessata, direzione (cut/boost), intensità approssimativa in dB,
+    più impostazioni e versione del competitor. Niente semantica nominale "fira/non fira".
+    Trascrizione PRIMA di vedere il report del nostro modello su quella clip.
+
+CRITERIO DI HIT (REV 2, per-classe come da tuo counter-exam):
+  - Resonance: classe giusta E freq entro ±1/3 ottava (picco stretto → centro sensato);
+  - Mud/Boom/Boxy: classe giusta E SOVRAPPOSIZIONE di banda (banda della correzione ∩
+    banda annotata non vuota) — un centro singolo non ha senso per difetti larghi;
+  - Thin/Dull: classe giusta E REGIONE/DIREZIONE spettrale coerente (carenza low-mid /
+    carenza HF), senza vincolo di centro.
+Report per classe × dominio × severità; clean-FP sul sottoinsieme clean.
+
+FONTI CANDIDATE (tutte da vagliare per licenza, regole manifest): demo/registrazioni
+grezze CC, field recording CC, materiale di Marco COME EVAL (da riproporgli — aveva
+declinato solo l'uso in training), spezzoni di sessioni proprie. MAI le clip giudice
+esistenti (già benchmark), MAI materiale del corpus train.
+
+════════════════════════════════════════════════════════════════════════
+STATO F0 AL MOMENTO DI QUESTO BRIEF (per il tuo contesto)
+════════════════════════════════════════════════════════════════════════
+- 0a cache fingerprint + 0b loader fail-closed: IMPLEMENTATI (aeb33287) + HARDENING dal
+  tuo round-1 (f97c0da4): temp unico mkstemp + recovery cache corrotta; OWNED con ledger
+  obbligatorio; split calib/metric GROUP-level (gid/name, splitter torch-free in dataset_v2,
+  CACHE_SCHEMA a4b-cache-2). Test 11/11. README baseline corretto (f1a3f201: SHA-1 vs
+  SHA-256 espliciti).
+- 0c freeze: /tmp/aieq_v2 COMPLETO → ~/aieq_data/baselines/tmp_aieq_v2_freeze_20260717/
+  (121MB); candidati+provenance+eval 3 seed nel repo (ml_v2/baselines/round5/, commit
+  76ef0a33) con README che marca la provenance legacy incompleta e la distinzione
+  LEGACY-REPLAY vs A4b-CONTROL.
+- F0 fotografia: 4392 righe manifest, licenze tutte CC (3692 CC-BY-4.0 / 357 CC-BY /
+  343 CC0), license_ok=1 ovunque. CORREZIONE a una mia assunzione del piano: il basso
+  NON è "quasi solo 16k" (90/109 file bass sono 44.1k; i 16k sono ~19-20 per dominio).
+  Il buco vero: domini strumentali PICCOLI (train: bass 70 min, drums 83, synth 91,
+  mix 81) vs vocal 381 min — il corpus è dominato dalla voce.
+- F0 verifica ipotesi Boom: PARZIALMENTE REFUTATA. A 44.1k Boom occupa bande mel 0-2,
+  Mud 2-8, UNA sola banda condivisa (con spill 0.25 oct: Boom tocca 0-3) → separabili in
+  rappresentazione. Causa più probabile RIDIRETTA: (i) positivi Boom generati anche su
+  materiale SENZA low-end (82% dei file è vocale) → iniezioni quasi invisibili che
+  diluiscono la classe; (ii) sul basso vero, boost cieco senza invariante vs low-end
+  naturale. Fix coerente col piano: content-gate (iniettare Boom solo dove c'è low-end
+  pre-esistente, come SYNTH_HF_MIN_DB per le classi HF) + protocollo prominenza + più
+  materiale strumentale. La colonna del manifest per il low-end non esiste: il gate va
+  fatto a build-time sulla finestra (band_series 40-150 > soglia), come per l'HF.
+
+RICHIESTA (REV 2): counter-exam dei contratti aggiornati — in particolare: (a) l'algoritmo
+split a quote garantite per strato (punto 3) e la regola multi-dominio (punto 4); (b) lo
+status PILOTA del gold set con hit per-classe; (c) resta aperta la tua domanda
+1-umano-2-passate (accettabile come pilota dichiarato?). VERIFICA anche i 4 fix del tuo
+round-1 nel codice (f97c0da4: concorrenza, OWNED ledger, group-split; f1a3f201: README).
+Dopo il tuo sign-off: commit di questo contratto + assertion split nel test + SOLO POI
+integrazione manifest dei nuovi corpus (previa verify_manifest_files deep=True su tutti
+gli split).
+
+════════════════════════════════════════════════════════════════════════
+APPENDICE QUARANTENA (REV 4 — tue note round-3, recepite nel DOWNLOAD_LOG)
+════════════════════════════════════════════════════════════════════════
+- FMA: "Public Domain" NON normalizzato a CC0 — l'audit d'integrazione conserva
+  URL/licenza ESATTA per file + attribuzione (fonte: raw_tracks.csv license_url).
+- Slakh: la selezione FINALE sarà una lista DETERMINISTICA di TrackID committata
+  (non "i primi N"), con esclusione di omitted/ (avviso del record Zenodo su MIDI
+  duplicati) e hash per ogni file estratto. Il materiale parziale attuale (18 track,
+  34 flac) è SOLO campione pilota. Download FERMI fino a tuo sign-off su questo REV 4.

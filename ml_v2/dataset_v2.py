@@ -225,19 +225,68 @@ def _gid(row: dict) -> str:
 
 # A4b 0d: contract role assignments (group -> role) for NEW corpora. Roles are
 # FIRST-CLASS: a group assigned 'calibration' or 'metric' by the committed
-# contract file lands on exactly that side of the heldout split — the hash
-# fallback below only covers legacy groups that predate the contract.
+# contract file lands on exactly that side of the heldout split. The hash
+# fallback is reserved for the FROZEN legacy_groups baseline (pre-contract
+# manifest groups); a new group without a contract role ABORTS the build.
 SPLIT_ROLES_PATH = HERE / "data" / "a4b_split_v1.json"
+CANONICAL_ROLES = {"train", "calibration", "metric", "g3-external"}
+ROLE_TO_SPLIT = {"train": "train", "calibration": "heldout",
+                 "metric": "heldout", "g3-external": "test"}
 
 
-def load_split_roles(path: Path = SPLIT_ROLES_PATH) -> dict[str, str]:
+def load_split_contract(path: Path = SPLIT_ROLES_PATH
+                        ) -> tuple[dict[str, str], set[str] | None]:
+    """FAIL-CLOSED contract load. Returns (roles, legacy_groups); legacy is
+    None only when the contract file does not exist at all (pure pre-contract
+    mode). Unknown schema or non-canonical role values (e.g. the retired
+    'train-expansion' spelling) ABORT."""
     if not path.exists():
-        return {}
-    return {k: v for k, v in json.loads(path.read_text()).items()}
+        return {}, None
+    data = json.loads(path.read_text())
+    if data.get("schema") != "a4b-split-v1":
+        raise ValueError(f"{path.name}: unknown schema {data.get('schema')!r}")
+    roles = data.get("roles", {})
+    if not isinstance(roles, dict):
+        raise ValueError(f"{path.name}: 'roles' must be a mapping")
+    for g, r in roles.items():
+        if r not in CANONICAL_ROLES:
+            raise ValueError(
+                f"{path.name}: unknown role {r!r} for group {g!r} "
+                f"(canonical: {sorted(CANONICAL_ROLES)})")
+    legacy = data.get("legacy_groups", [])
+    if not isinstance(legacy, list):
+        raise ValueError(f"{path.name}: 'legacy_groups' must be a list")
+    return roles, set(legacy)
+
+
+def validate_split_contract(manifest: Path = MANIFEST,
+                            contract_path: Path = SPLIT_ROLES_PATH) -> None:
+    """Gate check (corpus integration): every manifest group is either legacy
+    or role-assigned, and role<->split are coherent (train->train,
+    calibration/metric->heldout, g3-external->test)."""
+    roles, legacy = load_split_contract(contract_path)
+    if legacy is None:
+        raise FileNotFoundError(f"split contract missing: {contract_path}")
+    with open(manifest, newline="") as f:
+        for lineno, r in enumerate(csv.DictReader(f), start=2):
+            g = r["group"].strip()
+            role = roles.get(g)
+            if role is None:
+                if g not in legacy:
+                    raise ValueError(
+                        f"{manifest.name}:{lineno}: group {g!r} has no contract "
+                        f"role and is not in the frozen legacy baseline")
+                continue
+            want = ROLE_TO_SPLIT[role]
+            if r["split"].strip() != want:
+                raise ValueError(
+                    f"{manifest.name}:{lineno}: group {g!r} role {role!r} "
+                    f"requires split={want!r}, found {r['split']!r}")
 
 
 def heldout_calib_metric_indices(sources: list[str],
-                                 roles: dict[str, str] | None = None
+                                 roles: dict[str, str] | None = None,
+                                 legacy: set[str] | None = None
                                  ) -> tuple[np.ndarray, np.ndarray, dict]:
     """Split heldout windows by manifest source-GROUP (artist/pack/session),
     never by file or row (A4b 0d: files of the same artist must not straddle
@@ -245,10 +294,11 @@ def heldout_calib_metric_indices(sources: list[str],
     percent-encoded, unquote() recovers the raw group); legacy plain-name
     tails degrade to per-file grouping. Contract roles WIN over the hash
     fallback; a 'train' or 'g3-external' group found in heldout data is a
-    contamination and aborts. Torch-free on purpose: the guard tests exercise
-    this without the training stack."""
+    contamination and aborts. The hash fallback is allowed ONLY for groups in
+    the frozen legacy baseline — an un-roled NEW group aborts. Torch-free on
+    purpose: the guard tests exercise this without the training stack."""
     if roles is None:
-        roles = load_split_roles()
+        roles, legacy = load_split_contract()
     groups: dict[str, list[int]] = {}
     for i, src in enumerate(sources):
         tail = src.rsplit(":", 1)[-1] if ":" in src else src
@@ -258,10 +308,11 @@ def heldout_calib_metric_indices(sources: list[str],
     calib, metric = [], []
     role_forced = 0
     for group, idxs in sorted(groups.items()):
-        role = roles.get(unquote(group))
+        raw = unquote(group)
+        role = roles.get(raw)
         if role in ("train", "g3-external"):
             raise ValueError(
-                f"contamination: group {unquote(group)!r} has contract role "
+                f"contamination: group {raw!r} has contract role "
                 f"{role!r} but appears in heldout data")
         if role == "calibration":
             calib.extend(idxs); role_forced += 1
@@ -269,6 +320,11 @@ def heldout_calib_metric_indices(sources: list[str],
         if role == "metric":
             metric.extend(idxs); role_forced += 1
             continue
+        if legacy is not None and raw not in legacy:
+            raise ValueError(
+                f"new group {raw!r} appears in heldout data without a contract "
+                f"role (legacy baseline is frozen; assign a role in "
+                f"a4b_split_v1.json)")
         h = int(hashlib.sha1(group.encode("utf-8")).hexdigest()[:8], 16)
         (calib if (h % 100) < 50 else metric).extend(idxs)
 

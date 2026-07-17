@@ -159,6 +159,88 @@ def test_contract_roles_win_over_hash():
     assert gB in metric_gids and gB not in calib_gids
 
 
+def _write_contract(roles: dict, legacy: list) -> Path:
+    import json
+    f = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+    json.dump({"schema": "a4b-split-v1", "roles": roles,
+               "legacy_groups": legacy}, f)
+    f.close()
+    return Path(f.name)
+
+
+def test_contract_rejects_train_expansion_spelling():
+    from ml_v2.dataset_v2 import load_split_contract
+    p = _write_contract({"pack:new": "train-expansion"}, [])
+    try:
+        load_split_contract(p)
+    except ValueError as e:
+        assert "unknown role" in str(e) and "train-expansion" in str(e)
+    else:
+        raise AssertionError("'train-expansion' must be rejected (canonical: train)")
+
+
+def test_contract_rejects_unknown_role_and_schema():
+    from ml_v2.dataset_v2 import load_split_contract
+    p = _write_contract({"pack:new": "evaluation"}, [])
+    try:
+        load_split_contract(p)
+    except ValueError as e:
+        assert "unknown role" in str(e)
+    else:
+        raise AssertionError("unknown role must be rejected")
+    import json as _json
+    bad = Path(tempfile.mktemp(suffix=".json"))
+    bad.write_text(_json.dumps({"schema": "v999", "roles": {}}))
+    try:
+        load_split_contract(bad)
+    except ValueError as e:
+        assert "schema" in str(e)
+    else:
+        raise AssertionError("unknown schema must be rejected")
+
+
+def test_new_group_without_role_aborts_in_heldout():
+    from ml_v2.dataset_v2 import _gid, heldout_calib_metric_indices
+    g_new = _gid({"group": "pack:brandnew"})
+    g_old = _gid({"group": "legacy:known"})
+    sources = [f"dom-clean:{g_new}/f{i}.wav" for i in range(3)] \
+        + [f"dom-clean:{g_old}/f{i}.wav" for i in range(3)]
+    try:
+        heldout_calib_metric_indices(sources, roles={},
+                                     legacy={"legacy:known"})
+    except ValueError as e:
+        assert "without a contract role" in str(e)
+    else:
+        raise AssertionError("un-roled new group in heldout must abort")
+
+
+def test_role_split_mismatch_rejected():
+    from ml_v2.dataset_v2 import validate_split_contract
+    m = _write_manifest([_row(group="pack:x", split="train")])
+    c = _write_contract({"pack:x": "g3-external"}, [])  # g3 requires split=test
+    try:
+        validate_split_contract(m, c)
+    except ValueError as e:
+        assert "requires split" in str(e)
+    else:
+        raise AssertionError("role/split mismatch must be rejected")
+    c2 = _write_contract({}, [])  # group neither roled nor legacy
+    try:
+        validate_split_contract(m, c2)
+    except ValueError as e:
+        assert "no contract role" in str(e)
+    else:
+        raise AssertionError("group outside roles+legacy must be rejected")
+
+
+def test_real_contract_loads_and_validates():
+    from ml_v2.dataset_v2 import (MANIFEST, SPLIT_ROLES_PATH,
+                                  load_split_contract, validate_split_contract)
+    roles, legacy = load_split_contract(SPLIT_ROLES_PATH)
+    assert legacy is not None and len(legacy) > 0, "contract file must exist"
+    validate_split_contract(MANIFEST, SPLIT_ROLES_PATH)
+
+
 def test_contamination_role_in_heldout_aborts():
     from ml_v2.dataset_v2 import _gid, heldout_calib_metric_indices
     g = _gid({"group": "pack:X"})
