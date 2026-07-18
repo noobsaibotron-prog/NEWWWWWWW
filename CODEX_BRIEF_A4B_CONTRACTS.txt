@@ -290,8 +290,13 @@ P3 — ABLAZIONE DATI-ONLY
     NO-GO e tornare all'inventario, senza soglie piu' permissive.
 
 P4 — ABLazioni DI RICETTA, UNA CAUSA PER COMMIT
-  1. content-gate Boom: positivi solo con energia 40-150 Hz misurabile;
-  2. coppie contrastive Boom-vs-Mud sullo stesso frame;
+  1. content-gate Boom: ESEGUITO come measured gate 3x2 (`d9137421`) — NO-GO.
+     Migliora la neutralita' elettronica 6/6 ma `02` resta rosso 6/6 e la mediana
+     Boom F1 scende 0.112 -> 0.000. Vedi `ml_v2/reports/A4B_BOOM_GATE_3X2.md`.
+     Il follow-up ammesso e' un solo controllo fattoriale mass-matched (repeat
+     train-only x3); se fallisce, STOP alla famiglia measured-gate.
+  2. coppie contrastive Boom-vs-Mud sullo stesso frame: GIA' NEL CONTROL per
+     `clean_drums` e `clean_bass`; non duplicare questa leva come nuovo esperimento;
   3. pos_weight/oversampling per Boom e Resonance;
   4. espansione ring-vs-transient Resonance.
   Ogni voce ripete P3 sulla stessa griglia. Prima della run dichiara la classe e
