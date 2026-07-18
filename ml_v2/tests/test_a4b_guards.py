@@ -7,8 +7,11 @@ from __future__ import annotations
 
 import csv
 import json
+import math
 import tempfile
 from pathlib import Path
+
+import numpy as np
 
 from ml_v2.dataset_v2 import (ALLOWED_LICENSES, BuildConfig, MANIFEST,
                               cache_path, manifest_rows, pipeline_fingerprint)
@@ -71,6 +74,90 @@ def test_experiment_grid_seed_parsing_and_artifact_identity():
             pass
         else:
             raise AssertionError(f"invalid seed list accepted: {bad!r}")
+
+
+def test_f2a_rbj_response_and_waveform_gain_match():
+    from ml_v2.renderer_probe import (apply_biquad, biquad_magnitude_db,
+                                      rbj_peaking_coefficients)
+    sample_rate = 48000
+    center = 3000.0
+    gain_db = 9.0
+    coefficients = rbj_peaking_coefficients(sample_rate, center, 2.0, gain_db)
+    response = biquad_magnitude_db(coefficients, sample_rate)
+    center_bin = int(round(center * 4096 / sample_rate))
+    assert abs(float(response[center_bin]) - gain_db) < 0.03
+
+    count = sample_rate
+    t = np.arange(count, dtype=np.float64) / sample_rate
+    sine = np.sin(2.0 * math.pi * center * t).astype(np.float32) * 0.05
+    filtered = apply_biquad(sine, coefficients)
+    warmup = sample_rate // 2
+    ratio = np.sqrt(np.mean(filtered[warmup:] ** 2)) \
+        / np.sqrt(np.mean(sine[warmup:] ** 2))
+    measured_db = 20.0 * math.log10(float(ratio))
+    assert abs(measured_db - gain_db) < 0.03
+
+
+def test_f2a_window_selection_is_deterministic_and_interior():
+    from ml_v2.renderer_probe import deterministic_window_starts
+    assert deterministic_window_starts(32) == [0]
+    starts = deterministic_window_starts(171)
+    assert starts == deterministic_window_starts(171)
+    assert len(starts) == 3 and starts == sorted(set(starts))
+    assert starts[0] > 0 and starts[-1] + 32 < 171
+
+
+def test_f2a_frozen_model_inventory_is_numeric_and_complete():
+    from ml_v2.renderer_probe import load_models
+    models_dir = Path(__file__).resolve().parents[1] / "baselines" / "round5"
+    models = load_models(models_dir)
+    assert [model["seed"] for model in models] == [42, 1337, 2026]
+    assert all(len(model["sha256"]) == 64 for model in models)
+
+
+def test_f2a_material_selection_fails_closed_when_ranked_file_is_missing():
+    from ml_v2.renderer_probe import _select_material_row
+    root = Path(tempfile.mkdtemp())
+    row = {
+        "domain": "clean_bass", "sr": "44100", "duration_s": "8.0",
+        "group": "fixture:missing", "sha256": "a" * 64,
+        "path": "missing.wav",
+    }
+    try:
+        _select_material_row([row], "clean_bass", root)
+    except FileNotFoundError as error:
+        assert "deterministically selected" in str(error)
+    else:
+        raise AssertionError("missing selected material must abort the probe")
+
+
+def test_f2a_summary_gate_is_falsifiable():
+    from ml_v2.renderer_probe import (EQ_CASES, FEATURE_RMS_MIN,
+                                      TARGET_PROB_DELTA_MIN, summarize)
+    features = []
+    models = []
+    for material_index, material in enumerate(("pink", "bass", "synth", "mix")):
+        for case in EQ_CASES:
+            features.append({
+                "material": material,
+                "feature_rms": FEATURE_RMS_MIN * (2.0 if material_index < 3 else 0.0),
+            })
+            for seed in (42, 1337, 2026):
+                models.append({
+                    "material": material,
+                    "case": case.name,
+                    "model_seed": seed,
+                    "target_db_effect": 0.1,
+                    "target_waveform_effect": 0.1,
+                    "target_renderer_delta": TARGET_PROB_DELTA_MIN * (
+                        2.0 if material_index < 3 and seed != 2026 else 0.0),
+                    "non_target_max_abs_delta": 0.0,
+                })
+    summary = summarize(features, models)
+    assert summary["f2a_go"] and summary["passing_materials"] == 3
+    for record in models:
+        record["target_renderer_delta"] = 0.0
+    assert not summarize(features, models)["f2a_go"]
 
 
 def test_contract_digest_is_stable_and_content_sensitive():
