@@ -68,16 +68,12 @@ def measure_boom_window(win_db: np.ndarray, sample_rate: float, gain_db: float,
         raise ValueError("sample_rate is too low for the Boom probe")
 
     raw_low = float(li.band_series(window, sample_rate, 40.0, 150.0).mean())
-    raw_ref = float(li.band_series(window, sample_rate, 150.0, 400.0).mean())
     raw_wide = float(li.band_series(window, sample_rate, 100.0, wide_hi).mean())
     boosted = np.stack([
         li.scale_band_db(frame, sample_rate, 50.0, 150.0, gain_db)
         for frame in window
     ])
-    post_low = float(li.band_series(boosted, sample_rate, 40.0, 150.0).mean())
-    post_ref = float(li.band_series(boosted, sample_rate, 150.0, 400.0).mean())
-    pre_excess = raw_low - raw_ref
-    post_excess = post_low - post_ref
+    shared = li.measure_boom_injection(window, boosted, sample_rate)
 
     return BoomMeasurement(
         split=split,
@@ -89,10 +85,10 @@ def measure_boom_window(win_db: np.ndarray, sample_rate: float, gain_db: float,
         gain_db=float(gain_db),
         raw_low_db=raw_low,
         raw_wide_db=raw_wide,
-        content_relative_db=raw_low - raw_wide,
-        pre_excess_db=pre_excess,
-        post_excess_db=post_excess,
-        delta_excess_db=post_excess - pre_excess,
+        content_relative_db=shared.content_relative_db,
+        pre_excess_db=shared.pre_excess_db,
+        post_excess_db=shared.post_excess_db,
+        delta_excess_db=shared.delta_excess_db,
     )
 
 

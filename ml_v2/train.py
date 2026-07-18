@@ -36,6 +36,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
+from . import lab_inject as li
 from .dataset_v2 import (BuildConfig, build_or_load, split_contract_sha256,
                          validate_training_preflight)
 from .export_rtneural import export_torch_model
@@ -195,6 +196,8 @@ def _apply_ablation_flags(cfg: BuildConfig, args: argparse.Namespace) -> None:
         cfg.synth_harsh_every = 0
     if args.ablate_real_resonance:
         cfg.real_resonance_per_file = 0
+    if args.boom_measured_gate:
+        cfg.measured_boom_gate = True
 
 
 # ------------------------------------------------------------ training
@@ -364,6 +367,9 @@ def main() -> int:
                     help="internal ablation: disable A4b clean_synth harsh/sib axis")
     ap.add_argument("--ablate-real-resonance", action="store_true",
                     help="internal ablation: disable A4b real resonance labels")
+    ap.add_argument("--boom-measured-gate", action="store_true",
+                    help="F2b: admit Boom positives only through the frozen "
+                         "measured content/excess gate")
     ap.add_argument("--quick", action="store_true",
                     help="smoke run: tiny dataset caps + 6 epochs")
     args = ap.parse_args()
@@ -395,6 +401,8 @@ def main() -> int:
     }
     if any(ablations.values()):
         print(f"INTERNAL ABLATION ACTIVE: {json.dumps(ablations, sort_keys=True)}")
+    if args.boom_measured_gate:
+        print("F2b INTERVENTION: measured Boom gate enabled")
 
     print("A4b corpus preflight (committed contract + deep hashes):")
     corpus_preflight = validate_training_preflight()
@@ -417,12 +425,19 @@ def main() -> int:
         heldout_summary = _preflight_summary("heldout", Yva, src_va)
         real_res_train = train_summary["real_resonance_positives"]
         real_res_heldout = heldout_summary["real_resonance_positives"]
+        boom_train = train_summary["class_positive_counts"]["Boominess"]
+        boom_heldout = heldout_summary["class_positive_counts"]["Boominess"]
         print(f"real resonance positives: train {real_res_train}, "
               f"heldout {real_res_heldout}")
         if not args.quick and real_res_train < 50:
             raise SystemExit("A4b stop: real-resonance train positives < 50; "
                              "provide 5-10 known real-resonance files before "
                              "full Round 4.")
+        if (args.boom_measured_gate and not args.quick
+                and (boom_train < 100 or boom_heldout < 20)):
+            raise SystemExit(
+                "F2b stop: measured Boom positives below frozen viability floor "
+                f"(train {boom_train}/100, heldout {boom_heldout}/20)")
         calib_idx, metric_idx, heldout_meta = heldout_calib_metric_indices(src_va)
         X_calib, Y_calib = Xva[calib_idx], Yva[calib_idx]
         X_metric, Y_metric = Xva[metric_idx], Yva[metric_idx]
@@ -456,6 +471,15 @@ def main() -> int:
                 "preflight_train": train_summary,
                 "preflight_heldout": heldout_summary,
                 "ablations": ablations,
+                "recipe_interventions": {
+                    "measured_boom_gate": {
+                        "enabled": bool(args.boom_measured_gate),
+                        "content_min_db": li.BOOM_CONTENT_MIN_DB,
+                        "pre_excess_max_db": li.BOOM_PRE_EXCESS_MAX_DB,
+                        "post_excess_min_db": li.BOOM_POST_EXCESS_MIN_DB,
+                        "delta_excess_min_db": li.BOOM_DELTA_EXCESS_MIN_DB,
+                    }
+                },
                 "loss_weights": {"class": 1.0, "presence": 0.3, "freq": 0.5},
                 "masked_classes": masked,
                 "masked_class_names": [PROBLEM_NAMES_V2[i] for i in masked],

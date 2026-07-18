@@ -676,6 +676,7 @@ class BuildConfig:
     colored_clean_every: int = 2      # one mild colour negative per N raw-clean windows
     synth_harsh_every: int = 4        # one synth harsh/sib triplet per N clean_synth files
     real_resonance_per_file: int = 10
+    measured_boom_gate: bool = False  # F2b opt-in; CONTROL remains byte-identical
     max_vocal_files: int = 0          # 0 = no cap (cap applies AFTER per-singer pick)
     max_tier2_files_per_domain: int = 0
 
@@ -697,6 +698,18 @@ def build_windows(cfg: BuildConfig, data_root: Path = DATA_ROOT_DEFAULT,
     synth_hf_seen = 0
     synth_harsh_pairs = 0
     real_resonance = 0
+    boom_gate_attempted = 0
+    boom_gate_accepted = 0
+
+    def inject(win_db: np.ndarray, sr: float, inj: li.InjectionSpec):
+        nonlocal boom_gate_attempted, boom_gate_accepted
+        got = li.inject_window_db(
+            win_db, sr, rng, inj,
+            measured_boom_gate=cfg.measured_boom_gate)
+        if cfg.measured_boom_gate and inj.problem == 4:
+            boom_gate_attempted += 1
+            boom_gate_accepted += int(got is not None)
+        return got
 
     def add_raw_clean(win_db: np.ndarray, sr: float, fm: FastMel,
                       source: str, hf_dead: bool = False) -> None:
@@ -742,14 +755,14 @@ def build_windows(cfg: BuildConfig, data_root: Path = DATA_ROOT_DEFAULT,
                 add_raw_clean(w, sr, fm, f"vox-raw:{name}",
                               hf_dead=(r.get("hf_dead") == "1"))
                 inj = specs[int(rng.integers(0, len(specs)))]
-                got = li.inject_window_db(w, sr, rng, inj)
+                got = inject(w, sr, inj)
                 if got is not None:
                     boosted, target = got
                     out.append(WindowSample(fm(boosted),
                                             _make_target(inj.problem, target, ranges),
                                             f"vox+{li.PROBLEM_NAMES_V2[inj.problem]}:{name}"))
             for w in top_energy_windows(wins, sr, 5000.0, 9000.0, cfg.sib_focus):
-                got = li.inject_window_db(w, sr, rng, specs[3])
+                got = inject(w, sr, specs[3])
                 if got is not None:
                     boosted, target = got
                     out.append(WindowSample(fm(boosted),
@@ -819,7 +832,7 @@ def build_windows(cfg: BuildConfig, data_root: Path = DATA_ROOT_DEFAULT,
                 candidates = [s for s in specs if li.injectable(s, sr)]
                 if candidates:
                     inj = candidates[int(rng.integers(0, len(candidates)))]
-                    got = li.inject_window_db(w, sr, rng, inj)
+                    got = inject(w, sr, inj)
                     if got is not None:
                         boosted, target = got
                         out.append(WindowSample(
@@ -847,7 +860,7 @@ def build_windows(cfg: BuildConfig, data_root: Path = DATA_ROOT_DEFAULT,
                     spec_p = next(s for s in specs if s.problem == p)
                     if not li.injectable(spec_p, sr):
                         continue
-                    got = li.inject_window_db(w0, sr, rng, spec_p)
+                    got = inject(w0, sr, spec_p)
                     if got is None:
                         continue
                     boosted, target = got
@@ -870,6 +883,9 @@ def build_windows(cfg: BuildConfig, data_root: Path = DATA_ROOT_DEFAULT,
     log(f"  synth harsh/sib axis positives: {synth_harsh_pairs} "
         f"from {synth_hf_seen}/{synth_seen} clean_synth HF-rich files")
     log(f"  real resonance positives: {real_resonance}")
+    if cfg.measured_boom_gate:
+        log(f"  measured Boom gate: {boom_gate_accepted}/{boom_gate_attempted} "
+            "injections accepted")
     return out
 
 

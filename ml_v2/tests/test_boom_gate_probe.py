@@ -5,6 +5,8 @@ import unittest
 
 import numpy as np
 
+from ml_v2 import dataset_v2 as ds
+from ml_v2 import lab_inject as li
 from ml_v2.boom_gate_probe import measure_boom_window, qualifies
 
 
@@ -61,6 +63,37 @@ class BoomGateProbeTest(unittest.TestCase):
         bad[0, 0] = np.nan
         with self.assertRaises(ValueError):
             measure_boom_window(bad, 44100.0, 9.0)
+
+    def test_dataset_gate_is_opt_in_and_control_path_is_exact(self):
+        window = shaped_window(low_db=-95.0, mid_db=-60.0)
+        spec = next(item for item in li.injections_for() if item.problem == 4)
+        default = li.inject_window_db(
+            window, 44100.0, np.random.default_rng(42), spec)
+        explicit_off = li.inject_window_db(
+            window, 44100.0, np.random.default_rng(42), spec,
+            measured_boom_gate=False)
+        gated = li.inject_window_db(
+            window, 44100.0, np.random.default_rng(42), spec,
+            measured_boom_gate=True)
+        self.assertIsNotNone(default)
+        self.assertIsNotNone(explicit_off)
+        np.testing.assert_array_equal(default[0], explicit_off[0])
+        self.assertEqual(default[1], explicit_off[1])
+        self.assertIsNone(gated)
+
+    def test_gate_accepts_frozen_candidate_shape(self):
+        window = shaped_window(low_db=-55.0, mid_db=-58.0)
+        spec = next(item for item in li.injections_for() if item.problem == 4)
+        got = li.inject_window_db(
+            window, 44100.0, np.random.default_rng(7), spec,
+            measured_boom_gate=True)
+        self.assertIsNotNone(got)
+
+    def test_dataset_cache_key_records_gate_state(self):
+        control = ds.BuildConfig(split="train", seed=42)
+        gated = ds.BuildConfig(split="train", seed=42,
+                               measured_boom_gate=True)
+        self.assertNotEqual(control.key(), gated.key())
 
 
 if __name__ == "__main__":
