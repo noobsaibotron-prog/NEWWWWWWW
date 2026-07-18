@@ -157,6 +157,10 @@ STATO (REV 7):
   (`c80bd386`): ripara il quota A6 `clean_synth`, non entra mai in train o heldout;
 - il trainer ora misura la varianza `seed modello x seed dataset` senza collisioni
   di artefatti (`cb9cf585`); il default singolo seed conserva il naming storico;
+- il CONTROL 3x2 e' congelato e controverificato (`ea05321b`): data seed 42
+  riproduce i tre artefatti storici bit-per-bit, ma A6 resta 0/6. `02` e `04`
+  falliscono in 6/6; report completo in
+  `ml_v2/reports/A4B_CONTROL_GRID_3X2.md`;
 - una NUOVA ammissione DI TRAINING resta NO-GO. Non esiste ancora un batch
   strumentale revisionato, ne' una policy che permetta FSLD in train.
 
@@ -290,9 +294,17 @@ P4 — ABLazioni DI RICETTA, UNA CAUSA PER COMMIT
   2. coppie contrastive Boom-vs-Mud sullo stesso frame;
   3. pos_weight/oversampling per Boom e Resonance;
   4. espansione ring-vs-transient Resonance.
-  Ogni voce ripete P3 sulla stessa griglia e puo' avanzare solo se conserva i tre
-  criteri P3, non peggiora clean worst-case o classi gia' verdi e migliora la mediana
-  heldout della propria classe target. Niente combinazioni di leve per inseguire un seed.
+  Ogni voce ripete P3 sulla stessa griglia. Prima della run dichiara la classe e
+  l'endpoint esterno target. Una leva mono-causa si qualifica soltanto come LEVA
+  INDIPENDENTE se migliora l'endpoint target in almeno 4/6 confronti appaiati,
+  migliora la mediana heldout della classe target, non aumenta il worst clean-FP e
+  non introduce nuovi FAIL A6 rispetto al CONTROL appaiato. Per il content-gate Boom
+  l'endpoint e' `02` (Boominess oppure Muddiness >=5%); `04` deve non regredire, ma
+  non e' tenuto a diventare verde per qualificare questa singola leva.
+  Una leva qualificata NON e' un candidato complessivo. Le leve possono essere
+  combinate solo dopo qualificazione indipendente, in un commit e una griglia nuovi;
+  il candidato combinato deve soddisfare integralmente i tre criteri P3 invariati,
+  inclusi `02` E `04` verdi in almeno 4/6. Niente combinazioni per inseguire un seed.
 
 P5 — GENERALIZZAZIONE E PROPOSTA PRODOTTO
   - Costruire il G3d naturale eval-only, group-disjoint, con protocollo annotazioni
