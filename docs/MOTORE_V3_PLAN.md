@@ -42,9 +42,14 @@ line, plugin installato, APVTS, preset, `Resources/Models/ml_weights.bin`,
 - Congelare un ambiente v3 separato con versione Python completa, piattaforma,
   pacchetti e hash delle distribuzioni.
 - Verificare in profondita gli hash audio di `train`, `heldout` e `test`, poi
-  `ml_v2/baselines/a4b_control/SHA256SUMS`.
-- Rieseguire i candidati 42, 1337 e 2026; normalizzare soltanto la riga
-  `model=` e confrontare gli output con i tre `eval_s*.txt` congelati.
+  gli artefatti storici in `ml_v2/baselines/a4b_control/SHA256SUMS`.
+- Il checkpoint corrente include la fixture test-only `fsld:46593`, ammessa
+  dopo i primi report e responsabile del passaggio controllato da 834 a 835
+  righe test. Il riferimento comportamentale corrente e il CONTROL 3x2
+  `a4b_control_grid_20260718_85fa55ec`, non i tre report pre-fixture.
+- Verificare l'hash del `SHA256SUMS` della griglia, rieseguire i candidati
+  dataset-seed 42 per model seed 42, 1337 e 2026, normalizzare soltanto la riga
+  `model=` e confrontare gli output con `eval_s*_d42.txt`.
 - Il risultato atteso e A4b `NO-GO 0/3`: G0 passa se lo riproduce esattamente,
   non se il modello diventa verde.
 
