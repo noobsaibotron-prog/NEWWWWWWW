@@ -1,6 +1,6 @@
 # Motore v3 - Contratto G1 frontend e benchmark
 
-Stato: PROPOSTA IMMUTABILE PER COUNTER-CHECK, REVISIONE 2. Questo documento non autorizza
+Stato: PROPOSTA IMMUTABILE PER COUNTER-CHECK, REVISIONE 3. Questo documento non autorizza
 ancora l'implementazione. G1 parte soltanto dopo il GO del reviewer sul commit
 che contiene esclusivamente questo file.
 
@@ -280,23 +280,42 @@ metadati immutabili `group_primary_profile`, `group_primary_domain` e
 `source_family`. Stem, mix, versioni, crop, augmentation, injection, render
 processati e render competitor ereditano lo stesso gruppo del dry originale.
 
+`group_id` non e testo libero. Se la sorgente pubblica un ID stabile di
+composizione, sessione o artista, l'ID canonico e
+`source_family + ":" + upstream_id`. Se manca, l'intero pack forma un solo
+gruppo con ID `source_family + ":pack:" + SHA256(sorted_audio_sha256)`. Mapping
+di alias, upstream snapshot e regole di inclusione sono versionati prima dello
+split; rinominare un gruppo o cambiare profilo/dominio dopo l'assegnazione
+invalida il batch.
+
 Regole:
 
 - nessun fallback legacy: ogni gruppo e assegnato esplicitamente;
 - nessun gruppo o SHA audio puo comparire in due ruoli;
 - near-duplicate detection e obbligatoria prima di G3, ma non sostituisce
   l'identita di gruppo;
-- assegnazione deterministica `sha256-threshold-v1`: interpretare come intero
-  unsigned big-endian i primi 8 byte di
-  `SHA256(salt + NUL + group_primary_profile + NUL + group_primary_domain +
-  NUL + source_family + NUL + group_id)`, dividerlo per `2**64` e assegnare gli
-  intervalli `[0,.55)`, `[.55,.65)`, `[.65,.75)`, `[.75,.85)`, `[.85,1)` ai
-  cinque ruoli nell'ordine dichiarato;
+- ogni admission batch usa un protocollo commit-reveal: prima di vedere il
+  roster il reviewer genera 32 byte casuali `salt` e committa
+  `SHA256("aieq-v3-split-salt-v1" + NUL + salt)`; il curatore materializza e
+  committa il roster completo di tutti i gruppi eleggibili della source
+  snapshot, in ordine canonico, senza ruoli; soltanto allora il reviewer rivela
+  `salt` e il tool verifica il commitment;
+- `admission_batch_id` e lo SHA-256 dei byte canonici del roster pre-split. Il
+  ruolo usa i primi 8 byte unsigned big-endian di
+  `HMAC-SHA256(salt, "aieq-v3-role-v1" + NUL + admission_batch_id + NUL +
+  group_primary_profile + NUL + group_primary_domain + NUL + source_family +
+  NUL + group_id)`, divisi per `2**64`, con intervalli `[0,.55)`, `[.55,.65)`,
+  `[.65,.75)`, `[.75,.85)`, `[.85,1)` nell'ordine dichiarato;
+- un batch rivelato non puo essere filtrato dopo aver visto i ruoli: viene
+  ammesso interamente oppure resta registrato come rifiutato soltanto per una
+  regola fail-closed preregistrata e verificabile senza leggere i ruoli; i suoi
+  gruppi non possono rientrare sotto un altro ID o batch;
 - strato di verifica minimo: `(group_primary_profile, group_primary_domain,
   source_family)`; il preflight pubblica conteggi per strato e si ferma se i
   minimi per profilo non sono raggiunti;
-- batch e assegnazioni append-only; salt, ruoli e metadati ammessi non sono
-  modificabili;
+- roster, commitment, reveal, batch e assegnazioni sono append-only; tentativi
+  multipli, salt riutilizzati, subset di source snapshot o metadati mutati
+  bloccano il preflight;
 - un gruppo multi-dominio riceve un solo ruolo globale;
 - una sorgente ammessa da v2 viene riammessa esplicitamente nel contratto v3;
   non eredita il fallback A4b.
@@ -316,12 +335,33 @@ retroattiva, un gruppo senza ruolo o un asset il cui hash non corrisponde.
 Campi obbligatori:
 
 ```text
-schema, asset_id, relative_path, sha256, group_id, split_role,
+schema, asset_id, relative_path, sha256, group_id, admission_batch_id,
+split_role, benchmark_families, development_pilot,
 source_profile, primary_domain, group_primary_profile, group_primary_domain,
 source_family, electronic_subgenre,
 sample_rate, channels, duration_s, parent_asset_id, derivative_kind,
 license_class, license_url, attribution, ledger_id
 ```
+
+`benchmark_families` e una lista ordinata senza duplicati presa esclusivamente
+da `tonal-controlled`, `tonal-natural`, `anomaly-natural`, `clean-safety` ed
+`electronic-stratified`. `development_pilot` e booleano, puo essere vero
+soltanto nello split `development-metric` ed e assegnato dopo lo split con
+`HMAC-SHA256(salt, "aieq-v3-pilot-v1" + NUL + admission_batch_id + NUL +
+group_id)`, interpretato unsigned big-endian e diviso per `2**256`, minore di
+0.25. Il pilot e group-disjoint dal punto-estimate
+development dello stesso round; se non raggiunge i supporti richiesti si
+ammettono nuovi batch, non si cambia la soglia 0.25.
+
+La membership benchmark viene congelata dopo l'adjudication ma prima di
+eseguire qualunque candidato sul ruolo. Dipende soltanto da provenance e
+annotazioni, mai da prediction o metrica; modificarla dopo il freeze invalida
+manifest e report.
+
+Ogni batch possiede inoltre un record `aieq-v3-admission-batch-1` con source
+snapshot, regole di inclusione, roster SHA-256, salt commitment/reveal, commit
+del roster, reviewer e stato admitted/rejected. Il manifest viene rifiutato se
+questo record manca o non ricostruisce esattamente ruoli e pilot flag.
 
 Licenze ammesse: CC0, CC-BY o OWNED con ledger completo. Campo mancante,
 licenza sconosciuta o hash errato bloccano il preflight.
@@ -331,13 +371,14 @@ licenza sconosciuta o hash errato bloccano il preflight.
 Ogni record usa `schema = "aieq-v3-annotation-1"` e contiene:
 
 - `asset_id`, `annotator_id`, `pass_id`, `profile`,
-  `segment_start_s`, `segment_end_s`;
+  `evaluation_unit_id`, `segment_start_s`, `segment_end_s`;
 - `tonal_correction_db[120]`: EQ correttiva desiderata; segno positivo =
   boost, negativo = cut;
 - `tonal_confidence[120]` e `tonal_actionable_mask[120]`;
 - `semantic_regions[]` per gli otto tipi pubblici correnti;
 - `dynamic_events[]` per Resonance, Harshness e Sibilance;
-- `global_actionable`, `clean_for_action`, note e versione tool.
+- `complete_types[]`, `explicit_negative_types[]`, `global_actionable`,
+  `clean_for_action`, note e versione tool.
 
 Gli otto tipi e ID canonici restano, nell'ordine `0..7`: `Resonance`,
 `Harshness`, `Muddiness`, `Sibilance`, `Boominess`, `Thinness`,
@@ -357,8 +398,19 @@ Curve e prediction pubbliche sono finite e limitate a `[-9, +9]` dB;
 confidence e severity sono in `[0, 1]`; tempi e frequenze devono cadere nel
 segmento e in 20-20000 Hz. `clean_for_action = true` impone curva zero,
 `tonal_actionable_mask` tutto falso, `global_actionable = false` e nessun
-evento actionable. Un suono colorato ma intenzionalmente corretto e clean:
-non viene trasformato in hard-negative di un problema diverso.
+evento actionable; impone inoltre tutti gli otto tipi canonici dentro
+`complete_types` ed `explicit_negative_types`. Fuori da questo caso, un tipo
+entra in `complete_types` soltanto quando l'intero segmento e stato annotato
+esaustivamente per quel tipo; entra in `explicit_negative_types` soltanto se e
+completo e gli annotatori ne hanno verificato l'assenza. Le aree fuori dagli
+eventi GT valgono come negative soltanto per tipi completi. Un suono colorato
+ma intenzionalmente corretto e clean non viene trasformato in hard-negative di
+un problema diverso.
+
+`evaluation_unit_id` e congelato prima di eseguire i sistemi. Segmenti che
+derivano dallo stesso intervallo annotato condividono l'ID e possono contribuire
+una sola volta; dividere, duplicare o sovrapporre un segmento dopo il freeze
+invalida il record.
 
 G3 definira processo a due annotatori e adjudication. G1 congela formato e
 semantica, non inventa annotazioni reali.
@@ -371,6 +423,32 @@ Ogni prediction usa `schema = "aieq-v3-prediction-1"` e contiene `asset_id`,
 semantici e lista eventi. Ogni bundle ed evento porta confidence e
 `actionable`; l'evaluator non ricostruisce questi campi da una soglia nascosta.
 
+Ogni prediction contiene anche `anomaly_score_ref` e
+`anomaly_severity_ref`, riferimenti con SHA-256 ad array little-endian float32
+di forma `[num_feature_frames, 3, 120]`, ordine classi `Resonance`, `Harshness`,
+`Sibilance`, allineati ai frame G1. Sono superfici dense finite in `[0,1]`
+prima di threshold, hysteresis, top-k o veto. Frame/bande invalidi sono marcati
+da una mask separata e non possono essere omessi; una lista eventi senza queste
+superfici e schema invalido.
+
+L'evaluator deriva una lista completa di candidati prima della soglia. Per ogni
+classe prende i massimi locali positivi nel vicinato 3x3 tempo-banda: score
+maggiore o uguale a tutti i vicini e maggiore di almeno un vicino esterno al
+proprio plateau connesso. Per ogni plateau conserva soltanto la coordinata
+frame/banda minima.
+In ordine decrescente di score, ogni massimo genera la componente 8-neighbour
+che lo contiene nella mask `score >= 0.5 * peak`; massimi successivi la cui
+componente contiene gia un massimo conservato vengono soppressi. Ogni componente
+produce onset/offset dai frame estremi, banda dagli estremi di banda, centro
+come media geometrica dei centri pesata dagli score, confidence uguale al peak
+e severity come media pesata della superficie severity.
+
+Gli eventi pubblicati alla soglia operativa sono esattamente i candidati con
+confidence calibrata almeno pari alla soglia; devono coincidere con questa
+estrazione o la prediction e invalida. La PR-AUC ordina l'intera lista
+pre-threshold per `(confidence desc, frame, band)` e ripete il matching ai suoi
+cut-point. Nessun top-k, floor di confidence o veto puo nascondere un candidato.
+
 ## 10. Evaluator deterministico
 
 L'evaluator legge soltanto manifest, annotation record e prediction record
@@ -379,6 +457,12 @@ risultati. Tutte le aggregazioni pubblicano valore globale, macro per profilo,
 macro per dominio e CI percentile 95% da 10000 bootstrap a livello `group_id`,
 con PCG64 seed 20260719. Il campionamento conserva tutti gli asset figli del
 gruppo estratto.
+
+Salvo i rate exposure-aware dichiarati separatamente, ogni metrica primaria
+viene calcolata prima per `evaluation_unit_id`, poi mediata dentro `group_id` e
+infine macro-mediata con peso uguale fra gruppi. Numero di asset, segmenti,
+eventi o celle non aumenta il peso del gruppo. Le micro-medie vengono riportate
+solo come diagnostica.
 
 ### 10.1 Metriche tonali
 
@@ -432,13 +516,21 @@ dell'errore frequenziale in ottave, poi ordine crescente degli ID evento. Non
 e ammesso un greedy dipendente dall'ordine dei record.
 Metriche obbligatorie:
 
-- precision, recall, F1 e area precision-recall per classe;
+- precision, recall, F1 e area precision-recall per classe, macro a peso uguale
+  sui gruppi con annotazione completa; un gruppo senza GT positivo ha PR-AUC
+  `N/A` e contribuisce invece alla clean safety;
 - errore centro in ottave per Resonance;
 - errore onset e offset in millisecondi;
 - MAE della severity `[0,1]` sugli eventi matched e Spearman rho con supporto
   almeno 10;
 - falsi eventi al minuto su gruppi clean;
 - durata e occupancy soltanto come diagnostica, mai come gate primario.
+
+Le metriche evento vengono prima calcolate per gruppo usando le superfici dense
+pre-threshold della sezione 9.3 e poi macro-mediate con peso uguale. Segmenti,
+eventi o durate aggiuntive dello stesso gruppo non aumentano il peso del gruppo.
+Si riportano anche le micro-metriche come diagnostica, ma non possono promuovere
+una classe.
 
 Nessun singolo file, singolo hit o threshold scelto sullo stesso split puo far
 passare una classe.
@@ -450,14 +542,23 @@ si fittano solo su `calibration`; ECE, Brier e PR-AUC vengono pubblicati su
 `development-metric` e poi, una sola volta, su `final-test`.
 
 Per la confidence tonale, ogni cella udibile e un esempio binario actionable/
-non-actionable. Per anomaly, ogni evento predetto e corretto se entra nel
-matching one-to-one; i ground-truth mancati restano FN nelle metriche PR.
+non-actionable. Per anomaly, ogni cella valida delle superfici dense e un
+esempio: target uno dentro un evento GT del tipo e zero fuori, ma soltanto
+quando il tipo e in `complete_types`. I ground-truth mancati restano FN nelle
+metriche evento.
 
-ECE usa 15 bin equal-count: stable sort per `(confidence, asset_id, event_or_
-band_id)`, partizione con differenza di cardinalita al massimo uno, poi
-`sum_bin(n_bin/N * abs(accuracy_bin - mean_confidence_bin))`. Brier e la media
-di `(confidence - target)**2`. Bin vuoti non vengono creati e supporto zero e
-`N/A`, mai PASS.
+Ogni gruppo riceve peso totale uno. Dentro un gruppo, ciascun
+`evaluation_unit_id` unico riceve peso `1 / num_units`; dentro l'unita, il peso
+viene diviso uniformemente fra le celle eleggibili. Duplicati, crop e derivati
+con lo stesso `evaluation_unit_id` vengono deduplicati prima del fit e della
+misura. Questo schema di pesi e identico per fit del calibratore, ECE e Brier.
+
+ECE usa 15 bin equal-mass: stable sort per `(confidence, group_id,
+evaluation_unit_id, frame_or_band_id)`, poi partizione per peso cumulativo con
+deviazione minima da `1/15`. Ogni bin usa accuratezza e confidence pesate; ECE
+e la somma `mass_bin * abs(accuracy_bin - mean_confidence_bin)`. Brier e la
+media pesata di `(confidence - target)**2`. Bin vuoti non vengono creati e
+supporto zero e `N/A`, mai PASS.
 
 ### 10.4 Copertura minima per calibrazione e misura
 
@@ -471,7 +572,7 @@ La calibrazione globale e ammessa soltanto con questa copertura minima:
 
 | Famiglia | Positivi indipendenti | Negativi indipendenti | Copertura obbligatoria |
 |---|---:|---:|---|
-| Tonale | almeno 50 gruppi `global_actionable`, di cui almeno 20 con una cella actionable positiva e 20 con una negativa | almeno 50 gruppi `clean_for_action` | almeno 3 actionable e 3 clean per ciascuno dei sette profili |
+| Tonale | almeno 50 gruppi con almeno una cella `tonal_actionable_mask` vera e target non zero, di cui almeno 20 con cella positiva e 20 con cella negativa | almeno 50 gruppi `clean_for_action` | almeno 3 actionable e 3 clean per ciascuno dei sette profili |
 | Resonance | almeno 30 gruppi con evento GT actionable | almeno 50 gruppi senza evento GT della classe, di cui almeno 30 clean | positivi da almeno 3 `source_family`, almeno 5 gruppi ciascuna e nessuna oltre il 50%; negativi almeno 3 per profilo |
 | Harshness | almeno 30 gruppi con evento GT actionable | almeno 50 gruppi senza evento GT della classe, di cui almeno 30 clean | positivi da almeno 3 `source_family`, almeno 5 gruppi ciascuna e nessuna oltre il 50%; negativi almeno 3 per profilo |
 | Sibilance | almeno 30 gruppi con evento GT actionable | almeno 50 gruppi senza evento GT della classe, di cui almeno 30 clean | positivi da almeno 3 `source_family`, almeno 5 gruppi ciascuna e nessuna oltre il 50%; negativi almeno 3 per profilo |
@@ -479,7 +580,9 @@ La calibrazione globale e ammessa soltanto con questa copertura minima:
 Un gruppo multi-label puo contribuire al supporto positivo di piu classi, ma
 una sola volta per classe. Un gruppo negativo per una classe puo contenere
 un'altra anomalia soltanto se l'annotazione esclude esplicitamente la classe in
-esame; l'assenza di annotazione non vale come negativo.
+esame; l'assenza di annotazione non vale come negativo. Le direzioni positive e
+negative della curva sono sotto-strati dello stesso supporto actionable: non
+valgono come gruppi negativi e un gruppo si conta una sola volta nel totale 50.
 
 I calibratori restano globali salvo prova contraria in G4. Una soglia o un
 calibratore specifico per profilo, dominio o sottogenere e vietato se quello
@@ -489,8 +592,9 @@ contribuire a un GO; non si accorpano split e non si abbassano i minimi.
 
 Su `development-metric` e `final-test` il supporto minimo dipende dalla metrica:
 curve e coverage tonali richiedono almeno 30 gruppi actionable; clean actionable
-rate almeno 30 gruppi clean; ogni classe anomaly almeno 30 gruppi positivi e 50
-negativi. Si applicano inoltre i floor della sezione 11 e la sua power analysis.
+rate almeno 149 gruppi clean; ogni classe anomaly almeno 30 gruppi positivi, 50
+negativi e l'esposizione clean della sezione 11. Si applicano inoltre i floor
+della sezione 11 e la sua power analysis.
 Supporto inferiore produce `N/A` e blocca ogni claim o gate che dipende da quella
 metrica. ECE/Brier possono essere riportati anche con supporto maggiore di zero,
 ma non valgono come prova di calibrazione finche questi minimi non sono
@@ -510,30 +614,37 @@ contro la baseline deterministica G2. Se invece un candidato dichiara una
 superficie ma non emette una prediction valida, l'esito e fail-closed: FN,
 errore di schema o fallimento del candidato secondo il caso, mai `N/A`.
 
-Il gate G2 rispetto a v2 usa un solo adapter omologo, congelato in G1c, che
-proietta entrambi i sistemi su `problem_presence[ProblemType]` per segmento
-annotato. I tipi comuni sono esattamente gli otto ID canonici della sezione 9.2;
-`BoxyMidrange`, `Boominess` e `Thinness` corrispondono rispettivamente ai tipi
-pubblici `Boxyness`, `LowEndBoom` e `ThinSound` del runtime storico.
+Il gate G2 rispetto a v2 usa un solo adapter omologo, congelato in G1c, sulle
+sei classi realmente attive in tutti e tre i candidati G0: `Resonance`,
+`Muddiness`, `Boominess`, `Thinness`, `BoxyMidrange`, `DullSound`.
+`Harshness` e `Sibilance` sono mascherate nelle provenance G0 e restano `N/A`
+nel confronto v2; v3 le deve superare con i gate assoluti e contro G2, mai
+trattandole come negativi v2. Il denominatore della macro-F1 e sempre sei; una
+delle sei classi con supporto insufficiente rende il gate NO-GO.
 
-Per v2 si esegue il frontend congelato G0 sull'asset intero con
-`window_step=16`; una finestra appartiene al segmento quando il suo centro
-fisico cade in `[segment_start_s, segment_end_s)`. Il tipo e presente quando
-almeno il 5% delle finestre assegnate supera la soglia della provenance; classi
-mascherate dalla stessa provenance restano mascherate. Un segmento senza
-finestre v2 e `N/A` soltanto per questo confronto omologo. Per v3 il tipo e
-presente quando almeno un bundle semantico o evento `actionable` dello stesso
-tipo interseca il segmento con IoU almeno 0.3.
+Per ogni segmento completo con almeno 20 finestre v2, l'adapter usa i centri
+fisici delle finestre prodotte dal frontend G0 con `window_step=16` come griglia
+temporale comune. A ogni centro:
 
-L'adapter calcola macro-F1 per gli otto tipi e false-positive group rate sui
-gruppi clean, senza inventare curve, frequenze o severity per v2. Si valutano
-separatamente tutti e tre i candidati G0 con i rispettivi model/provenance hash
-e threshold. Il riferimento conservativo usa il massimo macro-F1 ottenuto dai
-tre e il minimo false-positive group rate ottenuto dai tre, anche se provengono
-da seed diversi. Il GO G2 richiede macro-F1 almeno 10% relativo sopra quel
-massimo, oppure almeno +0.10 assoluto se il massimo v2 e inferiore a 0.10, e
-false-positive group rate non superiore al minimo v2. G1a serializza mapping,
-costanti e hash gia definiti qui; non puo sceglierli o modificarli.
+- v2 vale uno se la probabilita supera la soglia della provenance del seed;
+- v3 vale uno se il centro cade nel supporto temporale di un bundle o evento
+  `actionable` della classe; un bundle statico copre il segmento prediction;
+- GT vale uno se il centro cade in una semantic region o evento GT actionable.
+
+La presenza di segmento e uno per ciascuno dei tre vettori soltanto quando la
+rispettiva occupancy sulla stessa griglia e almeno 5%. Un segmento con meno di
+20 centri e `N/A` per l'adapter omologo, ma resta disponibile alle metriche v3
+native. Ogni classe richiede separatamente almeno 30 gruppi GT positivi e 30
+negativi sia su development sia su final-test.
+
+L'adapter calcola macro-F1 a sei classi e false-positive group rate sui gruppi
+clean, senza inventare curve, frequenze o severity per v2. Ognuno dei tre
+candidati G0 viene valutato separatamente con model, provenance, mask e soglie
+congelati. G2 deve superare ciascun seed: macro-F1 almeno 10% relativo, oppure
+almeno +0.10 assoluto quando il seed v2 e sotto 0.10, e false-positive group
+rate non superiore allo stesso seed. Non e ammesso comporre una baseline con la
+metrica migliore di un seed e la safety migliore di un altro. G1a serializza
+mapping, costanti e hash gia definiti qui; non puo sceglierli o modificarli.
 
 ## 11. Matrice benchmark e potenza statistica
 
@@ -547,8 +658,8 @@ manifest, ma il supporto statistico e sempre contato per `group_id`.
 |---|---|---|---|
 | `tonal-controlled` | dry group-disjoint con 1-3 trasformazioni note, includendo boost, cut, shelf, bell e interazioni | RMSE/p95 della curva, miglioramento residuo, errore di segno | almeno 5 parent group per profilo; ogni regione tonale e direzione compare in almeno 10 gruppi |
 | `tonal-natural` | materiale reale clean e materiale reale con curva actionable annotata e adjudicata | RMSE/p95, coverage, clean actionable rate, severity | almeno 5 clean e 5 actionable group per profilo |
-| `anomaly-natural` | Resonance, Harshness e Sibilance reali con intervallo, banda e severity annotati | PR-AUC, F1, errore frequenziale/temporale, severity, falsi/min | almeno 30 positive group per classe e 50 negative group per classe |
-| `clean-safety` | materiale reale intenzionalmente corretto, incluso materiale colorato ma non problematico | clean actionable rate e falsi eventi/min | almeno 10 group per profilo; nessun negativo implicito da annotazione mancante |
+| `anomaly-natural` | Resonance, Harshness e Sibilance reali con intervallo, banda e severity annotati | PR-AUC, F1, errore frequenziale/temporale, severity, falsi/min | almeno 30 positive group e 50 negative group per classe, piu almeno 60 minuti clean eleggibili |
+| `clean-safety` | materiale reale intenzionalmente corretto, incluso materiale colorato ma non problematico | clean actionable rate e falsi eventi/min | almeno 149 group totali e 10 per profilo, piu almeno 60 minuti clean eleggibili; nessun negativo implicito |
 | `electronic-stratified` | vista trasversale delle quattro famiglie per techno, house, breakbeat e altri sottogeneri dichiarati | stesse metriche della famiglia madre, riportate per sottogenere | almeno il 40% del final-test complessivo; nessuna claim di sottogenere senza supporto determinato dalla power analysis |
 
 I derivati controlled ereditano il gruppo del dry e non moltiplicano il
@@ -559,6 +670,12 @@ su seed o asset: nessuna cella final-test compare nel generatore di training e
 almeno una composizione multi-trasformazione completa e riservata al benchmark.
 `tonal-natural` e obbligatorio: il sintetico da solo non puo dimostrare
 trasferimento al reale.
+
+Le regioni tonali canoniche, inclusive a sinistra ed esclusive a destra salvo
+l'ultima, sono `[20,80)`, `[80,200)`, `[200,500)`, `[500,2000)`, `[2000,5000)`,
+`[5000,10000)` e `[10000,20000]` Hz. La griglia controlled deve coprire boost e
+cut in ciascuna regione; un asset con piu trasformazioni resta una sola unita
+del parent group.
 
 Il sotto-set competitor di G5/G8 e una selezione preregistrata dalle famiglie
 `tonal-natural`, `anomaly-natural` e `clean-safety`; non costituisce una sesta
@@ -572,15 +689,20 @@ La numerosita finale di ogni famiglia e strato e:
 n_required = max(floor_contrattuale, n_power)
 ```
 
-`n_power` viene stimato soltanto da un sottoinsieme pilot preregistrato di
-`development-metric`, mai da `final-test`, con unita di ricampionamento
-`group_id` e test paired quando i sistemi condividono la sorgente. Il pilot e
-marcato nel manifest e non viene usato per il punto-estimate del gate
-development dello stesso round. Alpha family-wise e 0.05, corretto Holm su
-tutti i gate primari dello stesso report di promozione, e la potenza minima e
-0.90. Il calcolo usa una simulazione Monte Carlo deterministica o una formula
-chiusa controverificata e registra seed, distribuzione osservata, effect size,
-test, numero di confronti e risultato.
+`n_power` viene stimato soltanto dal sottoinsieme `development_pilot`, mai da
+`final-test`, con unita di ricampionamento `group_id` e test paired quando i
+sistemi condividono la sorgente. Il pilot non viene usato per il point-estimate
+del gate development dello stesso round e deve avere almeno 30 gruppi paired
+per una metrica continua/macro e almeno 15 gruppi GT positivi per ogni classe
+anomaly. Supporto inferiore richiede nuovi batch, non una diversa selezione.
+
+La decisione finale controlla alpha family-wise 0.05 con Holm su tutti i gate
+primari dello stesso report. Per dimensionare il campione si usa invece il
+conservativo `alpha_plan = 0.05 / m`, dove `m` e il numero congelato di gate
+primari: e il piu piccolo livello possibile nella procedura Holm. La potenza
+minima e 0.90. Numero e ordine dei gate sono congelati prima del calcolo. Il
+piano registra seed, pilot SHA-256, statistico, orientamento, effect size minimo,
+`m`, `alpha_plan`, supporto, risultato e versione dell'implementazione.
 
 L'effetto minimo di interesse e preregistrato per metrica:
 
@@ -588,26 +710,48 @@ L'effetto minimo di interesse e preregistrato per metrica:
   baseline pertinente, senza regressione clean;
 - macro-F1 o PR-AUC comparabile: aumento relativo almeno 10%, oppure +0.10
   assoluto quando la baseline e inferiore a 0.10;
-- clean actionable rate: limite superiore unilaterale CI 95% inferiore al 2%;
-- falsi eventi/min: limite superiore unilaterale CI 95% non oltre 0.5;
+- clean actionable rate: ipotesi nulla `p >= 0.02`, alternativa di progetto
+  `p = 0.01`, limite superiore esatto unilaterale sotto 0.02;
+- falsi eventi/min: ipotesi nulla `lambda >= 0.5`, alternativa di progetto
+  `lambda = 0.25`, limite superiore Poisson esatto non oltre 0.5;
 - parity e invariance: restano gate deterministici, non sono sostituiti da una
   power analysis;
 - G8: numerosita ascoltatori e sorgenti resta determinata dal pilot G5 e dal
   modello clusterizzato definito nel piano principale.
 
-Il risultato viene congelato in `benchmark_power_plan.json` con SHA-256 prima
-di aprire `final-test`. Se il corpus disponibile non raggiunge `n_required`, la
-famiglia e NO-GO: non si riduce l'effetto, non si contano crop come gruppi e non
-si trasferiscono asset da altri ruoli. Tutti i risultati pubblicano supporto,
-intervallo di confidenza e numero di gruppi esclusi con motivo.
+Per metriche continue e macro-F1/PR-AUC, il tool usa 10000 simulazioni PCG64. A
+ogni numerosita candidata ricampiona con replacement i record completi di
+gruppo paired, ricalcola lo statistico, centra la distribuzione bootstrap e la
+trasla esattamente dell'effetto minimo dichiarato; non usa la media favorevole
+osservata come alternativa. La potenza e la quota di simulazioni che supera il
+critico unilaterale sotto la distribuzione centrata nulla ad `alpha_plan`. Si
+sceglie il primo `n` con potenza almeno 0.90; seed base `20260719`, derivato per
+metrica con SHA-256 del suo ID canonico.
 
-Per metriche continue si simula la distribuzione paired delle differenze per
-gruppo. Per rate binari si usa il modello binomiale al livello gruppo e si
-verifica anche il limite superiore esatto unilaterale. Per falsi eventi/minuto
-si ricampiona il vettore `(false_events, duration_minutes)` per gruppo: minuti o
-segmenti aggiuntivi dello stesso gruppo aumentano l'esposizione ma non il numero
-di unita indipendenti. Metodo e assunzioni devono essere serializzati nel piano;
-non e ammesso scegliere a posteriori il metodo che produce il campione minore.
+Per clean actionable rate, `n_power` e il primo `n` per cui il test binomiale
+esatto unilaterale di `p >= 0.02` ha size non oltre `alpha_plan` e potenza almeno
+0.90 a `p = 0.01`; resta comunque il floor di 149 gruppi. Per falsi eventi/min,
+l'esposizione richiesta e il primo numero di minuti per cui il test Poisson
+esatto di `lambda >= 0.5` ha size non oltre `alpha_plan` e potenza almeno 0.90 a
+`lambda = 0.25`; restano comunque almeno 50 gruppi e 60 minuti eleggibili.
+
+Il tempo eleggibile e l'unione degli intervalli coperti da frame G1 validi nei
+segmenti `clean_for_action` con il tipo in `explicit_negative_types`. Silenzio,
+frame invalidi, warm-up, overlap e derivati duplicati non entrano nel
+denominatore. Ogni gruppo contribuisce al massimo due minuti; si pubblicano per
+gruppo minuti inclusi ed esclusi. Il gate usa sia il limite Poisson esatto sul
+totale `(false_events, eligible_minutes)` sia il limite bootstrap per gruppi al
+livello simultaneo `1 - alpha_plan` e richiede che entrambi siano non oltre
+0.5. Il report pubblica anche i CI 95% descrittivi. Con zero eventi il limite
+esatto simultaneo e `-log(alpha_plan) / eligible_minutes`, mai zero.
+
+Il risultato viene congelato in `benchmark_power_plan.json` con SHA-256 prima
+di aprire `final-test`. Se il corpus disponibile non raggiunge `n_required` o
+l'esposizione richiesta, la famiglia e NO-GO: non si riduce l'effetto, non si
+contano crop come gruppi e non si trasferiscono asset da altri ruoli. Tutti i
+risultati pubblicano supporto, intervallo di confidenza e numero di gruppi
+esclusi con motivo. Non e ammesso scegliere a posteriori il metodo che produce
+il campione minore.
 
 ## 12. Protocollo competitor
 
@@ -696,10 +840,14 @@ Gate obbligatori:
 7. **Anti-alias**: i toni ultrasonici a 96 kHz non producono componenti alias
    fra 20 e 20000 Hz oltre -80 dB rispetto al tono di ingresso.
 8. **Split**: zero overlap di group, SHA e parent fra tutti i ruoli; ogni
-   derivato eredita il ruolo del parent; nessun fallback.
+   derivato eredita il ruolo del parent; nessun fallback. Commitment errato,
+   reveal anticipato, ID rinominato, roster parziale, retry del salt o filtro
+   post-role devono fallire.
 9. **Evaluator**: fixture perfetta produce metriche perfette; prediction vuota,
    classe errata, frequenza errata, segno invertito e duplicati producono i
-   fallimenti attesi; permutare righe non cambia il report.
+   fallimenti attesi; permutare righe o duplicare un `evaluation_unit_id` non
+   cambia il report. Superficie anomaly mancante, score thresholded e zero
+   eventi con esposizione insufficiente devono fallire.
 10. **Ambiente**: sync del lock con hash, test completi e deep hash di tutte le
    fixture PASS.
 
@@ -714,8 +862,9 @@ finiti. Archivi ZIP/NPZ con timestamp non sono usati come prova byte-identica.
 
 Ordine obbligatorio:
 
-1. **G1a - contract artifacts**: JSON schema, griglia 120 bande, split roles,
-   schema di copertura calibration, schema del piano di potenza, generatori
+1. **G1a - contract artifacts**: JSON schema di manifest, admission batch,
+   annotazione, prediction e piano di potenza; griglia 120 bande, split roles,
+   commit-reveal, copertura calibration, mapping adapter v2-v3, generatori
    fixture e hash. Nessun frontend ancora.
 2. **G1b - canonical frontend**: resampler streaming, dual-resolution
    time-aligned, `V3FeatureFrame` Python e unit test.
@@ -745,10 +894,15 @@ G1 e NO-GO se si verifica uno solo dei seguenti casi:
 - sample-rate parity o streaming parity non raggiunti senza rilassare il gate;
 - LF e MAIN non condividono lo stesso timestamp;
 - uno split permette fallback, overlap o riassegnazione retroattiva;
-- calibration, development o final-test non raggiungono i supporti indipendenti
-  richiesti per una metrica usata come gate;
+- il preflight G1 accetta una fixture calibration, development o final-test che
+  non raggiunge supporto o esposizione richiesti. La disponibilita del corpus
+  reale viene invece verificata in G3/G4 e non blocca l'implementazione G1;
 - il piano di potenza usa file/crop come unita indipendenti, legge final-test o
   viene modificato dopo la sua apertura;
+- fit o metriche cambiano duplicando celle, segmenti o derivati nello stesso
+  gruppo;
+- un sistema puo omettere score anomaly pre-threshold senza invalidare lo
+  schema;
 - una metrica dipende dall'ordine dei file o usa lo split che calibra;
 - final-test viene letto per scegliere una decisione;
 - una dipendenza non e bloccata con hash;
