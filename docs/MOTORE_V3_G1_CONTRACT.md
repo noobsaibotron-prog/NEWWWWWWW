@@ -1,6 +1,6 @@
 # Motore v3 - Contratto G1 frontend e benchmark
 
-Stato: PROPOSTA IMMUTABILE PER COUNTER-CHECK. Questo documento non autorizza
+Stato: PROPOSTA IMMUTABILE PER COUNTER-CHECK, REVISIONE 2. Questo documento non autorizza
 ancora l'implementazione. G1 parte soltanto dopo il GO del reviewer sul commit
 che contiene esclusivamente questo file.
 
@@ -267,6 +267,8 @@ Quota attesa per strato: 55%, 10%, 10%, 10%, 15% nello stesso ordine. Le
 quote non autorizzano un corpus insufficiente: G3 deve avere per ogni profilo
 almeno 10 gruppi train, 3 validation, 3 calibration, 3 development-metric e 5
 final-test. Almeno il 40% del `final-test` complessivo deve essere elettronica.
+Questi sono floor generali di split, non sufficienti per calibrare o validare
+una famiglia: i supporti piu severi delle sezioni 10.4 e 11 prevalgono.
 
 ### 8.2 Identita e assegnazione
 
@@ -457,7 +459,157 @@ band_id)`, partizione con differenza di cardinalita al massimo uno, poi
 di `(confidence - target)**2`. Bin vuoti non vengono creati e supporto zero e
 `N/A`, mai PASS.
 
-## 11. Protocollo competitor
+### 10.4 Copertura minima per calibrazione e misura
+
+L'unita indipendente di supporto e sempre `group_id`. Celle, eventi, crop,
+derivati e asset multipli dello stesso gruppo aumentano il numero di esempi ma
+non il supporto indipendente. I conteggi vengono pubblicati prima di fittare
+qualunque calibratore. La stessa annotazione non puo essere usata come positivo
+e negativo per la stessa famiglia.
+
+La calibrazione globale e ammessa soltanto con questa copertura minima:
+
+| Famiglia | Positivi indipendenti | Negativi indipendenti | Copertura obbligatoria |
+|---|---:|---:|---|
+| Tonale | almeno 50 gruppi `global_actionable`, di cui almeno 20 con una cella actionable positiva e 20 con una negativa | almeno 50 gruppi `clean_for_action` | almeno 3 actionable e 3 clean per ciascuno dei sette profili |
+| Resonance | almeno 30 gruppi con evento GT actionable | almeno 50 gruppi senza evento GT della classe, di cui almeno 30 clean | positivi da almeno 3 `source_family`, almeno 5 gruppi ciascuna e nessuna oltre il 50%; negativi almeno 3 per profilo |
+| Harshness | almeno 30 gruppi con evento GT actionable | almeno 50 gruppi senza evento GT della classe, di cui almeno 30 clean | positivi da almeno 3 `source_family`, almeno 5 gruppi ciascuna e nessuna oltre il 50%; negativi almeno 3 per profilo |
+| Sibilance | almeno 30 gruppi con evento GT actionable | almeno 50 gruppi senza evento GT della classe, di cui almeno 30 clean | positivi da almeno 3 `source_family`, almeno 5 gruppi ciascuna e nessuna oltre il 50%; negativi almeno 3 per profilo |
+
+Un gruppo multi-label puo contribuire al supporto positivo di piu classi, ma
+una sola volta per classe. Un gruppo negativo per una classe puo contenere
+un'altra anomalia soltanto se l'annotazione esclude esplicitamente la classe in
+esame; l'assenza di annotazione non vale come negativo.
+
+I calibratori restano globali salvo prova contraria in G4. Una soglia o un
+calibratore specifico per profilo, dominio o sottogenere e vietato se quello
+strato non contiene almeno 30 gruppi positivi e 30 negativi nello split
+`calibration`. Se il supporto manca, la classe o lo strato e `N/A` e non puo
+contribuire a un GO; non si accorpano split e non si abbassano i minimi.
+
+Su `development-metric` e `final-test` il supporto minimo dipende dalla metrica:
+curve e coverage tonali richiedono almeno 30 gruppi actionable; clean actionable
+rate almeno 30 gruppi clean; ogni classe anomaly almeno 30 gruppi positivi e 50
+negativi. Si applicano inoltre i floor della sezione 11 e la sua power analysis.
+Supporto inferiore produce `N/A` e blocca ogni claim o gate che dipende da quella
+metrica. ECE/Brier possono essere riportati anche con supporto maggiore di zero,
+ma non valgono come prova di calibrazione finche questi minimi non sono
+raggiunti.
+
+### 10.5 Comparabilita delle baseline e semantica `N/A`
+
+Un sistema viene confrontato soltanto sulle superfici che produce realmente
+con lo stesso schema, oppure tramite un adapter congelato e controfirmato prima
+di aprire `development-metric`. L'assenza strutturale di curve tonali, eventi,
+frequenza o severity nel Motore v2 vale `N/A`, non zero, infinito o FAIL.
+
+`N/A` non entra in macro-medie, non soddisfa un gate e non dimostra un
+miglioramento. Le claim relative a v2 usano soltanto metriche omologhe o un
+surrogato preregistrato; le nuove capacita v3 vengono valutate in assoluto e
+contro la baseline deterministica G2. Se invece un candidato dichiara una
+superficie ma non emette una prediction valida, l'esito e fail-closed: FN,
+errore di schema o fallimento del candidato secondo il caso, mai `N/A`.
+
+Il gate G2 rispetto a v2 usa un solo adapter omologo, congelato in G1c, che
+proietta entrambi i sistemi su `problem_presence[ProblemType]` per segmento
+annotato. I tipi comuni sono esattamente gli otto ID canonici della sezione 9.2;
+`BoxyMidrange`, `Boominess` e `Thinness` corrispondono rispettivamente ai tipi
+pubblici `Boxyness`, `LowEndBoom` e `ThinSound` del runtime storico.
+
+Per v2 si esegue il frontend congelato G0 sull'asset intero con
+`window_step=16`; una finestra appartiene al segmento quando il suo centro
+fisico cade in `[segment_start_s, segment_end_s)`. Il tipo e presente quando
+almeno il 5% delle finestre assegnate supera la soglia della provenance; classi
+mascherate dalla stessa provenance restano mascherate. Un segmento senza
+finestre v2 e `N/A` soltanto per questo confronto omologo. Per v3 il tipo e
+presente quando almeno un bundle semantico o evento `actionable` dello stesso
+tipo interseca il segmento con IoU almeno 0.3.
+
+L'adapter calcola macro-F1 per gli otto tipi e false-positive group rate sui
+gruppi clean, senza inventare curve, frequenze o severity per v2. Si valutano
+separatamente tutti e tre i candidati G0 con i rispettivi model/provenance hash
+e threshold. Il riferimento conservativo usa il massimo macro-F1 ottenuto dai
+tre e il minimo false-positive group rate ottenuto dai tre, anche se provengono
+da seed diversi. Il GO G2 richiede macro-F1 almeno 10% relativo sopra quel
+massimo, oppure almeno +0.10 assoluto se il massimo v2 e inferiore a 0.10, e
+false-positive group rate non superiore al minimo v2. G1a serializza mapping,
+costanti e hash gia definiti qui; non puo sceglierli o modificarli.
+
+## 11. Matrice benchmark e potenza statistica
+
+### 11.1 Famiglie congelate
+
+Il benchmark non e un unico pool e non usa il numero di file come prova di
+indipendenza. Ogni asset appartiene a una o piu famiglie dichiarate nel
+manifest, ma il supporto statistico e sempre contato per `group_id`.
+
+| Famiglia | Contenuto | Metriche primarie | Copertura minima prima della power analysis |
+|---|---|---|---|
+| `tonal-controlled` | dry group-disjoint con 1-3 trasformazioni note, includendo boost, cut, shelf, bell e interazioni | RMSE/p95 della curva, miglioramento residuo, errore di segno | almeno 5 parent group per profilo; ogni regione tonale e direzione compare in almeno 10 gruppi |
+| `tonal-natural` | materiale reale clean e materiale reale con curva actionable annotata e adjudicata | RMSE/p95, coverage, clean actionable rate, severity | almeno 5 clean e 5 actionable group per profilo |
+| `anomaly-natural` | Resonance, Harshness e Sibilance reali con intervallo, banda e severity annotati | PR-AUC, F1, errore frequenziale/temporale, severity, falsi/min | almeno 30 positive group per classe e 50 negative group per classe |
+| `clean-safety` | materiale reale intenzionalmente corretto, incluso materiale colorato ma non problematico | clean actionable rate e falsi eventi/min | almeno 10 group per profilo; nessun negativo implicito da annotazione mancante |
+| `electronic-stratified` | vista trasversale delle quattro famiglie per techno, house, breakbeat e altri sottogeneri dichiarati | stesse metriche della famiglia madre, riportate per sottogenere | almeno il 40% del final-test complessivo; nessuna claim di sottogenere senza supporto determinato dalla power analysis |
+
+I derivati controlled ereditano il gruppo del dry e non moltiplicano il
+supporto. Il set `tonal-controlled` usa parent group sigillati e una griglia di
+parametri preregistrata. La partizione di holdout opera su celle del piano
+fattoriale `(sequenza trasformazioni, regione, direzione, gain, Q)`, non soltanto
+su seed o asset: nessuna cella final-test compare nel generatore di training e
+almeno una composizione multi-trasformazione completa e riservata al benchmark.
+`tonal-natural` e obbligatorio: il sintetico da solo non puo dimostrare
+trasferimento al reale.
+
+Il sotto-set competitor di G5/G8 e una selezione preregistrata dalle famiglie
+`tonal-natural`, `anomaly-natural` e `clean-safety`; non costituisce una sesta
+famiglia e non puo cambiare i loro conteggi dopo l'apertura.
+
+### 11.2 Piano di potenza preregistrato
+
+La numerosita finale di ogni famiglia e strato e:
+
+```text
+n_required = max(floor_contrattuale, n_power)
+```
+
+`n_power` viene stimato soltanto da un sottoinsieme pilot preregistrato di
+`development-metric`, mai da `final-test`, con unita di ricampionamento
+`group_id` e test paired quando i sistemi condividono la sorgente. Il pilot e
+marcato nel manifest e non viene usato per il punto-estimate del gate
+development dello stesso round. Alpha family-wise e 0.05, corretto Holm su
+tutti i gate primari dello stesso report di promozione, e la potenza minima e
+0.90. Il calcolo usa una simulazione Monte Carlo deterministica o una formula
+chiusa controverificata e registra seed, distribuzione osservata, effect size,
+test, numero di confronti e risultato.
+
+L'effetto minimo di interesse e preregistrato per metrica:
+
+- errore di curva comparabile: riduzione relativa almeno 10% rispetto alla
+  baseline pertinente, senza regressione clean;
+- macro-F1 o PR-AUC comparabile: aumento relativo almeno 10%, oppure +0.10
+  assoluto quando la baseline e inferiore a 0.10;
+- clean actionable rate: limite superiore unilaterale CI 95% inferiore al 2%;
+- falsi eventi/min: limite superiore unilaterale CI 95% non oltre 0.5;
+- parity e invariance: restano gate deterministici, non sono sostituiti da una
+  power analysis;
+- G8: numerosita ascoltatori e sorgenti resta determinata dal pilot G5 e dal
+  modello clusterizzato definito nel piano principale.
+
+Il risultato viene congelato in `benchmark_power_plan.json` con SHA-256 prima
+di aprire `final-test`. Se il corpus disponibile non raggiunge `n_required`, la
+famiglia e NO-GO: non si riduce l'effetto, non si contano crop come gruppi e non
+si trasferiscono asset da altri ruoli. Tutti i risultati pubblicano supporto,
+intervallo di confidenza e numero di gruppi esclusi con motivo.
+
+Per metriche continue si simula la distribuzione paired delle differenze per
+gruppo. Per rate binari si usa il modello binomiale al livello gruppo e si
+verifica anche il limite superiore esatto unilaterale. Per falsi eventi/minuto
+si ricampiona il vettore `(false_events, duration_minutes)` per gruppo: minuti o
+segmenti aggiuntivi dello stesso gruppo aumentano l'esposizione ma non il numero
+di unita indipendenti. Metodo e assunzioni devono essere serializzati nel piano;
+non e ammesso scegliere a posteriori il metodo che produce il campione minore.
+
+## 12. Protocollo competitor
 
 Il protocollo viene congelato in G1 ma usato per claim soltanto in G5/G8.
 
@@ -494,7 +646,7 @@ I render competitor final-test restano sigillati fino a G8. La non inferiorita
 umana resta G8; G1 verifica soltanto che il protocollo sia riproducibile e non
 contaminante.
 
-## 12. Fixture e gate G1
+## 13. Fixture e gate G1
 
 Le fixture sono generate da formule, non registrate a mano:
 
@@ -558,16 +710,17 @@ Gli artefatti numerici canonici sono array little-endian `.npy` senza oggetti
 e JSON UTF-8 con chiavi ordinate, separatori compatti, newline finale e float
 finiti. Archivi ZIP/NPZ con timestamp non sono usati come prova byte-identica.
 
-## 13. Implementazione e commit atomici dopo il GO
+## 14. Implementazione e commit atomici dopo il GO
 
 Ordine obbligatorio:
 
 1. **G1a - contract artifacts**: JSON schema, griglia 120 bande, split roles,
-   generatori fixture e hash. Nessun frontend ancora.
+   schema di copertura calibration, schema del piano di potenza, generatori
+   fixture e hash. Nessun frontend ancora.
 2. **G1b - canonical frontend**: resampler streaming, dual-resolution
    time-aligned, `V3FeatureFrame` Python e unit test.
-3. **G1c - evaluator**: parser fail-closed, matching, metriche, CI group-level e
-   fixture di errore.
+3. **G1c - evaluator**: parser fail-closed, matching, metriche, CI group-level,
+   adapter omologo v2-v3 e fixture di errore.
 4. **G1d - competitor protocol harness**: manifest/config/hash e verifica dei
    render; nessun render proprietario nel repository.
 5. **G1e - report**: esecuzione completa dei gate, hash degli output e tabella
@@ -585,13 +738,17 @@ git diff --name-only 2c88edad -- Source ml_v2 CMakeLists.txt Resources AIEQ-mac
 L'ultimo comando deve produrre output vuoto. I comandi specifici delle fixture
 saranno definiti da G1a e poi riportati senza abbreviazioni nel report.
 
-## 14. Stop condition e rollback
+## 15. Stop condition e rollback
 
 G1 e NO-GO se si verifica uno solo dei seguenti casi:
 
 - sample-rate parity o streaming parity non raggiunti senza rilassare il gate;
 - LF e MAIN non condividono lo stesso timestamp;
 - uno split permette fallback, overlap o riassegnazione retroattiva;
+- calibration, development o final-test non raggiungono i supporti indipendenti
+  richiesti per una metrica usata come gate;
+- il piano di potenza usa file/crop come unita indipendenti, legge final-test o
+  viene modificato dopo la sua apertura;
 - una metrica dipende dall'ordine dei file o usa lo split che calibra;
 - final-test viene letto per scegliere una decisione;
 - una dipendenza non e bloccata con hash;
@@ -600,7 +757,7 @@ G1 e NO-GO se si verifica uno solo dei seguenti casi:
 Rollback: si elimina il branch/commit G1 non promosso e si torna al commit G0
 `2c88edad`. Nessun altro branch richiede ripristino.
 
-## 15. Criterio di approvazione
+## 16. Criterio di approvazione
 
 Il reviewer deve verificare questo contratto su commit immutabile e restituire
 una sola lista consolidata. Il GO richiede:
@@ -609,6 +766,8 @@ una sola lista consolidata. Il GO richiede:
 - specifiche implementabili senza decisioni aperte nascoste;
 - nessun percorso di leakage o contaminazione del final-test;
 - metriche separate per bilanciamento tonale e anomalie dinamiche;
+- supporti calibration clean/positivi e benchmark group-level falsificabili;
+- baseline non omologhe trattate come `N/A`, mai come vittorie artificiali;
 - gate abbastanza severi da rendere falsificabili le claim successive;
 - diff del commit limitato a questo documento.
 
