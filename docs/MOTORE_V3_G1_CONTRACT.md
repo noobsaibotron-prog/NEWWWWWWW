@@ -1,6 +1,6 @@
 # Motore v3 - Contratto G1 frontend e benchmark
 
-Stato: PROPOSTA IMMUTABILE PER COUNTER-CHECK, REVISIONE 3. Questo documento non autorizza
+Stato: PROPOSTA IMMUTABILE PER COUNTER-CHECK, REVISIONE 4. Questo documento non autorizza
 ancora l'implementazione. G1 parte soltanto dopo il GO del reviewer sul commit
 che contiene esclusivamente questo file.
 
@@ -418,10 +418,23 @@ semantica, non inventa annotazioni reali.
 ### 9.3 Prediction record
 
 Ogni prediction usa `schema = "aieq-v3-prediction-1"` e contiene `asset_id`,
-`model_id`, hash del modello e del frontend contract, profilo, curva tonale a
-120 bande, confidence a 120 bande, `segment_start_s`, `segment_end_s`, bundle
-semantici e lista eventi. Ogni bundle ed evento porta confidence e
-`actionable`; l'evaluator non ricostruisce questi campi da una soglia nascosta.
+`model_id`, hash del modello e del frontend contract, `calibration_policy_id`,
+SHA-256 della policy, profilo, curva tonale a 120 bande, `tonal_score[120]`
+pre-calibrazione, `tonal_confidence[120]` calibrata, `segment_start_s`,
+`segment_end_s`, bundle semantici e lista eventi. Ogni bundle ed evento porta
+confidence e `actionable`.
+
+La policy usa `schema = "aieq-v3-calibration-policy-1"` e contiene hash di
+modello, frontend, calibration manifest e prediction schema; ID/versione,
+algoritmo e parametri completi dei calibratori tonal e anomaly;
+`tonal_band_thresholds[120]`, `semantic_type_thresholds[8]` e
+`anomaly_class_thresholds[3]`; versione dell'estrattore di candidati e regole
+deterministiche score-to-confidence, region-to-bundle e threshold-to-actionable.
+Ogni mapping score-to-confidence e monotono non decrescente e definito anche
+agli estremi zero e uno.
+Viene fittata soltanto su `calibration` dopo il freeze dei pesi e committata
+prima di aprire `development-metric`. Ogni modifica a calibratore, threshold o
+decision rule cambia SHA-256.
 
 Ogni prediction contiene anche `anomaly_score_ref` e
 `anomaly_severity_ref`, riferimenti con SHA-256 ad array little-endian float32
@@ -431,16 +444,17 @@ prima di threshold, hysteresis, top-k o veto. Frame/bande invalidi sono marcati
 da una mask separata e non possono essere omessi; una lista eventi senza queste
 superfici e schema invalido.
 
-L'evaluator deriva una lista completa di candidati prima della soglia. Per ogni
-classe prende i massimi locali positivi nel vicinato 3x3 tempo-banda: score
+L'evaluator applica prima la policy alla superficie score e deriva una lista
+completa di candidati dalla confidence calibrata, prima della soglia. Per ogni
+classe prende i massimi locali positivi nel vicinato 3x3 tempo-banda: confidence
 maggiore o uguale a tutti i vicini e maggiore di almeno un vicino esterno al
 proprio plateau connesso. Per ogni plateau conserva soltanto la coordinata
 frame/banda minima.
-In ordine decrescente di score, ogni massimo genera la componente 8-neighbour
-che lo contiene nella mask `score >= 0.5 * peak`; massimi successivi la cui
+In ordine decrescente di confidence, ogni massimo genera la componente 8-neighbour
+che lo contiene nella mask `confidence >= 0.5 * peak`; massimi successivi la cui
 componente contiene gia un massimo conservato vengono soppressi. Ogni componente
 produce onset/offset dai frame estremi, banda dagli estremi di banda, centro
-come media geometrica dei centri pesata dagli score, confidence uguale al peak
+come media geometrica dei centri pesata dalle confidence, confidence uguale al peak
 e severity come media pesata della superficie severity.
 
 Gli eventi pubblicati alla soglia operativa sono esattamente i candidati con
@@ -448,6 +462,10 @@ confidence calibrata almeno pari alla soglia; devono coincidere con questa
 estrazione o la prediction e invalida. La PR-AUC ordina l'intera lista
 pre-threshold per `(confidence desc, frame, band)` e ripete il matching ai suoi
 cut-point. Nessun top-k, floor di confidence o veto puo nascondere un candidato.
+L'evaluator carica la policy per hash, ricalcola confidence, bundle, eventi e
+flag `actionable` dai valori pre-calibrazione e rifiuta qualunque differenza con
+la prediction. Una policy assente, non committata o fittata su un ruolo diverso
+da `calibration` invalida il report.
 
 ## 10. Evaluator deterministico
 
@@ -592,9 +610,9 @@ contribuire a un GO; non si accorpano split e non si abbassano i minimi.
 
 Su `development-metric` e `final-test` il supporto minimo dipende dalla metrica:
 curve e coverage tonali richiedono almeno 30 gruppi actionable; clean actionable
-rate almeno 149 gruppi clean; ogni classe anomaly almeno 30 gruppi positivi, 50
-negativi e l'esposizione clean della sezione 11. Si applicano inoltre i floor
-della sezione 11 e la sua power analysis.
+rate almeno 149 gruppi clean; ogni classe anomaly almeno 30 gruppi positivi e
+l'intero pool clean-safety da almeno 149 gruppi/minuti della sezione 11. Si
+applicano inoltre i floor della sezione 11 e la sua power analysis.
 Supporto inferiore produce `N/A` e blocca ogni claim o gate che dipende da quella
 metrica. ECE/Brier possono essere riportati anche con supporto maggiore di zero,
 ma non valgono come prova di calibrazione finche questi minimi non sono
@@ -658,8 +676,8 @@ manifest, ma il supporto statistico e sempre contato per `group_id`.
 |---|---|---|---|
 | `tonal-controlled` | dry group-disjoint con 1-3 trasformazioni note, includendo boost, cut, shelf, bell e interazioni | RMSE/p95 della curva, miglioramento residuo, errore di segno | almeno 5 parent group per profilo; ogni regione tonale e direzione compare in almeno 10 gruppi |
 | `tonal-natural` | materiale reale clean e materiale reale con curva actionable annotata e adjudicata | RMSE/p95, coverage, clean actionable rate, severity | almeno 5 clean e 5 actionable group per profilo |
-| `anomaly-natural` | Resonance, Harshness e Sibilance reali con intervallo, banda e severity annotati | PR-AUC, F1, errore frequenziale/temporale, severity, falsi/min | almeno 30 positive group e 50 negative group per classe, piu almeno 60 minuti clean eleggibili |
-| `clean-safety` | materiale reale intenzionalmente corretto, incluso materiale colorato ma non problematico | clean actionable rate e falsi eventi/min | almeno 149 group totali e 10 per profilo, piu almeno 60 minuti clean eleggibili; nessun negativo implicito |
+| `anomaly-natural` | Resonance, Harshness e Sibilance reali con intervallo, banda e severity annotati | PR-AUC, F1, errore frequenziale/temporale, severity, falsi/min | almeno 30 positive group per classe; i negativi usano il pool clean-safety completo |
+| `clean-safety` | materiale reale intenzionalmente corretto, incluso materiale colorato ma non problematico | clean actionable rate e falsi eventi/min | almeno 149 group totali e 10 per profilo, ciascuno con almeno un minuto clean eleggibile per i tre tipi anomaly; nessun negativo implicito |
 | `electronic-stratified` | vista trasversale delle quattro famiglie per techno, house, breakbeat e altri sottogeneri dichiarati | stesse metriche della famiglia madre, riportate per sottogenere | almeno il 40% del final-test complessivo; nessuna claim di sottogenere senza supporto determinato dalla power analysis |
 
 I derivati controlled ereditano il gruppo del dry e non moltiplicano il
@@ -694,7 +712,9 @@ n_required = max(floor_contrattuale, n_power)
 sistemi condividono la sorgente. Il pilot non viene usato per il point-estimate
 del gate development dello stesso round e deve avere almeno 30 gruppi paired
 per una metrica continua/macro e almeno 15 gruppi GT positivi per ogni classe
-anomaly. Supporto inferiore richiede nuovi batch, non una diversa selezione.
+anomaly; per stimare l'overdispersione false-events servono almeno 30 gruppi
+clean con un minuto eleggibile per classe. Supporto inferiore richiede nuovi
+batch, non una diversa selezione.
 
 La decisione finale controlla alpha family-wise 0.05 con Holm su tutti i gate
 primari dello stesso report. Per dimensionare il campione si usa invece il
@@ -713,7 +733,8 @@ L'effetto minimo di interesse e preregistrato per metrica:
 - clean actionable rate: ipotesi nulla `p >= 0.02`, alternativa di progetto
   `p = 0.01`, limite superiore esatto unilaterale sotto 0.02;
 - falsi eventi/min: ipotesi nulla `lambda >= 0.5`, alternativa di progetto
-  `lambda = 0.25`, limite superiore Poisson esatto non oltre 0.5;
+  `lambda = 0.25`, limite superiore Poisson esatto e limite cluster-bootstrap
+  entrambi non oltre 0.5;
 - parity e invariance: restano gate deterministici, non sono sostituiti da una
   power analysis;
 - G8: numerosita ascoltatori e sorgenti resta determinata dal pilot G5 e dal
@@ -730,20 +751,41 @@ metrica con SHA-256 del suo ID canonico.
 
 Per clean actionable rate, `n_power` e il primo `n` per cui il test binomiale
 esatto unilaterale di `p >= 0.02` ha size non oltre `alpha_plan` e potenza almeno
-0.90 a `p = 0.01`; resta comunque il floor di 149 gruppi. Per falsi eventi/min,
-l'esposizione richiesta e il primo numero di minuti per cui il test Poisson
-esatto di `lambda >= 0.5` ha size non oltre `alpha_plan` e potenza almeno 0.90 a
-`lambda = 0.25`; restano comunque almeno 50 gruppi e 60 minuti eleggibili.
+0.90 a `p = 0.01`; resta comunque il floor di 149 gruppi.
 
-Il tempo eleggibile e l'unione degli intervalli coperti da frame G1 validi nei
-segmenti `clean_for_action` con il tipo in `explicit_negative_types`. Silenzio,
-frame invalidi, warm-up, overlap e derivati duplicati non entrano nel
-denominatore. Ogni gruppo contribuisce al massimo due minuti; si pubblicano per
-gruppo minuti inclusi ed esclusi. Il gate usa sia il limite Poisson esatto sul
-totale `(false_events, eligible_minutes)` sia il limite bootstrap per gruppi al
-livello simultaneo `1 - alpha_plan` e richiede che entrambi siano non oltre
-0.5. Il report pubblica anche i CI 95% descrittivi. Con zero eventi il limite
-esatto simultaneo e `-log(alpha_plan) / eligible_minutes`, mai zero.
+Il tempo clean eleggibile e l'unione degli intervalli coperti da frame G1 validi
+nei segmenti `clean_for_action` con il tipo in `explicit_negative_types`.
+Silenzio, frame invalidi, warm-up, overlap e derivati duplicati non entrano nel
+denominatore. Per ciascun gruppo e classe si usa esattamente il primo minuto
+eleggibile in ordine temporale canonico; un gruppo con meno di un minuto non
+entra nel pool false-events. Quindi `n` gruppi producono esattamente `n` minuti
+indipendenti e nessun asset lungo domina l'esposizione.
+
+La potenza false-events e congiunta. Dal pilot si costruisce per ogni classe il
+vettore di conteggi sui minuti standard. Si stima soltanto l'overdispersione con
+
+```text
+mu_pilot = mean(counts)
+alpha_nb = max(0, (sample_variance(counts) - mu_pilot)
+                  / max(mu_pilot**2, 1e-12))
+```
+
+`sample_variance` usa il denominatore `n - 1`. Si fissa sempre la media
+alternativa a `lambda = 0.25`, senza usare la media osservata. Per ogni
+`n >= 149`, 5000 simulazioni PCG64 estraggono `n` rate di
+gruppo da `Gamma(shape=1/alpha_nb, scale=0.25*alpha_nb)` e poi conteggi
+`Poisson(rate)`; con `alpha_nb = 0` usano direttamente `Poisson(0.25)`. Ogni
+simulazione calcola il limite Poisson esatto e, con 2000 resample interni dei
+gruppi, il quantile `1 - alpha_plan` della media dei conteggi da un minuto.
+Entrambi i limiti sono quindi espressi in eventi/minuto. Il seed interno e
+derivato dai primi 8 byte di
+`SHA256(metric_id + NUL + outer_simulation_index)`. Si sceglie il primo `n` per
+cui almeno il 90% delle simulazioni soddisfa entrambi i limiti `<= 0.5`. Il gate
+finale usa il limite esatto e 10000 resample per gruppi con il seed evaluator
+sul pool reale. Con zero eventi il limite Poisson simultaneo e
+`-log(alpha_plan) / n`, mai zero. La dimensione del pool clean-safety e il
+massimo fra 149, `n_power` binomiale e i tre `n_power` false-events; lo stesso
+pool deve soddisfare tutti e quattro i gate.
 
 Il risultato viene congelato in `benchmark_power_plan.json` con SHA-256 prima
 di aprire `final-test`. Se il corpus disponibile non raggiunge `n_required` o
@@ -847,7 +889,9 @@ Gate obbligatori:
    classe errata, frequenza errata, segno invertito e duplicati producono i
    fallimenti attesi; permutare righe o duplicare un `evaluation_unit_id` non
    cambia il report. Superficie anomaly mancante, score thresholded e zero
-   eventi con esposizione insufficiente devono fallire.
+   eventi con esposizione insufficiente devono fallire. Policy assente/hash
+   errato, threshold mutato o actionable non riproducibile devono fallire; le
+   fixture power devono provare che il gate congiunto non usa la sola Poisson.
 10. **Ambiente**: sync del lock con hash, test completi e deep hash di tutte le
    fixture PASS.
 
@@ -863,9 +907,9 @@ finiti. Archivi ZIP/NPZ con timestamp non sono usati come prova byte-identica.
 Ordine obbligatorio:
 
 1. **G1a - contract artifacts**: JSON schema di manifest, admission batch,
-   annotazione, prediction e piano di potenza; griglia 120 bande, split roles,
-   commit-reveal, copertura calibration, mapping adapter v2-v3, generatori
-   fixture e hash. Nessun frontend ancora.
+   annotazione, prediction, calibration policy e piano di potenza; griglia 120
+   bande, split roles, commit-reveal, copertura calibration, mapping adapter
+   v2-v3, generatori fixture e hash. Nessun frontend ancora.
 2. **G1b - canonical frontend**: resampler streaming, dual-resolution
    time-aligned, `V3FeatureFrame` Python e unit test.
 3. **G1c - evaluator**: parser fail-closed, matching, metriche, CI group-level,
@@ -903,6 +947,10 @@ G1 e NO-GO se si verifica uno solo dei seguenti casi:
   gruppo;
 - un sistema puo omettere score anomaly pre-threshold senza invalidare lo
   schema;
+- calibratore, soglia o decision policy possono cambiare senza cambiare hash o
+  senza invalidare prediction e report;
+- il dimensionamento false-events garantisce potenza soltanto per uno dei due
+  limiti richiesti dal gate congiunto;
 - una metrica dipende dall'ordine dei file o usa lo split che calibra;
 - final-test viene letto per scegliere una decisione;
 - una dipendenza non e bloccata con hash;
