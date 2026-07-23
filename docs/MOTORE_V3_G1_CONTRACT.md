@@ -4,6 +4,14 @@ Stato: PROPOSTA IMMUTABILE PER COUNTER-CHECK, REVISIONE 4. Questo documento non 
 ancora l'implementazione. G1 parte soltanto dopo il GO del reviewer sul commit
 che contiene esclusivamente questo file.
 
+Allineamento all'audit 2026-07-23: **nulla di questo contratto e implementato**.
+Non esistono frontend V3, modello V3, runtime V3, UI V3 o build Ableton V3;
+nessun training V3 e autorizzato; `AIEQ_ENABLE_MOTORE_V3` non esiste ancora nel
+codice e verra introdotto OFF di default in una futura fase di integrazione.
+G0 e PASS soltanto come freeze riproducibile della baseline NEGATIVA (il CONTROL
+Motore v2/A4b resta NO-GO). **Tutti i gate elencati qui sotto sono criteri
+FUTURI da soddisfare: nessuno e PASS, e nessuno va rilassato.**
+
 ## 1. Scopo e risultato atteso
 
 G1 congela il sistema di misura usato da tutte le fasi successive. Deve
@@ -99,10 +107,16 @@ I soli profili condizionanti sono i sette esposti oggi dall'APVTS:
 Questo e anche l'ordine canonico degli ID `0..6`; stringa e ID devono
 concordare o il record viene rifiutato.
 
-L'enum interno `SourceProfile::Techno` usa il conditioning `edm`. Techno,
-house, breakbeat e altri sottogeneri restano metadati di benchmark separati e
-obbligatori quando noti; non aggiungono un parametro host e non cambiano il
-numero dei profili.
+Stato VERIFICATO sul codice corrente: queste sette scelte sono esattamente
+quelle esposte dal parametro host APVTS (`Source/PluginProcessor.cpp:651`), e il
+parametro clampa gli ID a `0..6` (`Source/PluginProcessor.cpp:1849`).
+L'enum interno `AIEngine::SourceProfile` contiene ANCHE `Techno` con soglie
+proprie (`Source/AI/AIEngine.h:103-113`), ma il clamp lo rende irraggiungibile
+dall'host: **oggi nessun conditioning `Techno -> edm` avviene nel codice**.
+La mappatura `Techno -> edm` e una FUTURA policy dell'adapter V3 per i metadata
+di benchmark. Techno, house, breakbeat e altri sottogeneri restano metadati di
+benchmark separati e obbligatori quando noti; non aggiungono un parametro host e
+non cambiano il numero dei profili.
 
 ## 5. Ricampionamento canonico
 

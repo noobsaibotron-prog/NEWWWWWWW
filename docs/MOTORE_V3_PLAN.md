@@ -6,6 +6,25 @@ Questo e il piano canonico del laboratorio Motore v3. Congela obiettivo,
 interfacce di prodotto, governance e criteri di successo; l'architettura ML
 viene scelta soltanto dopo benchmark, baseline DSP e corpus controfirmati.
 
+### Stato fattuale (audit 2026-07-23) - leggere PRIMA del resto
+
+Il piano descrive un progetto da costruire. Ad oggi, su questo branch:
+
+- **G0: PASS**, ma esclusivamente come freeze RIPRODUCIBILE della baseline
+  NEGATIVA. Non promuove alcun modello e non autorizza l'implementazione G1.
+- **G1: ancora PROPOSTA / contratto** in attesa di counter-check. Nessuna riga
+  di G1 e implementata.
+- **Nessuna implementazione V3 esiste**: nessun frontend V3, nessun modello V3,
+  nessun runtime V3, nessuna UI V3, nessuna build Ableton V3.
+- **Nessun training V3 e autorizzato.**
+- Il CONTROL Motore v2/A4b resta **NO-GO**; nessun modello e promosso.
+- Il branch contiene oggi soltanto documenti, ambiente e report G0.
+- Il laboratorio prominence v2 vive su **branch separati** e NON e integrato in
+  questo branch (vedi sezione "Stato prominence v2").
+
+Tutte le sezioni seguenti descrivono quindi criteri e interfacce FUTURI. Ogni
+gate elencato piu sotto e un criterio da soddisfare, mai un risultato ottenuto.
+
 Obiettivo finale: non inferiorita misurata rispetto a smart:EQ 4 sul
 bilanciamento tonale e rispetto a soothe, Equator e Gullfoss sulle anomalie
 dinamiche, con particolare peso a techno, house e breakbeat.
@@ -59,8 +78,15 @@ line, plugin installato, APVTS, preset, `Resources/Models/ml_weights.bin`,
   prima dell'estrazione delle feature.
 - Congelare 120 bande logaritmiche con centri fisici 20 Hz-20 kHz e durate
   temporali identiche a ogni sample rate.
-- Usare i sette profili utente esistenti; `SourceProfile::Techno` viene
-  condizionato come EDM senza modificare APVTS.
+- Usare i sette profili utente esistenti. Stato VERIFICATO sul codice corrente:
+  il parametro host APVTS espone esattamente sette scelte - `Generic`, `Vocals`,
+  `Drums`, `Bass`, `Synth`, `Master`, `EDM` (`Source/PluginProcessor.cpp:651`);
+  `AIEngine::SourceProfile` possiede anche `Techno` con soglie proprie
+  (`Source/AI/AIEngine.h:103-113`), ma il parametro host lo rende irraggiungibile
+  perche clampa gli ID a `0..6` (`Source/PluginProcessor.cpp:1849`).
+  La mappatura `Techno -> edm` e quindi una FUTURA policy dell'adapter V3 per i
+  metadata di benchmark, NON il comportamento del codice attuale; APVTS resta
+  invariato e non si aggiungono parametri host.
 - Congelare split globalmente group-disjoint: `train`, `validation`,
   `calibration`, `development-metric`, `final-test`.
 - Congelare evaluator, schema annotazioni, metriche e protocollo dei render
@@ -132,9 +158,15 @@ line, plugin installato, APVTS, preset, `Resources/Models/ml_weights.bin`,
   undo/redo restano invariati.
 - La diagnosi valuta la risposta prevista dopo EQ manuale e semantica, evitando
   di duplicare intenzioni come Warmth o Air.
-- `AIEQ_ENABLE_MOTORE_V3` resta OFF nelle build normali. Nell'EXP, modello
-  valido e `aiEnabled` attivano i suggerimenti; `dynamicCorrections` controlla
-  soltanto l'audio dinamico.
+- `AIEQ_ENABLE_MOTORE_V3` **non esiste nel codice corrente** (verificato: zero
+  occorrenze in `Source/` e `CMakeLists.txt`). VERRA INTRODOTTO in una futura
+  fase di integrazione, **OFF di default** nelle build normali. Il comportamento
+  qui descritto e il contratto previsto per quel flag futuro, non lo stato
+  attuale: nell'EXP, modello valido e `aiEnabled` attiveranno i suggerimenti;
+  `dynamicCorrections` controllera soltanto l'audio dinamico. Anche i tipi
+  pubblici `V3FeatureFrame`, `V3AnalysisSnapshot`, `V3TonalSuggestion`,
+  `V3DynamicEvent` e `V3SuggestionBundle` sono nomi di contratto FUTURI: oggi
+  esistono solo in questi documenti, non nel codice.
 - Modello assente, corrotto o incompatibile: fallback completo alle euristiche
   correnti. Nessun nuovo parametro host.
 
@@ -145,6 +177,37 @@ line, plugin installato, APVTS, preset, `Resources/Models/ml_weights.bin`,
 - Installazione soltanto come `AI Equalizer Pro v3 EXP`; il plugin originale
   non viene toccato.
 - Smoke locali su M1 Pro; cloud autorizzato per tranche soltanto dopo G2/G3.
-- Closed beta stimata in 4-6 mesi; prova credibile di parita top-tier in
-  6-12 mesi.
+- **STIME DI PROGRAMMA NON VALIDATE, non garanzie**: closed beta indicativamente
+  4-6 mesi; prova credibile di parita top-tier indicativamente 6-12 mesi. Sono
+  proiezioni di pianificazione, prive di evidenza sperimentale a supporto e
+  soggette a revisione a ogni gate; non vanno citate come impegni.
 - Release production NO-GO fino a G8 verde e zero P0 aperti.
+
+## Stato prominence v2 (laboratorio separato, NON integrato qui)
+
+Registrato per evitare che risultati di un altro branch vengano letti come
+progressi del V3. Il laboratorio prominence vive su branch separati
+(`feature/prominence-engine-phase1`, `feature/prominence-p0-p2`) e **non e
+integrato in `feature/motore-v3-offline`**.
+
+- **P0: PASS**, ma esclusivamente come probe DETERMINISTICO e riproducibile
+  (due run bit-identiche). Non e una prova di qualita del motore.
+- **P1: NO-GO** contro i criteri congelati, con questi numeri:
+  - 100 Hz: monotonicita FALSA; dinamica `0.000395` < `0.03`;
+    separazione picco/valle `0.000876` < `0.05`;
+  - 2000 Hz: dinamica `0.019241` < `0.03`;
+    separazione picco/valle `0.008332` < `0.05`.
+- **P2 e P2-bis sono guardie** del valutatore e dell'hash di default: proteggono
+  da errori di misura e da regressioni silenziose, NON sono prove di qualita.
+- In questo branch **non e autorizzato nulla** di V3b, V4a, V4b o P0-bis.
+- Il futuro V3 **non eredita automaticamente** l'encoding legacy invertito ne le
+  sue scelte di finestra: la rappresentazione V3 va definita nei suoi contratti,
+  non ereditata dal laboratorio v2.
+
+Debt confermati del vecchio laboratorio prominence, che **non devono diventare
+semantiche del futuro V3**:
+
+1. Python applica `smoothingOctaves` dalla config, mentre il C++ prepara le
+   `windowSizes` con il default;
+2. `maxWidthBands` nel detector e in realta misurato in **bin FFT grezzi**, non
+   in bande.
