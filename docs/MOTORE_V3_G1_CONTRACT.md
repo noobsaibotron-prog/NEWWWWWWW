@@ -1,8 +1,12 @@
 # Motore v3 - Contratto G1 frontend e benchmark
 
-Stato: PROPOSTA IMMUTABILE PER COUNTER-CHECK, REVISIONE 4. Questo documento non autorizza
+Stato: PROPOSTA IMMUTABILE PER COUNTER-CHECK, REVISIONE 5. Questo documento non autorizza
 ancora l'implementazione. G1 parte soltanto dopo il GO del reviewer sul commit
 che contiene esclusivamente questo file.
+
+REVISIONE 5 incorpora il counter-check fattuale del 2026-07-23 (allineamento
+qui sotto). Nessun criterio, gate o contenuto tecnico e stato modificato
+rispetto alla REVISIONE 4: la revisione registra soltanto lo stato verificato.
 
 Allineamento all'audit 2026-07-23: **nulla di questo contratto e implementato**.
 Non esistono frontend V3, modello V3, runtime V3, UI V3 o build Ableton V3;
