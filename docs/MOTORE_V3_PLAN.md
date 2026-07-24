@@ -45,6 +45,8 @@ line, plugin installato, APVTS, preset, `Resources/Models/ml_weights.bin`,
   metriche, gate, stop condition e rollback.
 - Ogni fase produce commit atomici e report numerico. La fase successiva non
   parte senza counter-check e GO esplicito.
+- GO G1a — reviewer (Marco) su `6d254d0a` → fase aperta (2026-07-25).
+  T1 codice: `94dc9991`.
 - Dati, cache e modelli restano in `~/aieq_data/motore_v3/`; nel repository
   entrano soltanto codice, manifest, lock, hash, contratti e report.
 - Massimo tre round completi di training. Non si compensano fallimenti offline
