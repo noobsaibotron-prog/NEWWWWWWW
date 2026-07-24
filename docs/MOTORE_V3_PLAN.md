@@ -6,24 +6,30 @@ Questo e il piano canonico del laboratorio Motore v3. Congela obiettivo,
 interfacce di prodotto, governance e criteri di successo; l'architettura ML
 viene scelta soltanto dopo benchmark, baseline DSP e corpus controfirmati.
 
-### Stato fattuale (audit 2026-07-23) - leggere PRIMA del resto
+### Stato fattuale (aggiornato 2026-07-25) - leggere PRIMA del resto
 
-Il piano descrive un progetto da costruire. Ad oggi, su questo branch:
+Il piano descrive un progetto a contratti. Ad oggi, su questo branch:
 
-- **G0: PASS**, ma esclusivamente come freeze RIPRODUCIBILE della baseline
-  NEGATIVA. Non promuove alcun modello e non autorizza l'implementazione G1.
-- **G1: ancora PROPOSTA / contratto** in attesa di counter-check. Nessuna riga
-  di G1 e implementata.
-- **Nessuna implementazione V3 esiste**: nessun frontend V3, nessun modello V3,
-  nessun runtime V3, nessuna UI V3, nessuna build Ableton V3.
-- **Nessun training V3 e autorizzato.**
+- **G0: PASS**, freeze RIPRODUCIBILE della baseline NEGATIVA. Non promuove
+  alcun modello.
+- **G1 contratto**: freeze document-only `6d254d0a` (REV6 consolidata +
+  micro-amend). Header/§16 di quel commit restano storicamente "non e GO";
+  lo **stato di fase vivente** e nelle righe Governance sotto.
+- **GO G1a**: aperto (2026-07-25) dal reviewer (Marco) sul freeze `6d254d0a`.
+- **G1a codice in git**: T1 `94dc9991` (primitives/split/coverage) + T2
+  `1908fc45` (JSON schemas, validators fail-closed, fixtures, test). G1a DoD
+  §14.1 non e dichiarato chiuso finche counter-check esplicito.
+- **Ancora assente**: frontend G1b+, modello V3, runtime V3, UI V3, build
+  Ableton V3, training V3. Ship-line (`Source/`, CMake, `Resources/`,
+  `AIEQ-mac`) invariata vs freeze G0 `2c88edad`.
+- **Nessun training V3 e autorizzato** oltre i limiti di fase.
 - Il CONTROL Motore v2/A4b resta **NO-GO**; nessun modello e promosso.
-- Il branch contiene oggi soltanto documenti, ambiente e report G0.
 - Il laboratorio prominence v2 vive su **branch separati** e NON e integrato in
   questo branch (vedi sezione "Stato prominence v2").
 
-Tutte le sezioni seguenti descrivono quindi criteri e interfacce FUTURI. Ogni
-gate elencato piu sotto e un criterio da soddisfare, mai un risultato ottenuto.
+Le sezioni G1b–G8 seguenti restano criteri FUTURI finche la fase corrente non
+riceve GO di chiusura. Non confondere "fase G1a aperta" con "G1 PASS" o
+"release-safe".
 
 Obiettivo finale: non inferiorita misurata rispetto a smart:EQ 4 sul
 bilanciamento tonale e rispetto a soothe, Equator e Gullfoss sulle anomalie
@@ -46,7 +52,8 @@ line, plugin installato, APVTS, preset, `Resources/Models/ml_weights.bin`,
 - Ogni fase produce commit atomici e report numerico. La fase successiva non
   parte senza counter-check e GO esplicito.
 - GO G1a — reviewer (Marco) su `6d254d0a` → fase aperta (2026-07-25).
-  T1 codice: `94dc9991`.
+  T1 codice: `94dc9991`. T2 codice: `1908fc45` (tip G1a al 2026-07-25;
+  eventuali hardening WT su validate/test non sono tip finche non committati).
 - Dati, cache e modelli restano in `~/aieq_data/motore_v3/`; nel repository
   entrano soltanto codice, manifest, lock, hash, contratti e report.
 - Massimo tre round completi di training. Non si compensano fallimenti offline
