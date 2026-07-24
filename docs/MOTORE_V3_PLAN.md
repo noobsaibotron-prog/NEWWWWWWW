@@ -16,9 +16,24 @@ Il piano descrive un progetto a contratti. Ad oggi, su questo branch:
   micro-amend). Header/§16 di quel commit restano storicamente "non e GO";
   lo **stato di fase vivente** e nelle righe Governance sotto.
 - **GO G1a**: aperto (2026-07-25) dal reviewer (Marco) sul freeze `6d254d0a`.
-- **G1a codice in git**: T1 `94dc9991` (primitives/split/coverage) + T2
-  `1908fc45` (JSON schemas, validators fail-closed, fixtures, test). G1a DoD
-  §14.1 non e dichiarato chiuso finche counter-check esplicito.
+- **G1a codice in git** (tip `3bfd8aaf`): T1 `94dc9991` (primitives/split/
+  coverage) + T2 `1908fc45` / T2.1 `918b3dde` (JSON schemas, validators,
+  golden canonical) + T3 `9aa19295` (adapter v2↔v3 hashed,
+  `adapter_mapping_sha256` =
+  `6a978c01bcccb85fb7db17ae3c66ee55ebceee82f47dca792e5a2f3a5fb9828f`) +
+  T4 `3bfd8aaf` (metrology lock §13 committed;
+  `metrology_lock_sha256` =
+  `d2c35ccc12643f2520c8a50d2e27fd3631216bb9a8ce63a34193412e74d1c10e`).
+- **G1a T4**: committed at `3bfd8aaf` — not WIP, not working-tree-only.
+  **Stop rule T4**: last lock harden unless CRITICAL (vacuous PASS /
+  final-test leak); HIGH/MED → durable debt list (below). **T5** e
+  chiusura DoD §14.1 ancora aperti.
+- G1a DoD §14.1 **non** e dichiarato chiuso; nessun claim di G1 PASS.
+- **Debt list (durable, post-T4)**:
+  1. `contract_doc_sha256` → T5 SHA256SUMS. Precomputed (optional PLAN
+     note; contract @ `6d254d0a`, verified identical in WT):
+     `6a6f6d35bbf3fc65d7a01e54620bf4f9649ea77d60c2b3d9e7ea0b72f7f49a86`.
+     Tripwire against silent contract edits — not a G1a close criterion.
 - **Ancora assente**: frontend G1b+, modello V3, runtime V3, UI V3, build
   Ableton V3, training V3. Ship-line (`Source/`, CMake, `Resources/`,
   `AIEQ-mac`) invariata vs freeze G0 `2c88edad`.
@@ -52,8 +67,12 @@ line, plugin installato, APVTS, preset, `Resources/Models/ml_weights.bin`,
 - Ogni fase produce commit atomici e report numerico. La fase successiva non
   parte senza counter-check e GO esplicito.
 - GO G1a — reviewer (Marco) su `6d254d0a` → fase aperta (2026-07-25).
-  T1 codice: `94dc9991`. T2 codice: `1908fc45` (tip G1a al 2026-07-25;
-  eventuali hardening WT su validate/test non sono tip finche non committati).
+  T1: `94dc9991`. T2: `1908fc45`. T2.1: `918b3dde`. T3: `9aa19295`.
+  T4: `3bfd8aaf` (tip G1a; metrology lock committed;
+  `metrology_lock_sha256` =
+  `d2c35ccc12643f2520c8a50d2e27fd3631216bb9a8ce63a34193412e74d1c10e`).
+  Stop rule T4: last lock harden unless CRITICAL (vacuous PASS /
+  final-test leak); HIGH/MED → debt list. T5 aperto; DoD §14.1 non chiuso.
 - Dati, cache e modelli restano in `~/aieq_data/motore_v3/`; nel repository
   entrano soltanto codice, manifest, lock, hash, contratti e report.
 - Massimo tre round completi di training. Non si compensano fallimenti offline
