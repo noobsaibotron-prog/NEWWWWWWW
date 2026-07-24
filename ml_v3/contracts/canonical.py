@@ -37,7 +37,9 @@ __all__ = [
     "sha256_of_obj",
     "sha256_of_file",
     "is_sha256_hex",
+    "validate_sha256sums_relpath",
     "sha256sums_text",
+    "parse_sha256sums",
 ]
 
 _SEPARATORS = (",", ":")
@@ -149,12 +151,122 @@ def is_sha256_hex(value: object) -> bool:
     return all(character in "0123456789abcdef" for character in value)
 
 
+def validate_sha256sums_relpath(path: object) -> str:
+    """Validate a relative POSIX path for a SHA256SUMS entry (fail-closed).
+
+    Rejects: empty; NUL; CR/LF; other control chars (U+0001–U+001F, U+007F);
+    leading slash; backslash; ``..`` segments; leading/trailing ASCII spaces;
+    empty path segments (``//`` or trailing ``/``).
+    """
+    if not isinstance(path, str):
+        raise CanonicalError(
+            f"SHA256SUMS path must be str, got {type(path).__name__}")
+    if path == "":
+        raise CanonicalError("SHA256SUMS path is empty")
+    if "\0" in path:
+        raise CanonicalError("SHA256SUMS path contains NUL")
+    if "\n" in path or "\r" in path:
+        raise CanonicalError("SHA256SUMS path contains newline/CR")
+    for character in path:
+        code = ord(character)
+        if code < 32 or code == 127:
+            raise CanonicalError(
+                f"SHA256SUMS path contains control char U+{code:04X}")
+    if path.startswith("/") or path.startswith("\\"):
+        raise CanonicalError(
+            f"SHA256SUMS path must be relative (no leading slash): {path!r}")
+    if "\\" in path:
+        raise CanonicalError(
+            f"SHA256SUMS path must be POSIX (no backslash): {path!r}")
+    if path != path.strip(" "):
+        raise CanonicalError(
+            f"SHA256SUMS path has leading/trailing spaces: {path!r}")
+    segments = path.split("/")
+    if any(segment == "" for segment in segments):
+        raise CanonicalError(
+            f"SHA256SUMS path has empty segment: {path!r}")
+    if any(segment == ".." for segment in segments):
+        raise CanonicalError(
+            f"SHA256SUMS path contains '..' segment: {path!r}")
+    return path
+
+
 def sha256sums_text(entries: dict[str, str]) -> str:
-    """Render a SHA256SUMS body sorted lexicographically by POSIX path."""
+    """Render a SHA256SUMS body sorted lexicographically by POSIX path.
+
+    Format per line: ``<64 lowercase hex><two spaces><relpath>\\n``.
+    Paths are validated via :func:`validate_sha256sums_relpath`. Digests must
+    be lowercase 64-char hex. Duplicate path keys are impossible in a dict;
+    callers must not rely on last-wins merge of colliding validated paths.
+    """
+    if not isinstance(entries, dict):
+        raise CanonicalError(
+            f"SHA256SUMS entries must be dict, got {type(entries).__name__}")
+    if not entries:
+        raise CanonicalError("SHA256SUMS entries must be non-empty")
     lines = []
     for relative_path in sorted(entries):
+        validated = validate_sha256sums_relpath(relative_path)
         digest = entries[relative_path]
         if not is_sha256_hex(digest):
-            raise CanonicalError(f"invalid digest for {relative_path}: {digest!r}")
-        lines.append(f"{digest}  {relative_path}\n")
+            raise CanonicalError(
+                f"invalid digest for {validated}: {digest!r}")
+        lines.append(f"{digest}  {validated}\n")
     return "".join(lines)
+
+
+def parse_sha256sums(text: object) -> dict[str, str]:
+    """Parse a SHA256SUMS body into ``{relpath: digest}`` (fail-closed).
+
+    Requires GNU text-mode lines (``digest`` + two spaces + path + ``\\n``).
+    Rejects empty body, blank lines, ``#`` comments, binary-mode ``*``
+    markers, duplicate paths, and any path that fails
+    :func:`validate_sha256sums_relpath`. Round-trip guarantee:
+    ``parse_sha256sums(sha256sums_text(x)) == x`` for valid ``x``.
+    """
+    if not isinstance(text, str):
+        raise CanonicalError(
+            f"SHA256SUMS text must be str, got {type(text).__name__}")
+    if text == "":
+        raise CanonicalError("SHA256SUMS text is empty")
+    if not text.endswith("\n"):
+        raise CanonicalError("SHA256SUMS text must end with a trailing newline")
+    if "\0" in text:
+        raise CanonicalError("SHA256SUMS text contains NUL")
+    entries: dict[str, str] = {}
+    lines = text.split("\n")
+    # Final split element after trailing newline is the empty string.
+    if lines[-1] != "":
+        raise CanonicalError("SHA256SUMS text must end with a trailing newline")
+    body_lines = lines[:-1]
+    if not body_lines:
+        raise CanonicalError("SHA256SUMS text has no entries")
+    for index, line in enumerate(body_lines, start=1):
+        if line == "":
+            raise CanonicalError(f"SHA256SUMS blank line at {index}")
+        if "\r" in line:
+            raise CanonicalError(f"SHA256SUMS CR at line {index}")
+        if line.startswith("#"):
+            raise CanonicalError(
+                f"SHA256SUMS comments are forbidden at line {index}")
+        # Require exactly two ASCII spaces between digest and path.
+        separator = "  "
+        if separator not in line:
+            raise CanonicalError(
+                f"SHA256SUMS line {index} missing two-space separator")
+        digest, relative_path = line.split(separator, 1)
+        if "  " in relative_path or relative_path.startswith(" "):
+            raise CanonicalError(
+                f"SHA256SUMS line {index} has ambiguous spacing in path")
+        if relative_path.startswith("*"):
+            raise CanonicalError(
+                f"SHA256SUMS binary-mode marker forbidden at line {index}")
+        if not is_sha256_hex(digest):
+            raise CanonicalError(
+                f"SHA256SUMS line {index} has invalid digest: {digest!r}")
+        validated = validate_sha256sums_relpath(relative_path)
+        if validated in entries:
+            raise CanonicalError(
+                f"SHA256SUMS duplicate path at line {index}: {validated!r}")
+        entries[validated] = digest
+    return entries
