@@ -92,7 +92,7 @@ line, plugin installato, APVTS, preset, `Resources/Models/ml_weights.bin`,
 - Congelare evaluator, schema annotazioni, metriche e protocollo dei render
   competitor prima di qualunque training.
 - Gate: determinismo, overlap zero, gain invariance e parity 44.1/48/96 kHz
-  entro 0.25 dB.
+  con max |Δ| ≤ 0.25 dB.
 
 ## G2 - Baseline deterministica
 

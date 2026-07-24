@@ -1,12 +1,34 @@
 # Motore v3 - Contratto G1 frontend e benchmark
 
-Stato: PROPOSTA IMMUTABILE PER COUNTER-CHECK, REVISIONE 5. Questo documento non autorizza
-ancora l'implementazione. G1 parte soltanto dopo il GO del reviewer sul commit
-che contiene esclusivamente questo file.
+Stato: PROPOSTA IMMUTABILE PER COUNTER-CHECK, REVISIONE 6 CONSOLIDATA
++ micro-amend (`source_snapshot_sha256`, grammatica `group_id`, scope
+append-only) — 2026-07-24. Document-only; non autorizza ancora
+l'implementazione ne G1a. G1 parte soltanto dopo il GO del reviewer sul
+commit document-only che chiude questo emendamento; nessun criterio e
+stato rilassato.
 
 REVISIONE 5 incorpora il counter-check fattuale del 2026-07-23 (allineamento
 qui sotto). Nessun criterio, gate o contenuto tecnico e stato modificato
 rispetto alla REVISIONE 4: la revisione registra soltanto lo stato verificato.
+
+REVISIONE 6 (metrology, working tree precedente) chiudeva le falle di misura
+CRITICAL (porzioni stazionarie/warm-up/coda; dominio max |Δ| 0.25 dB;
+schedule streaming). REVISIONE 6 CONSOLIDATA aggiunge: (a) residuali
+metrology H1–H3 (warm-up additivo, activity mask unione cross-SR,
+bit-identita obbligatoria sulla piattaforma di gate); (b) §8-minimo
+byte-level pinnato (roster exact-key, `admission_batch_id` hex-64 in HMAC
+di ruolo e pilot, soglie intere, identita pack, NUL vietato). Nessun gate
+e stato allentato; nessuna soglia numerica e stata alzata.
+
+**Fuori scope di questo emendamento (§8-pieno, rimandato):** ledger
+append-only a cinque checkpoint, `immutable_artifact_ref`, ownership-ledger,
+i quattordici schemi estesi oltre il minimo G1a. Non vanno aggiunti qui.
+
+Questo emendamento document-only **non** autorizza G1a ne alcun codice
+finche il reviewer non emette GO sul commit che lo contiene (al piu
+accompagnato dalla sola riga G1 di parity in `docs/MOTORE_V3_PLAN.md` per
+coerenza letterale max |Δ|). I path `ml_v3/contracts/` e ogni altro file G1
+di codice restano fuori da quel commit.
 
 Allineamento all'audit 2026-07-23: **nulla di questo contratto e implementato**.
 Non esistono frontend V3, modello V3, runtime V3, UI V3 o build Ableton V3;
@@ -87,9 +109,10 @@ repository entrano solo fixture piccole, manifest, contratti, hash e report.
 
 Il frontend accetta array float32 mono o stereo interleaving-independent ai
 sample rate host comuni `44100`, `48000`, `88200`, `96000`, `176400` e
-`192000` Hz. I gate obbligatori G1 coprono 44100, 48000 e 96000 Hz; gli altri
-tre sono supportati e report-only fino a un gate dedicato successivo. Ogni
-altro sample rate viene rifiutato, non reinterpretato.
+`192000` Hz. I gate obbligatori G1 coprono 44100, 48000 e 96000 Hz;
+`88200`, `176400` e `192000` Hz restano sperimentali / report-only fino a un
+gate dedicato successivo e non possono sostenere un PASS di sample-rate
+parity. Ogni altro sample rate viene rifiutato, non reinterpretato.
 
 Regole fail-closed:
 
@@ -288,7 +311,7 @@ final-test. Almeno il 40% del `final-test` complessivo deve essere elettronica.
 Questi sono floor generali di split, non sufficienti per calibrare o validare
 una famiglia: i supporti piu severi delle sezioni 10.4 e 11 prevalgono.
 
-### 8.2 Identita e assegnazione
+### 8.2 Identita e assegnazione (§8-minimo byte-level pinnato)
 
 `group_id` rappresenta la piu piccola unita conservativa che racchiude tutte
 le dipendenze note: composizione, registrazione/sessione o artista; se questa
@@ -297,46 +320,153 @@ fra sorgenti diverse vengono riconciliati prima dell'ammissione. Ogni gruppo ha
 metadati immutabili `group_primary_profile`, `group_primary_domain` e
 `source_family`. Stem, mix, versioni, crop, augmentation, injection, render
 processati e render competitor ereditano lo stesso gruppo del dry originale.
+Mapping di alias, upstream snapshot e regole di inclusione sono versionati
+prima dello split; rinominare un gruppo o cambiare profilo/dominio dopo
+l'assegnazione invalida il batch.
 
-`group_id` non e testo libero. Se la sorgente pubblica un ID stabile di
-composizione, sessione o artista, l'ID canonico e
-`source_family + ":" + upstream_id`. Se manca, l'intero pack forma un solo
-gruppo con ID `source_family + ":pack:" + SHA256(sorted_audio_sha256)`. Mapping
-di alias, upstream snapshot e regole di inclusione sono versionati prima dello
-split; rinominare un gruppo o cambiare profilo/dominio dopo l'assegnazione
-invalida il batch.
+#### 8.2.1 Canonical JSON (hashabile)
 
-Regole:
+Ogni documento usato per `admission_batch_id`, commitment o artefatti di split
+segue le stesse regole degli artefatti numerici di §13: UTF-8 senza BOM;
+chiavi ordinate per code point; separatori esatti `,` e `:`; newline LF finale
+singola **inclusa nell'hash**; `allow_nan=false`; in lettura rifiuto di
+NaN/Infinity/overflow e chiavi duplicate. Si ordinano solo i set dichiarati
+order-independent; liste semantiche (curve, score, griglia) restano in ordine.
+
+#### 8.2.2 Identita `group_id` (non testo libero)
+
+- Con upstream stabile: `source_family + ":" + upstream_id`.
+- Senza upstream: `source_family + ":pack:" + SHA256(pack_bytes)`, dove
+  `pack_bytes` e la concatenazione, per ogni digest SHA-256 **lowercase**
+  ordinato per byte ASCII, di `(64 caratteri ASCII + LF)`. Nessun altro
+  serializzatore e ammesso. La sequenza `:pack:` e **riservata** alla sola
+  forma di fallback generata dal contratto; un `upstream_id` non deve
+  produrre ne imitare quella forma.
+- Il `group_id` dichiarato deve coincidere con quello ricostruito.
+  `upstream_id` e pack entrambi presenti, oppure entrambi assenti quando
+  servirebbe l'altro → FAIL.
+- U+0000 (NUL) e **vietato** in ogni componente di identita o messaggio HMAC
+  (`source_snapshot_id`, `group_id`, `group_primary_domain`, `source_family`,
+  `upstream_id`, alias, e la stringa `admission_batch_id`): rifiuto **prima**
+  di costruire il MAC. Inoltre `:` e **vietato** in `source_family` e in
+  `upstream_id` (oltre al NUL gia vietato).
+
+#### 8.2.3 Roster pre-split
+
+Envelope exact-key, schema `"aieq-v3-admission-roster-1"`:
+
+```text
+{
+  schema,
+  source_snapshot_id,
+  source_snapshot_sha256,
+  groups: [
+    { group_id, group_primary_profile, group_primary_domain, source_family }
+  ]
+}
+```
+
+`groups` ordinati per byte UTF-8 di `group_id`; `additionalProperties`
+vietato; il roster **non** porta ruoli ne flag pilot.
+
+`source_snapshot_sha256` = SHA-256 **lowercase hex** (64 caratteri ASCII) di
+`canonical_bytes(source_identity_index)`, con
+`source_identity_index.schema == "aieq-v3-source-identity-index-1"` e byte
+canonici secondo §8.2.1. Nessun altro digest, serializzazione o SHA
+free-form e ammesso per quel campo.
+
+`admission_batch_id` = SHA-256 **lowercase hex** (64 caratteri ASCII) dei
+byte canonici del roster, **newline finale inclusa**.
+
+#### 8.2.4 Commit-reveal
+
+Prima di vedere il roster il reviewer genera 32 byte raw `salt` e committa
+
+```text
+commitment = SHA256(b"aieq-v3-split-salt-v1" + 0x00 + salt)
+```
+
+Il curatore materializza e committa il roster completo di tutti i gruppi
+eleggibili della source snapshot, in ordine canonico, senza ruoli; soltanto
+allora il reviewer rivela `salt` e il tool verifica il commitment. Salt con
+lunghezza diversa da 32 byte, commitment errato, reveal anticipato o retry
+del salt → FAIL.
+
+#### 8.2.5 Ruolo (HMAC, interi esatti)
+
+`admission_batch_id` entra nell'HMAC come **esattamente i 64 byte ASCII
+lowercase dell'hex digest**, **mai** i 32 byte raw. Questa scelta e
+obbligatoria: la codifica raw-32 vs hex-64 cambia circa il 63.4% dei ruoli.
+
+Messaggio:
+
+```text
+HMAC-SHA256(salt,
+  b"aieq-v3-role-v1" + NUL
+  + admission_batch_id(hex-ASCII) + NUL
+  + group_primary_profile + NUL
+  + group_primary_domain + NUL
+  + source_family + NUL
+  + group_id)
+```
+
+Sia `value` i primi 8 byte del digest, unsigned big-endian. Confronto
+**intero esatto** (nessun float):
+
+- `train` se `value * 20 < 11 * 2^64`;
+- `validation` se `value * 20 < 13 * 2^64`;
+- `calibration` se `value * 20 < 15 * 2^64`;
+- `development-metric` se `value * 20 < 17 * 2^64`;
+- altrimenti `final-test`.
+
+(Equivalente alle quote dichiarate 55/10/10/10/15% senza arrotondamento
+floating-point.)
+
+#### 8.2.6 Pilot
+
+```text
+HMAC-SHA256(salt,
+  b"aieq-v3-pilot-v1" + NUL
+  + admission_batch_id(hex-ASCII) + NUL
+  + group_id)
+```
+
+`admission_batch_id` entra come i **stessi 64 byte ASCII hex** del punto 8.2.5
+(identico; mai raw-32). Sia `value` tutti i 32 byte unsigned big-endian.
+`development_pilot = (role == "development-metric" AND value * 4 < 2^256)`.
+Fuori da `development-metric` e sempre false. Il pilot e group-disjoint dal
+punto-estimate development dello stesso round; se non raggiunge i supporti
+richiesti si ammettono nuovi batch, non si cambia la soglia 0.25
+(equivalente intero sopra).
+
+#### 8.2.7 Invarianti e ammissione
 
 - nessun fallback legacy: ogni gruppo e assegnato esplicitamente;
-- nessun gruppo o SHA audio puo comparire in due ruoli;
+- un `group_id` e un SHA audio in esattamente un ruolo;
+- parent e ogni derivato condividono ruolo e `group_id` del parent; parent
+  esistente salvo root esplicito; niente cicli parent;
+- `asset_id` e `relative_path` unici nel manifest;
 - near-duplicate detection e obbligatoria prima di G3, ma non sostituisce
   l'identita di gruppo;
-- ogni admission batch usa un protocollo commit-reveal: prima di vedere il
-  roster il reviewer genera 32 byte casuali `salt` e committa
-  `SHA256("aieq-v3-split-salt-v1" + NUL + salt)`; il curatore materializza e
-  committa il roster completo di tutti i gruppi eleggibili della source
-  snapshot, in ordine canonico, senza ruoli; soltanto allora il reviewer rivela
-  `salt` e il tool verifica il commitment;
-- `admission_batch_id` e lo SHA-256 dei byte canonici del roster pre-split. Il
-  ruolo usa i primi 8 byte unsigned big-endian di
-  `HMAC-SHA256(salt, "aieq-v3-role-v1" + NUL + admission_batch_id + NUL +
-  group_primary_profile + NUL + group_primary_domain + NUL + source_family +
-  NUL + group_id)`, divisi per `2**64`, con intervalli `[0,.55)`, `[.55,.65)`,
-  `[.65,.75)`, `[.75,.85)`, `[.85,1)` nell'ordine dichiarato;
-- un batch rivelato non puo essere filtrato dopo aver visto i ruoli: viene
-  ammesso interamente oppure resta registrato come rifiutato soltanto per una
-  regola fail-closed preregistrata e verificabile senza leggere i ruoli; i suoi
-  gruppi non possono rientrare sotto un altro ID o batch;
+- un batch rivelato non puo essere filtrato/riassegnato dopo aver visto i
+  ruoli: ammesso interamente oppure rifiutato solo per regola fail-closed
+  preregistrata verificabile senza leggere i ruoli; i suoi gruppi non
+  rientrano sotto un altro ID o batch;
 - strato di verifica minimo: `(group_primary_profile, group_primary_domain,
   source_family)`; il preflight pubblica conteggi per strato e si ferma se i
   minimi per profilo non sono raggiunti;
-- roster, commitment, reveal, batch e assegnazioni sono append-only; tentativi
-  multipli, salt riutilizzati, subset di source snapshot o metadati mutati
-  bloccano il preflight;
+- roster, commitment, reveal, batch e assegnazioni materializzati sono
+  immutabili e coerenti **intra-batch** nel senso di questo §8-minimo
+  (niente rewrite silenzioso degli artefatti gia materializzati dello stesso
+  batch); la detection/enforcement cross-batch di retry pregressi, riuso del
+  salt, cancellazione di history o ri-ammissione dopo tentativi precedenti
+  appartiene a **§8-pieno** (ledger persistente) e **non** e una proprieta
+  dimostrata da G1a-minimo;
 - un gruppo multi-dominio riceve un solo ruolo globale;
 - una sorgente ammessa da v2 viene riammessa esplicitamente nel contratto v3;
-  non eredita il fallback A4b.
+  non eredita il fallback A4b;
+- input malformato → reject, mai reinterpretazione;
+- `final-test` mai usato per scegliere regole, feature o soglie.
 
 Audio e annotazioni `final-test` vivono sotto una root separata. I loader di
 training, validation, calibration e development rifiutano quel ruolo anche se
@@ -364,12 +494,15 @@ license_class, license_url, attribution, ledger_id
 `benchmark_families` e una lista ordinata senza duplicati presa esclusivamente
 da `tonal-controlled`, `tonal-natural`, `anomaly-natural`, `clean-safety` ed
 `electronic-stratified`. `development_pilot` e booleano, puo essere vero
-soltanto nello split `development-metric` ed e assegnato dopo lo split con
-`HMAC-SHA256(salt, "aieq-v3-pilot-v1" + NUL + admission_batch_id + NUL +
-group_id)`, interpretato unsigned big-endian e diviso per `2**256`, minore di
-0.25. Il pilot e group-disjoint dal punto-estimate
+soltanto nello split `development-metric` ed e assegnato dopo lo split come in
+§8.2.6: `HMAC-SHA256(salt, b"aieq-v3-pilot-v1" + NUL +
+admission_batch_id(hex-ASCII) + NUL + group_id)`, con `admission_batch_id`
+codificato come **64 byte ASCII hex** (identico al MAC di ruolo; mai raw-32),
+`value` = digest intero unsigned big-endian a 32 byte, e
+`development_pilot` vero solo se `role == "development-metric"` e
+`value * 4 < 2^256`. Il pilot e group-disjoint dal punto-estimate
 development dello stesso round; se non raggiunge i supporti richiesti si
-ammettono nuovi batch, non si cambia la soglia 0.25.
+ammettono nuovi batch, non si cambia la soglia equivalente a 0.25.
 
 La membership benchmark viene congelata dopo l'adjudication ma prima di
 eseguire qualunque candidato sul ruolo. Dipende soltanto da provenance e
@@ -869,14 +1002,75 @@ Le fixture sono generate da formule, non registrate a mano:
 
 Ogni segnale continuo viene renderizzato direttamente a 44.1, 48 e 96 kHz;
 non si crea una variante ricampionando un'altra variante. I confronti usano
-frame con timestamp fisico comune, dopo warm-up, e sole celle attive sopra il
-floor dichiarato.
+frame con timestamp fisico comune, dopo warm-up e prima della coda congelati
+come sotto, e sole celle attive secondo il predicato di attivita di gate 4.
 
-La parity spettrale usa le porzioni stazionarie di multitone, sweep e rumore,
-escludendo soltanto warm-up e coda dichiarati nel manifest. Transient burst e
-risonanza smorzata non vengono esclusi: hanno un gate separato su onset, picco
-e decadimento, per evitare che un arrotondamento frazionario venga nascosto in
-un confronto dB non omologo.
+### 13.1 Warm-up, coda e porzioni stazionarie (fail-closed)
+
+Warm-up e coda **non** sono parametri liberi del manifest post-generazione.
+Sono formule chiuse, congelate in G1a e hashed nel lock; il manifest puo solo
+ripetere i valori derivati dalle formule. Modificare warm-up/coda dopo la
+generazione delle fixture per restringere la finestra di confronto e FAIL.
+
+Con hop canonico `H = 1024`, `fs_c = 48000`, lunghezza minima LF
+`N_LF = 8192` e `resampler_group_delay_seconds` come in §5:
+
+```text
+warm_up_seconds = resampler_group_delay_seconds + N_LF / fs_c + K_wu * H / fs_c
+coda_seconds = K_coda * H / fs_c
+```
+
+con `K_wu = 4` e `K_coda = 4`. La somma e **additiva** (non un `max` fra i
+due rami): `N_LF / fs_c` porta al primo frame LF-capable e `K_wu * H / fs_c`
+esclude **ulteriori** quattro hop oltre quel punto, cosi shape, prominence e
+delta non confrontano il bordo in cui la storia e azzerata e la fusione dual-
+resolution e appena diventata disponibile. `K_coda = 4` simmetrizza il
+trailing edge senza padding finale (§4.1). I campioni esclusi sono quelli con
+`source_time < warm_up_seconds` oppure
+`source_time > T_asset - coda_seconds`, dove `T_asset` e la durata fisica
+dell'asset alla griglia `source_time`.
+
+Per i confronti cross-SR (44.1 / 48 / 96 kHz) la finestra utile e
+l'**intersezione** dei segmenti utili dopo warm-up e prima della coda su
+ciascun rate (equivalente a usare il massimo dei warm_up e il massimo delle
+code sulla stessa `source_time`); confrontare tratti non comuni e FAIL.
+
+**Porzione stazionaria** (multitone e rumore): e l'intero segmento utile dopo
+warm-up e prima della coda (**modalita (a)**, default obbligatorio per i gate
+di sample-rate parity su multitone e rumore). Non e ammesso un sottoinsieme
+post-hoc. In alternativa (**modalita (b)**), e soltanto se preregistrata in
+G1a e hashed nel lock **e** dichiarata diagnostica / non usata per chiudere
+il gate 4 di parity, una collezione di finestre che soddisfano tutte:
+
+- durata almeno `T_min = 8 * H / fs_c` (otto hop);
+- predicato di stabilita preregistrato: varianza della `mid_psd_db` media
+  sulle 120 bande, calcolata hop-per-hop nella finestra, `<= 1.0 dB^2`, e
+  max |Δ| hop-to-hop della stessa media `<= 0.5 dB`.
+
+La scelta fra (a) segmento utile intero e (b) collezione di finestre e
+fissata in G1a prima della generazione e hashed; non si cambia modalita dopo
+aver visto un FAIL. Per chiudere il gate 4 su multitone/rumore vale solo (a).
+Tutte le finestre della collezione preregistrata in (b) entrano nel max |Δ|
+diagnostico; omettere una finestra fallita e FAIL. Se nessuna finestra
+soddisfa il predicato, il report diagnostico e FAIL (non si allarga `T_min`
+ne si alza la soglia di varianza dopo aver visto i numeri).
+
+**Sweep log**: il gate di parity non usa "porzioni stazionarie" libere. Usa
+esclusivamente la griglia di checkpoint preregistrata in G1a (hashed), con
+almeno i centri critici di §13 (45, 60, 80, 250, 1000, 3500, 8000, 16000,
+20000 Hz) piu gli estremi 20 e 20000 Hz del path; per ciascun checkpoint si
+confronta il frame il cui `source_time` e piu vicino all'istante in cui lo
+sweep attraversa quella frequenza, entro al piu un hop. Se nessun frame cade
+nel raggio di un hop (`min |source_time - t_cross| > H / fs_c`) → FAIL
+(checkpoint missing). Nessun sottoinsieme libero dei checkpoint e ammesso:
+manca un checkpoint o uno fallisce → FAIL.
+
+Transient burst e risonanza smorzata restano fuori dal confronto dB di
+parity spettrale: hanno il gate separato su onset, picco e decadimento gia
+previsto al punto 4, per evitare che un arrotondamento frazionario venga
+nascosto in un confronto dB non omologo.
+
+### 13.2 Gate obbligatori
 
 Gate obbligatori:
 
@@ -884,13 +1078,59 @@ Gate obbligatori:
    forme esatte.
 2. **Determinismo**: due processi puliti producono artefatti byte-identici
    sulla stessa piattaforma e stesso lock.
-3. **Streaming**: chunk casuali e input monolitico producono gli stessi frame,
-   max delta `1e-6`.
-4. **Sample-rate parity**: rispetto al render 48 kHz, max delta assoluto sulle
-   feature dB attive nelle porzioni spettrali dichiarate a 44.1 e 96 kHz
-   `<= 0.25 dB`; timestamp entro un campione canonico. Sui transienti: onset e
-   frame di picco entro un campione canonico e tempo di decadimento entro un
-   hop, senza confronto ottenuto spostando manualmente i frame.
+3. **Streaming ≡ offline**: l'equivalenza non si dimostra con "chunk casuali"
+   ad hoc. G1a congela e hasha nel lock:
+   - seed PRNG fisso `PCG64(20260719)` (stesso seed dell'evaluator §10);
+   - insieme minimo di schedule di chunk size (campioni host di input):
+     `1`, `63`, `1024`, `4095`, `8192`, `8193`, piu una schedule geometrica
+     casuale `floor(2 ** U)` con `U ~ Uniform[0, 14)` estratta dal PRNG
+     preregistrato, di lunghezza almeno 32 chunk, ripetuta identica su ogni
+     asset del set di gate.
+   Per ogni schedule, l'input a chunk e l'input monolitico offline sullo
+   stesso lock/piattaforma devono produrre la stessa sequenza di
+   `V3FeatureFrame`: tutti i campi float32 del frame (§7), i timestamp
+   razionali (`source_time_num`/`source_time_den`, `frame_end_sample`,
+   `frame_index`) e i flag `mid_valid`/`side_valid`/`valid` (e il motivo
+   enumerato). Obbligatori inoltre: (a) concatenazione multi-asset con reset
+   esplicito della storia `delta_db` al confine asset; (b) silenzio
+   intercalato fra asset; (c) identita streaming-vs-offline sullo stesso
+   lock e piattaforma. Preferenza e regola di gate sulla **piattaforma di
+   gate G1** (OS, arch, stack/numpy dichiarati e hashed nel lock del report):
+   artefatti canonici **byte-identici** fra offline e streaming; la
+   bit-identita float e **obbligatoria** su quella piattaforma. La tolleranza
+   max |Δ| assoluto `<= 1e-6` su ogni float32 (con timestamp razionali
+   identici e bit dei flag `valid` identici) e ammessa **solo** per
+   piattaforme secondarie **preregistrate** nel lock G1a, resta report-only
+   e **non** chiude il gate G1. Dichiarare ad hoc "piattaforma non
+   bit-identical" senza allowlist preregistrata → FAIL.
+4. **Sample-rate parity**: rispetto al render 48 kHz, su 44.1 e 96 kHz, e
+   sulle porzioni definite in §13.1,
+   `max_i |x_i(sr) - x_i(48k)| <= 0.25 dB` dove `x` scorrono **ogni**
+   elemento del dominio dB dichiarato:
+   `mid_psd_db[120]`, `side_psd_db[120]`, `mid_shape_db[120]`,
+   `side_shape_db[120]`, `mid_prominence_db[120]`,
+   `side_prominence_db[120]`, e gli scalari `mid_level_dbfs` /
+   `side_level_dbfs` quando il rispettivo canale e valido.
+   Predicato di attivita (nessuna maschera post-hoc): una cella di PSD e
+   attiva sse `max(psd_db_ref, psd_db_sr) > -120` (unione: strettamente sopra
+   il floor `1e-12` / clamp di §6.1 sul riferimento 48 kHz **oppure** sul
+   render sotto test). Cosi un artefatto presente solo a 44.1/96 kHz non
+   scompare dal max |Δ|. Shape e prominence della stessa banda ereditano
+   l'attivita della PSD del medesimo canale; i vettori di un canale con
+   `*_valid == false` restano ignorati come in §7. Questo predicato e del
+   solo gate SR; i criteri −100 dBFS/Hz di §10 evaluator restano invariati
+   (gate diversi).
+   **Una sola cella attiva fuori soglia → FAIL dell'intero gate.** Non si
+   sostituisce il max con media, p95, RMSE o sottoinsieme di bande scelto
+   dopo aver visto gli errori. `mid_delta_db` / `side_delta_db` **non**
+   entrano in questo gate 0.25 dB (il delta e un derivato temporale gia
+   coperto da gain invariance `<= 0.05 dB` e dall'identita streaming≡offline);
+   includerli nel max SR sarebbe un dominio diverso e non li si usa per
+   mascherare un fallimento su PSD/shape/prominence. Timestamp entro un
+   campione canonico. Sui transienti: onset e frame di picco entro un
+   campione canonico e tempo di decadimento entro un hop, senza confronto
+   ottenuto spostando manualmente i frame. I sample rate 88.2 / 176.4 /
+   192 kHz restano sperimentali (§4.1) e non possono chiudere questo gate.
 5. **Gain invariance**: a -12, -6, +6 e +12 dB senza clipping, shape,
    prominence e delta hanno max delta `<= 0.05 dB`; PSD e level traslano del
    gain applicato con errore `<= 0.05 dB`.
@@ -913,12 +1153,18 @@ Gate obbligatori:
 10. **Ambiente**: sync del lock con hash, test completi e deep hash di tutte le
    fixture PASS.
 
-La soglia 0.25 dB e hard. Non si sostituisce con una media o un p95 per
-nascondere una banda fuori contratto.
+La soglia 0.25 dB e hard sul **max** assoluto del dominio dichiarato al
+punto 4. Non si sostituisce con una media o un p95 per nascondere una banda
+fuori contratto.
 
 Gli artefatti numerici canonici sono array little-endian `.npy` senza oggetti
-e JSON UTF-8 con chiavi ordinate, separatori compatti, newline finale e float
-finiti. Archivi ZIP/NPZ con timestamp non sono usati come prova byte-identica.
+e JSON UTF-8 **senza BOM**, con chiavi ordinate per code point Unicode,
+separatori esatti `,` e `:` (niente spazi), newline LF finale **singola
+inclusa nell'hash**, `allow_nan=false` / soli float finiti. In lettura si
+rifiutano token `NaN`/`Infinity`/`-Infinity`, overflow tipo `1e400` e chiavi
+oggetto duplicate. Si ordinano **solo** i set dichiarati order-independent;
+curve, score e griglia 120 bande restano nell'ordine semantico. Archivi
+ZIP/NPZ con timestamp non sono usati come prova byte-identica.
 
 ## 14. Implementazione e commit atomici dopo il GO
 
@@ -989,6 +1235,11 @@ una sola lista consolidata. Il GO richiede:
 - supporti calibration clean/positivi e benchmark group-level falsificabili;
 - baseline non omologhe trattate come `N/A`, mai come vittorie artificiali;
 - gate abbastanza severi da rendere falsificabili le claim successive;
-- diff del commit limitato a questo documento.
+- diff del commit limitato a questo documento e, se presente per coerenza
+  letterale del max |Δ|, alla sola riga G1 di parity in
+  `docs/MOTORE_V3_PLAN.md`;
+- nessun path `ml_v3/contracts/`, frontend, fixture, test harness o altro
+  codice G1 nello stesso commit document-only.
 
 Fino a quel GO: nessun file G1 di codice, fixture o ambiente viene creato.
+Questa REVISIONE 6 CONSOLIDATA + micro-amend non costituisce GO a G1a.
