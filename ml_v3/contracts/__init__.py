@@ -9,5 +9,16 @@ Authority: MOTORE_V3_G1_CONTRACT REVISIONE 6 CONSOLIDATA + micro-amend
 @ 6d254d0a. Draft modules here are migrated to that freeze.
 """
 from .constants import CONTRACT_REVISION, SCHEMA_IDS
+from .schemas import SCHEMA_REGISTRY, schema_for, schema_ids_t2
+from .validate import SchemaError, validate, validate_schema_id
 
-__all__ = ["CONTRACT_REVISION", "SCHEMA_IDS"]
+__all__ = [
+    "CONTRACT_REVISION",
+    "SCHEMA_IDS",
+    "SCHEMA_REGISTRY",
+    "SchemaError",
+    "schema_for",
+    "schema_ids_t2",
+    "validate",
+    "validate_schema_id",
+]
