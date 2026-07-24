@@ -5,7 +5,11 @@ import copy
 import unittest
 from pathlib import Path
 
-from ml_v3.contracts.canonical import loads_strict, write_canonical
+from ml_v3.contracts.canonical import (
+    canonical_bytes,
+    loads_strict,
+    write_canonical,
+)
 from ml_v3.contracts.constants import GRID_BANDS, SCHEMA_IDS, SPLIT_ROLES
 from ml_v3.contracts.schemas import SCHEMA_REGISTRY, schema_for, schema_ids_t2
 from ml_v3.contracts.split import validate_manifest_split_invariants
@@ -139,6 +143,15 @@ class RejectPathAdmissionTests(unittest.TestCase):
         doc = admission_batch(status="pending")
         with self.assertRaises(SchemaError):
             validate(doc)
+
+    def test_admitted_requires_salt_reveal(self):
+        doc = admission_batch(status="admitted", salt_reveal=None)
+        with self.assertRaises(SchemaError):
+            validate(doc)
+
+    def test_rejected_allows_null_salt_reveal(self):
+        doc = admission_batch(status="rejected", salt_reveal=None)
+        validate(doc)
 
     def test_alias_mapping_version_extra_key_rejected(self):
         # Identity-index field must not sneak into admission-batch envelope.
@@ -303,15 +316,18 @@ class FailClosedParseTests(unittest.TestCase):
 
 
 class GoldenFixtureTests(unittest.TestCase):
-    def test_golden_files_roundtrip_if_present(self):
+    def test_golden_raw_equals_canonical_bytes(self):
+        """A6: schema-valid is not enough — golden on-disk bytes must be
+        canonical artifacts (raw == canonical_bytes(doc))."""
         if not FIXTURE_DIR.is_dir():
             self.skipTest("no golden fixture dir")
         files = sorted(FIXTURE_DIR.glob("*.json"))
         self.assertGreaterEqual(len(files), 6)
         for path in files:
             with self.subTest(path=path.name):
-                text = path.read_text(encoding="utf-8")
-                doc = loads_strict(text)
+                raw = path.read_bytes()
+                doc = loads_strict(raw.decode("utf-8"))
+                self.assertEqual(raw, canonical_bytes(doc))
                 validate(doc)
 
 

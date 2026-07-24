@@ -287,15 +287,22 @@ def validate_admission_batch(doc: object) -> None:
             "(SHA-256 of canonical roster bytes)")
     _require_sha256(data, "salt_commitment")
     reveal = data["salt_reveal"]
-    if reveal is not None:
-        if not isinstance(reveal, str) or not is_sha256_hex(reveal):
-            raise SchemaError(
-                "salt_reveal must be null or lowercase hex of 32 raw salt bytes")
     _require_str(data, "roster_commit")
     _require_str(data, "reviewer_id")
     status = _require_str(data, "status")
     if status not in ("admitted", "rejected"):
         raise SchemaError(f"status must be admitted|rejected, got {status!r}")
+    # admitted ⇒ salt must be revealed (hex-64). rejected may keep null
+    # (pre-reveal reject) or carry a hex reveal (revealed-then-rejected).
+    if status == "admitted":
+        if not isinstance(reveal, str) or not is_sha256_hex(reveal):
+            raise SchemaError(
+                "admitted status requires salt_reveal as lowercase hex-64 "
+                "(null forbidden)")
+    elif reveal is not None:
+        if not isinstance(reveal, str) or not is_sha256_hex(reveal):
+            raise SchemaError(
+                "salt_reveal must be null or lowercase hex of 32 raw salt bytes")
 
 
 # --------------------------------------------------------------- annotation
