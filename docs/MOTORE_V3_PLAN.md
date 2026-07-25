@@ -16,9 +16,11 @@ Il piano descrive un progetto a contratti. Ad oggi, su questo branch:
   micro-amend). Header/§16 di quel commit restano storicamente "non e GO";
   lo **stato di fase vivente** e nelle righe Governance sotto.
 - **Tip accuracy**: codice G1a tip = `501a4e00` (T6). PLAN tip pre-stamp
-  (docs) = `8ee2a804` (honesty refresh post-T6). This CLOSE stamp supersedes
-  that docs tip. Non confondere tip codice e tip PLAN.
+  CLOSE GO = `1746a058` (ritirato). Questo stamp REOPENED supersedes
+  `1746a058` come stato vivente CLOSE. Non confondere tip codice e tip PLAN;
+  tip codice resta `501a4e00` ma CLOSE non vale.
 - **GO G1a**: aperto (2026-07-25) dal reviewer (Marco) sul freeze `6d254d0a`.
+  Apertura fase ≠ CLOSE. **REV7: NO** (nessun amend contratto autorizzato).
 - **G1a codice in git** (tip `501a4e00`): T1 `94dc9991` (primitives/split/
   coverage) + T2 `1908fc45` / T2.1 `918b3dde` (JSON schemas, validators,
   golden canonical) + T3 `9aa19295` (adapter v2↔v3 hashed,
@@ -43,25 +45,36 @@ Il piano descrive un progetto a contratti. Ad oggi, su questo branch:
 - **G1a T6**: committed at `501a4e00` (generators + WAV inventory). M2
   fixture-spec remains `e9916319` with digest `513c3baf…` (unchanged).
   Path-order hygiene `fe8b97d3` remains relevant on the SHA256SUMS chain.
-- **G1a CLOSE: GO** (Guardian consolidated, 2026-07-25) su code tip
-  `501a4e00` + PLAN tip pre-stamp `8ee2a804`. Contratto freeze `6d254d0a`
-  (REV6). Trust chain: T5 `75cb6902` → M2 `e9916319` / digest `513c3baf…`
-  → hygiene `fe8b97d3` → T6 `501a4e00`. `verify_g1a_sha256sums` 47/47
-  PASS; ship-line 0-diff vs G0 `2c88edad`. **No G1 PASS.** Product G1b
-  may start after this CLOSE; uncommitted `ml_v3/frontend/` remains spike
-  until official G1b tip.
-- **G1a vs DoD contratto §14 item 1 (G1a)**: T1–T6 + M2 hanno atterrato le
-  **primitives di contratto** e i **generatori fixture + hash** richiesti
-  da §14. Retract: claim che T6 resti OPEN in codice. **G1a CLOSE: GO**
-  (Guardian consolidated) — fase G1a chiusa; **No G1 PASS**.
-- **GO G1b (mandato)**: aperto nel PLAN tip storico `37f6ac60` (2026-07-25)
-  dal reviewer (Marco) con mandato: **REV7 only if implementation
-  demonstrates falsifiable impossibility** (not inconvenience); one
-  redteam + one independent CC per tranche; stop-rule semantica sotto
-  (non etichetta di severity). **Product G1b may start after G1a CLOSE**;
-  mandato aperto ≠ lavoro prodotto già iniziato. Uncommitted
-  `ml_v3/frontend/` = **spike / feasibility probe** (not gate proof; non
-  tip ufficiale G1b; spike ≠ proof) fino a tip G1b ufficiale / M3+M4.
+- **G1a CLOSE: REOPENED** (2026-07-25) — ritiro dello stamp GO `1746a058`
+  dopo CC/redteam (CONTRACT-BROKEN; CLOSE REOPEN-REQUIRED). Code tip ancora
+  `501a4e00` (T6) ma CLOSE non vale; contract freeze `6d254d0a` invariato;
+  **REV7: NO**. Trust chain storica T5→M2→hygiene→T6 resta come tip codice;
+  non equivale a CLOSE. **No G1 PASS.** **Product G1b: SOSPESO** fino a
+  re-CLOSE.
+  - **BLOCKER F2**: `validate_admission_batch` non verifica
+    salt_commitment↔reveal (`verify_commitment`); golden dd/ee ACCEPT.
+  - **BLOCKER F3**: SHA256SUMS pinna istanze `fixtures/g1/schemas/*.json`,
+    non la superficie schema in `contracts/schemas.py`.
+  - **MED F1**: 37 WAV ~22MB in-repo vs CONTRACT §2 (decisione pending:
+    rewrite→`~/aieq_data` vs debito documentato; branch unpushed).
+  - **MED F4**: evidence su CPython 3.14.4; lock pinna 3.12.13 — venv
+    canonico `~/aieq_data/motore_v3/env/venv` (3.12.13). Re-CLOSE evidence
+    MUST use that interpreter.
+  - Sequenza: REOPENED → F4 env for evidence → F2+F3 → F1 decision → CC →
+    re-CLOSE on 3.12.13.
+- **G1a vs DoD contratto §14 item 1 (G1a)**: T1–T6 + M2 hanno atterrato tip
+  codice e generatori/hash; **CLOSE non vale** finche F2/F3 BLOCKER restano
+  aperti. Retract: claim **G1a CLOSE: GO** / "fase G1a chiusa" da
+  `1746a058`. **No G1 PASS**.
+- **GO G1b (mandato)**: storicamente aperto nel PLAN tip `37f6ac60`
+  (2026-07-25) dal reviewer (Marco) con mandato: **REV7 only if
+  implementation demonstrates falsifiable impossibility** (not
+  inconvenience); one redteam + one independent CC per tranche; stop-rule
+  semantica sotto (non etichetta di severity). **Product G1b: SOSPESO**
+  fino a re-CLOSE G1a; mandato storico ≠ autorizzazione a partire ora.
+  Uncommitted `ml_v3/frontend/` = **spike / feasibility probe** (not gate
+  proof; non tip ufficiale G1b; spike ≠ proof) fino a tip G1b ufficiale /
+  M3+M4 post re-CLOSE.
 - **Authority hierarchy (Motore-v3)**:
   - GLOBAL / RELEASE AUTHORITY → `ALIGNMENT_MANIFEST.md`
   - MOTORE V3 LAB STATE AUTHORITY → `docs/MOTORE_V3_PLAN.md`
@@ -86,23 +99,23 @@ Il piano descrive un progetto a contratti. Ad oggi, su questo branch:
      (b) only ASCII space stripped — NBSP / unicode WS accepted;
      (c) commit-anchor SHA declared in PLAN/docstring, not a machine-checked
      constant in `sha256sums.py`.
-- **Ancora assente / in corso**: product G1b (G1a CLOSE: GO; mandato open;
-  prodotto non ancora tip ufficiale; uncommitted `ml_v3/frontend/` =
-  spike/feasibility probe, not gate proof — spike ≠ proof); modello V3,
+- **Ancora assente / in corso**: product G1b (**SOSPESO** finche G1a CLOSE
+  e REOPENED; mandato storico non autorizza partenza); G1a re-CLOSE
+  (F2/F3 BLOCKER + F4 evidence su 3.12.13 + F1 decision); modello V3,
   runtime V3, UI V3, build Ableton V3, training V3. Ship-line (`Source/`,
   CMake, `Resources/`, `AIEQ-mac`) **0-diff** vs freeze G0 `2c88edad`.
-  Product G1b may start after this CLOSE and may touch `ml_v3/frontend/`
-  (e solo minimum `Source/` se contract-authorized later) — **still no
-  silent ship of V3 to Ableton** without later gates (G6+). **No G1 PASS.**
+  Post re-CLOSE, product G1b potra toccare `ml_v3/frontend/` (e solo
+  minimum `Source/` se contract-authorized later) — **still no silent ship
+  of V3 to Ableton** without later gates (G6+). **No G1 PASS.**
 - **Nessun training V3 e autorizzato** oltre i limiti di fase.
 - Il CONTROL Motore v2/A4b resta **NO-GO**; nessun modello e promosso.
 - Il laboratorio prominence v2 vive su **branch separati** e NON e integrato in
   questo branch (vedi sezione "Stato prominence v2").
 
 Le sezioni G1c–G8 seguenti restano criteri FUTURI finche la fase corrente non
-riceve GO di chiusura. G1a e CLOSED (Guardian GO). Non confondere "mandato
-G1b aperto / product G1b may start" con "G1b tip ufficiale", "G1 PASS" o
-"release-safe". Spike frontend ≠ proof.
+riceve GO di chiusura. **G1a CLOSE: REOPENED** (ritiro `1746a058`); non
+CLOSED. Non confondere "mandato G1b storico" / "Product G1b: SOSPESO" con
+"G1b tip ufficiale", "G1 PASS" o "release-safe". Spike frontend ≠ proof.
 
 Obiettivo finale: non inferiorita misurata rispetto a smart:EQ 4 sul
 bilanciamento tonale e rispetto a soothe, Equator e Gullfoss sulle anomalie
@@ -141,19 +154,19 @@ line, plugin installato, APVTS, preset, `Resources/Models/ml_weights.bin`,
   `d2c35ccc12643f2520c8a50d2e27fd3631216bb9a8ce63a34193412e74d1c10e`).
   T5: `75cb6902` (SHA256SUMS trust anchor). M2: `e9916319` (fixture-spec
   v1; digest `513c3baf…`). Hygiene: `fe8b97d3` (SHA256SUMS path order).
-  T6: `501a4e00` (**tip codice G1a**). PLAN tip pre-stamp: `8ee2a804`.
-  Stop-rule: vedi bullet semantico sopra (no automatic HIGH/MED→debt).
-  **M1 T5 catch-up CC: CLEAN** on `75cb6902`. **G1a CLOSE: GO**
-  (Guardian consolidated, 2026-07-25) su `501a4e00` + `8ee2a804`;
-  `verify_g1a_sha256sums` 47/47 PASS; ship-line 0-diff vs G0 `2c88edad`.
-  **No G1 PASS.** Product G1b may start after CLOSE; spike ≠ proof.
-- GO G1b — mandato aperto in PLAN storico `37f6ac60` (2026-07-25) con
-  REV7: amend solo se l'implementazione dimostra **impossibilita
-  falsificabile** (non inconvenienza); un redteam + un CC indipendente
-  per tranche; stop-rule semantica (stesso bullet sopra). **Product G1b
-  may start after G1a CLOSE**; uncommitted `ml_v3/frontend/` = spike /
+  T6: `501a4e00` (**tip codice G1a**; CLOSE non vale). Stamp CLOSE GO
+  ritirato: `1746a058`. Stop-rule: vedi bullet semantico sopra (no
+  automatic HIGH/MED→debt). **M1 T5 catch-up CC: CLEAN** on `75cb6902`.
+  **G1a CLOSE: REOPENED** (2026-07-25) — BLOCKER F2/F3; MED F1/F4;
+  contract freeze `6d254d0a` invariato; **REV7: NO**. **No G1 PASS.**
+  **Product G1b: SOSPESO** fino a re-CLOSE; spike ≠ proof.
+- GO G1b — mandato storico in PLAN `37f6ac60` (2026-07-25) con REV7:
+  amend solo se l'implementazione dimostra **impossibilita falsificabile**
+  (non inconvenienza); un redteam + un CC indipendente per tranche;
+  stop-rule semantica (stesso bullet sopra). **Product G1b: SOSPESO**
+  fino a re-CLOSE G1a; uncommitted `ml_v3/frontend/` = spike /
   feasibility probe (not gate proof; spike ≠ proof) until official G1b
-  tip / M3+M4. Nessun ship Ableton.
+  tip / M3+M4 post re-CLOSE. Nessun ship Ableton.
 - Dati, cache e modelli restano in `~/aieq_data/motore_v3/`; nel repository
   entrano soltanto codice, manifest, lock, hash, contratti e report.
 - Massimo tre round completi di training. Non si compensano fallimenti offline
