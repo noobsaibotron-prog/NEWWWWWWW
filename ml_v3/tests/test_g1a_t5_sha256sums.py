@@ -19,6 +19,7 @@ from ml_v3.contracts.sha256sums import (
     G1A_SHA256SUMS_RELPATH,
     Sha256SumsError,
     build_sha256sums_entries,
+    g1a_sha256sums_audio_required,
     load_g1a_sha256sums,
     render_g1a_sha256sums,
     repo_root_from_here,
@@ -148,7 +149,12 @@ class G1aSha256sumsFixtureTests(unittest.TestCase):
 
     def test_committed_sha256sums_verifies_against_tree(self):
         entries = verify_g1a_sha256sums()
-        self.assertEqual(set(entries), set(G1A_SHA256SUMS_COVERED))
+        # COVERED + T6 audio required; full happy path is 10 + 37 = 47.
+        self.assertTrue(set(G1A_SHA256SUMS_COVERED).issubset(entries))
+        audio = g1a_sha256sums_audio_required()
+        self.assertEqual(len(audio), 37)
+        self.assertTrue(set(audio).issubset(entries))
+        self.assertEqual(len(entries), 47)
         root = repo_root_from_here()
         contract = root / "docs" / "MOTORE_V3_G1_CONTRACT.md"
         self.assertEqual(sha256_of_file(contract), CONTRACT_DOC_SHA256_TRIPWIRE)
@@ -161,6 +167,28 @@ class G1aSha256sumsFixtureTests(unittest.TestCase):
         self.assertTrue(committed.is_file())
         self.assertEqual(committed.read_text(encoding="utf-8"), render_g1a_sha256sums())
         self.assertEqual(load_g1a_sha256sums(), entries)
+        self.assertEqual(committed.read_text(encoding="utf-8"), sha256sums_text(entries))
+
+    def test_verify_rejects_truncated_sums_missing_audio(self):
+        """COVERED-only inventory must not PASS verify (audio unbound)."""
+        root = repo_root_from_here()
+        full = load_g1a_sha256sums()
+        truncated = {path: full[path] for path in G1A_SHA256SUMS_COVERED}
+        self.assertEqual(len(truncated), 10)
+        with tempfile.TemporaryDirectory() as tmp:
+            troot = Path(tmp)
+            for rel, digest in truncated.items():
+                absolute = troot / rel
+                absolute.parent.mkdir(parents=True, exist_ok=True)
+                src = root / rel
+                absolute.write_bytes(src.read_bytes())
+                self.assertEqual(sha256_of_file(absolute), digest)
+            sums_path = troot / G1A_SHA256SUMS_RELPATH
+            sums_path.parent.mkdir(parents=True, exist_ok=True)
+            sums_path.write_text(sha256sums_text(truncated), encoding="utf-8")
+            with self.assertRaises(Sha256SumsError) as ctx:
+                verify_g1a_sha256sums(troot)
+            self.assertIn("missing required audio inventory", str(ctx.exception))
 
     def test_verify_detects_tampered_digest(self):
         root = repo_root_from_here()
