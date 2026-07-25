@@ -3,6 +3,7 @@
 Tranche T1: FIR coefficient generator (§5) + V3FeatureFrame schema stub (§7).
 Tranche T1b / spike WS1: causal polyphase streaming apply (§5) under P5.
 Tranche T2 / spike WS2: offline §6+§7 feature path under P1–P7.
+Tranche T2 / spike WS3: chunked feature path; offline≡chunk bit-identity (gate 3).
 No training or Ableton ship.
 """
 from __future__ import annotations
@@ -15,7 +16,9 @@ from .feature_frame import (
 )
 from .offline_features import (
     OfflineFeatureError,
+    StreamingFeatureExtractor,
     empty_support_report,
+    extract_chunked_feature_frames,
     extract_offline_feature_frames,
 )
 from .resampler import (
@@ -39,7 +42,9 @@ __all__ = [
     "OfflineFeatureError",
     "ResamplerCoeffError",
     "ResamplerError",
+    "StreamingFeatureExtractor",
     "empty_support_report",
+    "extract_chunked_feature_frames",
     "extract_offline_feature_frames",
     "feature_frame_field_names",
     "fir_lowpass_coefficients",

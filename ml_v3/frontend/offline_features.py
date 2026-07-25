@@ -1,6 +1,9 @@
-"""§6+§7 offline feature path (G1b T2 / spike WS2).
+"""§6+§7 feature path (G1b T2/WS2 offline + T2/WS3 streaming).
 
-Offline-only emit under pinned P1–P7. Streaming/chunked feature path is WS3+.
+Shared frame emission under pinned P1–P7: offline monolith is one
+``StreamingFeatureExtractor.process`` of the full host buffer; chunked
+schedules reuse the same resampler + STFT + emit path (mini gate 3).
+
 Does not touch hashed G1a artifacts, CONTRACT, or ship-line.
 
 Pins (a priori; changing after numbers → AMBRA):
@@ -18,7 +21,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from math import gcd
-from typing import Any
+from typing import Any, Sequence
 
 import numpy as np
 
@@ -41,11 +44,16 @@ from ml_v3.frontend.feature_frame import (
     FeatureFrameError,
     validate_feature_frame_stub,
 )
-from ml_v3.frontend.resampler import ResamplerError, resample_offline
+from ml_v3.frontend.resampler import (
+    CausalPolyphaseResampler,
+    ResamplerError,
+    iter_host_chunks,
+)
 from ml_v3.frontend.resampler_coeffs import group_delay_rational
 
 __all__ = [
     "OfflineFeatureError",
+    "StreamingFeatureExtractor",
     "N_MAIN",
     "FUSION_LO_HZ",
     "FUSION_HI_HZ",
@@ -55,6 +63,7 @@ __all__ = [
     "P7_REASONS",
     "empty_support_report",
     "extract_offline_feature_frames",
+    "extract_chunked_feature_frames",
 ]
 
 N_MAIN: int = 4096
@@ -486,86 +495,194 @@ def _channel_features(
     return psd_db, shape, prom, level
 
 
-def extract_offline_feature_frames(
-    audio: np.ndarray,
-    fs_in: int,
-) -> list[dict[str, Any]]:
-    """Extract §7 frames offline (monolithic resample + STFT).
-
-    Hard errors raise ``OfflineFeatureError`` / ``ResamplerError`` (no frame).
-    Insufficient length → empty list (incomplete frames are not emitted).
-    """
+def _validate_fs_in(fs_in: int) -> int:
     if not isinstance(fs_in, int) or isinstance(fs_in, bool):
         raise OfflineFeatureError(f"fs_in must be int, got {type(fs_in).__name__}")
     if fs_in not in ACCEPTED_SAMPLE_RATES:
         raise OfflineFeatureError(
             f"fs_in {fs_in} rejected; accepted={ACCEPTED_SAMPLE_RATES}"
         )
+    return fs_in
 
-    mid_h, side_h, mono = _as_mid_side(audio)
 
-    try:
-        mid_c = np.asarray(resample_offline(mid_h.astype(np.float32), fs_in), dtype=np.float64)
-        if mono:
-            side_c = None
-        else:
-            assert side_h is not None
-            side_c = np.asarray(
-                resample_offline(side_h.astype(np.float32), fs_in), dtype=np.float64
-            )
-    except ResamplerError as exc:
-        raise OfflineFeatureError(str(exc)) from exc
+def _host_time_slices(
+    audio: np.ndarray,
+) -> tuple[int, Any]:
+    """Return (n_host, slice_fn) for frozen host-sample schedules.
 
-    n = int(mid_c.size)
-    if side_c is not None and int(side_c.size) != n:
-        raise OfflineFeatureError("mid/side canonical length mismatch")
-    if n < N_LF:
-        return []
-
-    (
-        w_main,
-        w_lf,
-        fusion_lf,
-        prom_ker,
-        hann_main,
-        hann_lf,
-        edge_main,
-        edge_lf,
-    ) = _tables()
-
-    delay_num, delay_den = group_delay_rational(fs_in)
-    frames: list[dict[str, Any]] = []
-    prev_mid_shape: np.ndarray | None = None
-    prev_side_shape: np.ndarray | None = None
-    frame_index = 0
-    frame_end = N_LF
-
-    while frame_end <= n:
-        psd_m, shape_m, prom_m, level_m = _channel_features(
-            mid_c,
-            frame_end,
-            w_main=w_main,
-            w_lf=w_lf,
-            fusion_lf=fusion_lf,
-            prom_ker=prom_ker,
-            hann_main=hann_main,
-            hann_lf=hann_lf,
-            edge_main=edge_main,
-            edge_lf=edge_lf,
+    ``slice_fn(start, end)`` yields a view accepted by ``_as_mid_side``.
+    """
+    if not isinstance(audio, np.ndarray):
+        raise OfflineFeatureError(
+            f"audio must be numpy.ndarray, got {type(audio).__name__}"
         )
-        mid_valid = level_m >= LEVEL_VALID_DBFS
+    if audio.ndim == 1:
+        n = int(audio.shape[0])
 
-        if mono or side_c is None:
-            inv = _invalid_channel_vectors()
-            psd_s = inv["psd_db"]
-            shape_s = inv["shape_db"]
-            prom_s = inv["prominence_db"]
-            level_s = float(inv["level_dbfs"])
-            side_valid = False
+        def slice_fn(start: int, end: int) -> np.ndarray:
+            return audio[start:end]
+
+        return n, slice_fn
+    if audio.ndim != 2:
+        raise OfflineFeatureError(f"audio ndim must be 1 or 2, got {audio.ndim}")
+
+    if audio.shape[1] == 2 and audio.shape[0] != 2:
+        n = int(audio.shape[0])
+
+        def slice_fn(start: int, end: int) -> np.ndarray:
+            return audio[start:end, :]
+
+        return n, slice_fn
+    if audio.shape[0] == 2:
+        n = int(audio.shape[1])
+
+        def slice_fn(start: int, end: int) -> np.ndarray:
+            return audio[:, start:end]
+
+        return n, slice_fn
+    raise OfflineFeatureError(
+        f"stereo layout must be (N,2) or (2,N); got shape {audio.shape}"
+    )
+
+
+class StreamingFeatureExtractor:
+    """Stateful §5→§7 feature path; offline ≡ single full-buffer ``process``.
+
+    Canonical samples accumulate across host chunks via WS1 resamplers.
+    Frames emit on the same LF-capable hop lattice as the offline path.
+    """
+
+    def __init__(self, fs_in: int) -> None:
+        self._fs_in = _validate_fs_in(fs_in)
+        try:
+            self._mid_r = CausalPolyphaseResampler(self._fs_in)
+        except ResamplerError as exc:
+            raise OfflineFeatureError(str(exc)) from exc
+        self._side_r: CausalPolyphaseResampler | None = None
+        self._mono: bool | None = None
+        self._mid_c = np.zeros(0, dtype=np.float64)
+        self._side_c: np.ndarray | None = None
+        self._n_canonical = 0
+        self._buf_origin = 0
+        self._frame_end = N_LF
+        self._frame_index = 0
+        self._prev_mid_shape: np.ndarray | None = None
+        self._prev_side_shape: np.ndarray | None = None
+        self._delay_num, self._delay_den = group_delay_rational(self._fs_in)
+
+    @property
+    def fs_in(self) -> int:
+        return self._fs_in
+
+    @property
+    def n_canonical(self) -> int:
+        return self._n_canonical
+
+    @property
+    def frame_index(self) -> int:
+        return self._frame_index
+
+    def reset_delta_history(self) -> None:
+        """Explicit multi-asset boundary: clear delta shape history (lock also_required a)."""
+        self._prev_mid_shape = None
+        self._prev_side_shape = None
+
+    def process(self, audio: np.ndarray) -> list[dict[str, Any]]:
+        """Consume one host block; return newly emitted §7 frames."""
+        mid_h, side_h, mono = _as_mid_side(audio)
+        if self._mono is None:
+            self._mono = bool(mono)
+            if not self._mono:
+                try:
+                    self._side_r = CausalPolyphaseResampler(self._fs_in)
+                except ResamplerError as exc:
+                    raise OfflineFeatureError(str(exc)) from exc
+                self._side_c = np.zeros(0, dtype=np.float64)
+        elif bool(mono) != self._mono:
+            raise OfflineFeatureError(
+                "channel layout changed mid-stream "
+                f"(was_mono={self._mono}, chunk_mono={mono})"
+            )
+
+        try:
+            y_mid = self._mid_r.process(mid_h.astype(np.float32))
+            if self._mono:
+                y_side = None
+            else:
+                assert self._side_r is not None and side_h is not None
+                y_side = self._side_r.process(side_h.astype(np.float32))
+        except ResamplerError as exc:
+            raise OfflineFeatureError(str(exc)) from exc
+
+        self._append_canonical(y_mid, y_side)
+        return self._emit_available()
+
+    def _append_canonical(
+        self,
+        y_mid: np.ndarray,
+        y_side: np.ndarray | None,
+    ) -> None:
+        if y_mid.size == 0:
+            if y_side is not None and y_side.size != 0:
+                raise OfflineFeatureError("mid/side canonical emit length mismatch")
+            return
+        mid_f64 = np.asarray(y_mid, dtype=np.float64)
+        if self._mid_c.size == 0:
+            self._mid_c = mid_f64.copy()
         else:
-            psd_s, shape_s, prom_s, level_s = _channel_features(
-                side_c,
-                frame_end,
+            self._mid_c = np.concatenate((self._mid_c, mid_f64))
+        if y_side is not None:
+            assert self._side_c is not None
+            side_f64 = np.asarray(y_side, dtype=np.float64)
+            if side_f64.size != mid_f64.size:
+                raise OfflineFeatureError("mid/side canonical emit length mismatch")
+            if self._side_c.size == 0:
+                self._side_c = side_f64.copy()
+            else:
+                self._side_c = np.concatenate((self._side_c, side_f64))
+        self._n_canonical += int(mid_f64.size)
+
+    def _abs_slice(self, buf: np.ndarray, start: int, end: int) -> np.ndarray:
+        rel0 = start - self._buf_origin
+        rel1 = end - self._buf_origin
+        if rel0 < 0 or rel1 > buf.size or rel0 > rel1:
+            raise OfflineFeatureError(
+                f"canonical window out of buffer: [{start},{end}) "
+                f"origin={self._buf_origin} size={buf.size}"
+            )
+        return buf[rel0:rel1]
+
+    def _emit_available(self) -> list[dict[str, Any]]:
+        if self._n_canonical < N_LF:
+            return []
+
+        (
+            w_main,
+            w_lf,
+            fusion_lf,
+            prom_ker,
+            hann_main,
+            hann_lf,
+            edge_main,
+            edge_lf,
+        ) = _tables()
+
+        mono = bool(self._mono)
+        frames: list[dict[str, Any]] = []
+
+        while self._frame_end <= self._n_canonical:
+            frame_end = self._frame_end
+            # Rebuild a zero-origin view only for the needed window (N_LF).
+            # _channel_features indexes [frame_end-N_* : frame_end] on a
+            # contiguous buffer starting at absolute 0 — supply a local view
+            # whose index 0 is (frame_end - N_LF).
+            win_origin = frame_end - N_LF
+            mid_win = self._abs_slice(self._mid_c, win_origin, frame_end)
+            # Remap: local index i ↔ absolute win_origin + i; frame_end local = N_LF.
+            local_end = N_LF
+            psd_m, shape_m, prom_m, level_m = _channel_features(
+                mid_win,
+                local_end,
                 w_main=w_main,
                 w_lf=w_lf,
                 fusion_lf=fusion_lf,
@@ -575,107 +692,182 @@ def extract_offline_feature_frames(
                 edge_main=edge_main,
                 edge_lf=edge_lf,
             )
-            side_valid = level_s >= LEVEL_VALID_DBFS
+            mid_valid = level_m >= LEVEL_VALID_DBFS
 
-        valid = bool(mid_valid or side_valid)
-
-        # Measured levels (floored) drive P7; P6 may overwrite emitted level.
-        if level_m < LEVEL_FLOOR_DBFS:
-            level_m = LEVEL_FLOOR_DBFS
-        if level_s < LEVEL_FLOOR_DBFS:
-            level_s = LEVEL_FLOOR_DBFS
-        measured_mid_level = float(level_m)
-        measured_side_level = float(level_s)
-
-        if not valid:
-            mid_delta = np.zeros(GRID_BANDS, dtype=np.float64)
-            side_delta = np.zeros(GRID_BANDS, dtype=np.float64)
-            prev_mid_shape = None
-            prev_side_shape = None
-            reason: str | None = _p7_reason(
-                measured_mid_level, measured_side_level, mono=mono
-            )
-        else:
-            reason = None
-            if mid_valid:
-                if prev_mid_shape is None:
-                    mid_delta = np.zeros(GRID_BANDS, dtype=np.float64)
-                else:
-                    mid_delta = _clamp_delta(shape_m - prev_mid_shape)
-                prev_mid_shape = shape_m.copy()
+            if mono or self._side_c is None:
+                inv = _invalid_channel_vectors()
+                psd_s = inv["psd_db"]
+                shape_s = inv["shape_db"]
+                prom_s = inv["prominence_db"]
+                level_s = float(inv["level_dbfs"])
+                side_valid = False
             else:
+                side_win = self._abs_slice(self._side_c, win_origin, frame_end)
+                psd_s, shape_s, prom_s, level_s = _channel_features(
+                    side_win,
+                    local_end,
+                    w_main=w_main,
+                    w_lf=w_lf,
+                    fusion_lf=fusion_lf,
+                    prom_ker=prom_ker,
+                    hann_main=hann_main,
+                    hann_lf=hann_lf,
+                    edge_main=edge_main,
+                    edge_lf=edge_lf,
+                )
+                side_valid = level_s >= LEVEL_VALID_DBFS
+
+            valid = bool(mid_valid or side_valid)
+
+            if level_m < LEVEL_FLOOR_DBFS:
+                level_m = LEVEL_FLOOR_DBFS
+            if level_s < LEVEL_FLOOR_DBFS:
+                level_s = LEVEL_FLOOR_DBFS
+            measured_mid_level = float(level_m)
+            measured_side_level = float(level_s)
+
+            if not valid:
                 mid_delta = np.zeros(GRID_BANDS, dtype=np.float64)
-                prev_mid_shape = None
-            if side_valid:
-                if prev_side_shape is None:
-                    side_delta = np.zeros(GRID_BANDS, dtype=np.float64)
-                else:
-                    side_delta = _clamp_delta(shape_s - prev_side_shape)
-                prev_side_shape = shape_s.copy()
-            else:
                 side_delta = np.zeros(GRID_BANDS, dtype=np.float64)
-                prev_side_shape = None
+                self._prev_mid_shape = None
+                self._prev_side_shape = None
+                reason: str | None = _p7_reason(
+                    measured_mid_level, measured_side_level, mono=mono
+                )
+            else:
+                reason = None
+                if mid_valid:
+                    if self._prev_mid_shape is None:
+                        mid_delta = np.zeros(GRID_BANDS, dtype=np.float64)
+                    else:
+                        mid_delta = _clamp_delta(shape_m - self._prev_mid_shape)
+                    self._prev_mid_shape = shape_m.copy()
+                else:
+                    mid_delta = np.zeros(GRID_BANDS, dtype=np.float64)
+                    self._prev_mid_shape = None
+                if side_valid:
+                    if self._prev_side_shape is None:
+                        side_delta = np.zeros(GRID_BANDS, dtype=np.float64)
+                    else:
+                        side_delta = _clamp_delta(shape_s - self._prev_side_shape)
+                    self._prev_side_shape = shape_s.copy()
+                else:
+                    side_delta = np.zeros(GRID_BANDS, dtype=np.float64)
+                    self._prev_side_shape = None
 
-        # P6 overlays for invalid-channel emitted fields (after P7 reason).
-        if not mid_valid:
-            inv = _invalid_channel_vectors()
-            psd_m = inv["psd_db"]
-            shape_m = inv["shape_db"]
-            prom_m = inv["prominence_db"]
-            level_m = float(inv["level_dbfs"])
-            mid_delta = inv["delta_db"]
-        if not side_valid:
-            inv = _invalid_channel_vectors()
-            psd_s = inv["psd_db"]
-            shape_s = inv["shape_db"]
-            prom_s = inv["prominence_db"]
-            level_s = float(inv["level_dbfs"])
-            side_delta = inv["delta_db"]
+            if not mid_valid:
+                inv = _invalid_channel_vectors()
+                psd_m = inv["psd_db"]
+                shape_m = inv["shape_db"]
+                prom_m = inv["prominence_db"]
+                level_m = float(inv["level_dbfs"])
+                mid_delta = inv["delta_db"]
+            if not side_valid:
+                inv = _invalid_channel_vectors()
+                psd_s = inv["psd_db"]
+                shape_s = inv["shape_db"]
+                prom_s = inv["prominence_db"]
+                level_s = float(inv["level_dbfs"])
+                side_delta = inv["delta_db"]
 
-        st_num, st_den = _source_time_rational(frame_end, delay_num, delay_den)
-        frame = {
-            "schema": FEATURE_FRAME_SCHEMA,
-            "frame_end_sample": int(frame_end),
-            "frame_index": int(frame_index),
-            "source_time_num": int(st_num),
-            "source_time_den": int(st_den),
-            "canonical_sample_rate": CANONICAL_SAMPLE_RATE,
-            "mid_psd_db": _emit_vector(psd_m),
-            "side_psd_db": _emit_vector(psd_s),
-            "mid_shape_db": _emit_vector(shape_m),
-            "side_shape_db": _emit_vector(shape_s),
-            "mid_prominence_db": _emit_vector(prom_m),
-            "side_prominence_db": _emit_vector(prom_s),
-            "mid_delta_db": _emit_vector(mid_delta),
-            "side_delta_db": _emit_vector(side_delta),
-            "mid_level_dbfs": _f32(level_m),
-            "side_level_dbfs": _f32(level_s),
-            "mid_valid": bool(mid_valid),
-            "side_valid": bool(side_valid),
-            "valid": bool(valid),
-            "reason": reason,
-        }
-        if reason is not None and reason not in P7_REASONS:
-            raise OfflineFeatureError(f"internal P7 reason out of enum: {reason!r}")
-        try:
-            validate_feature_frame_stub(frame)
-        except FeatureFrameError as exc:
-            raise OfflineFeatureError(f"emitted frame failed §7 stub: {exc}") from exc
+            st_num, st_den = _source_time_rational(
+                frame_end, self._delay_num, self._delay_den
+            )
+            frame = {
+                "schema": FEATURE_FRAME_SCHEMA,
+                "frame_end_sample": int(frame_end),
+                "frame_index": int(self._frame_index),
+                "source_time_num": int(st_num),
+                "source_time_den": int(st_den),
+                "canonical_sample_rate": CANONICAL_SAMPLE_RATE,
+                "mid_psd_db": _emit_vector(psd_m),
+                "side_psd_db": _emit_vector(psd_s),
+                "mid_shape_db": _emit_vector(shape_m),
+                "side_shape_db": _emit_vector(shape_s),
+                "mid_prominence_db": _emit_vector(prom_m),
+                "side_prominence_db": _emit_vector(prom_s),
+                "mid_delta_db": _emit_vector(mid_delta),
+                "side_delta_db": _emit_vector(side_delta),
+                "mid_level_dbfs": _f32(level_m),
+                "side_level_dbfs": _f32(level_s),
+                "mid_valid": bool(mid_valid),
+                "side_valid": bool(side_valid),
+                "valid": bool(valid),
+                "reason": reason,
+            }
+            if reason is not None and reason not in P7_REASONS:
+                raise OfflineFeatureError(
+                    f"internal P7 reason out of enum: {reason!r}"
+                )
+            try:
+                validate_feature_frame_stub(frame)
+            except FeatureFrameError as exc:
+                raise OfflineFeatureError(
+                    f"emitted frame failed §7 stub: {exc}"
+                ) from exc
 
-        # Extra range guards (emit contract).
-        for name in ("mid_delta_db", "side_delta_db"):
-            for v in frame[name]:
-                if v < DELTA_CLAMP_DB[0] or v > DELTA_CLAMP_DB[1]:
-                    raise OfflineFeatureError(
-                        f"{name} out of clamp [{DELTA_CLAMP_DB[0]}, {DELTA_CLAMP_DB[1]}]"
-                    )
-        for name in ("mid_psd_db", "side_psd_db"):
-            for v in frame[name]:
-                if v < PSD_CLAMP_DB[0] or v > PSD_CLAMP_DB[1]:
-                    raise OfflineFeatureError(f"{name} out of PSD clamp")
+            for name in ("mid_delta_db", "side_delta_db"):
+                for v in frame[name]:
+                    if v < DELTA_CLAMP_DB[0] or v > DELTA_CLAMP_DB[1]:
+                        raise OfflineFeatureError(
+                            f"{name} out of clamp "
+                            f"[{DELTA_CLAMP_DB[0]}, {DELTA_CLAMP_DB[1]}]"
+                        )
+            for name in ("mid_psd_db", "side_psd_db"):
+                for v in frame[name]:
+                    if v < PSD_CLAMP_DB[0] or v > PSD_CLAMP_DB[1]:
+                        raise OfflineFeatureError(f"{name} out of PSD clamp")
 
-        frames.append(frame)
-        frame_index += 1
-        frame_end += HOP_SAMPLES
+            frames.append(frame)
+            self._frame_index += 1
+            self._frame_end += HOP_SAMPLES
 
+        self._trim_history()
+        return frames
+
+    def _trim_history(self) -> None:
+        """Drop canonical samples that can no longer enter a future LF window."""
+        keep_from = max(0, self._frame_end - N_LF)
+        if keep_from <= self._buf_origin:
+            return
+        rel = keep_from - self._buf_origin
+        if rel >= self._mid_c.size:
+            self._mid_c = np.zeros(0, dtype=np.float64)
+            if self._side_c is not None:
+                self._side_c = np.zeros(0, dtype=np.float64)
+            self._buf_origin = keep_from
+            return
+        self._mid_c = self._mid_c[rel:].copy()
+        if self._side_c is not None:
+            self._side_c = self._side_c[rel:].copy()
+        self._buf_origin = keep_from
+
+
+def extract_offline_feature_frames(
+    audio: np.ndarray,
+    fs_in: int,
+) -> list[dict[str, Any]]:
+    """Extract §7 frames offline (monolith = single-chunk streaming).
+
+    Hard errors raise ``OfflineFeatureError`` (no frame).
+    Insufficient length → empty list (incomplete frames are not emitted).
+    """
+    return StreamingFeatureExtractor(fs_in).process(audio)
+
+
+def extract_chunked_feature_frames(
+    audio: np.ndarray,
+    fs_in: int,
+    schedule: int | Sequence[int],
+) -> list[dict[str, Any]]:
+    """Chunked streaming feature path under a frozen host-sample schedule.
+
+    Schedules are host-sample sizes (lock ``streaming_equivalence``). Same
+    emit path as offline; bit-identity required on gate platform (P5).
+    """
+    n_host, slice_fn = _host_time_slices(audio)
+    ext = StreamingFeatureExtractor(fs_in)
+    frames: list[dict[str, Any]] = []
+    for start, end in iter_host_chunks(n_host, schedule):
+        frames.extend(ext.process(slice_fn(start, end)))
     return frames
