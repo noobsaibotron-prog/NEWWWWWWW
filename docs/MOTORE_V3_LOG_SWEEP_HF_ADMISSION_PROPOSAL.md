@@ -21,11 +21,11 @@
 | **Date** | 2026-07-26 |
 | **Reviewer** | Marco (confirmed **"ok"** on living choices) |
 | **Path** | **Option A** — a-priori admission amend (NOT Option B tip-with-debt) |
-| **Mechanism** | **A3** — BOTH: sweep-scoped activity predicate **AND** neighbourhood around `f_inst` |
-| **REV7 packaging** | Sweep-HF stays **outside** the REV7 LF / geometric-`R` vehicle until measure **PASS** under the new admission |
+| **Mechanism** | **A3** — BOTH: sweep-scoped activity predicate **AND** neighbourhood = **solo `F_TRAJ`** (support ∩ window chirp image + `T_MEM`; **not** peak-local ±K) |
+| **REV7 packaging** | Sweep-HF stays **outside** the REV7 LF / geometric-`R` vehicle until measure **PASS** under the new admission; closing max on sweep **must not** silently use `ACTIVE∩R` |
 | **Still true** | **REV7 consolidate: NO** · ≠ G1 PASS · ≠ G1b tip ufficiale |
-| **Next** | Delta redteam on concrete formula `docs/MOTORE_V3_LOG_SWEEP_HF_ADMISSION_FORMULA.md` (`ACTIVE_sweep` + F1) — CC + measure still blocked until non-BROKEN; **then** Marco authorizes commit |
-| **Concrete formula** | `docs/MOTORE_V3_LOG_SWEEP_HF_ADMISSION_FORMULA.md` (A3 executable boolean; document-only) |
+| **Next** | Redteam/CC delta again on patched formula (CC + third redteam + CC-delta empty-N were **POROUS**; HIGH#1/#2 / MED#2 / LOW#3 closed in `MOTORE_V3_LOG_SWEEP_HF_ADMISSION_FORMULA.md` incl. `CHK_CHIRP_REACHABLE` / T18) — measure still blocked until non-POROUS; formula must not self-stamp SOUND; **then** Marco authorizes commit |
+| **Concrete formula** | `docs/MOTORE_V3_LOG_SWEEP_HF_ADMISSION_FORMULA.md` (A3 executable boolean; document-only; tip packaging `81e86dc5`; POROUS closures HIGH#1/#2 / MED#2 / LOW#3 in prose) |
 
 **REV7 consolidate: NO** — this document does **not** merge candidate REV7 prose
 into the freeze CONTRACT. It addresses only the remaining gate-4 FAIL on
@@ -40,7 +40,7 @@ into the freeze CONTRACT. It addresses only the remaining gate-4 FAIL on
 | Gate-4 closable under current REV6 activity on sweep checkpoints | **NO-GO** (measured FAIL) |
 | Stationary adversarial subset on geometric `R` | **PASS** (measured; does not close overall gate) |
 | This proposal = G1 PASS / G1b tip / REV7 consolidate | **NO** |
-| Recommended next lab action | redteam + independent CC on concrete **A/A3** formula — **not** frontend implement; commit only after that |
+| Recommended next lab action | Redteam/CC delta again on patched **A/A3** formula (POROUS closures incl. empty-N `CHK_CHIRP_REACHABLE` / T18 in formula prose) — **not** frontend implement; measure blocked until non-POROUS; commit only after that |
 
 ---
 
@@ -196,11 +196,16 @@ support) **before** re-measure.
 ## 4. Locked decision (was: recommended option)
 
 **LOCKED (Marco 2026-07-26):** **Option A** + mechanism **A3**
-(sweep-scoped predicate **AND** neighbourhood around `f_inst`; Option C’s
-peak-neighbourhood idea is part of A3, not a silent third freeze).
+(sweep-scoped predicate **AND** neighbourhood of the instantaneous sweep
+trajectory). **Normative reading (post-CC):** “around `f_inst`” =
+triangular support ∩ `F_TRAJ` (PSD-window chirp image + lock `T_MEM`) as
+pinned in the formula — **not** Option C’s peak-local ±K band pad (that
+pad is explicitly REJECT). Option C’s geometry intuition is absorbed only
+via `F_TRAJ`, not as a silent third freeze.
 **Option B (tip-with-debt) rejected** as the living path.
 Sweep-HF remains **fuori** dal veicolo REV7 LF / geometric-`R` until
-measure PASSes under the new admission.
+measure PASSes under the new admission; sweep closing domain must not
+silently become `ACTIVE∩R`.
 
 Rationale (counsel already in PLAN @ `2c69606f`; now stamped):
 
@@ -298,15 +303,19 @@ Silent lock edit without CONTRACT amend GO → **FAIL** / stop-rule BLOCKER.
 1. ~~Marco counter-check A vs B~~ — **DONE** 2026-07-26 (A / A3 / fuori REV7 LF).
 2. ~~Concrete A/A3 formula draft~~ — **DONE** (doc-only):
    `docs/MOTORE_V3_LOG_SWEEP_HF_ADMISSION_FORMULA.md`
-   (`ACTIVE_sweep`, F1, geometry-only `N`, vacuous/report/anti-launder).
-3. **Delta `ember-metrology-redteam`** on that formula — not on frontend code.
-   **CC + re-measure blocked** until verdict ≠ `CONTRACT-BROKEN`.
-4. **Independent CC** (parity-lab / judge lineage) under the written rule —
-   ACCEPT/REJECT per §5 — only after redteam non-BROKEN.
+   (`ACTIVE_sweep`, F1, `N`:=support∩`F_TRAJ`, vacuous/report/anti-launder).
+3. ~~Tip packaging + independent CC @ `81e86dc5`~~ — **DONE**: verdict
+   **CONTRACT-POROUS**; must-fixes 1–7 closed in formula prose (uncommitted
+   until Marco OK). Formula **must not** self-declare `CONTRACT-SOUND`.
+4. **Redteam/CC delta again** on the patched formula (empty-N /
+   `CHK_CHIRP_REACHABLE` / T18 + tie-break / b106 lattice / level pins) —
+   not on frontend code. **Re-measure blocked** until verdict ≠
+   `CONTRACT-POROUS` / `CONTRACT-BROKEN`.
 5. Only then: candidate CONTRACT amend path for **sweep admission**
    (still **separate** from full REV7 consolidate of LF+R; sweep-HF stays
-   outside that vehicle until measure PASS). Marco authorizes **commit**
-   of this stamp / formula only after redteam/CC (or explicitly sooner).
+   outside that vehicle until measure PASS; no `ACTIVE∩R` closing on sweep).
+   Marco authorizes **commit** of this stamp / formula only after
+   non-POROUS CC (or explicitly sooner).
 
 **Not permitted as next step:** implement/close gate in `ml_v3/frontend/`;
 ship; training; claim PASS from stationary-only tables; consolidate REV7
