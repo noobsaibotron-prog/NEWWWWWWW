@@ -3,7 +3,7 @@
 **Status:** PLAN ONLY — not G1b tip, not gate proof, not G1 PASS  
 **Date:** 2026-07-25 (P7 ACCEPTED — Marco OK; P1–P7 pinned; WS0 worktree create unblocked)  
 **Contract:** `docs/MOTORE_V3_G1_CONTRACT.md` @ freeze `6d254d0a` (REV6)  
-**Lab state:** `docs/MOTORE_V3_PLAN.md` — G1a CLOSE: GO @ tip `a2186ac1`; product G1b may unfreeze; **REV7: NO** until falsifiable impossibility  
+**Lab state:** `docs/MOTORE_V3_PLAN.md` — G1a CLOSE: GO @ tip `a2186ac1`; product G1b may unfreeze; spike WS4 **RED** → REV7 **candidate draft** `docs/MOTORE_V3_G1_CONTRACT_REV7_CANDIDATE.md` (admission only; 0.25 immutable); **REV7 consolidate: NO** until formula + redteam + second GO  
 **Authority for this doc:** planning spike under Marco mandate; does not amend CONTRACT  
 **Pin readiness:** **P1–P7 ACCEPTED** (P7 = Marco OK 2026-07-25 on restricted spike-only `{silence, level_below_threshold}`); **worktree create unblocked**
 

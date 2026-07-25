@@ -22,8 +22,10 @@ Il piano descrive un progetto a contratti. Ad oggi, su questo branch:
   codice remediation, tip T6, e tip PLAN. **Stato corrente: G1a CLOSE: GO**
   (questo stamp) — REOPENED **non** e piu lo stato vivente.
 - **GO G1a**: aperto (2026-07-25) dal reviewer (Marco) sul freeze `6d254d0a`.
-  Apertura fase ≠ CLOSE; CLOSE ora = GO sotto. **REV7: NO** (nessun amend
-  contratto autorizzato).
+  Apertura fase ≠ CLOSE; CLOSE ora = GO sotto. **REV7 consolidate: NO.**
+  Candidate draft open: `docs/MOTORE_V3_G1_CONTRACT_REV7_CANDIDATE.md`
+  (activity/admission gate 4 only; 0.25 dB immutable; ≠ freeze amend until
+  second Guardian GO + lock re-hash).
 - **G1a codice in git** (remediation tip `a2186ac1`): T1 `94dc9991`
   (primitives/split/coverage) + T2 `1908fc45` / T2.1 `918b3dde` (JSON
   schemas, validators, golden canonical) + T3 `9aa19295` (adapter v2↔v3
@@ -54,9 +56,11 @@ Il piano descrive un progetto a contratti. Ad oggi, su questo branch:
   invariato; lock
   `d2c35ccc12643f2520c8a50d2e27fd3631216bb9a8ce63a34193412e74d1c10e`;
   SHA256SUMS 48 verify OK; F2/F3/F4 closed; gate-8 + F1 WAV remain durable
-  debt (no rewrite). **No G1 PASS.** **REV7: NO.** History: false CLOSE
-  `1746a058` withdrawn; REOPEN `284228d6`. **Product G1b may unfreeze after
-  this stamp** (spike `ml_v3/frontend/` ≠ tip).
+  debt (no rewrite). **No G1 PASS.** **REV7 consolidate: NO** (candidate
+  draft only — see `docs/MOTORE_V3_G1_CONTRACT_REV7_CANDIDATE.md` after
+  spike WS4 RED). History: false CLOSE `1746a058` withdrawn; REOPEN
+  `284228d6`. **Product G1b may unfreeze after this stamp** (spike
+  `ml_v3/frontend/` ≠ tip).
   - **F2 (code-closed @ `a2186ac1`)**: commitment↔reveal match on
     non-null reveal via `verify_commitment`; golden dd/ee REJECT when
     mismatch. **Residual debt** (not F2 reopen): §8.2.4 gate 8 premature
@@ -181,13 +185,21 @@ line, plugin installato, APVTS, preset, `Resources/Models/ml_weights.bin`,
   `75cb6902`. **G1a CLOSE: GO** (Guardian re-CLOSE 2026-07-25) on
   `a2186ac1` + `805fb34d`; contract freeze `6d254d0a` invariato; lock
   `d2c35ccc…`; SHA256SUMS 48 verify OK; F2/F3/F4 closed; gate-8 + F1 WAV
-  durable debt (no rewrite); **REV7: NO**. **No G1 PASS.** **Product G1b
-  may unfreeze after this stamp** (spike ≠ tip).
+  durable debt (no rewrite); **REV7 consolidate: NO**. **No G1 PASS.**
+  **Product G1b may unfreeze after this stamp** (spike ≠ tip).
+- **G1b spike WS4 (2026-07-25):** tip `c7f05871` @
+  `spike/motore-v3-g1b-frontend` → gate-4 **RED** (max|Δ|=9.537 dB) under
+  REV6 activity `max(psd)>−120`; streaming/proof (b) PASS; P1–P7
+  unchanged. Independent CC + Guardian: impossibilita falsificabile del
+  **predicato di admission**, non della soglia 0.25 dB. Candidate:
+  `docs/MOTORE_V3_G1_CONTRACT_REV7_CANDIDATE.md`. Next: fill `ACTIVE(…)`
+  a priori (no fit to RED cells) → metrology-redteam → second Guardian GO
+  before consolidate/lock re-hash. **≠ G1 PASS.**
 - GO G1b — mandato storico in PLAN `37f6ac60` (2026-07-25) con REV7:
   amend solo se l'implementazione dimostra **impossibilita falsificabile**
   (non inconvenienza); un redteam + un CC indipendente per tranche;
   stop-rule semantica (stesso bullet sopra). **Product G1b may unfreeze
-  after this G1a CLOSE stamp**; uncommitted `ml_v3/frontend/` = spike /
+  after this G1a CLOSE stamp**; uncommitted / spike `ml_v3/frontend/` =
   feasibility probe (not gate proof; spike ≠ tip) until official G1b tip /
   M3+M4. Nessun ship Ableton.
 - Dati, cache e modelli restano in `~/aieq_data/motore_v3/`; nel repository
