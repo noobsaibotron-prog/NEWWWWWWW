@@ -19,7 +19,10 @@
 ### Tip
 | Tip | Commit | Nota |
 |-----|--------|------|
-| **HEAD** | **`2c69606f`** | living next-path: log_sweep HF before G1b tip |
+| **HEAD** | **`04e47b39`** | A3 formula CLOSED (POROUS holes) — falsification measure next |
+| A3 falsification measure | *(this commit / see evidence)* | **FAIL honest** — `docs/MOTORE_V3_LOG_SWEEP_A3_FALSIFICATION_MEASURE.md` (b106 ACTIVE ~6.44/5.84; chk 20 Hz unreachable; no PASS-claim; consolidate still NO) |
+| Formula freeze | `81e86dc5` / close `04e47b39` | log_sweep HF A3 admission formula |
+| Living next-path | `2c69606f` | log_sweep HF before G1b tip |
 | Final R-remeasure | `b3d7f71b` | stationary PASS, sweep FAIL (~6.44 dB @ b106) |
 | G1a CLOSE stamp | `57b31bf1` | Guardian re-CLOSE GO (ancora valido) |
 | Codice G1a remediation | **`a2186ac1`** | F2/F3/F4 closed — tip codice |
@@ -30,11 +33,10 @@
 | Spike G1b (altro WT) | `c7f05871` @ `spike/motore-v3-g1b-frontend` | WS4 gate-4 RED |
 
 ### Stato fase (una frase)
-**G1a CLOSED (GO).** Living next-path: proposta
-`docs/MOTORE_V3_LOG_SWEEP_HF_ADMISSION_PROPOSAL.md` **DECISION STAMPED**
-(Marco 2026-07-26: **A / A3 / fuori REV7 LF**). **Next:** redteam + CC
-(uncommitted fino ad allora); **poi** tip G1b. **REV7 consolidate: NO.**
-**No G1 PASS. No ship.**
+**G1a CLOSED (GO).** A3 formula @ `04e47b39`; falsification measure
+`docs/MOTORE_V3_LOG_SWEEP_A3_FALSIFICATION_MEASURE.md` = **FAIL honest**
+(b106 ACTIVE ~6.44/5.84; chk 20 Hz unreachable). **≠ PASS-claim.**
+**REV7 consolidate: NO. No G1 PASS. No ship.**
 
 ### Progresso dopo CLOSE G1a
 1. G1b spike P1–P7 pinned (Marco OK) → WS0 worktree.  
@@ -45,7 +47,11 @@
 6. Evidence: `docs/MOTORE_V3_REV7_REMEASURE_R_FINAL.md`.  
 7. Living next-path registered `2c69606f`.  
 8. **Proposal STAMPED:** `docs/MOTORE_V3_LOG_SWEEP_HF_ADMISSION_PROPOSAL.md`
-   (Marco 2026-07-26: **A / A3 / fuori REV7 LF**; uncommitted for redteam/CC).
+   (Marco 2026-07-26: **A / A3 / fuori REV7 LF**).
+9. Formula freeze `81e86dc5` + POROUS close `04e47b39`.
+10. **A3 falsification measure (FAIL honest):**
+    `docs/MOTORE_V3_LOG_SWEEP_A3_FALSIFICATION_MEASURE.md`
+    — b106 ACTIVE ~6.44/5.84; chk 20 Hz unreachable; no PASS-claim.
 
 ### Checklist
 | Voce | Stato |
@@ -53,7 +59,8 @@
 | G1a T1–T6 + M2 + remediation | FATTO |
 | G1a CLOSE | **GO** |
 | REV7 consolidate | **NO** |
-| log_sweep HF admission proposal | **STAMPED** A/A3/fuori REV7 LF (doc-only; uncommitted → redteam+CC) |
+| log_sweep HF admission formula | **CLOSED** @ `04e47b39` |
+| A3 falsification measure | **FAIL honest** (evidence doc; ≠ PASS-claim) |
 | G1 PASS | **NO** |
 | G1b tip ufficiale | **NO** (spike ≠ tip; WT locale stub `ml_v3/frontend/` untracked) |
 | Ship Source vs `2c88edad` | **0-diff** |
@@ -65,28 +72,29 @@ gate-8 residual (§8-pieno) · F1 WAV in-repo (~22MB) · G4 low-end cross-SR · 
 ### Working tree (questo lab)
 | Path | Stato |
 |------|--------|
-| Tip committed | HEAD `2c69606f` |
-| Proposal + PLAN/handoff §A touch | **uncommitted** STAMP (A/A3; redteam+CC next) |
+| Tip committed | HEAD `04e47b39` (+ this measure-evidence commit) |
+| A3 measure evidence | `docs/MOTORE_V3_LOG_SWEEP_A3_FALSIFICATION_MEASURE.md` |
 | `ml_v3/frontend/` + `test_g1b_t1_*` | **untracked** stub ≠ tip (codice vero nello spike WT) |
-| handoff / `agents/ember/` | untracked |
+| handoff / `agents/ember/` | untracked mirrors |
 | Perimetro Source/CMake/Resources | 0 |
 
 ### Sequenza restante
 **Autorità short-path (counsel Marco — document-only). Non consolidare REV7 ora.**
 
-**Consiglio:** Non c’è ancora impossibilità falsificabile sul dominio giusto: stazionario su `R` **PASS**; FAIL = `log_sweep` HF (skirt floor-union), non geometria LF. Consolidare ora = shopping admission/soglia, non metrology.
+**Consiglio:** A3 measure = **FAIL honest** sul dominio scritto (ACTIVE_sweep); stazionario su `R` resta PASS storico. Consolidare ora = shopping admission/soglia, non metrology.
 
 **Percorso (ordine):**
 1. ~~Counter-check A vs B~~ — **DONE** (stamped **A / A3 / fuori REV7 LF**).
-2. Redteam + CC indipendente sulla **formula concreta A/A3** → ACCEPT/REJECT.
-   Solo allora candidato amend sweep-HF (fuori veicolo REV7 LF/`R` fino a PASS).
-3. G1b tip ufficiale solo dopo quella misura/ACCEPT:
+2. ~~Formula freeze + POROUS close~~ — **DONE** (`81e86dc5` / `04e47b39`).
+3. ~~Falsification-only remeasure~~ — **DONE: FAIL honest** (evidence doc).
+4. Lab choice a-priori (Marco): amend admission further, change frontend/PSD under contract, or keep debt explicit — **not** mean/p95 / 0.25 relax / ∩R laundering / REV7 consolidate.
+5. G1b tip ufficiale solo dopo path ACCEPT/override Marco:
    - se amend GO → tip sotto contratto aggiornato + lock re-hash;
    - tip-with-debt (B) **non** è il path locked (serve nuovo override Marco).
-4. Spike locale (`ml_v3/frontend/`): lab only; ≠ tip; **non** next step ora.
-5. Mai: rilassare 0.25→media/p95; ship/Source/Ableton; training; “G1 PASS”; consolidate REV7 ora.
+6. Spike locale (`ml_v3/frontend/`): lab only; ≠ tip; **non** next step ora.
+7. Mai: rilassare 0.25→media/p95; ship/Source/Ableton; training; “G1 PASS”; consolidate REV7 ora.
 
-**Una riga:** Decision stamped A/A3; next = redteam + CC sulla formula, poi tip G1b. REV7 consolidate: NO.
+**Una riga:** A3 measure FAIL honest (b106 ACTIVE ~6.44/5.84; 20 Hz unreachable); no PASS-claim; REV7 consolidate: NO.
 
 ### Vietato
 Claim G1 PASS; REV7 consolidate senza impossibilità falsificabile + Guardian; trattare spike come tip; rilassare 0.25 dB; ship Ableton; history-rewrite WAV.
