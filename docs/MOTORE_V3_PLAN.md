@@ -208,6 +208,16 @@ line, plugin installato, APVTS, preset, `Resources/Models/ml_weights.bin`,
   on `log_sweep` HF floor-union skirt (b106, ~6.44 dB). Report-only ∉`R`
   published. **REV7 consolidate: NO** until sweep admission amend a priori.
   G4 debt: cross-SR low-end detections. **≠ G1 PASS.**
+- **Living next-path (post-`b3d7f71b`, counsel — no REV7 consolidate now):**
+  stazionario su `R` PASS; FAIL = `log_sweep` HF skirt (floor-union), non
+  geometria LF. Ordine: (1) chiudere `log_sweep` HF a priori (admission /
+  one-sided-floor fixture; docs + redteam + CC → solo allora candidato amend
+  REV7 o debt esplicito no-amend); (2) tip G1b ufficiale solo dopo quella
+  decisione (amend GO → tip + lock re-hash; no amend → tip REV6 + debt
+  scritto; hard 0.25 dB intatto); (3) spike `ml_v3/frontend/` = lab only ≠
+  tip; (4) debt parallelo F1 WAV / gate-8 non riapre G1a CLOSE. Mai:
+  0.25→media/p95; ship/Source; training; “G1 PASS”. Short path:
+  `docs/EMBER_CORE_PARALLEL_HANDOFF.md` §A Sequenza restante.
 - GO G1b — mandato storico in PLAN `37f6ac60` (2026-07-25) con REV7:
   amend solo se l'implementazione dimostra **impossibilita falsificabile**
   (non inconvenienza); un redteam + un CC indipendente per tranche;
