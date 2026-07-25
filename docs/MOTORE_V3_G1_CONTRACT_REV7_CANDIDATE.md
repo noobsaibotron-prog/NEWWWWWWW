@@ -83,18 +83,41 @@ Smoking-gun shape (from spike evidence JSON, illustrative of the clause):
 
 ## 3. Amend target (scoped)
 
-### In scope
+### In scope (updated after metrology-redteam 2026-07-25)
 
-Replace **only** the gate-4 **activity / domain-admission predicate** in
-§13.2 item 4 (and the matching string in the G1a metrology lock when/if
-consolidated — see §6). Shape/prominence continue to **inherit** PSD-band
-activity of the same channel; invalid channels remain ignored as §7.
+**Original draft scope:** replace the gate-4 activity / domain-admission
+predicate in §13.2 item 4 (+ lock string on consolidate).
+
+**Scope reopen (judge-endorsed, redteam VERDICT CONTRACT-BROKEN):** the amend
+target may also need to include **one or more** of:
+
+- an explicit **domain** carve-out for geometrically unresolvable bands
+  (preferred durable form for 0/1-bin material occupancy — pick **either**
+  domain wording **or** predicate exclusion, not dual optional packaging);
+- fail-closed rules for **shape/prominence coupling**: excluding a PSD cell
+  from the max does **not** remove that band’s energy from §7’s global
+  shape normalizer (`sum` over 120) nor from prominence’s ±16 kernel — so
+  “inherit ACTIVE” alone is insufficient;
+- a normative narrowing of candidate constraint 4 (ENBW-aperture-only) **or**
+  an a-priori anti-leakage operator (disclaimer/residual ≠ satisfaction of a
+  normative constraint);
+- a corrected **MATERIAL** rule (equal-energy `W_MATERIAL` bound is not
+  worst-case);
+- hashed/pinned `N_BINS` / `ACTIVE` mask procedure + vacuous FAIL per
+  §13.1 portion and valid channel.
+
+Invalid channels remain ignored as §7. **0.25 dB hard max and max
+aggregator remain immutable.**
 
 ### Out of scope (forbidden in this REV7)
 
 - Changing `0.25 dB` hard max or replacing max with mean/p95/RMSE.
-- Dropping `shape` / `prominence` / `level` from the declared domain.
+- Dropping `shape` / `prominence` / `level` from the declared domain
+  **without** a fail-closed replacement definition that closes coupling
+  (redefinition of domain membership or of shape/prominence for gate 4 may
+  be in scope; silent drop to hide FAIL is not).
 - Post-hoc prominence clamp; changing aggregator; changing P1–P7.
+- Raising `N_MIN` after a FAIL to chase PASS (threshold shopping).
 - Changing §10 evaluator −100 dBFS/Hz criteria (different gate).
 - Product frontend “fixes” under an unconsolidated candidate rule.
 - Silent lock / SHA256SUMS mutation.
@@ -117,15 +140,17 @@ all of the following **before** consolidate:
    sits at the floor. Pure “intersection both > −120” is **insufficient**
    as a complete replacement (multitone peaks have both sides above floor
    and still fail).
-4. **Signal-bearing admission.** Exclude cells whose content is dominated by
-   inter-component leakage / interference or numerical-floor instability,
-   while retaining cells that carry stable signal energy relevant to SR
-   parity. The operational definition must be stated in CONTRACT language
-   (absolute floor, relative-to-frame-peak dynamic range, fixture-declared
-   component occupancy, or another a-priori rule) **without** fitting that
-   definition to the spike RED magnitudes.
-5. **Inheritance unchanged.** Shape/prominence of band *b* inherit PSD
-   activity of band *b* on that channel; invalid channels ignored.
+4. **Signal-bearing admission (REV7 perimeter — narrowed).** For this amend,
+   admission is **ENBW-aperture resolvability** on every positive-weight
+   fusion path plus the floor/union cut — stated in CONTRACT language
+   **without** fitting to spike RED magnitudes. Inter-component leakage /
+   sidelobe domination is **out of scope** for `ACTIVE` unless a separate
+   a-priori anti-leakage operator is added by a further authorized amend.
+   (Proposal §2.0; residual disclaimer ≠ satisfaction.)
+5. **Inheritance + coupling close.** Shape/prominence of band *b* inherit PSD
+   activity of band *b* on that channel **after** gate-4 shape/prominence
+   are redefined on `R = {RESOLVED}` so excluded-band energy cannot
+   contaminate ACTIVE cells (proposal §2.7 choice B); invalid channels ignored.
 6. **Vacuous-PASS fail-closed.** If a run admits **zero** active cells on a
    required asset/portion, the gate **FAILS** (empty domain ≠ PASS).
 7. **0.25 dB immutable.** Domain fields and max aggregator unchanged.
@@ -133,25 +158,58 @@ all of the following **before** consolidate:
    adversarial subset (and redteam attacks in §5) on the gate platform;
    PASS/FAIL is that measurement, not this draft.
 
-**Open slot (for the follow-up amend prose, not filled here):**
+**Open slot (filled in proposal prose — not consolidated):**
+
+See `docs/MOTORE_V3_REV7_ACTIVE_FORMULA_PROPOSAL.md` (redteam closure draft).
+Packaging summary (normative intent; byte-equivalent max set):
 
 ```text
-ACTIVE(b, ch) ≜ <formula a priori satisfying constraints 1–8>
+RESOLVED(b)  ⇔  every path with w_path(center[b]) > 0 has N_BINS(b,N_path) ≥ 2
+DOMAIN       :  ¬RESOLVED(b) ⇒ b outside gate-4 PSD/shape/prominence domain
+ACTIVE(b,ch) ⇔  RESOLVED(b) ∧ max(psd_ref, psd_sr)[b,ch] > -120
+GATE-4 shape/prominence := §7 formulas on R={i: RESOLVED(i)} only
+CONSTRAINT-4 := ENBW aperture + floor/union only (leakage out of scope)
+VACUOUS      :  empty active set on any §13.1 portion × valid channel → FAIL
+N_MIN = 2 = ceil(ENBW_Hann); 0.25 dB unchanged; no W_MATERIAL
 ```
+
+Constraint 4 of this candidate §4 is **narrowed** for REV7 admission to the
+ENBW + floor perimeter above (proposal §2.0). Dual optional 0/1-bin wording
+is forbidden: domain amend is the sole normative packaging.
 
 ---
 
 ## 5. Required before consolidate (second GO)
 
-1. **Write** the concrete `ACTIVE(…)` formula into a CONTRACT amend patch
-   (still document-only until accepted) obeying §4.
-2. **`ember-metrology-redteam`:** attack false-PASS surfaces — activity
-   window, union/empty-set, vacuous PASS, invalid-channel ignore, platform
-   drift, post-hoc threshold shopping.
-3. **Optional `ember-parity-lab`:** re-verify max|Δ| / margin tables on
-   CPython 3.12.13 gate venv.
-4. **Guardian second GO** to consolidate REV7 into
-   `docs/MOTORE_V3_G1_CONTRACT.md` and bump revision header.
+1. **Write** the concrete `ACTIVE(…)` (+ domain / coupling / MATERIAL
+   clauses from §3 scope reopen) — **done in proposal** (closure draft);
+   pending delta redteam acceptance.
+2. **`ember-metrology-redteam`:** first pass → **CONTRACT-BROKEN**; judge
+   endorsed five must-fixes. Prose closure + **delta redteam** →
+   **CONTRACT-POROUS** (2026-07-25): five must-fixes closed; residuals
+   remain (prominence-on-R dual reading; ENBW↛occupancy isomorphism;
+   MATERIAL center vs support wings; vacuous vs level scalars; A15
+   wording). **Independent re-measure authorized YES** under residual
+   acceptances A–F in the delta redteam handoff (ENBW-only PASS wording;
+   harness §7-on-R; pin one prominence algorithm before lock; no N_MIN
+   raise; no leakage-solved claim). ≠ consolidate GO.
+3. **Independent re-measure** (judge lineage) — **DONE → RED**.
+   Report: `docs/MOTORE_V3_REV7_REMEASURE_R_REPORT.md`.
+   Stationary subset under ENBW+floor / §7-on-`R`: still FAIL (multitone
+   ~4.77; noise 9.54→1.24 still FAIL). **Dense probe (iii)** — one tone per
+   band centre, same rules — also FAIL (~1.19 dB, `prom` b24): sparse
+   excitation **insufficient**; residual diagnosis = **inter-band
+   inseparability** (neighbour centres inside Hann main lobe) on
+   `RESOLVED` bands. **Forbidden:** fit cuts / raise `N_MIN` / shop
+   constants against 4.77 / 1.24 / 1.19. **log_sweep** still owed before
+   formal close. Next: untainted rewrite of domain/fields and/or a-priori
+   geometric criterion (ENBW vs main-lobe separation re-openable on
+   diagnostic grounds only) → redteam → re-measure → Guardian.
+   ≠ consolidate GO.
+4. **Guardian second GO** — **blocked** until scope rewrite addresses §3
+   reopen (domain/fields / coupling) consistent with re-measure RED; then
+   consolidate path into `docs/MOTORE_V3_G1_CONTRACT.md` only after a later
+   PASS re-measure under the rewritten scope.
 5. **Lock reopen / re-hash** (mandatory on consolidate): G1a freeze pins
    `predicate: max(psd_db_ref, psd_db_sr) > -120` and
    `threshold_max_abs_db: 0.25` under digest `d2c35ccc…`. Consolidate
@@ -159,6 +217,14 @@ ACTIVE(b, ch) ≜ <formula a priori satisfying constraints 1–8>
 
 Until steps 1–5 complete: **REV7 consolidate = NO.** Product G1b tip must
 not claim gate-4 PASS under REV6 admission.
+
+### Redteam must-fix (paper; no N_MIN raise) — closure mapping
+
+1. Coupling → proposal §2.7 choice **(B)** (gate-4 shape/prominence on `R`).
+2. Constraint-4 → proposal §2.0 **narrowed** (ENBW + floor; leakage OOS).
+3. 0/1-bin → proposal §2.5 **domain amend only** (predicate set-equivalent).
+4. MATERIAL → proposal §2.2 **`w_path > 0`** (`W_MATERIAL` withdrawn).
+5. Pin + vacuous → proposal §2.1 + §2.8.
 
 ---
 
@@ -188,9 +254,9 @@ not claim gate-4 PASS under REV6 admission.
 
 | agent | next |
 |-------|------|
-| Marco / author | fill `ACTIVE(…)` under §4 constraints (no fit to 9.5 dB) |
-| ember-metrology-redteam | after formula written; before consolidate |
-| ember-parity-lab | optional re-verify |
+| untainted author | closure draft in `MOTORE_V3_REV7_ACTIVE_FORMULA_PROPOSAL.md` |
+| ember-metrology-redteam | **delta** pass on closure prose; re-measure still forbidden if BROKEN |
+| ember-parity-lab | re-measure only after delta non-BROKEN |
 | ember-contract-guardian | second GO for consolidate only |
 
 ≠ G1 PASS. ≠ REV7 consolidated. 0.25 dB not touched.

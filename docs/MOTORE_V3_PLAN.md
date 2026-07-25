@@ -190,11 +190,16 @@ line, plugin installato, APVTS, preset, `Resources/Models/ml_weights.bin`,
 - **G1b spike WS4 (2026-07-25):** tip `c7f05871` @
   `spike/motore-v3-g1b-frontend` → gate-4 **RED** (max|Δ|=9.537 dB) under
   REV6 activity `max(psd)>−120`; streaming/proof (b) PASS; P1–P7
-  unchanged. Independent CC + Guardian: impossibilita falsificabile del
-  **predicato di admission**, non della soglia 0.25 dB. Candidate:
-  `docs/MOTORE_V3_G1_CONTRACT_REV7_CANDIDATE.md`. Next: fill `ACTIVE(…)`
-  a priori (no fit to RED cells) → metrology-redteam → second Guardian GO
-  before consolidate/lock re-hash. **≠ G1 PASS.**
+  unchanged. Guardian: impossibilita del **predicato di admission**, non
+  della soglia 0.25. Candidate + ACTIVE proposal + redteam
+  BROKEN→POROUS; independent re-measure on ENBW+floor / §7-on-`R` →
+  still **RED** (`docs/MOTORE_V3_REV7_REMEASURE_R_REPORT.md`: noise
+  9.54→1.24; multitone ~4.77; **dense probe (iii) ~1.19 FAIL** — sparse
+  excitation insufficient; residual = inter-band inseparability under
+  Hann main lobe). **REV7 consolidate: NO.** Forbidden: shop `N_MIN` /
+  cuts on those numbers. Next: untainted domain/field / geometric-criterion
+  rewrite (diagnosis only from judge) → redteam → re-measure → Guardian.
+  **≠ G1 PASS.**
 - GO G1b — mandato storico in PLAN `37f6ac60` (2026-07-25) con REV7:
   amend solo se l'implementazione dimostra **impossibilita falsificabile**
   (non inconvenienza); un redteam + un CC indipendente per tranche;
