@@ -203,6 +203,59 @@ class MultiAssetDeltaResetTests(unittest.TestCase):
             self.assertTrue(all(v == 0.0 for v in first["mid_delta_db"]))
 
 
+class InterleavedSilenceProofBTests(unittest.TestCase):
+    """Lock also_required (b): silence interleaved between assets.
+
+    Stream = asset_a || silence || asset_b. Silence frames are invalid and
+    clear delta history identically on offline monolith vs chunked schedules.
+    """
+
+    def _concat_stream(self, fs: int) -> np.ndarray:
+        n_a = _host_len_for_canonical(fs, N_LF + 3 * HOP_SAMPLES)
+        n_sil = _host_len_for_canonical(fs, N_LF + 2 * HOP_SAMPLES)
+        n_b = _host_len_for_canonical(fs, N_LF + 3 * HOP_SAMPLES)
+        a = _tone(n_a, 1000.0, fs=fs, amp=0.2)
+        sil = np.zeros(n_sil, dtype=np.float32)
+        b = _tone(n_b, 500.0, fs=fs, amp=0.2)
+        return np.concatenate([a, sil, b])
+
+    def test_48k_interleaved_silence_spike_schedules(self):
+        require_gate_platform_python()
+        x = self._concat_stream(48000)
+        offline = extract_offline_feature_frames(x, 48000)
+        self.assertGreaterEqual(len(offline), 3)
+        # At least one invalid (silence) frame must appear.
+        self.assertTrue(any(not f["valid"] for f in offline))
+        for fixed in SPIKE_FIXED_SCHEDULES:
+            chunked = extract_chunked_feature_frames(x, 48000, fixed)
+            _assert_frame_sequences_bit_identical(
+                offline, chunked, ctx=f"proof-b schedule={fixed}"
+            )
+        geo = extract_chunked_feature_frames(x, 48000, GEOMETRIC_CHUNK_SCHEDULE)
+        _assert_frame_sequences_bit_identical(
+            offline, geo, ctx="proof-b schedule=geometric-32"
+        )
+
+    def test_silence_clears_delta_before_second_asset(self):
+        """After interleaved silence, first re-valid mid_delta is all-zero."""
+        require_gate_platform_python()
+        x = self._concat_stream(48000)
+        frames = extract_offline_feature_frames(x, 48000)
+        saw_invalid = False
+        first_revalid = None
+        for f in frames:
+            if not f["valid"]:
+                saw_invalid = True
+                continue
+            if saw_invalid and first_revalid is None:
+                first_revalid = f
+                break
+        self.assertIsNotNone(first_revalid)
+        assert first_revalid is not None
+        self.assertTrue(first_revalid["mid_valid"])
+        self.assertTrue(all(v == 0.0 for v in first_revalid["mid_delta_db"]))
+
+
 class FailClosedStreamingTests(unittest.TestCase):
     def test_layout_change_rejected(self):
         ext = StreamingFeatureExtractor(48000)
