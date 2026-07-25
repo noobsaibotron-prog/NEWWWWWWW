@@ -216,8 +216,13 @@ line, plugin installato, APVTS, preset, `Resources/Models/ml_weights.bin`,
   decisione (amend GO → tip + lock re-hash; no amend → tip REV6 + debt
   scritto; hard 0.25 dB intatto); (3) spike `ml_v3/frontend/` = lab only ≠
   tip; (4) debt parallelo F1 WAV / gate-8 non riapre G1a CLOSE. Mai:
-  0.25→media/p95; ship/Source; training; “G1 PASS”. Short path:
+  0.25→media/p95; ship/Source; training; “G1 PASS”.   Short path:
   `docs/EMBER_CORE_PARALLEL_HANDOFF.md` §A Sequenza restante.
+  **Proposal STAMPED (document-only, post-`2c69606f`, Marco 2026-07-26):**
+  `docs/MOTORE_V3_LOG_SWEEP_HF_ADMISSION_PROPOSAL.md` — **A / A3 / fuori REV7 LF**;
+  next = redteam + independent CC (leave uncommitted); ≠ REV7 consolidate;
+  ≠ G1b tip.
+
 - GO G1b — mandato storico in PLAN `37f6ac60` (2026-07-25) con REV7:
   amend solo se l'implementazione dimostra **impossibilita falsificabile**
   (non inconvenienza); un redteam + un CC indipendente per tranche;

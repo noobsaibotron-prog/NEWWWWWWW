@@ -1,6 +1,6 @@
 # Ember Core / Motore v3 — Handoff AUTOSUFFICIENTE per agenti esterni
 
-**Ultimo aggiornamento:** 2026-07-25 23:59 (UTC+2)  
+**Ultimo aggiornamento:** 2026-07-26 (UTC+2)  
 **Destinatario:** agente esterno **senza terminale / senza git**.  
 **Sezione A** = quadro vivo. **Sezione B** = snapshot (può essere stale; vince git + §A).
 
@@ -19,7 +19,8 @@
 ### Tip
 | Tip | Commit | Nota |
 |-----|--------|------|
-| **HEAD** | **`b3d7f71b`** | final REV7 R remeasure (stationary PASS, sweep FAIL) |
+| **HEAD** | **`2c69606f`** | living next-path: log_sweep HF before G1b tip |
+| Final R-remeasure | `b3d7f71b` | stationary PASS, sweep FAIL (~6.44 dB @ b106) |
 | G1a CLOSE stamp | `57b31bf1` | Guardian re-CLOSE GO (ancora valido) |
 | Codice G1a remediation | **`a2186ac1`** | F2/F3/F4 closed — tip codice |
 | T6 / M2 | `501a4e00` / `e9916319` | generators+WAV; fixture-spec `513c3baf…` |
@@ -29,7 +30,11 @@
 | Spike G1b (altro WT) | `c7f05871` @ `spike/motore-v3-g1b-frontend` | WS4 gate-4 RED |
 
 ### Stato fase (una frase)
-**G1a CLOSED (GO).** Living next-path: **prima** chiudere il FAIL `log_sweep` HF come domanda metrologica a priori (docs + misura); **poi** tip G1b. **REV7 consolidate: NO** (stazionario su `R` già PASS; FAIL ≠ geometria LF). **No G1 PASS. No ship.**
+**G1a CLOSED (GO).** Living next-path: proposta
+`docs/MOTORE_V3_LOG_SWEEP_HF_ADMISSION_PROPOSAL.md` **DECISION STAMPED**
+(Marco 2026-07-26: **A / A3 / fuori REV7 LF**). **Next:** redteam + CC
+(uncommitted fino ad allora); **poi** tip G1b. **REV7 consolidate: NO.**
+**No G1 PASS. No ship.**
 
 ### Progresso dopo CLOSE G1a
 1. G1b spike P1–P7 pinned (Marco OK) → WS0 worktree.  
@@ -37,7 +42,10 @@
 3. REV7 **candidate draft only** — non freeze.  
 4. Product decision: **report-only LF** (gate chiude solo su bande geometriche `R`; ∉`R` si pubblica, non chiude; no shopping dB).  
 5. Final R-remeasure `b3d7f71b`: multitone/noise su `R` **PASS** (~0.19 / ~0.05); overall **FAIL** su `log_sweep` HF floor-union skirt (~6.44 dB @ b106).  
-6. Evidence: `docs/MOTORE_V3_REV7_REMEASURE_R_FINAL.md`.
+6. Evidence: `docs/MOTORE_V3_REV7_REMEASURE_R_FINAL.md`.  
+7. Living next-path registered `2c69606f`.  
+8. **Proposal STAMPED:** `docs/MOTORE_V3_LOG_SWEEP_HF_ADMISSION_PROPOSAL.md`
+   (Marco 2026-07-26: **A / A3 / fuori REV7 LF**; uncommitted for redteam/CC).
 
 ### Checklist
 | Voce | Stato |
@@ -45,6 +53,7 @@
 | G1a T1–T6 + M2 + remediation | FATTO |
 | G1a CLOSE | **GO** |
 | REV7 consolidate | **NO** |
+| log_sweep HF admission proposal | **STAMPED** A/A3/fuori REV7 LF (doc-only; uncommitted → redteam+CC) |
 | G1 PASS | **NO** |
 | G1b tip ufficiale | **NO** (spike ≠ tip; WT locale stub `ml_v3/frontend/` untracked) |
 | Ship Source vs `2c88edad` | **0-diff** |
@@ -56,7 +65,8 @@ gate-8 residual (§8-pieno) · F1 WAV in-repo (~22MB) · G4 low-end cross-SR · 
 ### Working tree (questo lab)
 | Path | Stato |
 |------|--------|
-| Tip docs/code G1a | clean @ HEAD `b3d7f71b` (solo untracked sotto) |
+| Tip committed | HEAD `2c69606f` |
+| Proposal + PLAN/handoff §A touch | **uncommitted** STAMP (A/A3; redteam+CC next) |
 | `ml_v3/frontend/` + `test_g1b_t1_*` | **untracked** stub ≠ tip (codice vero nello spike WT) |
 | handoff / `agents/ember/` | untracked |
 | Perimetro Source/CMake/Resources | 0 |
@@ -67,18 +77,16 @@ gate-8 residual (§8-pieno) · F1 WAV in-repo (~22MB) · G4 low-end cross-SR · 
 **Consiglio:** Non c’è ancora impossibilità falsificabile sul dominio giusto: stazionario su `R` **PASS**; FAIL = `log_sweep` HF (skirt floor-union), non geometria LF. Consolidare ora = shopping admission/soglia, non metrology.
 
 **Percorso (ordine):**
-1. Chiudere il FAIL `log_sweep` come domanda metrologica **a priori** (prima di tip G1b ufficiale):
-   - ammissione sweep / checkpoint HF sotto union `max>−120` quando ref è a floor; **oppure**
-   - fixture/mode di confronto che non ammette celle “one-sided floor”;
-   - proposta document-only + redteam + CC → solo allora candidato amend REV7 (o debt esplicito se si decide di non amendare).
-2. G1b tip ufficiale solo dopo quella decisione:
+1. ~~Counter-check A vs B~~ — **DONE** (stamped **A / A3 / fuori REV7 LF**).
+2. Redteam + CC indipendente sulla **formula concreta A/A3** → ACCEPT/REJECT.
+   Solo allora candidato amend sweep-HF (fuori veicolo REV7 LF/`R` fino a PASS).
+3. G1b tip ufficiale solo dopo quella misura/ACCEPT:
    - se amend GO → tip sotto contratto aggiornato + lock re-hash;
-   - se no amend → tip sotto REV6 con debt scritto (sweep HF + G4 LF report-only); gate hard non toccati (0.25 dB su ciò che chiude).
-3. Spike locale (`ml_v3/frontend/` untracked / spike WT): lab only; ≠ tip; ≠ claim progresso gate.
-4. Debt in parallelo non bloccante: F1 WAV, gate-8 — non riaprono G1a CLOSE.
-5. Mai: rilassare 0.25→media/p95; ship/Source/Ableton; training; “G1 PASS”.
+   - tip-with-debt (B) **non** è il path locked (serve nuovo override Marco).
+4. Spike locale (`ml_v3/frontend/`): lab only; ≠ tip; **non** next step ora.
+5. Mai: rilassare 0.25→media/p95; ship/Source/Ableton; training; “G1 PASS”; consolidate REV7 ora.
 
-**Una riga:** Prima fix/spec del `log_sweep` HF (docs + misura), poi tip G1b. REV7 consolidate solo se quel lavoro dimostra che sotto ogni admission onesta il gate non è chiudibile — oggi non è il caso (stazionario già PASS).
+**Una riga:** Decision stamped A/A3; next = redteam + CC sulla formula, poi tip G1b. REV7 consolidate: NO.
 
 ### Vietato
 Claim G1 PASS; REV7 consolidate senza impossibilità falsificabile + Guardian; trattare spike come tip; rilassare 0.25 dB; ship Ableton; history-rewrite WAV.
