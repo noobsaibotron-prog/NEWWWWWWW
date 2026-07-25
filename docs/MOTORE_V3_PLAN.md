@@ -75,6 +75,10 @@ Il piano descrive un progetto a contratti. Ad oggi, su questo branch:
   - **MED F1 (durable debt)**: 37 WAV ~22MB in-repo vs CONTRACT §2 — **no
     history rewrite**; forward WAV remediation tranche (not a CLOSE blocker;
     debt/decision).
+  - **G4 debt (REV7 report-only LF)**: cross-SR detection stability on
+    low-end classes (mud/boom/boxy) — not satisfied by G1 gate 4 PASS on
+    geometric `R` alone; see
+    `docs/MOTORE_V3_REV7_REPORT_ONLY_LF_CLAUSE.md` §5.
   - Sequenza chiusa: REOPENED → F4 env evidence PASS → F2+F3 code tip
     `a2186ac1` → PLAN pre-stamp `805fb34d` → Guardian re-CLOSE GO →
     **this PLAN stamp** → F1 forward WAV tranche (debt) → product G1b may
@@ -196,10 +200,11 @@ line, plugin installato, APVTS, preset, `Resources/Models/ml_weights.bin`,
   still **RED** (`docs/MOTORE_V3_REV7_REMEASURE_R_REPORT.md`: noise
   9.54→1.24; multitone ~4.77; **dense probe (iii) ~1.19 FAIL** — sparse
   excitation insufficient; residual = inter-band inseparability under
-  Hann main lobe). **REV7 consolidate: NO.** Forbidden: shop `N_MIN` /
-  cuts on those numbers. Next: untainted domain/field / geometric-criterion
-  rewrite (diagnosis only from judge) → redteam → re-measure → Guardian.
-  **≠ G1 PASS.**
+  Hann main lobe). **Product decision: report-only LF** (gate on `R` only;
+  ∉`R` mandatory publish; no LF dB shopping). Clause:
+  `docs/MOTORE_V3_REV7_REPORT_ONLY_LF_CLAUSE.md`. **REV7 consolidate: NO.**
+  Next: redteam on clause → re-measure (max on `R` + report-only table) →
+  Guardian. G4 debt: cross-SR low-end detections. **≠ G1 PASS.**
 - GO G1b — mandato storico in PLAN `37f6ac60` (2026-07-25) con REV7:
   amend solo se l'implementazione dimostra **impossibilita falsificabile**
   (non inconvenienza); un redteam + un CC indipendente per tranche;

@@ -109,6 +109,16 @@ target may also need to include **one or more** of:
 Invalid channels remain ignored as §7. **0.25 dB hard max and max
 aggregator remain immutable.**
 
+**Product decision (Marco, 2026-07-25) — report-only LF:** geometric
+domain `R` from ENBW `N_MIN=2` ∧ Rayleigh `SEPARATION_MIN_BINS=2` (scope
+rewrite). Gate 4 closes only on `i ∈ R`. Bands `i ∉ R` are **report-only**:
+measured and **must** be published (omit table → report FAIL); they do not
+enter the gate-closing max. Explicit CONTRACT why-sentence required (grid
+finer than window separation). G4 debt: cross-SR low-end detection
+stability. Normative prose:
+`docs/MOTORE_V3_REV7_REPORT_ONLY_LF_CLAUSE.md`. No LF alternate dB
+tolerance. No option-1 blindness.
+
 ### Out of scope (forbidden in this REV7)
 
 - Changing `0.25 dB` hard max or replacing max with mean/p95/RMSE.
