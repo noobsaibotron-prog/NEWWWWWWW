@@ -1,11 +1,11 @@
 # G1b Frontend Spike Plan — REV6 feasibility (0.25 dB + streaming≡offline)
 
 **Status:** PLAN ONLY — not G1b tip, not gate proof, not G1 PASS  
-**Date:** 2026-07-25 (refined: Codex/Claude P1–P7 pin review — P1–P6 ready; P7 awaiting Marco)  
+**Date:** 2026-07-25 (refined: independent CC on P7 — P1–P6 ACCEPTED; P7 refined recommendation pending Marco)  
 **Contract:** `docs/MOTORE_V3_G1_CONTRACT.md` @ freeze `6d254d0a` (REV6)  
 **Lab state:** `docs/MOTORE_V3_PLAN.md` — G1a CLOSE: GO @ tip `a2186ac1`; product G1b may unfreeze; **REV7: NO** until falsifiable impossibility  
 **Authority for this doc:** planning spike under Marco mandate; does not amend CONTRACT  
-**Pin readiness:** **P1–P6 ready** (Codex ACCEPTED / refined); **P7 awaiting Marco**; **worktree create blocked until P7 OK**
+**Pin readiness:** **P1–P6 ACCEPTED**; **P7 refined recommendation pending Marco** (accept restricted set OR supply canonical); **worktree create blocked until P7 OK**
 
 ```text
 PHASE:            G1b-SPIKE-PLAN (planning + inventory; not product G1b)
@@ -175,8 +175,8 @@ Unpinned §6/§7 choices that **silently change measured quantities**.
 **Choices MUST be written here (or amended by Marco) before any product/spike
 coding run.** Changing a pin after seeing numbers → at best AMBRA.
 
-**Meta (2026-07-25 Codex/Claude independent review):** **P1–P6 ready**;
-**P7 awaiting Marco**; **worktree create blocked until P7 OK**.
+**Meta (2026-07-25):** **P1–P6 ACCEPTED**; **P7 refined recommendation
+pending Marco**; **worktree create blocked until P7 OK**.
 No CONTRACT amend invented here.
 
 | ID | Status | Ambiguity | Contract cite | Default (conservative) | Needs Marco? |
@@ -187,7 +187,7 @@ No CONTRACT amend invented here.
 | **P4** | **ACCEPTED** (Codex) | `shape_db` from clamped vs pre-clamp `psd_db` | §6.1 floor→clamp then dB; §7 `shape_db` uses `psd_db` | **Clamped `psd_db`** (the emitted field): `shape = psd_db - 10*log10(sum(10**(psd_db/10)))` on 120 bands | No |
 | **P5** | **ACCEPTED** (Codex) | `float64→float32` cast point + reduction association | §7 frame float32; gate3 bit-identity; lock `gate_platform_float_tol=0` | **Accumulate FIR/FFT/band sums in float64; cast each emitted frame float field to float32 once at write.** Same association offline and streaming (left-to-right on frozen index order). No Kahan / blocked reassoc without new pin | No (default is spike baseline) |
 | **P6** | **ACCEPTED** (Codex correct; was inconsistent) | Floor / zero values for invalid-channel vectors | §7 floor for invalid channel; PSD clamp `[-120,+12]`; `delta_db` clamp `[-24,+24]`; first-valid / history-reset → zeros | See **P6 detail** below | No |
-| **P7** | **PENDING Marco** | `reason` enumeration when `valid=false` | §7 «motivo enumerato quando falso» — **enum not listed** on contract surface; stub accepts any non-empty `str` | **Provisional spike-only set** (not CONTRACT amend): `silence`, `non_finite_input`, `unsupported_sr`, `insufficient_samples`, `channel_invalid` — used consistently offline≡streaming. Recommended: accept as provisional + freeze-from-prose debt for official enum at G1b tip | **YES — accept provisional set or supply canonical enum** |
+| **P7** | **PENDING Marco** (refined recommendation) | `reason` when `valid=false` (frame emitted) | §7 «motivo enumerato quando falso» — **enum not listed** on contract surface; stub accepts any non-empty `str` | See **P7 detail** below — restricted spike-only `{silence, level_below_threshold}`; hard errors out of frame `reason` | **YES — accept this restricted set OR supply canonical** |
 
 ### P2 detail (fail-closed default + quantified evidence obligations)
 
@@ -225,10 +225,38 @@ Prior draft set `*_delta_db = -120` for invalid channel — **INVALID**: violate
   from shape
 - `mid_valid` / `side_valid` / `valid` false as §7
 
+### P7 detail (refined recommendation; pending Marco OK)
+
+**Supersedes** the prior provisional 5-value set
+`{silence, non_finite_input, unsupported_sr, insufficient_samples,
+channel_invalid}`. That set is **withdrawn** for two reasons:
+
+1. **Category error:** it conflates hard-error / no-frame paths
+   (`unsupported_sr`, `non_finite_input`, `insufficient_samples` — §4.1 /
+   §6.2 fail-closed: frame never emitted) with frame-emitted-but-invalid
+   (`valid == false` ⇒ both channels level < −100 dBFS).
+2. **Gate-3 risk:** `silence` vs `channel_invalid` were non-disjoint →
+   offline vs streaming can pick different strings → false RED on bit-identity
+   of `reason`.
+
+**New provisional spike-only enum** (recommended default; still
+**PENDING Marco OK**; ≠ REV7 / ≠ CONTRACT amend):
+
+| reason | when (deterministic, disjoint) |
+|--------|--------------------------------|
+| `silence` | both channels at level floor (−120 dBFS) |
+| `level_below_threshold` | both channels in (−120, −100) dBFS (below validity threshold but not at floor) |
+
+**Rules:**
+- Hard errors stay **out of** frame `reason`: raise / fail-closed on path;
+  never emit a frame with those labels.
+- Exactly one string chosen by the rule above; same offline ≡ streaming.
+- Spike-only + freeze-from-prose debt for the official G1b enum at tip.
+
 ### P* workflow
 
-1. Marco OK on **P7** (and any cell amend) **before** worktree coding —
-   P1–P6 already ACCEPTED under this review.  
+1. Marco OK on **P7** (accept restricted set above **or** supply canonical)
+   **before** worktree coding — P1–P6 already ACCEPTED.  
 2. Spike code may only implement pinned cells.  
 3. If a pin must change to pass → record AMBRA + debt; do not silently rewrite this table after the run.  
 4. AMBRA pins that product G1b will inherit → write into G1b tranche preregistration (still ≠ REV7).  
@@ -450,7 +478,7 @@ Last command must be empty. Spike commits stay on
 | Prominence reflect pad + σ=4 (P3) | Edge bands sensitive | Include in domain; do not drop |
 | Float32 reduction order FFT/sum (P5) | Streaming≡offline bit-identity | Freeze association; test schedules `1` and `8193` first |
 | Margin-thin SR-parity | 0.24 dB “pass” is AMBRA not GREEN | Report margin column |
-| Unpinned `reason` enum (P7) | Offline/streaming string mismatch → false RED | Pin provisional set before WS2 |
+| Unpinned / non-disjoint `reason` enum (P7) | Offline/streaming string mismatch → false RED on gate 3 | Pin restricted `{silence, level_below_threshold}` before WS2; hard errors out of frame |
 | Delta history across assets | also-required (a) | Explicit reset API in harness |
 | Mis-alignment on `source_time` | False RED/GREEN | Unit-test warm-up formulas vs lock rationals |
 | Transient onset sub-gate | Out of primary scope; latent product risk | Declared; do not claim covered by spike GREEN |
@@ -480,7 +508,7 @@ Last command must be empty. Spike commits stay on
 
 | Agent | Action after plan + P1–P7 approval |
 |-------|-------------------------------------|
-| **Marco** | **P7 only remaining:** accept provisional `reason` enum (or supply canonical). P1–P6 ACCEPTED. Then authorize worktree create + WS1 |
+| **Marco** | **P7 only remaining:** accept restricted `{silence, level_below_threshold}` (or supply canonical). P1–P6 ACCEPTED. Then authorize worktree create + WS1 |
 | **ember-phase-builder** | Create worktree; implement one WS/tranche at a time inside ALLOWED_PATHS on spike branch |
 | **ember-parity-lab** | When WS4 emits numbers: verify digests / max|Δ| / margin tables |
 | **ember-contract-guardian** | Counter-check each tip; REV7 only if spike RED + write-up; AMBRA → debt not amend |
@@ -500,4 +528,4 @@ Last command must be empty. Spike commits stay on
 - Spike worktree/branch isolation: no commits on `feature/motore-v3-offline`
   from spike.  
 - This plan session stops **before** worktree creation and product code.  
-- **P1–P6 ready; P7 awaiting Marco; worktree create blocked until P7 OK.**
+- **P1–P6 ACCEPTED; P7 refined recommendation pending Marco; worktree create blocked until P7 OK.**
