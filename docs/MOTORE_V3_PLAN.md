@@ -15,16 +15,18 @@ Il piano descrive un progetto a contratti. Ad oggi, su questo branch:
 - **G1 contratto**: freeze document-only `6d254d0a` (REV6 consolidata +
   micro-amend). Header/§16 di quel commit restano storicamente "non e GO";
   lo **stato di fase vivente** e nelle righe Governance sotto.
-- **Tip accuracy**: codice G1a tip = `501a4e00` (T6). PLAN tip pre-stamp
-  CLOSE GO = `1746a058` (ritirato). Questo stamp REOPENED supersedes
-  `1746a058` come stato vivente CLOSE. Non confondere tip codice e tip PLAN;
-  tip codice resta `501a4e00` ma CLOSE non vale.
+- **Tip accuracy**: codice G1a remediation tip = `a2186ac1` (F2/F3/F4
+  closed in code). Trust chain T6 tip = `501a4e00`; remediation tip is
+  forward of T6. PLAN tip REOPENED = `284228d6` (ritiro CLOSE GO
+  `1746a058`). Non confondere tip codice remediation, tip T6, e tip PLAN;
+  **CLOSE resta REOPENED** (pending Guardian re-CLOSE) — **non** stampare
+  CLOSE GO qui.
 - **GO G1a**: aperto (2026-07-25) dal reviewer (Marco) sul freeze `6d254d0a`.
   Apertura fase ≠ CLOSE. **REV7: NO** (nessun amend contratto autorizzato).
-- **G1a codice in git** (tip `501a4e00`): T1 `94dc9991` (primitives/split/
-  coverage) + T2 `1908fc45` / T2.1 `918b3dde` (JSON schemas, validators,
-  golden canonical) + T3 `9aa19295` (adapter v2↔v3 hashed,
-  `adapter_mapping_sha256` =
+- **G1a codice in git** (remediation tip `a2186ac1`): T1 `94dc9991`
+  (primitives/split/coverage) + T2 `1908fc45` / T2.1 `918b3dde` (JSON
+  schemas, validators, golden canonical) + T3 `9aa19295` (adapter v2↔v3
+  hashed, `adapter_mapping_sha256` =
   `6a978c01bcccb85fb7db17ae3c66ee55ebceee82f47dca792e5a2f3a5fb9828f`) +
   T4 `3bfd8aaf` (metrology lock §13 committed;
   `metrology_lock_sha256` =
@@ -35,7 +37,8 @@ Il piano descrive un progetto a contratti. Ad oggi, su questo branch:
   `513c3baf7aaed8eb1a15f7d2e875a3015479fc2ece0378e75cfceadefe68a6ef`) +
   hygiene `fe8b97d3` (SHA256SUMS path-order canonicalize after M2) +
   T6 `501a4e00` (fixture signal generators + WAV inventory + hashes;
-  SHA256SUMS does **not** self-hash — trust anchor = commit chain).
+  SHA256SUMS does **not** self-hash — trust anchor = commit chain) +
+  remediation `a2186ac1` (F2/F3/F4 closed in code; CLOSE not stamped).
 - **G1a T5**: committed at `75cb6902`. SHA256SUMS is the trust anchor for
   artifact digests beyond lock inline `dependencies`; it does not hash
   itself (anchor = commit `75cb6902`, then extended by M2/hygiene/T6).
@@ -46,26 +49,33 @@ Il piano descrive un progetto a contratti. Ad oggi, su questo branch:
   fixture-spec remains `e9916319` with digest `513c3baf…` (unchanged).
   Path-order hygiene `fe8b97d3` remains relevant on the SHA256SUMS chain.
 - **G1a CLOSE: REOPENED** (2026-07-25) — ritiro dello stamp GO `1746a058`
-  dopo CC/redteam (CONTRACT-BROKEN; CLOSE REOPEN-REQUIRED). Code tip ancora
-  `501a4e00` (T6) ma CLOSE non vale; contract freeze `6d254d0a` invariato;
-  **REV7: NO**. Trust chain storica T5→M2→hygiene→T6 resta come tip codice;
-  non equivale a CLOSE. **No G1 PASS.** **Product G1b: SOSPESO** fino a
-  re-CLOSE.
-  - **BLOCKER F2**: `validate_admission_batch` non verifica
-    salt_commitment↔reveal (`verify_commitment`); golden dd/ee ACCEPT.
-  - **BLOCKER F3**: SHA256SUMS pinna istanze `fixtures/g1/schemas/*.json`,
-    non la superficie schema in `contracts/schemas.py`.
-  - **MED F1**: 37 WAV ~22MB in-repo vs CONTRACT §2 (decisione pending:
-    rewrite→`~/aieq_data` vs debito documentato; branch unpushed).
-  - **MED F4**: evidence su CPython 3.14.4; lock pinna 3.12.13 — venv
-    canonico `~/aieq_data/motore_v3/env/venv` (3.12.13). Re-CLOSE evidence
-    MUST use that interpreter.
-  - Sequenza: REOPENED → F4 env for evidence → F2+F3 → F1 decision → CC →
-    re-CLOSE on 3.12.13.
-- **G1a vs DoD contratto §14 item 1 (G1a)**: T1–T6 + M2 hanno atterrato tip
-  codice e generatori/hash; **CLOSE non vale** finche F2/F3 BLOCKER restano
-  aperti. Retract: claim **G1a CLOSE: GO** / "fase G1a chiusa" da
-  `1746a058`. **No G1 PASS**.
+  dopo CC/redteam (CONTRACT-BROKEN; CLOSE REOPEN-REQUIRED). Remediation
+  tip `a2186ac1` chiude F2/F3/F4 **in codice**; **CLOSE non vale** finche
+  Guardian non emette re-CLOSE. Contract freeze `6d254d0a` invariato;
+  **REV7: NO**. Lock digest still
+  `d2c35ccc12643f2520c8a50d2e27fd3631216bb9a8ce63a34193412e74d1c10e`.
+  **No G1 PASS.** **Product G1b: SOSPESO** fino a re-CLOSE.
+  - **F2 (code-closed @ `a2186ac1`)**: commitment↔reveal match on
+    non-null reveal via `verify_commitment`; golden dd/ee REJECT when
+    mismatch. **Residual debt** (not F2 reopen): §8.2.4 gate 8 premature
+    reveal / salt retry **not** fully modeled in §8-minimo single-record
+    validate — deferred to §8-pieno/ledger.
+  - **F3 (code-closed @ `a2186ac1`)**: schema surface binding to
+    `contracts/schemas.py` (not only fixture JSON copies).
+  - **F4 (evidence-closed on canonical venv)**: Re-CLOSE evidence MUST use
+    `~/aieq_data/motore_v3/env/venv` (CPython **3.12.13**); lock pinna
+    3.12.13. Evidence on this tip: compileall + unittest + SHA256SUMS +
+    metrology lock digest on that interpreter.
+  - **MED F1 (open)**: 37 WAV ~22MB in-repo vs CONTRACT §2 — **no history
+    rewrite**; forward WAV remediation tranche **after** Guardian
+    re-CLOSE (not a re-CLOSE stamp blocker by itself; debt/decision).
+  - Sequenza: REOPENED → F4 env evidence PASS → F2+F3 code tip
+    `a2186ac1` → **this PLAN tip** (docs) → Guardian re-CLOSE (pending)
+    → F1 forward WAV tranche → product G1b may unfreeze.
+- **G1a vs DoD contratto §14 item 1 (G1a)**: T1–T6 + M2 + remediation
+  `a2186ac1` hanno atterrato tip codice; **CLOSE resta REOPENED** pending
+  Guardian re-CLOSE — **do not** claim **G1a CLOSE: GO**. Retract storico:
+  claim CLOSE da `1746a058`. **No G1 PASS**.
 - **GO G1b (mandato)**: storicamente aperto nel PLAN tip `37f6ac60`
   (2026-07-25) dal reviewer (Marco) con mandato: **REV7 only if
   implementation demonstrates falsifiable impossibility** (not
@@ -99,23 +109,31 @@ Il piano descrive un progetto a contratti. Ad oggi, su questo branch:
      (b) only ASCII space stripped — NBSP / unicode WS accepted;
      (c) commit-anchor SHA declared in PLAN/docstring, not a machine-checked
      constant in `sha256sums.py`.
+  3. **§8.2.4 gate 8 ordering** (post-`a2186ac1`): premature reveal / salt
+     retry **not** fully modeled in §8-minimo single-record validate —
+     deferred to §8-pieno/ledger. F2 closed only for commitment↔reveal
+     match on non-null reveal; do not reopen F2 for this residual.
+  4. **F1 WAV placement**: no rewrite; forward remediation tranche after
+     Guardian re-CLOSE (in-repo WAV inventory remains until then).
 - **Ancora assente / in corso**: product G1b (**SOSPESO** finche G1a CLOSE
   e REOPENED; mandato storico non autorizza partenza); G1a re-CLOSE
-  (F2/F3 BLOCKER + F4 evidence su 3.12.13 + F1 decision); modello V3,
-  runtime V3, UI V3, build Ableton V3, training V3. Ship-line (`Source/`,
-  CMake, `Resources/`, `AIEQ-mac`) **0-diff** vs freeze G0 `2c88edad`.
-  Post re-CLOSE, product G1b potra toccare `ml_v3/frontend/` (e solo
-  minimum `Source/` se contract-authorized later) — **still no silent ship
-  of V3 to Ableton** without later gates (G6+). **No G1 PASS.**
+  (Guardian pending on tip `a2186ac1` + F4 evidence 3.12.13; F1 forward
+  after re-CLOSE); modello V3, runtime V3, UI V3, build Ableton V3,
+  training V3. Ship-line (`Source/`, CMake, `Resources/`, `AIEQ-mac`)
+  **0-diff** vs freeze G0 `2c88edad`. Post re-CLOSE, product G1b potra
+  toccare `ml_v3/frontend/` (e solo minimum `Source/` se
+  contract-authorized later) — **still no silent ship of V3 to Ableton**
+  without later gates (G6+). **No G1 PASS.**
 - **Nessun training V3 e autorizzato** oltre i limiti di fase.
 - Il CONTROL Motore v2/A4b resta **NO-GO**; nessun modello e promosso.
 - Il laboratorio prominence v2 vive su **branch separati** e NON e integrato in
   questo branch (vedi sezione "Stato prominence v2").
 
 Le sezioni G1c–G8 seguenti restano criteri FUTURI finche la fase corrente non
-riceve GO di chiusura. **G1a CLOSE: REOPENED** (ritiro `1746a058`); non
-CLOSED. Non confondere "mandato G1b storico" / "Product G1b: SOSPESO" con
-"G1b tip ufficiale", "G1 PASS" o "release-safe". Spike frontend ≠ proof.
+riceve GO di chiusura. **G1a CLOSE: REOPENED** (ritiro `1746a058`; tip
+remediation `a2186ac1` non e CLOSE); non CLOSED. Non confondere "mandato
+G1b storico" / "Product G1b: SOSPESO" con "G1b tip ufficiale", "G1 PASS" o
+"release-safe". Spike frontend ≠ proof.
 
 Obiettivo finale: non inferiorita misurata rispetto a smart:EQ 4 sul
 bilanciamento tonale e rispetto a soothe, Equator e Gullfoss sulle anomalie
@@ -154,12 +172,15 @@ line, plugin installato, APVTS, preset, `Resources/Models/ml_weights.bin`,
   `d2c35ccc12643f2520c8a50d2e27fd3631216bb9a8ce63a34193412e74d1c10e`).
   T5: `75cb6902` (SHA256SUMS trust anchor). M2: `e9916319` (fixture-spec
   v1; digest `513c3baf…`). Hygiene: `fe8b97d3` (SHA256SUMS path order).
-  T6: `501a4e00` (**tip codice G1a**; CLOSE non vale). Stamp CLOSE GO
-  ritirato: `1746a058`. Stop-rule: vedi bullet semantico sopra (no
-  automatic HIGH/MED→debt). **M1 T5 catch-up CC: CLEAN** on `75cb6902`.
-  **G1a CLOSE: REOPENED** (2026-07-25) — BLOCKER F2/F3; MED F1/F4;
-  contract freeze `6d254d0a` invariato; **REV7: NO**. **No G1 PASS.**
-  **Product G1b: SOSPESO** fino a re-CLOSE; spike ≠ proof.
+  T6: `501a4e00`. Remediation tip: `a2186ac1` (F2/F3/F4 closed in code;
+  **tip codice G1a**). Stamp CLOSE GO ritirato: `1746a058`. PLAN REOPENED
+  tip: `284228d6`. Stop-rule: vedi bullet semantico sopra (no automatic
+  HIGH/MED→debt). **M1 T5 catch-up CC: CLEAN** on `75cb6902`.
+  **G1a CLOSE: REOPENED** — pending Guardian re-CLOSE; F2 residual =
+  §8.2.4 gate-8 ordering debt (§8-pieno/ledger); F1 = no rewrite, forward
+  WAV tranche after re-CLOSE; contract freeze `6d254d0a` invariato;
+  lock `d2c35ccc…`; **REV7: NO**. **No G1 PASS.** **Product G1b:
+  SOSPESO** fino a re-CLOSE; spike ≠ proof.
 - GO G1b — mandato storico in PLAN `37f6ac60` (2026-07-25) con REV7:
   amend solo se l'implementazione dimostra **impossibilita falsificabile**
   (non inconvenienza); un redteam + un CC indipendente per tranche;
