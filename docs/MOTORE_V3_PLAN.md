@@ -15,6 +15,8 @@ Il piano descrive un progetto a contratti. Ad oggi, su questo branch:
 - **G1 contratto**: freeze document-only `6d254d0a` (REV6 consolidata +
   micro-amend). Header/§16 di quel commit restano storicamente "non e GO";
   lo **stato di fase vivente** e nelle righe Governance sotto.
+- **Tip accuracy**: codice G1a tip = `75cb6902` (T5). PLAN tip (docs) =
+  `37f6ac60` (stato T5 + mandato G1b). Non confondere i due tip.
 - **GO G1a**: aperto (2026-07-25) dal reviewer (Marco) sul freeze `6d254d0a`.
 - **G1a codice in git** (tip `75cb6902`): T1 `94dc9991` (primitives/split/
   coverage) + T2 `1908fc45` / T2.1 `918b3dde` (JSON schemas, validators,
@@ -29,32 +31,69 @@ Il piano descrive un progetto a contratti. Ad oggi, su questo branch:
   trust anchor = this commit).
 - **G1a T5**: committed at `75cb6902`. SHA256SUMS is the trust anchor for
   artifact digests beyond lock inline `dependencies`; it does not hash
-  itself (anchor = commit `75cb6902`).
-- **G1a DoD §14.1**: artifact set landed (T1–T5). G1a closure still requires
-  explicit counter-check / Guardian GO. **No G1 PASS**, not release-safe.
-- **GO G1b**: reviewer (Marco) opens G1b (2026-07-25) with mandate:
-  **REV7 only if implementation demonstrates falsifiable impossibility**
-  (not inconvenience); one redteam + one independent CC per tranche;
-  non-CRITICAL → debt list.
-- **Debt list (durable)**:
-  1. `contract_doc_sha256` tripwire (also in T5 SHA256SUMS). Precomputed
-     (contract @ `6d254d0a`):
+  itself (anchor = commit `75cb6902`). **M1 T5 catch-up CC: CLEAN**
+  (2026-07-25) on `75cb6902`. Hygiene findings that are not semantic
+  BLOCKERs → durable debt below; **do not reopen T5 hash**.
+- **G1a vs DoD contratto §14 item 1 (G1a)**: T1–T5 hanno atterrato solo le
+  **primitives di contratto** — schemas/validators, adapter v2↔v3 hashed,
+  metrology lock, SHA256SUMS trust anchor. **Non** chiudono da soli il DoD
+  G1a: restano **OPEN (T6)** i **generatori di segnale fixture e i relativi
+  hash**, come richiesto dal contratto §14 ("generatori fixture e hash").
+  Retract: qualsiasi claim precedente che §14.1 / G1a artifact set sia
+  "fully landed" via T1–T5 alone. **Sequencing**: fixture-spec v1
+  commit+hash **before** generation; **G1a CLOSE** only after T6 (+ CC /
+  Guardian GO) **before** official product G1b. **No G1 PASS**, not
+  release-safe.
+- **GO G1b (mandato)**: aperto nel PLAN tip `37f6ac60` (2026-07-25) dal
+  reviewer (Marco) con mandato: **REV7 only if implementation demonstrates
+  falsifiable impossibility** (not inconvenience); one redteam + one
+  independent CC per tranche; stop-rule semantica sotto (non etichetta
+  di severity). **Product G1b not started** — mandato aperto ≠ lavoro
+  prodotto iniziato. Uncommitted `ml_v3/frontend/` = **spike /
+  feasibility probe** (not gate proof; non tip ufficiale G1b) fino a
+  M3+M4.
+- **Authority hierarchy (Motore-v3)**:
+  - GLOBAL / RELEASE AUTHORITY → `ALIGNMENT_MANIFEST.md`
+  - MOTORE V3 LAB STATE AUTHORITY → `docs/MOTORE_V3_PLAN.md`
+  - FROZEN G1 TECHNICAL AUTHORITY → `docs/MOTORE_V3_G1_CONTRACT.md` @
+    `6d254d0a`
+  Per task Motore-v3, ordine di lettura: PLAN → frozen phase contract →
+  ALIGNMENT_MANIFEST per vincoli globali / ship.
+- **Stop-rule (unica, semantica)**: **BLOCKER** (indipendentemente da
+  etichetta CRITICAL/HIGH/MED/LOW) se abilita: false PASS; final-test
+  leakage; split leakage; hash/binding ambiguity; canonical
+  nondeterminism; post-freeze gate-domain mutation; non-implementability
+  del contratto. Tutto il resto → durable debt list. Le etichette di
+  severity descrivono gravita; la semantica decide se il gate puo
+  procedere.
+- **Debt list (durable)** — non-BLOCKER; do not reopen T5 hash:
+  1. `contract_doc_sha256` tripwire (also in T5 SHA256SUMS; T5/T6 chain).
+     Precomputed (contract @ `6d254d0a`):
      `6a6f6d35bbf3fc65d7a01e54620bf4f9649ea77d60c2b3d9e7ea0b72f7f49a86`.
      Tripwire against silent contract edits — not a G1a/G1b close criterion.
-- **Ancora assente / in corso**: frontend G1b (appena aperto; nessun claim di
-  completezza), modello V3, runtime V3, UI V3, build Ableton V3, training V3.
-  Ship-line (`Source/`, CMake, `Resources/`, `AIEQ-mac`) invariata vs freeze
-  G0 `2c88edad`. G1b may touch `ml_v3/frontend/` (and only minimum `Source/`
-  if contract-authorized later) — **still no silent ship of V3 to Ableton**
-  without later gates (G6+).
+  2. **T6** fixture signal generators + hashes **OPEN** (contratto §14 G1a);
+     fixture-spec v1 commit+hash precedes generation.
+  3. **From M1 T5 CC** (hygiene, non-CRITICAL):
+     (a) `.` path segments accepted in SHA256SUMS paths;
+     (b) only ASCII space stripped — NBSP / unicode WS accepted;
+     (c) commit-anchor SHA declared in PLAN/docstring, not a machine-checked
+     constant in `sha256sums.py`.
+- **Ancora assente / in corso**: G1a T6 (fixture generators/hash; after
+  fixture-spec v1); product G1b only after G1a CLOSE (mandato open, prodotto
+  non avviato; uncommitted `ml_v3/frontend/` = spike/feasibility probe, not
+  gate proof); modello V3, runtime V3, UI V3, build Ableton V3, training V3.
+  Ship-line (`Source/`, CMake, `Resources/`, `AIEQ-mac`) **0-diff** vs freeze
+  G0 `2c88edad`. Eventuale G1b prodotto potra toccare `ml_v3/frontend/`
+  (e solo minimum `Source/` se contract-authorized later) — **still no
+  silent ship of V3 to Ableton** without later gates (G6+).
 - **Nessun training V3 e autorizzato** oltre i limiti di fase.
 - Il CONTROL Motore v2/A4b resta **NO-GO**; nessun modello e promosso.
 - Il laboratorio prominence v2 vive su **branch separati** e NON e integrato in
   questo branch (vedi sezione "Stato prominence v2").
 
 Le sezioni G1c–G8 seguenti restano criteri FUTURI finche la fase corrente non
-riceve GO di chiusura. Non confondere "fase G1b aperta" con "G1 PASS" o
-"release-safe".
+riceve GO di chiusura. Non confondere "mandato G1b aperto nel PLAN" con
+"product G1b started", "G1 PASS" o "release-safe".
 
 Obiettivo finale: non inferiorita misurata rispetto a smart:EQ 4 sul
 bilanciamento tonale e rispetto a soothe, Equator e Gullfoss sulle anomalie
@@ -66,6 +105,16 @@ line, plugin installato, APVTS, preset, `Resources/Models/ml_weights.bin`,
 
 ## Governance
 
+- **Authority hierarchy (Motore-v3)**: GLOBAL / RELEASE →
+  `ALIGNMENT_MANIFEST.md`; LAB STATE → questo PLAN; FROZEN G1 TECHNICAL →
+  `docs/MOTORE_V3_G1_CONTRACT.md` @ `6d254d0a`. Ordine di lettura task
+  Motore-v3: PLAN → frozen phase contract → ALIGNMENT_MANIFEST (global /
+  ship).
+- **Stop-rule (unica, semantica)**: BLOCKER (a prescindere da
+  CRITICAL/HIGH/MED/LOW) se abilita false PASS, final-test leakage, split
+  leakage, hash/binding ambiguity, canonical nondeterminism, post-freeze
+  gate-domain mutation, o non-implementability del contratto; altrimenti
+  durable debt list. Severity = gravita; semantica = proceed/stop.
 - Branch offline: `feature/motore-v3-offline`, basato su
   `88e70dd03679adfeb388976c702ad8f0a73b2bd3`.
 - Integrazione futura: branch nuovo da
@@ -81,14 +130,18 @@ line, plugin installato, APVTS, preset, `Resources/Models/ml_weights.bin`,
   T4: `3bfd8aaf` (metrology lock;
   `metrology_lock_sha256` =
   `d2c35ccc12643f2520c8a50d2e27fd3631216bb9a8ce63a34193412e74d1c10e`).
-  T5: `75cb6902` (tip G1a; SHA256SUMS trust anchor).
-  Stop rule post-T4: last lock harden unless CRITICAL; HIGH/MED → debt list.
-  §14.1 artifact set landed (T1–T5); G1a closure needs CC / Guardian GO;
-  no G1 PASS.
-- GO G1b — reviewer (Marco) apre G1b (2026-07-25) con mandato REV7:
+  T5: `75cb6902` (tip codice G1a; SHA256SUMS trust anchor). PLAN tip docs:
+  `37f6ac60`. Stop-rule: vedi bullet semantico sopra (no automatic
+  HIGH/MED→debt). T1–T5 = contract primitives only; **M1 T5 catch-up CC:
+  CLEAN** on `75cb6902`; **T6 OPEN** (generatori fixture + hash per §14;
+  fixture-spec v1 commit+hash before generation). **G1a CLOSE** after T6 +
+  CC / Guardian GO, before official product G1b; no G1 PASS.
+- GO G1b — mandato aperto in PLAN `37f6ac60` (2026-07-25) con REV7:
   amend solo se l'implementazione dimostra **impossibilita falsificabile**
   (non inconvenienza); un redteam + un CC indipendente per tranche;
-  non-CRITICAL → debt list. Frontend lab sotto `ml_v3/`; nessun ship Ableton.
+  stop-rule semantica (stesso bullet sopra). **Product G1b not started**;
+  uncommitted `ml_v3/frontend/` = spike / feasibility probe (not gate
+  proof) until M3+M4. Nessun ship Ableton.
 - Dati, cache e modelli restano in `~/aieq_data/motore_v3/`; nel repository
   entrano soltanto codice, manifest, lock, hash, contratti e report.
 - Massimo tre round completi di training. Non si compensano fallimenti offline
