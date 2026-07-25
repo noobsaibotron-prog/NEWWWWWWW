@@ -123,7 +123,11 @@ class G1aSha256sumsFixtureTests(unittest.TestCase):
                 root, (G1A_SHA256SUMS_RELPATH,), forbid_self=G1A_SHA256SUMS_RELPATH)
 
     def test_minimum_coverage_and_contract_tripwire(self):
-        self.assertEqual(len(G1A_SHA256SUMS_COVERED), 9)
+        self.assertEqual(len(G1A_SHA256SUMS_COVERED), 10)
+        self.assertIn(
+            "ml_v3/fixtures/g1/fixture_spec_v1.json",
+            G1A_SHA256SUMS_COVERED,
+        )
         schema_paths = [
             path for path in G1A_SHA256SUMS_COVERED if "/schemas/" in path]
         self.assertEqual(len(schema_paths), 6)
