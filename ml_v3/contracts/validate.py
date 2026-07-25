@@ -46,6 +46,7 @@ from .schemas import (
     SEMANTIC_BUNDLE_KEYS,
     SEMANTIC_REGION_KEYS,
 )
+from .split import SplitError, verify_commitment
 
 __all__ = [
     "SchemaError",
@@ -285,7 +286,7 @@ def validate_admission_batch(doc: object) -> None:
         raise SchemaError(
             "roster_sha256 must equal admission_batch_id "
             "(SHA-256 of canonical roster bytes)")
-    _require_sha256(data, "salt_commitment")
+    commitment = _require_sha256(data, "salt_commitment")
     reveal = data["salt_reveal"]
     _require_str(data, "roster_commit")
     _require_str(data, "reviewer_id")
@@ -294,6 +295,9 @@ def validate_admission_batch(doc: object) -> None:
         raise SchemaError(f"status must be admitted|rejected, got {status!r}")
     # admitted ⇒ salt must be revealed (hex-64). rejected may keep null
     # (pre-reveal reject) or carry a hex reveal (revealed-then-rejected).
+    # When reveal is non-null, §8.2.4 commit-reveal MUST hold:
+    #   salt_commitment == SHA256(b"aieq-v3-split-salt-v1" + 0x00 + salt)
+    # via split.verify_commitment (mismatched commitment → FAIL).
     if status == "admitted":
         if not isinstance(reveal, str) or not is_sha256_hex(reveal):
             raise SchemaError(
@@ -303,6 +307,13 @@ def validate_admission_batch(doc: object) -> None:
         if not isinstance(reveal, str) or not is_sha256_hex(reveal):
             raise SchemaError(
                 "salt_reveal must be null or lowercase hex of 32 raw salt bytes")
+    if isinstance(reveal, str):
+        try:
+            verify_commitment(bytes.fromhex(reveal), commitment)
+        except SplitError as exc:
+            raise SchemaError(
+                f"salt_commitment does not match salt_reveal (§8.2.4): {exc}"
+            ) from exc
 
 
 # --------------------------------------------------------------- annotation

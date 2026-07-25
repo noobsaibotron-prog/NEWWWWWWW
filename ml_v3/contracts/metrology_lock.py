@@ -26,6 +26,8 @@ policy; only serialize / package contract prose.
 """
 from __future__ import annotations
 
+import platform
+import sys
 from copy import deepcopy
 from math import gcd
 from typing import Any
@@ -44,6 +46,7 @@ __all__ = [
     "MetrologyLockError",
     "METROLOGY_ARTIFACT_ID",
     "METROLOGY_SECTION",
+    "GATE_PLATFORM_PYTHON",
     "HOP_SAMPLES",
     "N_LF",
     "K_WU",
@@ -65,6 +68,8 @@ __all__ = [
     "metrology_lock_bytes",
     "metrology_lock_sha256",
     "validate_metrology_lock_claim",
+    "gate_platform_python_label",
+    "require_gate_platform_python",
     "resampler_group_delay_rational",
     "warm_up_seconds",
     "coda_seconds",
@@ -72,6 +77,10 @@ __all__ = [
 
 METROLOGY_ARTIFACT_ID = "aieq-v3-metrology-lock-1"
 METROLOGY_SECTION = "13"
+
+# Canonical gate-platform interpreter (lock bit_identity.gate_platform.python).
+# G1a evidence / re-CLOSE MUST run on this label (F4); not system 3.14.
+GATE_PLATFORM_PYTHON = "CPython 3.12.13"
 
 # §13.1 / §6.2
 HOP_SAMPLES: int = 1024
@@ -406,7 +415,7 @@ def frozen_metrology_lock() -> dict[str, Any]:
                 "os": "darwin",
                 "os_marketing": "macOS 15.5",
                 "arch": "arm64",
-                "python": "CPython 3.12.13",
+                "python": GATE_PLATFORM_PYTHON,
                 "numpy": "2.5.1",
                 "authority": (
                     "freeze-from-prose of ml_v3/environment/README.md and "
@@ -817,3 +826,35 @@ def validate_metrology_lock_claim(claim: object) -> dict[str, Any]:
     # Defensive: ensure caller cannot mutate the returned frozen template
     # via a shared reference (claim may be a deep copy already).
     return deepcopy(claim)
+
+
+def gate_platform_python_label() -> str:
+    """Return ``{implementation} {major}.{minor}.{micro}`` for this process."""
+    info = sys.version_info
+    return (
+        f"{platform.python_implementation()} "
+        f"{info.major}.{info.minor}.{info.micro}"
+    )
+
+
+def require_gate_platform_python() -> str:
+    """Fail-closed: running interpreter must match lock gate_platform.python.
+
+    Reads the pin from ``frozen_metrology_lock()`` (and the module constant
+    ``GATE_PLATFORM_PYTHON`` as a cross-check). Wrong CPython (e.g. 3.14)
+    raises ``MetrologyLockError`` — do not reinterpret or skip.
+    """
+    lock = frozen_metrology_lock()
+    expected = lock["bit_identity"]["gate_platform"]["python"]
+    if expected != GATE_PLATFORM_PYTHON:
+        raise MetrologyLockError(
+            "frozen lock gate_platform.python drifted from "
+            f"GATE_PLATFORM_PYTHON constant: lock={expected!r}, "
+            f"constant={GATE_PLATFORM_PYTHON!r}")
+    actual = gate_platform_python_label()
+    if actual != expected:
+        raise MetrologyLockError(
+            "interpreter does not match metrology lock gate_platform.python: "
+            f"actual={actual!r}, expected={expected!r}; "
+            "use ~/aieq_data/motore_v3/env/venv (CPython 3.12.13)")
+    return actual

@@ -8,14 +8,23 @@ from pathlib import Path
 from ml_v3.contracts.canonical import (
     canonical_bytes,
     loads_strict,
+    sha256_of_obj,
     write_canonical,
 )
 from ml_v3.contracts.constants import GRID_BANDS, SCHEMA_IDS, SPLIT_ROLES
-from ml_v3.contracts.schemas import SCHEMA_REGISTRY, schema_for, schema_ids_t2
+from ml_v3.contracts.schemas import (
+    SCHEMA_REGISTRY,
+    SCHEMA_REGISTRY_RELPATH,
+    frozen_schema_registry,
+    schema_for,
+    schema_ids_t2,
+    schema_registry_sha256,
+)
 from ml_v3.contracts.split import validate_manifest_split_invariants
 from ml_v3.contracts.validate import SchemaError, validate, validate_schema_id
 from ml_v3.tests._g1a_t2_fixtures import (
     admission_batch,
+    admission_batch_mismatched_commitment,
     annotation_clean,
     asset_manifest,
     benchmark_power_plan,
@@ -23,7 +32,11 @@ from ml_v3.tests._g1a_t2_fixtures import (
     prediction,
 )
 
-FIXTURE_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "g1" / "schemas"
+# Instance example goldens (not the normative schema surface).
+FIXTURE_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "g1" / "examples"
+SCHEMA_REGISTRY_FIXTURE = (
+    Path(__file__).resolve().parents[1] / "fixtures" / "g1" / "schema_registry_v1.json"
+)
 
 
 class SchemaRegistryTests(unittest.TestCase):
@@ -152,6 +165,18 @@ class RejectPathAdmissionTests(unittest.TestCase):
     def test_rejected_allows_null_salt_reveal(self):
         doc = admission_batch(status="rejected", salt_reveal=None)
         validate(doc)
+
+    def test_mismatched_salt_commitment_rejected(self):
+        """F2: historical dd/ee pair must FAIL commit-reveal (§8.2.4)."""
+        doc = admission_batch_mismatched_commitment()
+        with self.assertRaises(SchemaError) as ctx:
+            validate(doc)
+        self.assertIn("salt_commitment", str(ctx.exception))
+
+    def test_rejected_with_mismatched_reveal_rejected(self):
+        doc = admission_batch_mismatched_commitment(status="rejected")
+        with self.assertRaises(SchemaError):
+            validate(doc)
 
     def test_alias_mapping_version_extra_key_rejected(self):
         # Identity-index field must not sneak into admission-batch envelope.
@@ -316,11 +341,11 @@ class FailClosedParseTests(unittest.TestCase):
 
 
 class GoldenFixtureTests(unittest.TestCase):
-    def test_golden_raw_equals_canonical_bytes(self):
-        """A6: schema-valid is not enough — golden on-disk bytes must be
+    def test_example_raw_equals_canonical_bytes(self):
+        """A6: instance-valid is not enough — example on-disk bytes must be
         canonical artifacts (raw == canonical_bytes(doc))."""
         if not FIXTURE_DIR.is_dir():
-            self.skipTest("no golden fixture dir")
+            self.skipTest("no example fixture dir")
         files = sorted(FIXTURE_DIR.glob("*.json"))
         self.assertGreaterEqual(len(files), 6)
         for path in files:
@@ -331,8 +356,36 @@ class GoldenFixtureTests(unittest.TestCase):
                 validate(doc)
 
 
+class SchemaRegistrySurfaceTests(unittest.TestCase):
+    def test_frozen_registry_matches_fixture(self):
+        self.assertEqual(
+            SCHEMA_REGISTRY_RELPATH,
+            "ml_v3/fixtures/g1/schema_registry_v1.json",
+        )
+        self.assertTrue(SCHEMA_REGISTRY_FIXTURE.is_file())
+        raw = SCHEMA_REGISTRY_FIXTURE.read_bytes()
+        doc = loads_strict(raw.decode("utf-8"))
+        self.assertEqual(raw, canonical_bytes(doc))
+        self.assertEqual(doc, frozen_schema_registry())
+        self.assertEqual(sha256_of_obj(doc), schema_registry_sha256())
+
+    def test_mutating_asset_manifest_keys_changes_digest(self):
+        """F3: expanding schema surface MUST change a tracked digest."""
+        base = frozen_schema_registry()
+        digest_before = sha256_of_obj(base)
+        mutated = copy.deepcopy(base)
+        keys = mutated["key_sets"]["ASSET_MANIFEST_KEYS"]
+        self.assertIsInstance(keys, list)
+        keys.append("evil_extra_field")
+        # Also mutate required[] on the embedded schema dict (surface expand).
+        required = mutated["schemas"][SCHEMA_IDS["asset_manifest"]]["required"]
+        required.append("evil_extra_field")
+        digest_after = sha256_of_obj(mutated)
+        self.assertNotEqual(digest_before, digest_after)
+
+
 def _write_goldens() -> None:
-    """Helper for regenerating goldens (not invoked by unittest)."""
+    """Helper for regenerating example + schema-registry fixtures."""
     FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
     mapping = {
         "asset_manifest.json": asset_manifest(),
@@ -344,6 +397,7 @@ def _write_goldens() -> None:
     }
     for name, doc in mapping.items():
         write_canonical(FIXTURE_DIR / name, doc)
+    write_canonical(SCHEMA_REGISTRY_FIXTURE, frozen_schema_registry())
 
 
 if __name__ == "__main__":

@@ -262,7 +262,7 @@ class CommittedInventoryTests(unittest.TestCase):
         """Truncated SHA256SUMS (COVERED only) must fail verify."""
         full = load_g1a_sha256sums()
         truncated = {path: full[path] for path in G1A_SHA256SUMS_COVERED}
-        self.assertEqual(len(truncated), 10)
+        self.assertEqual(len(truncated), 11)
         with tempfile.TemporaryDirectory() as tmp:
             troot = Path(tmp)
             for rel in truncated:

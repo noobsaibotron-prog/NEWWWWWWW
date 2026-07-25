@@ -1,4 +1,8 @@
-"""Minimal valid golden documents for G1a T2 schema tests / fixtures."""
+"""Minimal valid example documents for G1a T2 validators / fixtures.
+
+Instance goldens live under ``ml_v3/fixtures/g1/examples/`` (not the
+normative schema surface — that is ``schema_registry_v1.json``).
+"""
 from __future__ import annotations
 
 from ml_v3.contracts.constants import (
@@ -7,12 +11,19 @@ from ml_v3.contracts.constants import (
     PROBLEM_TYPES,
     SCHEMA_IDS,
 )
+from ml_v3.contracts.split import salt_commitment
 
 _HEX_A = "aa" * 32
 _HEX_B = "bb" * 32
 _HEX_C = "cc" * 32
 _HEX_D = "dd" * 32
 _HEX_E = "ee" * 32
+# §8.2.4 coherent commit-reveal: reveal = hex(32 raw salt bytes);
+# commitment = SHA256(b"aieq-v3-split-salt-v1" + 0x00 + salt).
+_SALT_REVEAL = _HEX_E
+_SALT_COMMITMENT = salt_commitment(bytes.fromhex(_SALT_REVEAL))
+# Historical mismatched pair (dd commitment / ee reveal) — must FAIL.
+_MISMATCHED_SALT_COMMITMENT = _HEX_D
 
 
 def zeros120() -> list[float]:
@@ -68,14 +79,23 @@ def admission_batch(**overrides: object) -> dict:
         "source_snapshot_sha256": _HEX_C,
         "inclusion_rules_version": "incl-v1",
         "roster_sha256": _HEX_B,
-        "salt_commitment": _HEX_D,
-        "salt_reveal": _HEX_E,
+        "salt_commitment": _SALT_COMMITMENT,
+        "salt_reveal": _SALT_REVEAL,
         "roster_commit": "deadbeef",
         "reviewer_id": "reviewer-a",
         "status": "admitted",
     }
     doc.update(overrides)
     return doc
+
+
+def admission_batch_mismatched_commitment(**overrides: object) -> dict:
+    """Legacy dd/ee pair: commitment does not match reveal (§8.2.4 FAIL)."""
+    return admission_batch(
+        salt_commitment=_MISMATCHED_SALT_COMMITMENT,
+        salt_reveal=_SALT_REVEAL,
+        **overrides,
+    )
 
 
 def annotation_clean(**overrides: object) -> dict:

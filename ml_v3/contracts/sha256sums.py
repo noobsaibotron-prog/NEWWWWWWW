@@ -45,21 +45,24 @@ CONTRACT_DOC_SHA256_TRIPWIRE = (
     "6a6f6d35bbf3fc65d7a01e54620bf4f9649ea77d60c2b3d9e7ea0b72f7f49a86"
 )
 
-# Minimum G1a T5+M2 coverage: contract doc + 6 schema goldens + adapter +
-# lock + fixture-spec v1 (M2 extends the trust chain; path-canonical order).
-# Audio WAV digests are *not* listed here — T6 binds them via
-# ``g1a_sha256sums_audio_required()`` / ``G1A_SHA256SUMS_AUDIO_REQUIRED``.
+# Minimum G1a T5+M2+F3 coverage: contract doc + schema_registry_v1 (normative
+# schema surface) + 6 example instance goldens + adapter + lock +
+# fixture-spec v1 (path-canonical order). Audio WAV digests are *not*
+# listed here — T6 binds them via ``g1a_sha256sums_audio_required()`` /
+# ``G1A_SHA256SUMS_AUDIO_REQUIRED``.
+# Note: fixtures/g1/examples/*.json are instance goldens, NOT schemas.
 G1A_SHA256SUMS_COVERED: tuple[str, ...] = (
     "docs/MOTORE_V3_G1_CONTRACT.md",
     "ml_v3/fixtures/g1/adapter_v2_v3_mapping.json",
+    "ml_v3/fixtures/g1/examples/admission_batch.json",
+    "ml_v3/fixtures/g1/examples/annotation.json",
+    "ml_v3/fixtures/g1/examples/asset_manifest.json",
+    "ml_v3/fixtures/g1/examples/benchmark_power_plan.json",
+    "ml_v3/fixtures/g1/examples/calibration_policy.json",
+    "ml_v3/fixtures/g1/examples/prediction.json",
     "ml_v3/fixtures/g1/fixture_spec_v1.json",
     "ml_v3/fixtures/g1/metrology_lock.json",
-    "ml_v3/fixtures/g1/schemas/admission_batch.json",
-    "ml_v3/fixtures/g1/schemas/annotation.json",
-    "ml_v3/fixtures/g1/schemas/asset_manifest.json",
-    "ml_v3/fixtures/g1/schemas/benchmark_power_plan.json",
-    "ml_v3/fixtures/g1/schemas/calibration_policy.json",
-    "ml_v3/fixtures/g1/schemas/prediction.json",
+    "ml_v3/fixtures/g1/schema_registry_v1.json",
 )
 
 

@@ -49,6 +49,10 @@ __all__ = [
     "POWER_GATE_KEYS",
     "SCORE_KNOT_KEYS",
     "SCHEMA_REGISTRY",
+    "SCHEMA_REGISTRY_ARTIFACT_ID",
+    "SCHEMA_REGISTRY_RELPATH",
+    "frozen_schema_registry",
+    "schema_registry_sha256",
     "schema_for",
     "schema_ids_t2",
 ]
@@ -600,6 +604,34 @@ SCHEMA_REGISTRY: Final[dict[str, dict[str, Any]]] = {
     SCHEMA_IDS["benchmark_power_plan"]: BENCHMARK_POWER_PLAN_SCHEMA,
 }
 
+# Normative hashed schema *surface* (F3). Instance JSON under
+# fixtures/g1/examples/ are example goldens, not the schema registry.
+SCHEMA_REGISTRY_ARTIFACT_ID: Final[str] = "aieq-v3-schema-registry-1"
+SCHEMA_REGISTRY_RELPATH: Final[str] = (
+    "ml_v3/fixtures/g1/schema_registry_v1.json"
+)
+
+# Exact-key frozensets exported into the hashed surface so expanding a
+# required-key set changes the tracked digest even if a nested schema
+# dict were left stale (defense in depth).
+_KEY_SETS: Final[dict[str, frozenset[str]]] = {
+    "ASSET_MANIFEST_KEYS": ASSET_MANIFEST_KEYS,
+    "ADMISSION_BATCH_KEYS": ADMISSION_BATCH_KEYS,
+    "ANNOTATION_KEYS": ANNOTATION_KEYS,
+    "PREDICTION_KEYS": PREDICTION_KEYS,
+    "CALIBRATION_POLICY_KEYS": CALIBRATION_POLICY_KEYS,
+    "BENCHMARK_POWER_PLAN_KEYS": BENCHMARK_POWER_PLAN_KEYS,
+    "SEMANTIC_REGION_KEYS": SEMANTIC_REGION_KEYS,
+    "DYNAMIC_EVENT_KEYS": DYNAMIC_EVENT_KEYS,
+    "SEMANTIC_BUNDLE_KEYS": SEMANTIC_BUNDLE_KEYS,
+    "PREDICTION_EVENT_KEYS": PREDICTION_EVENT_KEYS,
+    "ANOMALY_REF_KEYS": ANOMALY_REF_KEYS,
+    "CALIBRATOR_KEYS": CALIBRATOR_KEYS,
+    "POWER_FAMILY_KEYS": POWER_FAMILY_KEYS,
+    "POWER_GATE_KEYS": POWER_GATE_KEYS,
+    "SCORE_KNOT_KEYS": SCORE_KNOT_KEYS,
+}
+
 
 def schema_ids_t2() -> tuple[str, ...]:
     """The six §14 G1a T2 schema identifiers, stable order."""
@@ -619,3 +651,34 @@ def schema_for(schema_id: str) -> dict[str, Any]:
         return dict(SCHEMA_REGISTRY[schema_id])
     except KeyError as exc:
         raise KeyError(f"unknown T2 schema id: {schema_id!r}") from exc
+
+
+def frozen_schema_registry() -> dict[str, Any]:
+    """Canonical schema-surface artifact for SHA256SUMS COVERED (F3).
+
+    Serializes SCHEMA_REGISTRY (six T2 JSON Schema dicts) plus the exact-key
+    frozensets as sorted lists. Expanding ASSET_MANIFEST_KEYS / a required
+    field MUST change ``schema_registry_sha256()``.
+    """
+    from copy import deepcopy
+
+    schemas = {
+        schema_id: deepcopy(SCHEMA_REGISTRY[schema_id])
+        for schema_id in schema_ids_t2()
+    }
+    key_sets = {
+        name: sorted(keys) for name, keys in sorted(_KEY_SETS.items())
+    }
+    return {
+        "artifact_id": SCHEMA_REGISTRY_ARTIFACT_ID,
+        "key_sets": key_sets,
+        "schema_ids": list(schema_ids_t2()),
+        "schemas": schemas,
+    }
+
+
+def schema_registry_sha256() -> str:
+    """SHA-256 of canonical_bytes(frozen_schema_registry())."""
+    from .canonical import sha256_of_obj
+
+    return sha256_of_obj(frozen_schema_registry())

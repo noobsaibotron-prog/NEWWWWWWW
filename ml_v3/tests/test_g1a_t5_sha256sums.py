@@ -124,14 +124,22 @@ class G1aSha256sumsFixtureTests(unittest.TestCase):
                 root, (G1A_SHA256SUMS_RELPATH,), forbid_self=G1A_SHA256SUMS_RELPATH)
 
     def test_minimum_coverage_and_contract_tripwire(self):
-        self.assertEqual(len(G1A_SHA256SUMS_COVERED), 10)
+        self.assertEqual(len(G1A_SHA256SUMS_COVERED), 11)
         self.assertIn(
             "ml_v3/fixtures/g1/fixture_spec_v1.json",
             G1A_SHA256SUMS_COVERED,
         )
-        schema_paths = [
+        example_paths = [
+            path for path in G1A_SHA256SUMS_COVERED if "/examples/" in path]
+        self.assertEqual(len(example_paths), 6)
+        self.assertIn(
+            "ml_v3/fixtures/g1/schema_registry_v1.json",
+            G1A_SHA256SUMS_COVERED,
+        )
+        # Normative schema surface is schema_registry_v1 — not examples/.
+        schema_mislabel = [
             path for path in G1A_SHA256SUMS_COVERED if "/schemas/" in path]
-        self.assertEqual(len(schema_paths), 6)
+        self.assertEqual(schema_mislabel, [])
         self.assertIn("docs/MOTORE_V3_G1_CONTRACT.md", G1A_SHA256SUMS_COVERED)
         self.assertIn(
             "ml_v3/fixtures/g1/adapter_v2_v3_mapping.json",
@@ -149,12 +157,12 @@ class G1aSha256sumsFixtureTests(unittest.TestCase):
 
     def test_committed_sha256sums_verifies_against_tree(self):
         entries = verify_g1a_sha256sums()
-        # COVERED + T6 audio required; full happy path is 10 + 37 = 47.
+        # COVERED + T6 audio required; full happy path is 11 + 37 = 48.
         self.assertTrue(set(G1A_SHA256SUMS_COVERED).issubset(entries))
         audio = g1a_sha256sums_audio_required()
         self.assertEqual(len(audio), 37)
         self.assertTrue(set(audio).issubset(entries))
-        self.assertEqual(len(entries), 47)
+        self.assertEqual(len(entries), 48)
         root = repo_root_from_here()
         contract = root / "docs" / "MOTORE_V3_G1_CONTRACT.md"
         self.assertEqual(sha256_of_file(contract), CONTRACT_DOC_SHA256_TRIPWIRE)
@@ -174,7 +182,7 @@ class G1aSha256sumsFixtureTests(unittest.TestCase):
         root = repo_root_from_here()
         full = load_g1a_sha256sums()
         truncated = {path: full[path] for path in G1A_SHA256SUMS_COVERED}
-        self.assertEqual(len(truncated), 10)
+        self.assertEqual(len(truncated), 11)
         with tempfile.TemporaryDirectory() as tmp:
             troot = Path(tmp)
             for rel, digest in truncated.items():
