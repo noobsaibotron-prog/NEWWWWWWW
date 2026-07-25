@@ -1,0 +1,104 @@
+{
+  "artifact": "G1B_REV7_REMEASURE_R_REPORT",
+  "first_in_R_hz": 433.67506219748697,
+  "gate": [
+    {
+      "asset": "multitone",
+      "fs": 44100,
+      "max_abs_db": 0.19149398803710938,
+      "n_pairs": 77,
+      "peak": "level",
+      "verdict": "PASS"
+    },
+    {
+      "asset": "multitone",
+      "fs": 96000,
+      "max_abs_db": 0.1897754669189453,
+      "n_pairs": 77,
+      "peak": "level",
+      "verdict": "PASS"
+    },
+    {
+      "asset": "pseudo_noise",
+      "fs": 44100,
+      "max_abs_db": 0.04581642150878906,
+      "n_pairs": 77,
+      "peak": "level",
+      "verdict": "PASS"
+    },
+    {
+      "asset": "pseudo_noise",
+      "fs": 96000,
+      "max_abs_db": 0.04635047912597656,
+      "n_pairs": 77,
+      "peak": "level",
+      "verdict": "PASS"
+    },
+    {
+      "asset": "log_sweep",
+      "fs": 44100,
+      "max_abs_db": 6.4350128173828125,
+      "n_pairs": 10,
+      "peak": "psd b106 (9403.7Hz)",
+      "verdict": "FAIL"
+    },
+    {
+      "asset": "log_sweep",
+      "fs": 96000,
+      "max_abs_db": 5.838142395019531,
+      "n_pairs": 10,
+      "peak": "psd b106 (9403.7Hz)",
+      "verdict": "FAIL"
+    }
+  ],
+  "n_R": 67,
+  "note": "\u2260 G1 PASS; \u2260 consolidate; report-only max not used to close gate",
+  "overall_gate_max_abs_db": 6.4350128173828125,
+  "overall_gate_verdict": "FAIL",
+  "perimeter": "ENBW N_MIN=2 \u2227 SEPARATION_MIN_BINS=2 \u2192 R; report-only \u2209R",
+  "report_only": [
+    {
+      "asset": "multitone",
+      "fs": 44100,
+      "max_abs_db": 4.779563903808594,
+      "n_active_cells_sum_over_pairs": 10275,
+      "peak": "shape b35 (152.5Hz)"
+    },
+    {
+      "asset": "multitone",
+      "fs": 96000,
+      "max_abs_db": 4.487525939941406,
+      "n_active_cells_sum_over_pairs": 10254,
+      "peak": "shape b35 (152.5Hz)"
+    },
+    {
+      "asset": "pseudo_noise",
+      "fs": 44100,
+      "max_abs_db": 9.537364959716797,
+      "n_active_cells_sum_over_pairs": 10857,
+      "peak": "shape b18 (56.9Hz)"
+    },
+    {
+      "asset": "pseudo_noise",
+      "fs": 96000,
+      "max_abs_db": 8.993476867675781,
+      "n_active_cells_sum_over_pairs": 10857,
+      "peak": "shape b18 (56.9Hz)"
+    },
+    {
+      "asset": "log_sweep",
+      "fs": 44100,
+      "max_abs_db": 108.02138137817383,
+      "n_active_cells_sum_over_pairs": 582,
+      "peak": "shape b2 (22.5Hz)"
+    },
+    {
+      "asset": "log_sweep",
+      "fs": 96000,
+      "max_abs_db": 1.5628204345703125,
+      "n_active_cells_sum_over_pairs": 441,
+      "peak": "shape b51 (386.1Hz)"
+    }
+  ],
+  "threshold_db": 0.25
+}

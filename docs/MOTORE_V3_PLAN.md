@@ -203,8 +203,11 @@ line, plugin installato, APVTS, preset, `Resources/Models/ml_weights.bin`,
   Hann main lobe). **Product decision: report-only LF** (gate on `R` only;
   ∉`R` mandatory publish; no LF dB shopping). Clause:
   `docs/MOTORE_V3_REV7_REPORT_ONLY_LF_CLAUSE.md`. **REV7 consolidate: NO.**
-  Next: redteam on clause → re-measure (max on `R` + report-only table) →
-  Guardian. G4 debt: cross-SR low-end detections. **≠ G1 PASS.**
+  Final re-measure recorded: `docs/MOTORE_V3_REV7_REMEASURE_R_FINAL.md` —
+  stationary on `R` **PASS** (~0.19 / ~0.05 dB); overall gate still **FAIL**
+  on `log_sweep` HF floor-union skirt (b106, ~6.44 dB). Report-only ∉`R`
+  published. **REV7 consolidate: NO** until sweep admission amend a priori.
+  G4 debt: cross-SR low-end detections. **≠ G1 PASS.**
 - GO G1b — mandato storico in PLAN `37f6ac60` (2026-07-25) con REV7:
   amend solo se l'implementazione dimostra **impossibilita falsificabile**
   (non inconvenienza); un redteam + un CC indipendente per tranche;
