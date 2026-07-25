@@ -1,11 +1,11 @@
 # G1b Frontend Spike Plan — REV6 feasibility (0.25 dB + streaming≡offline)
 
 **Status:** PLAN ONLY — not G1b tip, not gate proof, not G1 PASS  
-**Date:** 2026-07-25 (refined: independent CC on P7 — P1–P6 ACCEPTED; P7 refined recommendation pending Marco)  
+**Date:** 2026-07-25 (P7 ACCEPTED — Marco OK; P1–P7 pinned; WS0 worktree create unblocked)  
 **Contract:** `docs/MOTORE_V3_G1_CONTRACT.md` @ freeze `6d254d0a` (REV6)  
 **Lab state:** `docs/MOTORE_V3_PLAN.md` — G1a CLOSE: GO @ tip `a2186ac1`; product G1b may unfreeze; **REV7: NO** until falsifiable impossibility  
 **Authority for this doc:** planning spike under Marco mandate; does not amend CONTRACT  
-**Pin readiness:** **P1–P6 ACCEPTED**; **P7 refined recommendation pending Marco** (accept restricted set OR supply canonical); **worktree create blocked until P7 OK**
+**Pin readiness:** **P1–P7 ACCEPTED** (P7 = Marco OK 2026-07-25 on restricted spike-only `{silence, level_below_threshold}`); **worktree create unblocked**
 
 ```text
 PHASE:            G1b-SPIKE-PLAN (planning + inventory; not product G1b)
@@ -53,7 +53,7 @@ Verdict taxonomy (spike overall uses the pair below; see §4):
 | Closing gain/M/S/anti-alias/split/evaluator gates | Out of spike scope (note only) |
 | F1 WAV relocation | Durable debt; use in-repo T6 WAVs as-is |
 | Full 7 streaming schedules in spike | Adversarial subset only (§3.1); full set = official G1b |
-| Creating spike worktree in this plan session | Documented in WS0; execute only after Marco OK on **P7** (P1–P6 ready) |
+| Creating spike worktree before P7 pin | Documented in WS0; **unblocked** after Marco OK on **P7** (2026-07-25) |
 | Mutating hashed G1a artifacts | lock / SHA256SUMS / fixture-spec / WAVs stay frozen |
 
 ---
@@ -175,8 +175,8 @@ Unpinned §6/§7 choices that **silently change measured quantities**.
 **Choices MUST be written here (or amended by Marco) before any product/spike
 coding run.** Changing a pin after seeing numbers → at best AMBRA.
 
-**Meta (2026-07-25):** **P1–P6 ACCEPTED**; **P7 refined recommendation
-pending Marco**; **worktree create blocked until P7 OK**.
+**Meta (2026-07-25):** **P1–P7 ACCEPTED** (P7 = Marco OK on restricted
+spike-only enum); **worktree create unblocked**.
 No CONTRACT amend invented here.
 
 | ID | Status | Ambiguity | Contract cite | Default (conservative) | Needs Marco? |
@@ -187,7 +187,7 @@ No CONTRACT amend invented here.
 | **P4** | **ACCEPTED** (Codex) | `shape_db` from clamped vs pre-clamp `psd_db` | §6.1 floor→clamp then dB; §7 `shape_db` uses `psd_db` | **Clamped `psd_db`** (the emitted field): `shape = psd_db - 10*log10(sum(10**(psd_db/10)))` on 120 bands | No |
 | **P5** | **ACCEPTED** (Codex) | `float64→float32` cast point + reduction association | §7 frame float32; gate3 bit-identity; lock `gate_platform_float_tol=0` | **Accumulate FIR/FFT/band sums in float64; cast each emitted frame float field to float32 once at write.** Same association offline and streaming (left-to-right on frozen index order). No Kahan / blocked reassoc without new pin | No (default is spike baseline) |
 | **P6** | **ACCEPTED** (Codex correct; was inconsistent) | Floor / zero values for invalid-channel vectors | §7 floor for invalid channel; PSD clamp `[-120,+12]`; `delta_db` clamp `[-24,+24]`; first-valid / history-reset → zeros | See **P6 detail** below | No |
-| **P7** | **PENDING Marco** (refined recommendation) | `reason` when `valid=false` (frame emitted) | §7 «motivo enumerato quando falso» — **enum not listed** on contract surface; stub accepts any non-empty `str` | See **P7 detail** below — restricted spike-only `{silence, level_below_threshold}`; hard errors out of frame `reason` | **YES — accept this restricted set OR supply canonical** |
+| **P7** | **ACCEPTED** (Marco OK 2026-07-25) | `reason` when `valid=false` (frame emitted) | §7 «motivo enumerato quando falso» — **enum not listed** on contract surface; stub accepts any non-empty `str` | See **P7 detail** below — restricted spike-only `{silence, level_below_threshold}`; hard errors out of frame `reason` | No (restricted set accepted; ≠ CONTRACT amend) |
 
 ### P2 detail (fail-closed default + quantified evidence obligations)
 
@@ -225,7 +225,7 @@ Prior draft set `*_delta_db = -120` for invalid channel — **INVALID**: violate
   from shape
 - `mid_valid` / `side_valid` / `valid` false as §7
 
-### P7 detail (refined recommendation; pending Marco OK)
+### P7 detail (ACCEPTED — Marco OK 2026-07-25)
 
 **Supersedes** the prior provisional 5-value set
 `{silence, non_finite_input, unsupported_sr, insufficient_samples,
@@ -239,8 +239,7 @@ channel_invalid}`. That set is **withdrawn** for two reasons:
    offline vs streaming can pick different strings → false RED on bit-identity
    of `reason`.
 
-**New provisional spike-only enum** (recommended default; still
-**PENDING Marco OK**; ≠ REV7 / ≠ CONTRACT amend):
+**Pinned spike-only enum** (Marco OK 2026-07-25; ≠ REV7 / ≠ CONTRACT amend):
 
 | reason | when (deterministic, disjoint) |
 |--------|--------------------------------|
@@ -255,12 +254,11 @@ channel_invalid}`. That set is **withdrawn** for two reasons:
 
 ### P* workflow
 
-1. Marco OK on **P7** (accept restricted set above **or** supply canonical)
-   **before** worktree coding — P1–P6 already ACCEPTED.  
+1. ~~Marco OK on **P7**~~ → **DONE** (2026-07-25): restricted set accepted.  
 2. Spike code may only implement pinned cells.  
 3. If a pin must change to pass → record AMBRA + debt; do not silently rewrite this table after the run.  
 4. AMBRA pins that product G1b will inherit → write into G1b tranche preregistration (still ≠ REV7).  
-5. **Worktree create blocked until P7 OK.**
+5. **Worktree create unblocked** (P1–P7 pinned).
 
 ---
 
@@ -268,30 +266,33 @@ channel_invalid}`. That set is **withdrawn** for two reasons:
 
 Order is dependency order. Spike may stop early on RED / AMBRA-necessity.
 
-### WS0 — Hygiene / isolation / freeze baseline (plan-approved; execute after P7 OK)
+### WS0 — Hygiene / isolation / freeze baseline (**P7 OK → execute**)
 
 **Close isolation ambiguity (do not use `feature/motore-v3-offline` tip for spike commits):**
 
 ```text
-Worktree path:  .claude/worktrees/motore-v3-g1b-spike
-                (absolute under repo parent worktrees layout)
+Worktree path:  /Users/marco/Desktop/NEWWWWWWW/.claude/worktrees/motore-v3-g1b-spike
 Branch:         spike/motore-v3-g1b-frontend
-Base commit:    a2186ac1   # G1a remediation tip (code)
+Base commit:    a2186ac1   # G1a remediation tip (code); PLAN wins over later docs tips
 Seed:           COPY (not merge) uncommitted trees from motore-v3-offline:
                   - ml_v3/frontend/
                   - ml_v3/tests/test_g1b_t1_resampler_coeffs.py
 Policy:         NO commits on feature/motore-v3-offline from the spike
                 NO CONTRACT / lock / SHA256SUMS / fixture-spec mutation
+                Seed left UNCOMMITTED until WS1 / tranche 1 unless otherwise asked
+Pins:           P1–P7 ACCEPTED (spike-only; ≠ G1 PASS; ≠ official G1b tip)
+Gate Python:    /Users/marco/aieq_data/motore_v3/env/venv = CPython 3.12.13
 ```
 
-Setup steps (**after Marco OK on P7; P1–P6 ready; not in this plan session**):
+Setup steps (**authorized after Marco OK on P7 2026-07-25**):
 
 ```bash
-# From main repo / worktree parent — illustrative; run only post-approval
+# From main repo / worktree parent — post-approval
 git worktree add -b spike/motore-v3-g1b-frontend \
-  .claude/worktrees/motore-v3-g1b-spike a2186ac1
+  /Users/marco/Desktop/NEWWWWWWW/.claude/worktrees/motore-v3-g1b-spike a2186ac1
 # Then copy uncommitted frontend + T1 test from motore-v3-offline into the
 # new worktree working tree (cp -R); do not merge offline tip.
+# Prefer leave seed uncommitted until WS1 (tranche 1 lands seed as tip on spike).
 ```
 
 Also in WS0:
@@ -299,7 +300,8 @@ Also in WS0:
 - Re-verify lock digest + SHA256SUMS (48) on gate venv (F4 pattern).  
 - Do **not** treat uncommitted frontend as tip.  
 - Reuse G1a artifacts; **zero** CONTRACT edits.  
-- Evidence only on `/Users/marco/aieq_data/motore_v3/env/venv` (3.12.13).
+- Evidence only on `/Users/marco/aieq_data/motore_v3/env/venv` (3.12.13).  
+- Short WS0 note in spike worktree documenting P1–P7 pin freeze.
 
 ### WS1 — Resampler coeffs (T1) → streaming apply (T1b)
 
@@ -439,8 +441,8 @@ edit CONTRACT from this spike.
 
 ## 9. Suggested commit tranche order (AFTER Marco OK on P7 + this plan)
 
-Do **not** implement product in the plan session. Do **not** create the
-worktree until Marco OK on **P7** (P1–P6 ready). After approval:
+P7 ACCEPTED (2026-07-25). Worktree create + WS0 seed are unblocked.
+Do **not** land spike product code on `feature/motore-v3-offline`. After WS0:
 
 | # | Tranche | Paths (typical) | DoD slice |
 |---|---------|-----------------|-----------|
@@ -508,8 +510,8 @@ Last command must be empty. Spike commits stay on
 
 | Agent | Action after plan + P1–P7 approval |
 |-------|-------------------------------------|
-| **Marco** | **P7 only remaining:** accept restricted `{silence, level_below_threshold}` (or supply canonical). P1–P6 ACCEPTED. Then authorize worktree create + WS1 |
-| **ember-phase-builder** | Create worktree; implement one WS/tranche at a time inside ALLOWED_PATHS on spike branch |
+| **Marco** | **P7 ACCEPTED** (2026-07-25) restricted `{silence, level_below_threshold}`. P1–P7 pinned. WS0 unblocked; authorize WS1 when ready |
+| **ember-phase-builder** | WS0: create worktree + seed; then implement one WS/tranche at a time inside ALLOWED_PATHS on spike branch |
 | **ember-parity-lab** | When WS4 emits numbers: verify digests / max|Δ| / margin tables |
 | **ember-contract-guardian** | Counter-check each tip; REV7 only if spike RED + write-up; AMBRA → debt not amend |
 | **ember-metrology-redteam** | Attack false-PASS in harness (window, activity, platform, P* post-hoc) |
@@ -527,5 +529,7 @@ Last command must be empty. Spike commits stay on
 - **AMBRA ≠ REV7**; it is preregistration debt.  
 - Spike worktree/branch isolation: no commits on `feature/motore-v3-offline`
   from spike.  
-- This plan session stops **before** worktree creation and product code.  
-- **P1–P6 ACCEPTED; P7 refined recommendation pending Marco; worktree create blocked until P7 OK.**
+- Plan docs may land on `feature/motore-v3-offline`; spike product code stays
+  on `spike/motore-v3-g1b-frontend` only.  
+- **P1–P7 ACCEPTED** (P7 Marco OK 2026-07-25); **worktree create unblocked**;
+  spike ≠ official G1b; **no G1 PASS**.
