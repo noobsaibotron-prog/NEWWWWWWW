@@ -16,34 +16,44 @@ Il piano descrive un progetto a contratti. Ad oggi, su questo branch:
   micro-amend). Header/§16 di quel commit restano storicamente "non e GO";
   lo **stato di fase vivente** e nelle righe Governance sotto.
 - **GO G1a**: aperto (2026-07-25) dal reviewer (Marco) sul freeze `6d254d0a`.
-- **G1a codice in git** (tip `3bfd8aaf`): T1 `94dc9991` (primitives/split/
+- **G1a codice in git** (tip `75cb6902`): T1 `94dc9991` (primitives/split/
   coverage) + T2 `1908fc45` / T2.1 `918b3dde` (JSON schemas, validators,
   golden canonical) + T3 `9aa19295` (adapter v2↔v3 hashed,
   `adapter_mapping_sha256` =
   `6a978c01bcccb85fb7db17ae3c66ee55ebceee82f47dca792e5a2f3a5fb9828f`) +
   T4 `3bfd8aaf` (metrology lock §13 committed;
   `metrology_lock_sha256` =
-  `d2c35ccc12643f2520c8a50d2e27fd3631216bb9a8ce63a34193412e74d1c10e`).
-- **G1a T4**: committed at `3bfd8aaf` — not WIP, not working-tree-only.
-  **Stop rule T4**: last lock harden unless CRITICAL (vacuous PASS /
-  final-test leak); HIGH/MED → durable debt list (below). **T5** e
-  chiusura DoD §14.1 ancora aperti.
-- G1a DoD §14.1 **non** e dichiarato chiuso; nessun claim di G1 PASS.
-- **Debt list (durable, post-T4)**:
-  1. `contract_doc_sha256` → T5 SHA256SUMS. Precomputed (optional PLAN
-     note; contract @ `6d254d0a`, verified identical in WT):
+  `d2c35ccc12643f2520c8a50d2e27fd3631216bb9a8ce63a34193412e74d1c10e`) +
+  T5 `75cb6902` (SHA256SUMS trust anchor + path hygiene; inventory covers
+  contract + adapter + lock + schemas; SHA256SUMS does **not** self-hash —
+  trust anchor = this commit).
+- **G1a T5**: committed at `75cb6902`. SHA256SUMS is the trust anchor for
+  artifact digests beyond lock inline `dependencies`; it does not hash
+  itself (anchor = commit `75cb6902`).
+- **G1a DoD §14.1**: artifact set landed (T1–T5). G1a closure still requires
+  explicit counter-check / Guardian GO. **No G1 PASS**, not release-safe.
+- **GO G1b**: reviewer (Marco) opens G1b (2026-07-25) with mandate:
+  **REV7 only if implementation demonstrates falsifiable impossibility**
+  (not inconvenience); one redteam + one independent CC per tranche;
+  non-CRITICAL → debt list.
+- **Debt list (durable)**:
+  1. `contract_doc_sha256` tripwire (also in T5 SHA256SUMS). Precomputed
+     (contract @ `6d254d0a`):
      `6a6f6d35bbf3fc65d7a01e54620bf4f9649ea77d60c2b3d9e7ea0b72f7f49a86`.
-     Tripwire against silent contract edits — not a G1a close criterion.
-- **Ancora assente**: frontend G1b+, modello V3, runtime V3, UI V3, build
-  Ableton V3, training V3. Ship-line (`Source/`, CMake, `Resources/`,
-  `AIEQ-mac`) invariata vs freeze G0 `2c88edad`.
+     Tripwire against silent contract edits — not a G1a/G1b close criterion.
+- **Ancora assente / in corso**: frontend G1b (appena aperto; nessun claim di
+  completezza), modello V3, runtime V3, UI V3, build Ableton V3, training V3.
+  Ship-line (`Source/`, CMake, `Resources/`, `AIEQ-mac`) invariata vs freeze
+  G0 `2c88edad`. G1b may touch `ml_v3/frontend/` (and only minimum `Source/`
+  if contract-authorized later) — **still no silent ship of V3 to Ableton**
+  without later gates (G6+).
 - **Nessun training V3 e autorizzato** oltre i limiti di fase.
 - Il CONTROL Motore v2/A4b resta **NO-GO**; nessun modello e promosso.
 - Il laboratorio prominence v2 vive su **branch separati** e NON e integrato in
   questo branch (vedi sezione "Stato prominence v2").
 
-Le sezioni G1b–G8 seguenti restano criteri FUTURI finche la fase corrente non
-riceve GO di chiusura. Non confondere "fase G1a aperta" con "G1 PASS" o
+Le sezioni G1c–G8 seguenti restano criteri FUTURI finche la fase corrente non
+riceve GO di chiusura. Non confondere "fase G1b aperta" con "G1 PASS" o
 "release-safe".
 
 Obiettivo finale: non inferiorita misurata rispetto a smart:EQ 4 sul
@@ -68,11 +78,17 @@ line, plugin installato, APVTS, preset, `Resources/Models/ml_weights.bin`,
   parte senza counter-check e GO esplicito.
 - GO G1a — reviewer (Marco) su `6d254d0a` → fase aperta (2026-07-25).
   T1: `94dc9991`. T2: `1908fc45`. T2.1: `918b3dde`. T3: `9aa19295`.
-  T4: `3bfd8aaf` (tip G1a; metrology lock committed;
+  T4: `3bfd8aaf` (metrology lock;
   `metrology_lock_sha256` =
   `d2c35ccc12643f2520c8a50d2e27fd3631216bb9a8ce63a34193412e74d1c10e`).
-  Stop rule T4: last lock harden unless CRITICAL (vacuous PASS /
-  final-test leak); HIGH/MED → debt list. T5 aperto; DoD §14.1 non chiuso.
+  T5: `75cb6902` (tip G1a; SHA256SUMS trust anchor).
+  Stop rule post-T4: last lock harden unless CRITICAL; HIGH/MED → debt list.
+  §14.1 artifact set landed (T1–T5); G1a closure needs CC / Guardian GO;
+  no G1 PASS.
+- GO G1b — reviewer (Marco) apre G1b (2026-07-25) con mandato REV7:
+  amend solo se l'implementazione dimostra **impossibilita falsificabile**
+  (non inconvenienza); un redteam + un CC indipendente per tranche;
+  non-CRITICAL → debt list. Frontend lab sotto `ml_v3/`; nessun ship Ableton.
 - Dati, cache e modelli restano in `~/aieq_data/motore_v3/`; nel repository
   entrano soltanto codice, manifest, lock, hash, contratti e report.
 - Massimo tre round completi di training. Non si compensano fallimenti offline
