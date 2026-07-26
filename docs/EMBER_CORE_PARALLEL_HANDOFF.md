@@ -37,7 +37,7 @@ evidenza chirp dice no — concentrare lì. Mandato:
 ### Tip
 | Tip | Commit | Nota |
 |-----|--------|------|
-| HEAD (docs living) | *(mandate+handoff commit)* | SWEEP_METROLOGY_REDESIGN mandate open; A3 retirement path frozen |
+| HEAD (docs living) | **`b582ea1a`** | SWEEP_METROLOGY_REDESIGN mandate open; A3 retirement path frozen |
 | A3 falsification | **`78da84dd`** | FAIL honest — retired-as-solution (archival CC/redteam in flight) |
 | A3 formula tip | `04e47b39` | archival prose only; **not** next ACTIVE-family fix |
 | Living next-path | redesign mandate | S1 reachability + S2 non-stat observable (proposal later) |
@@ -64,7 +64,7 @@ evidenza chirp dice no — concentrare lì. Mandato:
 
 ### Catena tip (recente)
 ```text
-(this)    docs: open SWEEP_METROLOGY_REDESIGN mandate   ← HEAD
+b582ea1a  docs: open SWEEP_METROLOGY_REDESIGN mandate   ← HEAD
 78da84dd  docs: A3 falsification measure (FAIL honest)
 04e47b39  docs: close A3 formula POROUS holes
 81e86dc5  docs: freeze log_sweep HF A3 admission formula
