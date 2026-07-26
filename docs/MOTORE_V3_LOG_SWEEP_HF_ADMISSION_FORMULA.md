@@ -1,12 +1,14 @@
 # Motore v3 — Concrete formula: log_sweep A3 admission (`ACTIVE_sweep`)
 
-**Suggested commit title (if/when Marco authorizes commit):**  
-`docs(v3): close CC/third-redteam POROUS on log_sweep A3 formula`
+**Archival commit title:**  
+`docs(v3): archive A3 as SOUND+FALSIFIED+RETIRED`
 
 | Field | Value |
 |-------|--------|
-| **Status** | **FORMULA DRAFT — third-redteam + CC-delta POROUS closures** — document-only; tip packaging `81e86dc5`; independent CC + third redteam + CC delta returned **CONTRACT-POROUS**; this prose keeps CC must-fixes 1–7 and closes HIGH#1 (tie-break), HIGH#2 (empty-N / `CHK_CHIRP_REACHABLE`), MED#2 (b106 lattice), LOW#3 (level); **ready for redteam/CC delta again**; this document **must not** self-declare `CONTRACT-SOUND` (only independent redteam/CC may stamp that verdict); **re-measure still blocked** until non-POROUS acceptance; falsification-only still OK after non-POROUS |
+| **Status** | **ARCHIVAL — CONTRACT-SOUND + RETIRED AS SOLUTION** — dual independent closure complete (redteam + CC/Guardian); formula tip `04e47b39`; falsification measure `78da84dd` (**FAIL** honest); **ACTIVE family closed**; **no further A3-as-solution work**; stamp sibling `docs/MOTORE_V3_LOG_SWEEP_A3_ARCHIVE_STAMP.md` |
 | **Parent stamp** | `docs/MOTORE_V3_LOG_SWEEP_HF_ADMISSION_PROPOSAL.md` (A · A3 · fuori REV7 LF) |
+| **Archive stamp** | `docs/MOTORE_V3_LOG_SWEEP_A3_ARCHIVE_STAMP.md` |
+| **Falsification** | `docs/MOTORE_V3_LOG_SWEEP_A3_FALSIFICATION_MEASURE.md` @ `78da84dd` |
 | **Decisions** | **A** (a-priori admission amend) + **A3** (sweep-scoped predicate **AND** neighbourhood = **solo `F_TRAJ`** — **not** peak-local ±K) |
 | **Date** | 2026-07-26 |
 | **Freeze contract** | `docs/MOTORE_V3_G1_CONTRACT.md` @ `6d254d0a` (REV6) — **not edited** |
@@ -14,7 +16,7 @@
 | **SHA256SUMS** | untouched |
 | **Contamination guard** | No constant fitted to 6.435 / 5.838 dB; widths from §6 + fixture_spec + lock delay only |
 
-**≠** G1 PASS · ≠ REV7 consolidate · ≠ G1b tip · ≠ frontend implement · ≠ re-measure authorization · ≠ self-`CONTRACT-SOUND`
+**≠** G1 PASS · ≠ REV7 consolidate · ≠ G1b tip · ≠ frontend implement · 0.25 hard · **≠** reopen A3/A4 as solution
 
 ---
 
@@ -748,37 +750,38 @@ Silent lock edit without CONTRACT amend GO → BLOCKER.
 
 ---
 
-## 10. Next permitted action
+## 10. Archival status (closed)
 
 | step | status |
 |------|--------|
 | Parent decisions A / A3 / fuori REV7 LF | stamped |
-| Tip packaging for first independent CC | `81e86dc5` |
-| Independent CC @ `81e86dc5` | **CONTRACT-POROUS** (must-fixes 1–7) |
-| Third redteam | **CONTRACT-POROUS** (HIGH#1 / MED#2; LOW#3 pinned) |
-| CC delta (empty-N @ 20 Hz) | **CONTRACT-POROUS** → closed by §2.3.2 / T18 (`CHK_CHIRP_REACHABLE`) |
-| This concrete formula (POROUS closures in prose) | **ready for redteam/CC delta again** |
-| Self-declaration of `CONTRACT-SOUND` | **forbidden** (only independent redteam/CC) |
-| Independent redteam/CC under written rule | **authorized** as the next judge step |
-| Re-measure on gate platform | **blocked** until non-POROUS acceptance + Marco OK |
-| Falsification-only measure | OK **after** non-POROUS acceptance (not ACCEPT remeasure) |
-| Frontend implement / tip / REV7 consolidate | **forbidden** as next step |
+| Formula tip (POROUS closures landed) | `04e47b39` |
+| Falsification measure | `78da84dd` — **FAIL** honest |
+| Dual redteam + CC/Guardian | **CONTRACT-SOUND**; falsification **VALID**; **RETIRE_AS_SOLUTION YES** |
+| Archive stamp | `docs/MOTORE_V3_LOG_SWEEP_A3_ARCHIVE_STAMP.md` |
+| ACTIVE-family A3-as-solution work | **CLOSED** — no further A3/A4 solution deltas |
+| Next living path | `docs/MOTORE_V3_SWEEP_METROLOGY_REDESIGN_MANDATE.md` (S1+S2) |
+| Frontend implement / tip / REV7 consolidate / G1 PASS | **forbidden** |
 
-**Ready for redteam/CC delta again; remeasure ACCEPT still blocked until non-POROUS acceptance. Falsification-only still OK after non-POROUS. This file does not claim CONTRACT-SOUND.**
+**Archival triad:** A3 CONTRACT-SOUND + hypothesis FALSIFIED + RETIRED AS SOLUTION.  
+See sibling stamp for dual-agent refs. This file is archival prose only.
 
 ---
 
 ## 11. References
 
 1. `docs/MOTORE_V3_LOG_SWEEP_HF_ADMISSION_PROPOSAL.md` — A / A3 stamp
-2. `docs/MOTORE_V3_G1_CONTRACT.md` @ `6d254d0a` — §6, §13.1–13.2
-3. `ml_v3/contracts/fixture_spec.py` — `sweep_crossing_time`, useful lattice, active interval
-4. `ml_v3/contracts/metrology_lock.py` — `resampler_group_delay_rational` / `T_MEM` / alignment
-5. `docs/MOTORE_V3_REV7_REPORT_ONLY_LF_CLAUSE.md` — `EXCLUDED_GEOMETRY` (anti-launder foil)
-6. `docs/MOTORE_V3_REV7_SCOPE_REWRITE_PROPOSAL.md` — Hann null-to-null pin
-7. `docs/MOTORE_V3_REV7_REMEASURE_R_FINAL.md` — trigger evidence only (not a fit target)
+2. `docs/MOTORE_V3_LOG_SWEEP_A3_ARCHIVE_STAMP.md` — dual SOUND+FALSIFIED+RETIRED
+3. `docs/MOTORE_V3_LOG_SWEEP_A3_FALSIFICATION_MEASURE.md` @ `78da84dd`
+4. `docs/MOTORE_V3_G1_CONTRACT.md` @ `6d254d0a` — §6, §13.1–13.2
+5. `ml_v3/contracts/fixture_spec.py` — `sweep_crossing_time`, useful lattice, active interval
+6. `ml_v3/contracts/metrology_lock.py` — `resampler_group_delay_rational` / `T_MEM` / alignment
+7. `docs/MOTORE_V3_REV7_REPORT_ONLY_LF_CLAUSE.md` — `EXCLUDED_GEOMETRY` (anti-launder foil)
+8. `docs/MOTORE_V3_REV7_SCOPE_REWRITE_PROPOSAL.md` — Hann null-to-null pin
+9. `docs/MOTORE_V3_REV7_REMEASURE_R_FINAL.md` — trigger evidence only (not a fit target)
+10. `docs/MOTORE_V3_SWEEP_METROLOGY_REDESIGN_MANDATE.md` — living next path
 
 ---
 
-≠ G1 PASS. ≠ REV7 consolidate. ≠ G1b tip. ≠ re-measure GO. ≠ lock mutate.
-≠ self-CONTRACT-SOUND.
+≠ G1 PASS. ≠ REV7 consolidate. ≠ G1b tip. ≠ lock mutate. 0.25 hard.
+≠ reopen A3/A4 as solution.

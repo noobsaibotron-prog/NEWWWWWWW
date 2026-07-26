@@ -1,6 +1,6 @@
 # Ember Core / Motore v3 — Handoff AUTOSUFFICIENTE per agenti esterni
 
-**Ultimo aggiornamento:** 2026-07-26 19:50 (UTC+2)  
+**Ultimo aggiornamento:** 2026-07-26 19:52 (UTC+2)  
 **Destinatario:** agente esterno **senza terminale / senza git**.  
 **Questo file** = quadro + testo completo snapshot.
 
@@ -16,14 +16,14 @@
 - Prodotto: **AI Equalizer Pro**. **Ember Core** = Motore / misura / AI.
 - Lane: lab **Motore v3 offline** (`feature/motore-v3-offline`). Spike G1b su branch/worktree separato.
 
-### Fotografia congelata (mandate open)
+### Fotografia congelata (A3 archived; redesign mandate open)
 ```text
 G1a CLOSE                         GO
 REV6                              authority corrente
 stationary parity su R            evidence positiva
 streaming spike                   feasibility positiva
 sweep full-vector                 FAIL
-A3                                falsificata come soluzione (archival CC/redteam in flight)
+A3                                ARCHIVED: SOUND + FALSIFIED + RETIRED AS SOLUTION
 REV7                              NON consolidated
 G1b official tip                  NON esiste
 0.25 dB                           intoccato
@@ -31,16 +31,19 @@ G1b official tip                  NON esiste
 
 **Decisione:** smettere di far passare il test sweep full-vector corrente;
 stabilire se chiede una proprietà fisicamente ben definita. Stationary ≈ sì;
-evidenza chirp dice no — concentrare lì. Mandato:
-`docs/MOTORE_V3_SWEEP_METROLOGY_REDESIGN_MANDATE.md`.
+evidenza chirp dice no — concentrare lì. **Next work** =
+`docs/MOTORE_V3_SWEEP_METROLOGY_REDESIGN_MANDATE.md`. A3 stamp:
+`docs/MOTORE_V3_LOG_SWEEP_A3_ARCHIVE_STAMP.md`.
 
 ### Tip
 | Tip | Commit | Nota |
 |-----|--------|------|
-| HEAD (docs living) | **`b582ea1a`** | SWEEP_METROLOGY_REDESIGN mandate open; A3 retirement path frozen |
-| A3 falsification | **`78da84dd`** | FAIL honest — retired-as-solution (archival CC/redteam in flight) |
-| A3 formula tip | `04e47b39` | archival prose only; **not** next ACTIVE-family fix |
+| HEAD (docs living) | *(this archive stamp)* | A3 SOUND+FALSIFIED+RETIRED; redesign mandate = next |
+| A3 archive stamp | sibling doc | dual redteam+CC; ACTIVE family closed |
+| A3 falsification | **`78da84dd`** | FAIL honest — hypothesis falsified |
+| A3 formula tip | `04e47b39` | archival prose; packaging = SOUND+RETIRED |
 | Living next-path | redesign mandate | S1 reachability + S2 non-stat observable (proposal later) |
+| Mandate open | **`b582ea1a`** | `docs/MOTORE_V3_SWEEP_METROLOGY_REDESIGN_MANDATE.md` |
 | Final R remeasure | `b3d7f71b` | stationary PASS; sweep FAIL |
 | Code G1a | **`a2186ac1`** | F2/F3/F4; G1a CLOSE GO still holds |
 | T6 / M2 | `501a4e00` / `e9916319` | digests unchanged (`513c3baf…`, 48 SUMS) |
@@ -50,21 +53,22 @@ evidenza chirp dice no — concentrare lì. Mandato:
 1. G1b spike WS4 **RED** → REV7 **candidate draft only**.  
 2. Product decision: **report-only LF** (gate on geometric `R`; ∉R published debt).  
 3. Final re-measure `R`: stationary **PASS**; overall **FAIL** on `log_sweep` HF.  
-4. A/A3 stamped → formula → falsification @ `78da84dd` **FAIL honest**.  
-5. **A3 retired-as-solution**; **no A4+**. Open
-   `docs/MOTORE_V3_SWEEP_METROLOGY_REDESIGN_MANDATE.md` (S1+S2; ridge =
-   direction family only).  
-6. **≠** G1 PASS · **≠** REV7 consolidate · **≠** G1b tip · 0.25 intact.
+4. A/A3 stamped → formula `04e47b39` → falsification @ `78da84dd` **FAIL honest**.  
+5. Dual redteam+CC: **CONTRACT-SOUND** + **RETIRE_AS_SOLUTION**; archive stamped.  
+6. **Next** = SWEEP_METROLOGY_REDESIGN mandate (S1+S2); **no A4+**.  
+7. **≠** G1 PASS · **≠** REV7 consolidate · **≠** G1b tip · 0.25 intact.
 
 ### Stato fase
 - **G1a CLOSE: GO**; code tip `a2186ac1`.  
+- **A3: ARCHIVED** (SOUND + FALSIFIED + RETIRED); ACTIVE family closed.  
 - **REV7 consolidate: NO** — wait S1+S2, then **one** REV7 package.  
 - Spike ≠ official G1b tip.  
 - Debt: F1 WAV, gate-8, G4 cross-SR LF detections (report-only).
 
 ### Catena tip (recente)
 ```text
-b582ea1a  docs: open SWEEP_METROLOGY_REDESIGN mandate   ← HEAD
+(this)    docs: archive A3 as SOUND+FALSIFIED+RETIRED   ← HEAD
+b582ea1a  docs: open SWEEP_METROLOGY_REDESIGN mandate
 78da84dd  docs: A3 falsification measure (FAIL honest)
 04e47b39  docs: close A3 formula POROUS holes
 81e86dc5  docs: freeze log_sweep HF A3 admission formula
@@ -77,7 +81,7 @@ b3d7f71b  docs: final REV7 R remeasure (stat PASS, sweep FAIL)
 ### Working tree (this branch)
 | Path | Stato |
 |------|--------|
-| Motore docs | living @ mandate open |
+| Motore docs | living @ A3 archived + redesign mandate open |
 | `ml_v3/frontend/` + spike test | untracked lab spike ≠ tip |
 | agents / .cursor | untracked |
 
@@ -87,18 +91,17 @@ b3d7f71b  docs: final REV7 R remeasure (stat PASS, sweep FAIL)
 | G1a CLOSE | **GO** |
 | Stationary parity su `R` | evidence **positiva** |
 | Sweep full-vector | **FAIL** |
-| A3 | **retired-as-solution** (archival stamps in flight) |
-| SWEEP_METROLOGY_REDESIGN | **mandate OPEN** (no formula/measure yet) |
+| A3 | **ARCHIVED** SOUND+FALSIFIED+RETIRED (ACTIVE family closed) |
+| SWEEP_METROLOGY_REDESIGN | **mandate OPEN** — **next work** (no formula/measure yet) |
 | REV7 consolidate / G1 PASS / G1b tip | **NO** |
 
 ### Sequenza restante
-1. Archival redteam/CC stamps on A3 (close record; do **not** reopen A4+).  
-2. Untainted **proposal** under redesign mandate (S1+S2 + off-ridge) — docs only.  
-3. After S1+S2: redteam → CC → **one** fresh measure → Guardian GO → **one** REV7 package → rehash → official G1b tip.  
-4. Spike ≠ tip. Mai: 0.25→media/p95; ship/Source; training; claim G1 PASS.
+1. Untainted **proposal** under redesign mandate (S1+S2 + off-ridge) — docs only.  
+2. After S1+S2: redteam → CC → **one** fresh measure → Guardian GO → **one** REV7 package → rehash → official G1b tip.  
+3. Spike ≠ tip. Mai: 0.25→media/p95; ship/Source; training; claim G1 PASS; riaprire A3/A4.
 
 ### Vietato
-G1 PASS; REV7 consolidate prima di S1+S2 + secondo Guardian GO; tip G1b ufficiale; riaprire ACTIVE A4+; trattare FAIL A3 come PASS; formula/measure/lock in questa fase; ship Ableton; riaprire digests G1a.
+G1 PASS; REV7 consolidate prima di S1+S2 + secondo Guardian GO; tip G1b ufficiale; riaprire ACTIVE A3/A4; trattare FAIL A3 come PASS; formula/measure/lock fuori mandato redesign; ship Ableton; riaprire digests G1a.
 
 ---
 
