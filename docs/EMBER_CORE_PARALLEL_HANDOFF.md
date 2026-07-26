@@ -1,6 +1,6 @@
 # Ember Core / Motore v3 — Handoff AUTOSUFFICIENTE per agenti esterni
 
-**Ultimo aggiornamento:** 2026-07-26 20:56 (UTC+2)  
+**Ultimo aggiornamento:** 2026-07-26 21:01 (UTC+2)  
 **Destinatario:** agente esterno **senza terminale / senza git**.  
 **Questo file** = quadro + testo completo snapshot.
 
@@ -28,6 +28,7 @@ SWEEP_METROLOGY_REDESIGN proposal PARKED — out of G1 closing set (option C)
 REV7                              NON consolidated (one future package)
 G1b official tip                  NON esiste
 0.25 dB / max / R                 intoccati (scope decision ≠ relaxation)
+stationary R measure              docs/MOTORE_V3_G1_STATIONARY_R_CLOSING_MEASURE.md (MEASURE-PASS max|Δ|=0.1915; tip=this HEAD)
 ```
 
 **Decisione Marco — option (C):** stop POROUS litigation on
@@ -42,8 +43,9 @@ Normative clause: `docs/MOTORE_V3_G1_GATE4_SCOPE_CLAUSE.md`. A3 stamp:
 ### Tip
 | Tip | Commit | Nota |
 |-----|--------|------|
-| HEAD (docs living) | *(this scope clause stamp)* | option (C); sweep proposal PARKED |
-| Gate-4 scope clause | `docs/MOTORE_V3_G1_GATE4_SCOPE_CLAUSE.md` | stationary close; park non-stat |
+| HEAD (docs living) | *(this stationary R measure)* | option (C) measure; ≠ G1 PASS |
+| Stationary R closing measure | `docs/MOTORE_V3_G1_STATIONARY_R_CLOSING_MEASURE.md` | max\|Δ\|=0.1915 dB PASS on R; tip below |
+| Gate-4 scope clause | `docs/MOTORE_V3_G1_GATE4_SCOPE_CLAUSE.md` @ `31216df4` | stationary close; park non-stat |
 | Parked proposal tip | **`9b8f8305`** | SWEEP_METROLOGY_REDESIGN — PARKED, not under CC/RT |
 | LF report-only clause | **`71159469`** | joins scope clause in one future REV7 |
 | A3 archive stamp | sibling doc | dual redteam+CC; ACTIVE family closed |
@@ -63,7 +65,8 @@ Normative clause: `docs/MOTORE_V3_G1_GATE4_SCOPE_CLAUSE.md`. A3 stamp:
 5. Dual redteam+CC: **CONTRACT-SOUND** + **RETIRE_AS_SOLUTION**; archive stamped.  
 6. SWEEP_METROLOGY_REDESIGN mandate + proposal drafted; POROUS litigation **stopped**.  
 7. **Option (C) decided** — scope clause; proposal **PARKED**.  
-8. **≠** G1 PASS · **≠** REV7 consolidate · **≠** G1b tip · 0.25 / max / R intact.
+8. **One** stationary R closing measure — MEASURE-PASS (max\|Δ\|=0.1915 dB).  
+9. **≠** G1 PASS · **≠** REV7 consolidate · **≠** G1b tip · 0.25 / max / R intact.
 
 ### Stato fase
 - **G1a CLOSE: GO**; code tip `a2186ac1`.  
@@ -83,7 +86,8 @@ handoff B.3: 44.1→48 resampled audio agree to ~0.03 dB).
 
 ### Catena tip (recente)
 ```text
-(this)    docs(v3): G1 gate-4 scope — stationary close; park non-stat (C)  ← HEAD
+(this)    docs(v3): stationary R closing measure under gate-4 scope (C)  ← HEAD
+31216df4  docs(v3): G1 gate-4 scope — stationary close; park non-stat (C)
 9b8f8305  docs(v3): kill source_time_selected := mirror; fix RIDGE claim; P32
 …
 b582ea1a  docs: open SWEEP_METROLOGY_REDESIGN mandate
@@ -109,16 +113,16 @@ b3d7f71b  docs: final REV7 R remeasure (stat PASS, sweep FAIL)
 |------|--------|
 | G1a CLOSE | **GO** |
 | Option (C) / gate-4 scope | **DECIDED** — `MOTORE_V3_G1_GATE4_SCOPE_CLAUSE.md` |
-| Stationary closing set on `R` | next: docs verify → one stationary closing measure |
+| Stationary closing set on `R` | **MEASURE-PASS** — `MOTORE_V3_G1_STATIONARY_R_CLOSING_MEASURE.md` (max\|Δ\|=0.1915) |
 | Sweep proposal | **PARKED** (not under evaluation; no more redteam now) |
 | A3 | **ARCHIVED** SOUND+FALSIFIED+RETIRED (ACTIVE family closed) |
 | REV7 consolidate / G1 PASS / G1b tip | **NO** |
 
 ### Sequenza restante
-1. **Docs verify** of scope clause (`docs/MOTORE_V3_G1_GATE4_SCOPE_CLAUSE.md`).  
-2. **One** stationary closing measure (`multitone`, `pseudo_noise` on `R`).  
-3. **One** REV7 packaging = LF report-only (`71159469`) **+** this scope clause  
-   (not two REV7s) → **second GO** → spike→G1b tip.  
+1. Docs verify of scope clause — in catena con measure.  
+2. Stationary closing measure — **done** (`MOTORE_V3_G1_STATIONARY_R_CLOSING_MEASURE.md`).  
+3. **One** REV7 packaging = LF report-only (`71159469`) **+** scope clause  
+   (`31216df4`) (not two REV7s) → **second GO** → spike→G1b tip.  
 4. Non-stat / sweep proposal remains **PARKED** until G1c/G1e observable.  
 5. **No more redteam on sweep proposal now.** Spike ≠ tip. Mai: 0.25→media/p95;
    ship/Source; training; claim G1 PASS; riaprire A3/A4; amend CONTRACT freeze.
