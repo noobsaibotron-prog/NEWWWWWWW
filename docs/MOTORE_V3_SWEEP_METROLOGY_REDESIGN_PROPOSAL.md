@@ -1,18 +1,18 @@
 # Motore v3 — Proposal: SWEEP METROLOGY REDESIGN (S1 + S2)
 
 **Suggested commit title:**  
-`docs(v3): pin REPORT TSTAR nearest + match_ok in COMPLETE`
+`docs(v3): kill source_time_selected := mirror; fix RIDGE claim; P32`
 
 | Field | Value |
 |-------|--------|
-| **Status** | **PROPOSAL DRAFT** — document-only; D1 **LOCKED**; Prior-4 (`49c9f7eb`) RIDGE tautology / RIFF wav / D2 short / COMPLETE presence **claimed closed — not reopened**; residual POROUS delta RT `bd16cc8f` HIGH + re-CC `98755492` CRITICAL/HIGH pins (`COMPLETE`⇒`source_time_selected=t★_nearest` ∧ named `TSTAR_LAW_OK`/`RIDGE_LAW_OK` on REPORT×path; `COMPLETE`⇒`match_ok∧mid_valid`; \|REPORT_SET\|≥3 floor `{20,45,20000}`; key bijection; §6.1 anti-tautology HARD; `EQ_PUBLISH` REPORT without ATRL-used ambiguity; `decoded_pcm_arity` layout); P28/P33–P36 + P37–P40 **OPEN/PINNED** (no self-CLOSED); **not** self-SOUND (needs fresh re-CC+RT); **MEASURE_AUTHORIZED NO** |
+| **Status** | **PROPOSAL DRAFT** — document-only; D1 **LOCKED**; Prior-4 (`49c9f7eb`) **claimed closed — not reopened**; residual POROUS re-CC `1577733c` CRITICAL + delta RT `68a39a49` HIGH pins (`source_time_selected` **check** `== t★_nearest` never `:=`; RIDGE check-only vs independent publish / FORBIDDEN assign-then-check; `EQ_PUBLISH` CLOSE used≡publish / REPORT publish-vs-law; CONTRACT §13.1 **absolute** nearest then useful ⊆; tie→FAIL∨`min(frame_index)`; sole PCM layouts — delete “not pinned”); P28/P33–P36 + P37–P43 **OPEN/PINNED** (no self-CLOSED); **not** self-SOUND; **MEASURE_AUTHORIZED NO** |
 | **≠** | G1 PASS · ACCEPT · measure · REV7 consolidate · G1b tip · CONTRACT/lock/T6 edit · A3 reopen · A4 ACTIVE · silent §13.2.4 / gate-4 equivalence · self-SOUND · Dual-SOUND |
 | **Date** | 2026-07-26 |
-| **Authority** | Marco authorize docs-only residual POROUS (delta RT `bd16cc8f` HIGH) on tip ~`49c9f7eb`; merge re-CC `98755492` CRITICAL/HIGH; MEASURE NO; no CONTRACT/lock/Source |
+| **Authority** | Marco authorize docs-only residual POROUS (re-CC `1577733c` CRITICAL + delta RT `68a39a49` HIGH) on tip ~`81f10dea`; MEASURE NO; no CONTRACT/lock/Source |
 | **Mandate** | `docs/MOTORE_V3_SWEEP_METROLOGY_REDESIGN_MANDATE.md` (incl. stationary≠trajectory pin) |
 | **A3 status (status only)** | **RETIRED AS SOLUTION** — `docs/MOTORE_V3_LOG_SWEEP_A3_ARCHIVE_STAMP.md` |
 | **Freeze structure (read-only)** | `docs/MOTORE_V3_G1_CONTRACT.md` REV6 @ `6d254d0a`; lock / `fixture_spec` **structure** as frozen quantities |
-| **Prior tip** | `49c9f7eb` (kill RIDGE tautology; RIFF-only wav_channels; COMPLETE law; residual POROUS — REPORT TSTAR/match_ok soft; §6.1 :=-mirror; COMPLETE key bijection; stale ATRL+package; decoded layout unbound) |
+| **Prior tip** | `81f10dea` (pin REPORT TSTAR nearest + match_ok in COMPLETE; residual POROUS — `source_time_selected:=` vacuous TSTAR; false RIDGE claim; P32 stale EQ_PUBLISH; filter-first useful nearest; unbound tie; PCM “not pinned”) |
 
 ---
 
@@ -85,7 +85,7 @@ From CONTRACT §5–§6 / §13.1 and lock / `fixture_spec` structure:
 | Window | periodic Hann `0.5 - 0.5·cos(2πn/N)` | §6.2 |
 | Alignment | causal, **right-aligned** to exclusive `frame_end_sample` | §6.2 |
 | Timestamp | `source_time = frame_end_sample/fs_c − resampler_group_delay_seconds` | §5 |
-| Match radius | nearest `source_time` within `H/fs_c`; else missing → FAIL | §13.1 |
+| Match radius | **absolute** nearest `source_time` within `H/fs_c` (all frames); then useful ⊆ check; tie→FAIL∨`min(frame_index)`; else FAIL | §13.1 |
 | Fusion | LF ≤160 Hz; MAIN ≥320 Hz; raised-cosine on `log2(f)` in (160,320) | §6.2 |
 | Chirp band | \(f\in[20,20000]\) Hz log | `fixture_spec` |
 | Active interval | \(t\in[t_0,t_1]=[1/2,\,7/4]\) s | `fixture_spec` rationals |
@@ -209,7 +209,7 @@ law + frozen checkpoint list. It is not a post-hoc mask of a measured band.
 |----|----------|---------|
 | S1-R1 | Clamp frame selection into the chirp (ignore nearest/`source_time`) | **REJECT** — mandate forbidden |
 | S1-R2 | Delete 20 / 20k (or any) checkpoints from the hashed grid to pass | **REJECT** — checkpoint removal |
-| S1-R3 | Opportunistic second-nearest frame when first is awkward | **REJECT** |
+| S1-R3 | Opportunistic second-nearest / filter-first useful∩hop when abs nearest awkward | **REJECT** — CONTRACT §13.1 absolute nearest; useful ⊆ after |
 | S1-R4 | Manual time shift / proxy timestamps | **REJECT** |
 | S1-R5 | Widen/narrow guards after seeing a Δ table | **REJECT** — threshold/domain shopping |
 | S1-R6 | Treat lead/trail REPORT checkpoints as if they never existed | **REJECT** — must remain observable in report |
@@ -227,10 +227,10 @@ least:
 | `checkpoint_hz` | frozen grid value |
 | `role` | `REPORT` |
 | `t_cross` | analytic crossing time |
-| `source_time_selected` | **:=** `t★_nearest(f, path)` (nearest useful-segment frame within hop); unmatched → **FAIL** (no soft missing for COMPLETE) |
+| `source_time_selected` | **independent published** field; COMPLETE/`TSTAR_LAW_OK` **check** `source_time_selected == t★_nearest(f, path)` — **never** `source_time_selected := t★_nearest` (vacuous-by-assignment FORBIDDEN); unmatched → **FAIL** |
 | `match_distance_s` | \|source_time_selected − t_cross\| |
-| `match_ok` | **must be `true`** for COMPLETE; ⇔ \|t★ − t_cross\| ≤ H/fs_c; `false` → ¬COMPLETE → ¬TRANSPORT |
-| `b_star`, `f_star`, `t_star` | **used/published** per-path ridge operands (**independent** of assignment-by-law): must satisfy §5.3 `TSTAR_LAW_OK` ∧ `RIDGE_LAW_OK` on REPORT×path — **not** presence-only; **not** `f_star:=f_chk`; **FORBIDDEN** `f_star:=f(t_star)` identity-then-check |
+| `match_ok` | **must be `true`** for COMPLETE; ⇔ \|source_time_selected − t_cross\| ≤ H/fs_c ∧ `source_time_selected = t_star = t★_nearest`; `false` → ¬COMPLETE → ¬TRANSPORT |
+| `b_star`, `f_star`, `t_star` | **used/published** per-path ridge operands (**independent** of assignment-by-law): must satisfy §5.3 `TSTAR_LAW_OK` ∧ `RIDGE_LAW_OK` on REPORT×path — **not** presence-only; **not** `f_star:=f_chk`; **FORBIDDEN** define `f_star:=f(t_star)` then “check” |
 | `L` = `mid_psd_db[b_star]` | **required** under COMPLETE (`match_ok ∧ mid_valid`); else ¬COMPLETE |
 | `mid_valid` | **must be `true`** for COMPLETE; `false` → ¬COMPLETE → ¬TRANSPORT |
 
@@ -264,21 +264,35 @@ REPORT_KEYS  :=  published (f, path) keys of CHK_REPORT cells
 #   |REPORT_KEYS| = |REPORT_SET| · |GATE_SR|
 #   no duplicate (f, path); no extra key outside REPORT_SET × GATE_SR
 
-t★_nearest(f, path)  :=
-    source_time of nearest useful-segment frame to t_cross(f) on that path
-    within hop H/fs_c; else unmatched → FAIL
+# Absolute nearest oracle (CONTRACT §13.1 — NOT filter-first useful search):
+t★_abs(f, path)  :=
+    source_time of the frame minimizing |source_time − t_cross(f)| over ALL frames
+    on that path (absolute nearest). Tie: if ≥2 frames share d_min → FAIL
+    OR deterministic min(frame_index) among ties (no PASS-shopping).
+# Hop + useful are post-select checks (useful ⊆ after abs nearest):
+#   |t★_abs − t_cross| ≤ H/fs_c  else FAIL
+#   t★_abs ∈ useful-segment      else FAIL
+# FORBIDDEN: argmin over (useful-segment ∩ hop) / second-nearest when abs is awkward.
+
+t★_nearest(f, path)  :=  t★_abs(f, path) after hop∧useful checks above
+# unmatched / outside hop / abs∉useful → FAIL (no soft missing)
 
 # Named §5.3 laws on REPORT×path (same operands as close path):
 TSTAR_LAW_OK(f, path)  ⇔
     t_star(f, path) = source_time_selected(f, path)
     ∧  source_time_selected(f, path) = t★_nearest(f, path)
-# unmatched / outside hop → ¬TSTAR_LAW_OK → FAIL
+# check-equality only — FORBIDDEN schema/source_time_selected := t★_nearest
+#   (that would make the second conjunct vacuous-by-assignment)
+# unmatched / outside hop / abs∉useful → ¬TSTAR_LAW_OK → FAIL
 
 RIDGE_LAW_OK(f, path)  ⇔
     TSTAR_LAW_OK(f, path)
     ∧  f_star(f, path) = f(t_star(f, path))     # check published vs analytic
     ∧  b_star(f, path) = Band(f_star(f, path))
-# f_star:=f_chk or f_star:=f(t_star) definitional tautology → ¬RIDGE_LAW_OK
+# RIDGE_LAW is check-only equality of independent used/published fields vs law.
+# FORBIDDEN: define f_star:=f(t_star) then “check” — assign-then-check always
+#   passes RIDGE_LAW_OK algebraically; that is process/schema FAIL, not ¬RIDGE.
+# f_star:=f_chk → ¬RIDGE_LAW_OK whenever f(t_star) ≠ f_chk.
 
 CHK_REPORT_PUBLISH_COMPLETE  ⇔
     (|REPORT_SET| ≥ 3)                            # floor; ⊇ {20,45,20000} under §4.3
@@ -373,8 +387,10 @@ For each gate SR path \(\in\{44100,48000,96000\}\) and each
 \(f_{\mathrm{chk}}\) with `CHK_CLOSE(f_chk)`:
 
 1. \(t_\times \leftarrow \texttt{sweep_crossing_time}(f_{\mathrm{chk}})\) (frozen law).
-2. Selection oracle: nearest useful-segment `source_time` within `H/fs_c`
-   → \(t^\star_{\mathrm{nearest}}\); else FAIL (unchanged).
+2. Selection oracle (CONTRACT §13.1): **absolute** nearest `source_time` to
+   \(t_\times\) over all frames → \(t^\star_{\mathrm{abs}}\); require hop
+   radius and useful ⊆; tie→FAIL or `min(frame_index)`; else FAIL.
+   **Do not** filter-first to useful-segment then nearest.
 3. Per path, take **used/published** operands
    \((t^\star_{\mathrm{used}},\,f^\star_{\mathrm{used}},\,b^\star_{\mathrm{used}})\)
    (independent values consumed by close + published as `t_star`/`f_star`/`b_star`).
@@ -427,24 +443,32 @@ evaluates empty → **FAIL**. Empty union is never PASS-by-absence.
 # FORBIDDEN: define f★:=f(t★) then check f★=f(t★) (definitional tautology).
 # FORBIDDEN: bind f★_used:=f_chk or t★_used:=t_cross(f_chk) as SR-blind shortcuts.
 
-# Selection oracle (not an assignment of used f★/b★):
-t★_nearest(c, path)  :=
-    source_time of nearest useful-segment frame to t_cross(f_chk) on that path
-    within hop H/fs_c; else unmatched → FAIL
+# Selection oracle (CONTRACT §13.1 absolute nearest — not assignment of used f★/b★):
+t★_abs(c, path)  :=
+    source_time of the frame minimizing |source_time − t_cross(f_chk)| over ALL
+    frames on that path. Tie (≥2 at d_min) → FAIL OR min(frame_index).
+# Post-select (not filter-first search):
+#   |t★_abs − t_cross| ≤ H/fs_c  else FAIL
+#   t★_abs ∈ useful-segment      else FAIL
+t★_nearest(c, path)  :=  t★_abs(c, path) after hop∧useful checks
+# FORBIDDEN: argmin over useful∩hop / second-nearest shopping when abs awkward.
 
 # Used/published triples (closing + CHK_REPORT publish; §4.5 / §6.1):
 #   (t★_used, f★_used, b★_used)  — values actually consumed by ATRL / companions /
 #   veto / TRANSPORT and published as (t_star, f_star, b_star). Not := by law.
+# FORBIDDEN: define f★:=f(t★) then check f★=f(t★) (assign-then-check always
+#   passes RIDGE_LAW_OK; process/schema FAIL — law remains check-only).
 
 TSTAR_LAW_OK(c, path)  ⇔
     t★_used(c, path) = t★_nearest(c, path)
-# t★_used := t_cross(f_chk) (ignore nearest useful source_time) → ¬TSTAR_LAW_OK
-# unmatched / outside hop → FAIL (no soft t★)
+# t★_used := t_cross(f_chk) (ignore absolute nearest source_time) → ¬TSTAR_LAW_OK
+# unmatched / outside hop / abs∉useful → FAIL (no soft t★)
 
 RIDGE_LAW_OK(c, path)  ⇔
     TSTAR_LAW_OK(c, path)
     ∧  f★_used(c, path) = f(t★_used(c, path))   # analytic; NOT PSD argmax
     ∧  b★_used(c, path) = Band(f★_used(c, path))  # shared edge → lower-index
+# Check-only vs independent used/published fields (§5.3 / §6.1).
 # If used/published f★ was set to f_chk → FAIL whenever f(t★_used) ≠ f_chk.
 # ¬RIDGE_LAW_OK(c, path) → FAIL.
 
@@ -507,12 +531,14 @@ wav_channels(sr)  :=
     NumChannels  uint16 at `fmt ` payload offset +2 of log_sweep_{sr}.wav
     # PCM IEEE-float tag 3 as rendered; no alternate definition.
 decoded_pcm_arity(sr)  :=  channel count of decoded PCM array for that WAV
-# Layout pin (interleaved PCM IEEE-float as rendered):
-#   shape (N,)        ⇔  ch = 1
-#   shape (N, C)      ⇔  ch = C   (frame-major interleaved; C = channels)
-#   shape (C, N) / planar non-interleaved  → FAIL (layout not pinned here)
+# Sole PCM layouts (interleaved IEEE-float as rendered) — no soft alternate:
+#   ch = 1   ⇒  shape (N,)
+#   ch = C>1 ⇒  shape (N, C)   (frame-major interleaved)
+#   any other shape incl. (C, N) / planar / transposed → FAIL
+# FORBIDDEN: “layout not pinned” / soft-accept non-sole decode shapes.
 # Cross-check (not a second definition of wav_channels):
 #   decoded_pcm_arity(sr) == wav_channels(sr)   else FAIL
+#   ∧  decoded array conforms to sole layout for that ch
 # FORBIDDEN: wav_channels := decoded PCM arity / ndim / shape[1]  ("equivalently")
 # FORBIDDEN: wav_channels := asset_manifest.channels   (copy / tautology)
 # FORBIDDEN: wav_channels := fixture_spec…channels     (copy / tautology)
@@ -738,14 +764,18 @@ mask; off-ridge policy (§6); no CONTRACT edit in this phase.
 | S2-R22 | Use \(f^\star:=f_{\mathrm{chk}}\) as ridge operand (SR-blind tautology) | **REJECT** — `¬RIDGE_LAW_OK` on used/published; conjunct in ATRL_OK / REQUIRED_ACTIVE / TRANSPORT / COMPLETE |
 | S2-R23 | Omit `MONO_CROSSCHECK` from `SIDE_PAIR_OK` / TRANSPORT | **REJECT** — both ⇒ `MONO_CROSSCHECK` |
 | S2-R24 | Shrink `B_GEOM` below `B_OFF:=UNIVERSE_B\{b★}` | **REJECT** — §6.2 |
-| S2-R25 | Close operands ≠ published `t_star`/`f_star`/`b_star`/`L` fields | **REJECT** — mismatch→FAIL (§4.5; REPORT×path included) |
+| S2-R25 | CLOSE used ≠ published; REPORT law/publish violation | **REJECT** — EQ_PUBLISH: CLOSE used≡publish; REPORT publish-vs-law only (§4.5) |
 | S2-R26 | Define `f★:=f(t★)` then check `f★=f(t★)` (definitional tautology) | **REJECT** — law quantifies used/published operands vs `f(t★_used)` / `Band(f★_used)` |
-| S2-R27 | Bind `t★_used:=t_cross(f_chk)` (ignore nearest useful `source_time`) | **REJECT** — `¬TSTAR_LAW_OK` |
+| S2-R27 | Bind `t★_used:=t_cross(f_chk)` / ignore absolute nearest / filter-first useful | **REJECT** — `¬TSTAR_LAW_OK` (§13.1) |
 | S2-R28 | `wav_channels`:=decoded PCM arity / “equivalently decode” second authority | **REJECT** — RIFF/`fmt ` NumChannels sole; decode≠RIFF → FAIL |
 | S2-R29 | `CHK_REPORT_PUBLISH_COMPLETE` = non-null only / soft `¬match_ok` / vacuous or under-floor REPORT / duplicate keys | **REJECT** — §4.5: \|REPORT_SET\|≥3 `{20,45,20000}` + bijection + `match_ok∧mid_valid` + named TSTAR/RIDGE |
 | S2-R30 | Claim D2/D11 short 4-AND “package PASS” as close | **REJECT** — D2/D11=components only; sole close `D3⇔TRANSPORT` |
 | S2-R31 | §6.1 / REPORT define `f★:=f(t★)` then check identity (definitional tautology) | **REJECT** — publish independent; check-only `RIDGE_LAW_OK` |
 | S2-R32 | Require ATRL-used operands on REPORT for `EQ_PUBLISH` | **REJECT** — REPORT∉ATRL max; publish-vs-law only (§4.5) |
+| S2-R33 | `source_time_selected := t★_nearest` schema mirror (vacuous TSTAR) | **REJECT** — check-equality only |
+| S2-R34 | Claim `f★:=f(t★) ⇒ ¬RIDGE_LAW_OK` (false; assign-then-check always passes) | **REJECT** — FORBIDDEN as process; RIDGE remains check-only |
+| S2-R35 | Unbound nearest-frame tie / PASS-shop among equidistant frames | **REJECT** — tie→FAIL or `min(frame_index)` |
+| S2-R36 | Soft-accept planar/(C,N)/“layout not pinned” PCM decode | **REJECT** — sole layouts only (§5.3) |
 
 ---
 
@@ -894,11 +924,13 @@ D2/D11 “package PASS” under that short AND, is **REJECT**.
 | Threshold shopping | **forbidden** |
 | `T_MEM` | **0** locked (GD already in `source_time`) |
 | S1 guards | **D1 LOCKED** — §4.2 `T_LEAD`/`T_TRAIL` geometry; no silent widen |
-| Ridge operands | used/published `(t★,f★,b★)`; `TSTAR_LAW_OK ⇔ t★_used=t★_nearest`; `RIDGE_LAW_OK ⇔ TSTAR ∧ f★_used=f(t★_used) ∧ b★_used=Band(f★_used)`; **not** `f★:=f(t★)` then check; `f★:=f_chk` / `t★:=t_cross` → FAIL |
+| Ridge operands | used/published `(t★,f★,b★)`; `TSTAR_LAW_OK ⇔ t★_used=t★_nearest` (check; never `source_time_selected:=`); `RIDGE_LAW_OK` check-only vs analytic; **FORBIDDEN** `f★:=f(t★)` then check (always passes algebra); `f★:=f_chk` / `t★:=t_cross` → FAIL |
 | Common \(b^\star\) | `RIDGE_MATCH(c) ⇔ b★_used_ref=b★_used_sr` in ATRL_OK / REQUIRED_ACTIVE / TRANSPORT; else **FAIL** |
 | `RIDGE_LAW_OK` / `TSTAR_LAW_OK` | named conjuncts in `ATRL_OK(c)`, `REQUIRED_ACTIVE(c)`, `SWEEP_TRANSPORT_CLOSE` (∀c); COMPLETE enforces same law on REPORT |
 | `MONO_ASSET` | **⇔** `fixture_spec.categories.log_sweep.channels==1`; SIDE_PAIR trivial only then |
 | `wav_channels(sr)` | **:=** RIFF/`fmt ` `NumChannels` sole (∀sr∈GATE_SR); decode arity **≡** RIFF else FAIL; **≠** decode definition; **≠** manifest/spec copy |
+| Nearest oracle | CONTRACT §13.1 **absolute** nearest over all frames; hop∧useful ⊆ **after**; tie→FAIL∨`min(frame_index)`; filter-first useful **REJECT** |
+| PCM decode layout | sole: ch=1⇒`(N,)`; ch=C>1⇒`(N,C)`; `(C,N)`/planar/other→FAIL; “not pinned” **REJECT** |
 | `MONO_CROSSCHECK` | manifest==fixture_spec…channels ∧ (∀sr `wav_channels==manifest`) ∧ (∀sr decode≡RIFF) ∧ (`MONO_ASSET`⇒∀c SIDE_BOTH_FALSE ∧ `§4.1_MONO_FIELDS`); in `SIDE_PAIR_OK` **and** TRANSPORT |
 | `§4.1_MONO_FIELDS` | `MONO_ASSET`⇒∀path∀b `side_valid=false` ∧ closing mid operands ∈ `{mid_psd_db, mid_shape_db, mid_prominence_db}` only (`side_*` excluded) |
 | `SIDE_PAIR_OK` | **⇔** `MONO_CROSSCHECK ∧ ((BOTH_FALSE∧MONO_ASSET) ∨ (BOTH_TRUE∧SIDE_DELTA_OK))`; XOR / non-mono both-false → false |
@@ -908,7 +940,7 @@ D2/D11 “package PASS” under that short AND, is **REJECT**.
 | D2 / D11 | menu **components only**; **≠** close |
 | D3 / Off-ridge close | **sole close: D3 ⇔** `SWEEP_TRANSPORT_CLOSE` (§6.3 full); short 4-AND / D2-D11 “package PASS” **REJECT**; report≠close |
 | ATRL_OK / COMPANIONS_OK | sole normative **⇔** ∀c form; max/δ corollary only; `ATRL_OK`⇒`RIDGE_LAW_OK`⇒`TSTAR_LAW_OK` |
-| Close publish | CLOSE: used operands **≡** published; REPORT: publish-vs-law only (no ATRL-used ambiguity); mismatch→FAIL |
+| Close publish | CLOSE: used operands **≡** published; REPORT: publish-vs-law only (no ATRL-used / no used≡publish on REPORT); mismatch→FAIL |
 | COMPANIONS_OK | **⇔** ∀c `COMPANIONS_OK(c)` (⇒ `SIDE_PAIR_OK` ∧ δ≤0.25); δ-alone **≠** COMPANIONS_OK |
 | A3 / A4 ACTIVE | **closed** — A3 retired-as-solution; no A4 |
 | Menu freeze | components **ATRL + companions + veto (+ side-gate)** only; S2-ALT\* archival; close = D3⇔TRANSPORT only (no “package PASS”) |
@@ -956,7 +988,7 @@ Partial consolidate (LF-only, stationary-only, S1-only, S2-only) remains
 | Off-ridge vanishing | **NO** — **sole close D3 ⇔** `SWEEP_TRANSPORT_CLOSE` (§6.3 full); short ATRL∧COMPANIONS∧VETO∧SIDE / D2-D11 “package PASS” **REJECT** |
 | §13.2.4 / gate-4 equivalence | **NO** — not gate-4 equivalent until REV7 (S2-R14) |
 | Self-SOUND / MEASURE | **NO** — not self-SOUND (fresh re-CC+RT required); **MEASURE_AUTHORIZED NO**; Dual-SOUND **NO** |
-| Next lab action | fresh re-CC+RT on D1 + §6.1 HARD + COMPLETE TSTAR/match_ok/floor/bijection + EQ_PUBLISH REPORT pin + RIFF `wav_channels` + sole `D3⇔TRANSPORT` → only then measure auth (still NO until dual non-POROUS) |
+| Next lab action | fresh re-CC+RT on D1 + `:=` kill + RIDGE claim fix + EQ_PUBLISH split + §13.1 abs nearest/tie + sole PCM + COMPLETE pins + sole `D3⇔TRANSPORT` → only then measure auth (still NO until dual non-POROUS) |
 
 ---
 
@@ -995,15 +1027,18 @@ Partial consolidate (LF-only, stationary-only, S1-only, S2-only) remains
 | P29 | delta RT `3971c3c7` HIGH | Mono cross-check prose-only (outside close algebra) | **CLOSED** — `MONO_CROSSCHECK` conjunct; `SIDE_PAIR_OK`⇒`MONO_CROSSCHECK`; `SWEEP_TRANSPORT_CLOSE`⇒`MONO_CROSSCHECK` |
 | P30 | delta RT `3971c3c7` MED | `B_OFF`/`B_GEOM` universe shrink ambiguity | **CLOSED** — `UNIVERSE_B:={0..119}`; `B_OFF:=UNIVERSE_B\{b★}`; `B_GEOM` ≮ `B_OFF` |
 | P31 | delta RT `3971c3c7` MED | max/δ dual-norm vs ∀ sole form | **CLOSED** — ATRL_OK / COMPANIONS_OK sole normative = ∀; max/δ corollary only |
-| P32 | delta RT `3971c3c7` MED | close operands ≠ CHK_REPORT publish fields | **CLOSED** — `CLOSE_OPERANDS_EQ_PUBLISH` on (CLOSE∪REPORT)×GATE_SR; mismatch→FAIL |
+| P32 | delta RT `3971c3c7` MED / re-CC `1577733c` WARNING | close operands ≠ publish; stale used≡publish on REPORT | **CLOSED** — `CLOSE_OPERANDS_EQ_PUBLISH`: CLOSE used≡publish; REPORT publish-vs-law only (not used≡publish on REPORT); mismatch→FAIL |
 | P33 | re-CC `3f421a4a` / `a0960860` / delta RT `f0a5fe98` HIGH | `wav_channels` unbound / dual-def decode / manifest copy | **OPEN/PINNED** — RIFF/`fmt ` NumChannels sole; decode≡RIFF else FAIL; “equivalently decode” REJECT; pending dual stamp |
 | P34 | re-CC `3f421a4a` / `1e6f969e` / `f0a5fe98` / `98755492` HIGH | `CHK_REPORT_PUBLISH_COMPLETE` unbound / presence-only / vacuous emission | **OPEN/PINNED** — COMPLETE ⇔ \|REPORT_SET\|≥3 + bijection + `match_ok` + named TSTAR/RIDGE (extends Prior-4 presence pin; not reopened); pending dual stamp |
 | P35 | delta RT `a0960860` / `f0a5fe98` HIGH | D3 short AND / D2-D11 short “package” alias ≠ TRANSPORT | **OPEN/PINNED** — D2/D11=components only; sole close `D3⇔SWEEP_TRANSPORT_CLOSE`; short 4-AND / package PASS REJECT; pending dual stamp |
 | P36 | re-CC `3f421a4a` / `1e6f969e` HIGH | §4.1 mono semantics prose-only / soft L substitute | **OPEN/PINNED** — `§4.1_MONO_FIELDS`: ∀b `side_valid=false` ∧ closing mid ∈ `{mid_psd_db, mid_shape_db, mid_prominence_db}` only; `side_*` excluded; pending dual stamp |
-| P37 | delta RT `bd16cc8f` / re-CC `98755492` HIGH | COMPLETE soft TSTAR / `source_time_selected` ≠ `t★_nearest` on REPORT | **OPEN/PINNED** — COMPLETE⇒`source_time_selected=t★_nearest` ∧ `t_star=source_time_selected` ∧ named `TSTAR_LAW_OK`/`RIDGE_LAW_OK` on REPORT×path; unmatched→FAIL; pending dual stamp |
+| P37 | delta RT `bd16cc8f` / re-CC `98755492` HIGH | COMPLETE soft TSTAR / `source_time_selected` ≠ `t★_nearest` on REPORT | **OPEN/PINNED** — COMPLETE⇒ check `source_time_selected==t★_nearest` (never `:=`) ∧ `t_star=source_time_selected` ∧ named `TSTAR_LAW_OK`/`RIDGE_LAW_OK`; unmatched→FAIL; pending dual stamp |
 | P38 | delta RT `bd16cc8f` / re-CC `98755492` HIGH | COMPLETE allows `¬match_ok` / soft L missing | **OPEN/PINNED** — COMPLETE⇒`match_ok=true`∧`mid_valid=true`∧`L=mid_psd_db[b_star]`∧hop≤H/fs_c; ¬match_ok→¬COMPLETE→¬TRANSPORT; pending dual stamp |
 | P39 | re-CC `98755492` CRITICAL/HIGH | §6.1 :=-mirror / `f★:=f(t★)` identity tautology; EQ_PUBLISH ATRL-used on REPORT | **OPEN/PINNED** — §6.1 HARD: publish independent + check-only RIDGE/TSTAR; EQ_PUBLISH CLOSE used≡publish / REPORT publish-vs-law only; pending dual stamp |
 | P40 | re-CC `98755492` HIGH | COMPLETE vacuous / under-floor REPORT_SET; duplicate keys | **OPEN/PINNED** — `\|REPORT_SET\|≥3` ∧ `{20,45,20000}⊆REPORT_SET` ∧ keys biject REPORT_SET×GATE_SR; duplicate→FAIL; pending dual stamp |
+| P41 | re-CC `1577733c` CRITICAL / delta RT `68a39a49` HIGH | `source_time_selected:=t★_nearest` vacuous TSTAR; false `f★:=f(t★)⇒¬RIDGE` | **OPEN/PINNED** — check-equality only; RIDGE check-only + FORBIDDEN assign-then-check; pending dual stamp |
+| P42 | delta RT `68a39a49` HIGH | filter-first useful nearest ≠ §13.1 abs; unbound tie | **OPEN/PINNED** — abs nearest then useful ⊆; tie→FAIL∨`min(frame_index)`; pending dual stamp |
+| P43 | delta RT `68a39a49` HIGH | PCM “layout not pinned” / planar soft | **OPEN/PINNED** — sole `(N,)` / `(N,C)`; other→FAIL; pending dual stamp |
 
 ---
 
@@ -1011,11 +1046,11 @@ Partial consolidate (LF-only, stationary-only, S1-only, S2-only) remains
 
 | Lane | Ask |
 |------|-----|
-| Independent CC / guardian | **Fresh re-CC** on D1 LOCKED + §6.1 HARD anti-tautology + COMPLETE (`\|REPORT_SET\|≥3`/`{20,45,20000}`/bijection/`match_ok`/named TSTAR·RIDGE) + EQ_PUBLISH REPORT without ATRL-used + RIFF-only `wav_channels` + decoded layout + D2/D11=components / sole `D3⇔TRANSPORT`; no SOUND / no measure without dual non-POROUS stamps; P28/P33–P40 remain OPEN/PINNED until then |
-| `ember-metrology-redteam` | Delta-attack §6.1 `f★:=f(t★)` identity / COMPLETE soft `¬match_ok` / under-floor REPORT / duplicate keys / ATRL-used on REPORT EQ_PUBLISH / decode layout; leftover NOTES only unless new CRITICAL |
+| Independent CC / guardian | **Fresh re-CC** on D1 LOCKED + `source_time_selected==` (not `:=`) + RIDGE check-only / FORBIDDEN assign-then-check + EQ_PUBLISH split + §13.1 abs nearest (+useful after; tie) + sole PCM layouts + COMPLETE TSTAR/match_ok/floor/bijection + RIFF `wav_channels` + sole `D3⇔TRANSPORT`; no SOUND / no measure without dual non-POROUS stamps; P28/P33–P43 remain OPEN/PINNED until then |
+| `ember-metrology-redteam` | Delta-attack `:=` mirrors / filter-first useful nearest / unbound tie / planar PCM / assign-then-check RIDGE; leftover NOTES only unless new CRITICAL |
 | `ember-phase-builder` | Idle on code until GO post-CC |
 | `ember-parity-lab` | No measure until authorized |
 
-**§A (one-line):** D1 LOCKED §4.2; §6.1 HARD anti-tautology (publish independent; check-only RIDGE/TSTAR); COMPLETE⇔\|REPORT_SET\|≥3∧{20,45,20000}⊆∧bijection∧match_ok∧named TSTAR·RIDGE; EQ_PUBLISH CLOSE used≡publish / REPORT publish-vs-law; D2/D11=components; sole close `D3⇔TRANSPORT`; P28/P33–P40 OPEN/PINNED; ¬self-SOUND; fresh re-CC+RT; **MEASURE_AUTHORIZED NO**.
+**§A (one-line):** D1 LOCKED §4.2; `source_time_selected==t★_nearest` (never `:=`); RIDGE check-only + FORBIDDEN `f★:=f(t★)` then check; EQ_PUBLISH CLOSE used≡publish / REPORT publish-vs-law; §13.1 abs nearest→useful ⊆; tie FAIL∨min(frame_index); sole PCM `(N,)`/`(N,C)`; P28/P33–P43 OPEN/PINNED; ¬self-SOUND; **MEASURE_AUTHORIZED NO**.
 
 **END PROPOSAL — not self-SOUND.**
