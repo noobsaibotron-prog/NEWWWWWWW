@@ -44,8 +44,8 @@ in CONTRACT: (A) LF report-only ∉R; (B) gate-4 scope C. Package tip
 ### Tip
 | Tip | Commit | Nota |
 |-----|--------|------|
-| HEAD / REV7 CONSOLIDATED | *(this consolidate tip)* | CONTRACT REV7 A+B; freeze digest below |
-| Lock/SHA rehash | *(follow-up chore commit)* | coordinated after CONTRACT tip |
+| HEAD / REV7 CONSOLIDATED | **`6fbf5b59`** | CONTRACT REV7 A+B |
+| Lock/SHA rehash | *(this chore tip)* | metrology lock + SHA256SUMS + fixture_spec |
 | REV7 candidate package | `5e0d32fc` | historical 2nd GO package; superseded |
 | Stationary R closing measure | `8cf38625` | max\|Δ\|=0.1915 dB PASS on R |
 | Gate-4 scope clause | `31216df4` | amend B source |
@@ -55,9 +55,14 @@ in CONTRACT: (A) LF report-only ∉R; (B) gate-4 scope C. Package tip
 | Code G1a | `a2186ac1` | F2/F3/F4; G1a CLOSE GO still holds |
 | Ancestor REV6 freeze | `6d254d0a` | superseded as living authority by REV7 |
 
-**Freeze digest (CONTRACT file SHA-256):** computed at consolidate; see
-SHA256SUMS / tripwire after rehash commit. Tip hash of CONTRACT amend =
-git commit of `docs(v3): consolidate REV7…`.
+**Freeze digest (CONTRACT file SHA-256):**
+`9fd2dd875d25c12c8b2206b5f637bef998b905f77402309014299df0ee6d519f`
+(CONTRACT tip commit `6fbf5b59`). Lock digest after rehash:
+`a68e2a29beba12d2a2524f4988bd6545f3f2b4557a7beae72ba5f98d3a18456d`.
+adapter_mapping_sha256:
+`606fae2908b3a41d34581b84f1e6060272839e85005039bfb2cde60e934ac616`.
+fixture_spec_sha256:
+`b39a1565b26f6bb3dc7d55cb098d8ec0169b8e5d566d75e7734d38e0fe54f4e8`.
 
 ### Progresso
 1. G1b spike WS4 RED → REV7 candidate path.  
@@ -139,7 +144,7 @@ ship Ableton; threshold shopping.
 ## B.0 AUDIO INVENTORY (no binary; T6 @ 501a4e00; F1 debt)
 
 **Count:** 37 WAV · **SHA256SUMS:** 48 lines  
-**fixture_spec_sha256:** `513c3baf7aaed8eb1a15f7d2e875a3015479fc2ece0378e75cfceadefe68a6ef`  
+**fixture_spec_sha256:** `b39a1565b26f6bb3dc7d55cb098d8ec0169b8e5d566d75e7734d38e0fe54f4e8` (rehash after REV7)  
 **schema_registry_sha256:** `fa506142afd8a0794f2093a428841b445b130e2ee0f681e18609b1a9b9cd5247`
 
 ### Path + bytes

@@ -1,9 +1,10 @@
 """Frozen canonical constants for Motore v3 (G1a).
 
 Every value here is transcribed from docs/MOTORE_V3_G1_CONTRACT.md
-(REVISIONE 6 CONSOLIDATA + micro-amend @ 6d254d0a). G1a serializes these; it
-does not choose them (contract §10.5: "G1a serializza mapping, costanti e hash
-gia definiti qui; non puo sceglierli o modificarli").
+(REVISIONE 7 CONSOLIDATA @ 6fbf5b59; ancestor REV6 @ 6d254d0a). G1a
+serializes these; it does not choose them (contract §10.5: "G1a serializza
+mapping, costanti e hash gia definiti qui; non puo sceglierli o
+modificarli").
 """
 from __future__ import annotations
 
@@ -27,9 +28,10 @@ __all__ = [
     "SCHEMA_IDS",
 ]
 
-# Frozen contract identity for this G1a tranche (document commit 6d254d0a).
+# Frozen contract identity (document commit 6fbf5b59 — REV7 CONSOLIDATED).
 CONTRACT_REVISION: Final[str] = (
-    "MOTORE_V3_G1_CONTRACT REVISIONE 6 CONSOLIDATA + micro-amend @ 6d254d0a"
+    "MOTORE_V3_G1_CONTRACT REVISIONE 7 CONSOLIDATA "
+    "(LF report-only ∉R + gate-4 scope C) @ 6fbf5b59"
 )
 
 # --- §4.2: the seven host conditioning profiles, ids 0..6

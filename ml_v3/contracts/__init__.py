@@ -6,8 +6,8 @@ coverage floors, the v2-v3 adapter policy, the §13 metrology lock and the
 evaluator, no model and no training: see docs/MOTORE_V3_G1_CONTRACT.md
 §14 for the phase order.
 
-Authority: MOTORE_V3_G1_CONTRACT REVISIONE 6 CONSOLIDATA + micro-amend
-@ 6d254d0a. Draft modules here are migrated to that freeze.
+Authority: MOTORE_V3_G1_CONTRACT REVISIONE 7 CONSOLIDATA @ 6fbf5b59
+(ancestor REV6 @ 6d254d0a).
 """
 from .adapter import (
     ADAPTER_ARTIFACT_ID,

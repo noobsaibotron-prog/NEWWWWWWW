@@ -1,6 +1,6 @@
 """G1a T5 SHA256SUMS inventory and verify helpers (stdlib only).
 
-Authority: MOTORE_V3_G1_CONTRACT @ 6d254d0a; PLAN debt
+Authority: MOTORE_V3_G1_CONTRACT @ 6fbf5b59 (REV7 CONSOLIDATED); PLAN debt
 ``contract_doc_sha256`` → T5 SHA256SUMS.
 
 Self-hash policy
@@ -40,9 +40,9 @@ __all__ = [
 # Repo-root-relative path of the committed sums file (not self-hashed).
 G1A_SHA256SUMS_RELPATH = "ml_v3/fixtures/g1/SHA256SUMS"
 
-# Precomputed contract tripwire (PLAN durable debt; freeze @ 6d254d0a).
+# Precomputed contract tripwire (PLAN durable debt; freeze @ 6fbf5b59).
 CONTRACT_DOC_SHA256_TRIPWIRE = (
-    "6a6f6d35bbf3fc65d7a01e54620bf4f9649ea77d60c2b3d9e7ea0b72f7f49a86"
+    "9fd2dd875d25c12c8b2206b5f637bef998b905f77402309014299df0ee6d519f"
 )
 
 # Minimum G1a T5+M2+F3 coverage: contract doc + schema_registry_v1 (normative

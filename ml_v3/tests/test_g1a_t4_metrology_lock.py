@@ -46,7 +46,7 @@ FIXTURE = (
 )
 
 EXPECTED_ADAPTER_SHA256 = (
-    "6a978c01bcccb85fb7db17ae3c66ee55ebceee82f47dca792e5a2f3a5fb9828f"
+    "606fae2908b3a41d34581b84f1e6060272839e85005039bfb2cde60e934ac616"
 )
 
 
@@ -133,7 +133,7 @@ class FrozenLockHappyPathTests(unittest.TestCase):
             "empty_to_fail_derivation"]
         self.assertEqual(derivation["kind"], "derived_packaging")
         self.assertTrue(derivation["does_not_supersede_contract"])
-        self.assertTrue(derivation["candidate_for_future_contract_amendment"])
+        self.assertFalse(derivation["candidate_for_future_contract_amendment"])
         self.assertGreaterEqual(len(derivation["chain"]), 3)
         joined = " ".join(derivation["chain"])
         self.assertIn("§10.5", joined)
@@ -246,7 +246,8 @@ class FrozenLockHappyPathTests(unittest.TestCase):
     def test_dependencies_bind_contract_and_t3_adapter(self):
         deps = frozen_metrology_lock()["dependencies"]
         self.assertEqual(deps["contract_revision"], CONTRACT_REVISION)
-        self.assertIn("6d254d0a", deps["contract_revision"])
+        self.assertIn("6fbf5b59", deps["contract_revision"])
+        self.assertIn("REVISIONE 7 CONSOLIDATA", deps["contract_revision"])
         self.assertEqual(deps["adapter_mapping_sha256"], adapter_mapping_sha256())
         self.assertEqual(deps["adapter_mapping_sha256"], EXPECTED_ADAPTER_SHA256)
         self.assertEqual(deps["grid_bands"], GRID_BANDS)

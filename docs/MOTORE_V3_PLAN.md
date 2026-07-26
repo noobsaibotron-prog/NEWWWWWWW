@@ -56,9 +56,10 @@ Il piano descrive un progetto a contratti. Ad oggi, su questo branch:
   Path-order hygiene `fe8b97d3` remains relevant on the SHA256SUMS chain.
 - **G1a CLOSE: GO** (Guardian re-CLOSE 2026-07-25) on remediation tip
   `a2186ac1` + PLAN pre-stamp `805fb34d`; ancestor freeze `6d254d0a`;
-  living CONTRACT = REV7 CONSOLIDATED; pre-REV7 lock
-  `d2c35ccc12643f2520c8a50d2e27fd3631216bb9a8ce63a34193412e74d1c10e`
-  (rehashed after REV7 in chore commit); F2/F3/F4 closed; gate-8 + F1 WAV
+  living CONTRACT tip `6fbf5b59`; freeze digest
+  `9fd2dd875d25c12c8b2206b5f637bef998b905f77402309014299df0ee6d519f`;
+  lock after REV7 rehash
+  `a68e2a29beba12d2a2524f4988bd6545f3f2b4557a7beae72ba5f98d3a18456d`; F2/F3/F4 closed; gate-8 + F1 WAV
   remain durable debt (no rewrite). **No G1 PASS.** **REV7 consolidate:
   YES** (A+B only). History: false CLOSE `1746a058` withdrawn; REOPEN
   `284228d6`. **Official G1b tip: NO** until separate auth after

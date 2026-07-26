@@ -1,6 +1,6 @@
 """Frozen G1a metrology lock (§13.1 / §13.2).
 
-Authority: docs/MOTORE_V3_G1_CONTRACT.md @ 6d254d0a.
+Authority: docs/MOTORE_V3_G1_CONTRACT.md @ 6fbf5b59 (REV7 CONSOLIDATED).
 
 G1a serializes formulas, parameters and thresholds already defined in the
 contract (warm-up/coda, stationary modes, streaming schedules, bit-identity
@@ -105,6 +105,14 @@ SWEEP_CHECKPOINT_HZ: tuple[int, ...] = (
 )
 
 SR_PARITY_MAX_ABS_DB: float = 0.25
+
+# REV7 (A) — geometric domain R (a-priori; not fitted to measured cells).
+R_N_MIN: int = 2  # ceil(ENBW_Hann)
+R_SEPARATION_MIN_BINS: int = 2  # main-lobe null-to-null / 2
+# A-priori structural census under frozen geometry (scope-rewrite proposal).
+R_CARDINALITY: int = 67
+R_FIRST_IN_R_BAND_INDEX: int = 53
+R_GATE_CLOSING_ASSETS: tuple[str, ...] = ("multitone", "pseudo_noise")
 GAIN_INVARIANCE_MAX_ABS_DB: float = 0.05
 MS_MID_EQUIVALENCE_MAX_ABS_DB: float = 0.05
 ANTI_ALIAS_MAX_DB_RE_TONE: float = -80.0
@@ -358,6 +366,13 @@ def frozen_metrology_lock() -> dict[str, Any]:
             "match_radius_formula": "H / fs_c",
             "frame_selection": "nearest_source_time_within_match_radius",
             "alignment_policy_ref": "sample_rate_parity.alignment",
+            "closes_sample_rate_parity_gate": False,
+            "role": "report_only",
+            "omit_report_only_publication_is_report_fail": True,
+            "admit_into_gate4_closing_max_is_fail": True,
+            "non_stationary_sr_parity_named_requirement": "G1c_G1e",
+            "a3_status": "RETIRED",
+            "active_family_status": "closed",
             "missing_checkpoint_is_fail": True,
             "no_free_subset": True,
             "transient_and_damped_resonance_excluded_from_db_parity": True,
@@ -454,6 +469,35 @@ def frozen_metrology_lock() -> dict[str, Any]:
                 "side_level_dbfs",
             ],
             "excluded_from_domain": ["mid_delta_db", "side_delta_db"],
+            "gate_closing_assets": list(R_GATE_CLOSING_ASSETS),
+            "log_sweep_closes_gate": False,
+            "geometric_domain_R": {
+                "authority": "REV7 amend A — CONTRACT §13.2 gate 4",
+                "N_MIN": R_N_MIN,
+                "N_MIN_derivation": "ceil(ENBW_Hann)",
+                "SEPARATION_MIN_BINS": R_SEPARATION_MIN_BINS,
+                "SEPARATION_MIN_BINS_derivation": (
+                    "main-lobe null-to-null / 2 (Rayleigh)"
+                ),
+                "fail_closed_on_fusion_crossfade": True,
+                "predicate": (
+                    "i in R iff ENBW N_eff(i,p) >= N_MIN AND "
+                    "sep_bins(i,p) >= SEPARATION_MIN_BINS on every "
+                    "fusion-contributing path p"
+                ),
+                "census_a_priori": {
+                    "cardinality": R_CARDINALITY,
+                    "first_in_R_band_index": R_FIRST_IN_R_BAND_INDEX,
+                    "fitted_to_measured_cells": False,
+                },
+                "gate_closing_bands": "i_in_R",
+                "outside_R_role": "report_only",
+                "report_only_publication_required": True,
+                "omit_report_only_table_is_report_fail": True,
+                "excluded_geometry_tag": "EXCLUDED_GEOMETRY",
+                "alternate_lf_db_tolerance_forbidden": True,
+                "threshold_shopping_forbidden": True,
+            },
             "alignment": {
                 "authority_section": "5+13.2.gate_4",
                 "select_by": "nearest_source_time",
@@ -481,6 +525,7 @@ def frozen_metrology_lock() -> dict[str, Any]:
                 "shape_prominence_inherit_psd_activity": True,
                 "invalid_channel_vectors_ignored": True,
                 "post_hoc_mask_forbidden": True,
+                "gate_closing_requires_in_R": True,
                 "empty_active_cell_set_is_fail": True,
                 "empty_useful_segment_is_fail": True,
                 "max_over_empty_active_set": "FAIL",
@@ -489,7 +534,7 @@ def frozen_metrology_lock() -> dict[str, Any]:
                 "empty_to_fail_derivation": {
                     "kind": "derived_packaging",
                     "does_not_supersede_contract": True,
-                    "candidate_for_future_contract_amendment": True,
+                    "candidate_for_future_contract_amendment": False,
                     "chain": [
                         (
                             "§10.5: N/A does not satisfy a gate and does not "
@@ -502,16 +547,18 @@ def frozen_metrology_lock() -> dict[str, Any]:
                         ),
                         (
                             "§13.2 gate 4: activity predicate + aggregator "
-                            "max over the declared dB domain; max over an "
-                            "empty active set is not a numeric 0 PASS"
+                            "max over the declared dB domain restricted to "
+                            "i in R on the stationary closing set; max over "
+                            "an empty active in-R set is not a numeric 0 PASS"
                         ),
                     ],
                     "packaging_note": (
                         "empty_active_cell_set_is_fail / "
                         "empty_useful_segment_is_fail / "
                         "max_over_empty_active_set=FAIL package the chain "
-                        "above; lock packaging authority, not a new "
-                        "contract amendment (REV7 out of T4.2)"
+                        "above; lock packaging authority; REV7 CONSOLIDATED "
+                        "binds R + report-only + stationary closing set in "
+                        "CONTRACT @ 6fbf5b59"
                     ),
                 },
             },
@@ -520,6 +567,9 @@ def frozen_metrology_lock() -> dict[str, Any]:
             "transient_onset_peak_tolerance_canonical_samples": 1,
             "transient_decay_tolerance_hops": 1,
             "single_active_cell_over_threshold_fails_gate": True,
+            "a3_status": "RETIRED",
+            "active_family_status": "closed",
+            "not_g1_pass_product_claim": True,
         },
         "other_gate_thresholds": {
             "gain_invariance_max_abs_db": GAIN_INVARIANCE_MAX_ABS_DB,
@@ -672,6 +722,74 @@ def validate_metrology_lock_claim(claim: object) -> dict[str, Any]:
             f"threshold_max_abs_db must be {SR_PARITY_MAX_ABS_DB}")
     if sr.get("aggregator") != "max":
         raise MetrologyLockError("sample_rate_parity.aggregator must be 'max'")
+    if sr.get("gate_closing_assets") != list(R_GATE_CLOSING_ASSETS):
+        raise MetrologyLockError(
+            "sample_rate_parity.gate_closing_assets must be "
+            "['multitone', 'pseudo_noise'] (REV7 amend B)")
+    if sr.get("log_sweep_closes_gate") is not False:
+        raise MetrologyLockError(
+            "sample_rate_parity.log_sweep_closes_gate must be false "
+            "(REV7 amend B)")
+    geo_r = sr.get("geometric_domain_R")
+    if not isinstance(geo_r, dict):
+        raise MetrologyLockError(
+            "sample_rate_parity.geometric_domain_R must be an object "
+            "(REV7 amend A)")
+    if geo_r.get("N_MIN") != R_N_MIN:
+        raise MetrologyLockError(
+            f"geometric_domain_R.N_MIN must be {R_N_MIN}")
+    if geo_r.get("SEPARATION_MIN_BINS") != R_SEPARATION_MIN_BINS:
+        raise MetrologyLockError(
+            "geometric_domain_R.SEPARATION_MIN_BINS must be "
+            f"{R_SEPARATION_MIN_BINS}")
+    if geo_r.get("fail_closed_on_fusion_crossfade") is not True:
+        raise MetrologyLockError(
+            "geometric_domain_R.fail_closed_on_fusion_crossfade must be true")
+    if geo_r.get("report_only_publication_required") is not True:
+        raise MetrologyLockError(
+            "geometric_domain_R.report_only_publication_required must be true")
+    if geo_r.get("omit_report_only_table_is_report_fail") is not True:
+        raise MetrologyLockError(
+            "geometric_domain_R.omit_report_only_table_is_report_fail "
+            "must be true")
+    if geo_r.get("alternate_lf_db_tolerance_forbidden") is not True:
+        raise MetrologyLockError(
+            "geometric_domain_R.alternate_lf_db_tolerance_forbidden "
+            "must be true")
+    if geo_r.get("threshold_shopping_forbidden") is not True:
+        raise MetrologyLockError(
+            "geometric_domain_R.threshold_shopping_forbidden must be true")
+    census = geo_r.get("census_a_priori")
+    if not isinstance(census, dict):
+        raise MetrologyLockError(
+            "geometric_domain_R.census_a_priori must be an object")
+    if census.get("cardinality") != R_CARDINALITY:
+        raise MetrologyLockError(
+            f"census_a_priori.cardinality must be {R_CARDINALITY}")
+    if census.get("first_in_R_band_index") != R_FIRST_IN_R_BAND_INDEX:
+        raise MetrologyLockError(
+            "census_a_priori.first_in_R_band_index must be "
+            f"{R_FIRST_IN_R_BAND_INDEX}")
+    if census.get("fitted_to_measured_cells") is not False:
+        raise MetrologyLockError(
+            "census_a_priori.fitted_to_measured_cells must be false")
+    if activity.get("gate_closing_requires_in_R") is not True:
+        raise MetrologyLockError(
+            "activity.gate_closing_requires_in_R must be true (REV7)")
+    sweep = claim.get("sweep_log_parity")
+    if not isinstance(sweep, dict):
+        raise MetrologyLockError("sweep_log_parity must be an object")
+    if sweep.get("closes_sample_rate_parity_gate") is not False:
+        raise MetrologyLockError(
+            "sweep_log_parity.closes_sample_rate_parity_gate must be false "
+            "(REV7 amend B)")
+    if sweep.get("role") != "report_only":
+        raise MetrologyLockError(
+            "sweep_log_parity.role must be 'report_only'")
+    if sweep.get("admit_into_gate4_closing_max_is_fail") is not True:
+        raise MetrologyLockError(
+            "sweep_log_parity.admit_into_gate4_closing_max_is_fail "
+            "must be true")
     alignment = sr.get("alignment")
     if not isinstance(alignment, dict):
         raise MetrologyLockError(

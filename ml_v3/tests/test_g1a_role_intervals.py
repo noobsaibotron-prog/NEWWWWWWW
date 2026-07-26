@@ -34,10 +34,10 @@ def _floor_bug_role(value: int) -> str:
 
 
 class RoleIntervalExactTests(unittest.TestCase):
-    def test_contract_revision_is_rev6_micro_amend(self):
-        self.assertIn("REVISIONE 6 CONSOLIDATA", CONTRACT_REVISION)
-        self.assertIn("micro-amend", CONTRACT_REVISION)
-        self.assertIn("6d254d0a", CONTRACT_REVISION)
+    def test_contract_revision_is_rev7_consolidated(self):
+        self.assertIn("REVISIONE 7 CONSOLIDATA", CONTRACT_REVISION)
+        self.assertIn("6fbf5b59", CONTRACT_REVISION)
+        self.assertIn("gate-4 scope C", CONTRACT_REVISION)
         self.assertNotIn("REVISIONE 5", CONTRACT_REVISION)
 
     def test_schema_ids_include_identity_and_roster(self):

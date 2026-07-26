@@ -152,7 +152,7 @@ class G1aSha256sumsFixtureTests(unittest.TestCase):
         self.assertTrue(is_sha256_hex(CONTRACT_DOC_SHA256_TRIPWIRE))
         self.assertEqual(
             CONTRACT_DOC_SHA256_TRIPWIRE,
-            "6a6f6d35bbf3fc65d7a01e54620bf4f9649ea77d60c2b3d9e7ea0b72f7f49a86",
+            "9fd2dd875d25c12c8b2206b5f637bef998b905f77402309014299df0ee6d519f",
         )
 
     def test_committed_sha256sums_verifies_against_tree(self):

@@ -1,6 +1,6 @@
 """G1a T6 — fixture signal generators + committed WAV digests.
 
-Freeze authority: fixture_spec_v1.json (513c3baf…). No G1a CLOSE claim.
+Freeze authority: fixture_spec_v1.json (b39a1565…). No G1a CLOSE claim.
 """
 from __future__ import annotations
 
@@ -48,7 +48,7 @@ from ml_v3.fixtures.g1.render_signals import (
 
 REPO = Path(__file__).resolve().parents[2]
 FIXTURE_SPEC_DIGEST = (
-    "513c3baf7aaed8eb1a15f7d2e875a3015479fc2ece0378e75cfceadefe68a6ef"
+    "b39a1565b26f6bb3dc7d55cb098d8ec0169b8e5d566d75e7734d38e0fe54f4e8"
 )
 
 
