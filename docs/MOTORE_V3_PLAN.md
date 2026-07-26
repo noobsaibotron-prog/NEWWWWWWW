@@ -105,6 +105,40 @@ Il piano descrive un progetto a contratti. Ad oggi, su questo branch:
   (Marco "ok" post-REV7 rehash): product code tip `c81d2f22` = tree of
   spike `c7f05871` (`ml_v3/frontend/`, `ml_v3/benchmark/`, G1b tests,
   WS4 evidence). Spike WT retired-as-lab. ≠ G1 PASS; ≠ training; ≠ ship.
+- **GO G1c**: aperto (2026-07-26) dal reviewer (Marco) sul tip contratto
+  `52702f7b` (REVISIONE 7 + pin determinismo, digest vivo `1c18ec56…`).
+  Scope §14.3: parser fail-closed, matching, metriche, CI group-level,
+  adapter omologo v2-v3, fixture di errore. G1c implementa §10 (197 righe) e
+  §11 (131 righe). ≠ G1 PASS · ≠ training · ≠ ship.
+  - **Asset di partenza gia sigillati**: i sei pin determinismo G1c
+    (§10.0 / §11.2 @ `52702f7b`) chiudono ordinamento canonico, draw del
+    bootstrap, quantile type-7, `sum_pairwise64`, seed interno `uint64be` e
+    ordine Gamma→Poisson. Nati da spike misurato, non da prosa: permutare
+    l'ordine dei file cambiava il CI; codifica dell'indice e ordine dei draw
+    spostavano la potenza false-events.
+  - **Tre decisioni di scopo da chiudere PRIMA di implementare** (stessa
+    disciplina dei pin P1–P7 dello spike G1b):
+    1. **Collocazione della parity SR non-stazionaria.** Oggi il contratto
+       dice "G1c/G1e" in tre punti (righe 37, 1167, 1251) e §14.3 non la
+       nomina. Un debito con destinazione ambigua e un debito che sparisce:
+       va assegnata a G1c **oppure** a G1e, non a entrambe.
+    2. **Le 14 fixture di errore del gate 9.** "Producono i fallimenti
+       attesi" non e una specifica: per ciascuna serve il fallimento atteso
+       esatto. Da pinnare una per una prima di implementare — poche righe
+       ciascuna, altrimenti sono 14 superfici di contenzioso.
+    3. **Proprieta dell'adapter omologo.** §10.5 dice "congelato in G1c" ma
+       anche "G1a serializza mapping, costanti e hash gia definiti qui; non
+       puo sceglierli o modificarli", e T3 `9aa19295` **ha gia serializzato**
+       quel mapping. Va scritto chi possiede cosa: se G1c tocca il mapping,
+       si rigenerano lock e SHA256SUMS appena stabilizzati.
+  - **Costo misurato da conoscere**: il piano di potenza §11.2 costa ~36 s
+    per candidato `n`, e `n_power` va **cercato** a partire da 149, con seed
+    derivato per metrica (nessun riuso fra metriche). Una ricerca su ~50
+    candidati = ~30 min per metrica. Non proibitivo, ma non e il costo che
+    una lettura del contratto suggerisce.
+  - **Metodo**: specificare quanto si riesce a validare in giorni, non in
+    settimane. Implementare a tranche con una verifica indipendente per
+    tranche; niente redteam separato salvo su artefatti hashati.
 - **Authority hierarchy (Motore-v3)**:
   - GLOBAL / RELEASE AUTHORITY → `ALIGNMENT_MANIFEST.md`
   - MOTORE V3 LAB STATE AUTHORITY → `docs/MOTORE_V3_PLAN.md`
