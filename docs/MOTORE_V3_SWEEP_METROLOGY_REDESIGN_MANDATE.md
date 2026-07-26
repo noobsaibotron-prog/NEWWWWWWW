@@ -21,6 +21,23 @@ Decision line (locked by this mandate):
 > that test asks a physically well-defined property. Stationary evidence ≈
 > yes; chirp evidence says no — concentrate next work there.
 
+### CRITICAL PIN — stationary gate ≠ trajectory gate
+
+**Stationary gate** and **trajectory / full-vector chirp gate** assert
+**different properties.** They are not the same claim with a softer fixture.
+
+| Gate family | Property asserted |
+|-------------|-------------------|
+| **Stationary** | Two sample-rate paths produce the **same spectrum** of a **steady** signal (content that does not move inside the analysis aperture). |
+| **Full-vector chirp / trajectory spectrum** | Two paths produce the same **windowed** spectrum of a **moving** signal. That result depends on **how far the instantaneous frequency moves inside the analysis window** — a **joint** property of signal + instrument, not a pure SR-transport property of a fixed spectrum. |
+
+This distinction is **why S2 exists**. A writer under this mandate **must not**
+treat the chirp as “stationary with an asterisk,” nor redesign S2 as a
+patch that restores full-vector spectrum equality on a moving tone.
+
+No measured dB magnitudes, failing-band inventories, or prior-run peak
+indices may be used to blur or collapse this pin.
+
 ---
 
 ## Frozen photograph (lab state at mandate open)

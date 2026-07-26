@@ -31,7 +31,10 @@ G1b official tip                  NON esiste
 
 **Decisione:** smettere di far passare il test sweep full-vector corrente;
 stabilire se chiede una proprietà fisicamente ben definita. Stationary ≈ sì;
-evidenza chirp dice no — concentrare lì. **Next work** =
+evidenza chirp dice no — concentrare lì. **Pin:** stationary gate ≠
+trajectory gate (spettro di segnale fermo vs spettro finestrato di segnale
+in moto = proprietà congiunta segnale+strumento) — per questo esiste S2;
+chirp ≠ “stazionario con asterisco.” **Next work** =
 `docs/MOTORE_V3_SWEEP_METROLOGY_REDESIGN_MANDATE.md`. A3 stamp:
 `docs/MOTORE_V3_LOG_SWEEP_A3_ARCHIVE_STAMP.md`.
 
