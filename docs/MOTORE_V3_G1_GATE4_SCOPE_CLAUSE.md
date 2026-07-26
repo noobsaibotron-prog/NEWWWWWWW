@@ -14,6 +14,10 @@
 `docs/MOTORE_V3_SWEEP_METROLOGY_REDESIGN_PROPOSAL.md` tip ~`9b8f8305`  
 (30 closed findings parked, not deleted; ~15 open at park).
 
+**Post-G1c scope closure:** parity SR non-stazionaria now has a single home:
+`G1e-nonstat`. G1c does not own this debt and does not reinterpret the parked
+sweep. See `docs/MOTORE_V3_G1_CONTRACT.md` REVISIONE 7 post-G1c-scope closure.
+
 This clause’s six points are now normative inside CONTRACT REV7 (amend B).
 Historical REV6 freeze tip `6d254d0a` remains ancestor; living freeze is REV7.
 
@@ -28,10 +32,10 @@ Historical REV6 freeze tip `6d254d0a` remains ancestor; living freeze is REV7.
    not close** gate 4 in G1. Deviations still measured and published as
    **report-only** (preserve information, zero cost to closing).
 
-3. **Non-stationary SR-parity** is a **named requirement of G1c/G1e**, with
-   existing mandate + proposal as parked input (~1056 lines + 30 closed
-   findings parked, not deleted). Tip of parked proposal ~`9b8f8305` / living
-   HEAD as appropriate.
+3. **Non-stationary SR-parity** is a **named requirement of `G1e-nonstat`**,
+   not G1c. Existing mandate + proposal remain parked input (~1056 lines + 30
+   closed findings parked, not deleted). Tip of parked proposal ~`9b8f8305` /
+   living HEAD as appropriate.
 
 4. **Immutables (verbatim from existing contract language / REV7 geometry
    package — unchanged here):**
@@ -56,7 +60,7 @@ Historical REV6 freeze tip `6d254d0a` remains ancestor; living freeze is REV7.
 
 **Parity cross-SR non-stazionaria: non verificata a G1.** Input parcheggiati:
 mandato `SWEEP_METROLOGY_REDESIGN` + proposta S1/S2 (30 finding chiusi, ~15
-aperti al park). Da riprendere a G1c/G1e quando esiste un osservabile. Non è
+   aperti al park). Da riprendere a `G1e-nonstat` quando esiste un osservabile. Non è
 un difetto noto del frontend: Independent CC su WS4 (spike tip `c7f05871`)
 ha misurato accordo ~0.03 dB sulle bin con segnale tra audio 48 kHz diretto e
 44.1→48 ricampionato (evidenza lab — **cite only**, non criterio / non soglia).

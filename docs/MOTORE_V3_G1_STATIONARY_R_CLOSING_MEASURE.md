@@ -67,7 +67,7 @@ into the closing aggregate.
 | log_sweep | 44100 | 6.4350 | report-only (would FAIL if scored as close) | psd b106 (~9404 Hz) | 10 |
 | log_sweep | 96000 | 5.8381 | report-only (would FAIL if scored as close) | psd b106 (~9404 Hz) | 10 |
 
-Non-stationary SR-parity remains a named G1c/G1e requirement; sweep redesign
+Non-stationary SR-parity remains a named `G1e-nonstat` requirement; sweep redesign
 proposal stays **PARKED**.
 
 ---

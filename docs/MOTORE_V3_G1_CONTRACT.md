@@ -34,8 +34,8 @@ stazionaria `8cf38625`; Guardian second GO + autorizzazione Marco):
 - **(B) Gate-4 scope (option C)** — closing set G1 = solo asset stazionari
   (`multitone`, `pseudo_noise`) valutati su `R`; `log_sweep` resta generato
   e hashed in SHA256SUMS ma **non chiude** il gate 4 (deviazioni
-  report-only); parity SR non-stazionaria = requisito nominato di G1c/G1e
-  (proposta sweep **PARKED**, non cancellata).
+  report-only); parity SR non-stazionaria = requisito nominato di
+  **G1e-nonstat**, non di G1c (proposta sweep **PARKED**, non cancellata).
 
 **Immutabili (riaffermati; invariati da REV7):** aggregatore **max**
 (`max_i |x_i(sr) - x_i(48k)|`; una cella attiva fuori soglia → FAIL
@@ -855,8 +855,13 @@ contro la baseline deterministica G2. Se invece un candidato dichiara una
 superficie ma non emette una prediction valida, l'esito e fail-closed: FN,
 errore di schema o fallimento del candidato secondo il caso, mai `N/A`.
 
-Il gate G2 rispetto a v2 usa un solo adapter omologo, congelato in G1c, sulle
-sei classi realmente attive in tutti e tre i candidati G0: `Resonance`,
+Il gate G2 rispetto a v2 usa un solo adapter omologo. L'artefatto di mapping e
+gia serializzato e hashato da G1a T3; G1c ne e **consumer/validator**, non
+owner. In G1c e vietato cambiare classi omologhe, classi `N/A`, soglie seed,
+mapping profili, costanti o hash dell'adapter. Se il mapping risulta errato,
+G1c si ferma e apre una reseal pre-G1c separata: non lo corregge dentro
+l'evaluator. L'adapter copre le sei classi realmente attive in tutti e tre i
+candidati G0: `Resonance`,
 `Muddiness`, `Boominess`, `Thinness`, `BoxyMidrange`, `DullSound`.
 `Harshness` e `Sibilance` sono mascherate nelle provenance G0 e restano `N/A`
 nel confronto v2; v3 le deve superare con i gate assoluti e contro G2, mai
@@ -886,6 +891,9 @@ almeno +0.10 assoluto quando il seed v2 e sotto 0.10, e false-positive group
 rate non superiore allo stesso seed. Non e ammesso comporre una baseline con la
 metrica migliore di un seed e la safety migliore di un altro. G1a serializza
 mapping, costanti e hash gia definiti qui; non puo sceglierli o modificarli.
+G1c deve avere almeno un test che rifiuta qualunque tentativo di promuovere
+`Harshness` o `Sibilance` nel confronto omologo v2, qualunque riordino delle
+sei classi e qualunque mismatch fra SHA dichiarato e artifact T3.
 
 ## 11. Matrice benchmark e potenza statistica
 
@@ -1164,9 +1172,9 @@ si confronta il frame il cui `source_time` e piu vicino all'istante in cui
 lo sweep attraversa quella frequenza, entro al piu un hop. Omettere la
 pubblicazione report-only dello sweep, o ammettere silenziosamente lo sweep
 nel max di chiusura del gate 4, e FAIL di report / FAIL di perimetro.
-Parity SR non-stazionaria e requisito nominato di **G1c/G1e** (proposta
-`docs/MOTORE_V3_SWEEP_METROLOGY_REDESIGN_PROPOSAL.md` **PARKED**, non
-cancellata). **A3 resta RETIRED**; famiglia ACTIVE chiusa — nessun reopen
+Parity SR non-stazionaria e requisito nominato di **G1e-nonstat**, non di G1c
+(proposta `docs/MOTORE_V3_SWEEP_METROLOGY_REDESIGN_PROPOSAL.md` **PARKED**,
+non cancellata). **A3 resta RETIRED**; famiglia ACTIVE chiusa — nessun reopen
 via sweep.
 
 Transient burst e risonanza smorzata restano fuori dal confronto dB di
@@ -1248,8 +1256,8 @@ Gate obbligatori:
    **REV7 (B) — closing set.** In G1 chiudono il gate 4 solo gli asset
    stazionari `multitone` e `pseudo_noise` (porzione §13.1 modalita (a))
    valutati su `R`. `log_sweep` **non chiude** (report-only; §13.1).
-   Parity SR non-stazionaria → debito nominato G1c/G1e. A3 RETIRED / ACTIVE
-   chiusa. Debito G4 (invariato): stabilita cross-SR delle detection sulle
+   Parity SR non-stazionaria → debito nominato **G1e-nonstat**, fuori da G1c.
+   A3 RETIRED / ACTIVE chiusa. Debito G4 (invariato): stabilita cross-SR delle detection sulle
    classi low-end (mud/boom/boxy) — **non** soddisfatta dal solo PASS del
    gate 4 su `R`.
    **Una sola cella attiva in-R fuori soglia → FAIL dell'intero gate.** Non
@@ -1282,6 +1290,28 @@ Gate obbligatori:
    eventi con esposizione insufficiente devono fallire. Policy assente/hash
    errato, threshold mutato o actionable non riproducibile devono fallire; le
    fixture power devono provare che il gate congiunto non usa la sola Poisson.
+
+   **G1c T0 — registry obbligatoria prima del codice evaluator:** G1c non puo
+   implementare parser/matcher/metriche finche non ha committato una registry
+   canonica con esattamente queste 14 fixture gate-9 e il loro expected outcome.
+   La registry e un artifact G1c, non un file implicito nel test.
+
+   | ID | Expected outcome |
+   |---|---|
+   | `evaluator_perfect_prediction` | PASS: metriche perfette e report canonico |
+   | `evaluator_empty_prediction` | FAIL: FN/recall non perfetto su GT positivo |
+   | `evaluator_wrong_class` | FAIL: FP classe errata + FN classe corretta |
+   | `evaluator_wrong_frequency` | FAIL: evento non matchabile / errore frequenza oltre tolleranza |
+   | `evaluator_inverted_sign` | FAIL: errore di segno su celle tonali attive |
+   | `evaluator_duplicate_predictions` | FAIL: matching one-to-one lascia duplicato come FP |
+   | `evaluator_row_permutation` | PASS-INVARIANT: report byte-identico alla fixture base |
+   | `evaluator_duplicate_evaluation_unit` | PASS-INVARIANT: dedup canonica, stesso report della base |
+   | `evaluator_missing_anomaly_surface` | FAIL: superficie dichiarata/necessaria assente |
+   | `evaluator_thresholded_score_surface` | FAIL: superficie score pre-threshold non ricostruibile |
+   | `evaluator_zero_events_insufficient_exposure` | FAIL: esposizione insufficiente, mai PASS a zero eventi |
+   | `evaluator_policy_ref_invalid` | FAIL: policy assente o hash policy errato |
+   | `evaluator_policy_mutated_outputs` | FAIL: threshold mutato o actionable non riproducibile |
+   | `evaluator_power_joint_false_events` | FAIL se il gate congiunto passa usando solo Poisson o saltando il limite cluster-bootstrap |
 10. **Ambiente**: sync del lock con hash, test completi e deep hash di tutte le
    fixture PASS.
 
@@ -1311,11 +1341,15 @@ Ordine obbligatorio:
 2. **G1b - canonical frontend**: resampler streaming, dual-resolution
    time-aligned, `V3FeatureFrame` Python e unit test.
 3. **G1c - evaluator**: parser fail-closed, matching, metriche, CI group-level,
-   adapter omologo v2-v3 e fixture di errore.
+   validazione dell'adapter omologo v2-v3 gia serializzato da G1a T3 e fixture
+   di errore. G1c non modifica mapping adapter, lock, SHA256SUMS o parity SR
+   non-stazionaria.
 4. **G1d - competitor protocol harness**: manifest/config/hash e verifica dei
    render; nessun render proprietario nel repository.
 5. **G1e - report**: esecuzione completa dei gate, hash degli output e tabella
-   PASS/FAIL.
+   PASS/FAIL. La parity SR non-stazionaria vive qui come tranche dedicata
+   **G1e-nonstat**: usa la proposta sweep parcheggiata come input, non riapre
+   A3/ACTIVE e non cambia il closing set G1 gia consolidato.
 
 Dopo ogni commit:
 

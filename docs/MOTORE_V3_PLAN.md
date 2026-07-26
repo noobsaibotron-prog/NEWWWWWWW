@@ -57,9 +57,9 @@ Il piano descrive un progetto a contratti. Ad oggi, su questo branch:
   Path-order hygiene `fe8b97d3` remains relevant on the SHA256SUMS chain.
 - **G1a CLOSE: GO** (Guardian re-CLOSE 2026-07-25) on remediation tip
   `a2186ac1` + PLAN pre-stamp `805fb34d`; ancestor freeze `6d254d0a`;
-  living CONTRACT tip `52702f7b`; **living CONTRACT digest**
-  `1c18ec569e9db40ed9577c3553009735837a26f110dd6148c084a8b1294f7bf9`
-  (REV7 + pin determinismo G1c §10.0/§11.2, sigillato in SHA256SUMS +
+  living CONTRACT base `52702f7b` + closure scope G1c; **living CONTRACT digest**
+  `310d538647d71840c6dd8124f1e24281b758bb6dd3e4776aac4b34e5f658a5b0`
+  (REV7 + pin determinismo G1c §10.0/§11.2 + closure scope, sigillato in SHA256SUMS +
   `CONTRACT_DOC_SHA256_TRIPWIRE` + letterale del test T5). Digest storico
   REV7 A+B @ `6fbf5b59` era
   `9fd2dd875d25c12c8b2206b5f637bef998b905f77402309014299df0ee6d519f` —
@@ -106,31 +106,28 @@ Il piano descrive un progetto a contratti. Ad oggi, su questo branch:
   spike `c7f05871` (`ml_v3/frontend/`, `ml_v3/benchmark/`, G1b tests,
   WS4 evidence). Spike WT retired-as-lab. ≠ G1 PASS; ≠ training; ≠ ship.
 - **GO G1c**: aperto (2026-07-26) dal reviewer (Marco) sul tip contratto
-  `52702f7b` (REVISIONE 7 + pin determinismo, digest vivo `1c18ec56…`).
+  `52702f7b` (REVISIONE 7 + pin determinismo), poi scope closure docs-only
+  con digest vivo `310d5386…`.
   Scope §14.3: parser fail-closed, matching, metriche, CI group-level,
-  adapter omologo v2-v3, fixture di errore. G1c implementa §10 (197 righe) e
-  §11 (131 righe). ≠ G1 PASS · ≠ training · ≠ ship.
+  validazione adapter omologo v2-v3 T3 e fixture di errore. G1c implementa §10
+  (197 righe) e §11 (131 righe). ≠ G1 PASS · ≠ training · ≠ ship.
   - **Asset di partenza gia sigillati**: i sei pin determinismo G1c
     (§10.0 / §11.2 @ `52702f7b`) chiudono ordinamento canonico, draw del
     bootstrap, quantile type-7, `sum_pairwise64`, seed interno `uint64be` e
     ordine Gamma→Poisson. Nati da spike misurato, non da prosa: permutare
     l'ordine dei file cambiava il CI; codifica dell'indice e ordine dei draw
     spostavano la potenza false-events.
-  - **Tre decisioni di scopo da chiudere PRIMA di implementare** (stessa
+  - **Tre decisioni di scopo chiuse prima dell'implementazione** (stessa
     disciplina dei pin P1–P7 dello spike G1b):
-    1. **Collocazione della parity SR non-stazionaria.** Oggi il contratto
-       dice "G1c/G1e" in tre punti (righe 37, 1167, 1251) e §14.3 non la
-       nomina. Un debito con destinazione ambigua e un debito che sparisce:
-       va assegnata a G1c **oppure** a G1e, non a entrambe.
-    2. **Le 14 fixture di errore del gate 9.** "Producono i fallimenti
-       attesi" non e una specifica: per ciascuna serve il fallimento atteso
-       esatto. Da pinnare una per una prima di implementare — poche righe
-       ciascuna, altrimenti sono 14 superfici di contenzioso.
-    3. **Proprieta dell'adapter omologo.** §10.5 dice "congelato in G1c" ma
-       anche "G1a serializza mapping, costanti e hash gia definiti qui; non
-       puo sceglierli o modificarli", e T3 `9aa19295` **ha gia serializzato**
-       quel mapping. Va scritto chi possiede cosa: se G1c tocca il mapping,
-       si rigenerano lock e SHA256SUMS appena stabilizzati.
+    1. **Parity SR non-stazionaria:** fuori da G1c. Vive in `G1e-nonstat`;
+       G1c non implementa/reinterpreta lo sweep parcheggiato e non riapre
+       A3/ACTIVE.
+    2. **Fixture gate 9:** G1c parte da una tranche `T0 registry`: committare
+       una registry canonica con esattamente le 14 fixture e gli expected
+       outcome definiti in §13.2/gate 9 prima di parser/matcher/metriche.
+    3. **Adapter omologo:** G1c e consumer/validator del mapping G1a T3; non
+       modifica mapping, classi, soglie, costanti, lock o hash. Se il mapping
+       e errato, stop e reseal pre-G1c separato; niente fix dentro evaluator.
   - **Costo misurato da conoscere**: il piano di potenza §11.2 costa ~36 s
     per candidato `n`, e `n_power` va **cercato** a partire da 149, con seed
     derivato per metrica (nessun riuso fra metriche). Una ricerca su ~50
@@ -240,7 +237,7 @@ line, plugin installato, APVTS, preset, `Resources/Models/ml_weights.bin`,
   option C (stationary close; `log_sweep` report-only) → package
   `5e0d32fc` → Guardian 2nd GO → Marco consolidate. Misura stazionaria
   `8cf38625` MEASURE-PASS max|Δ|=0.1915. A3 RETIRED. Sweep redesign
-  **PARKED** (G1c/G1e). G4 debt: cross-SR low-end detections. **≠ G1 PASS.**
+  **PARKED** (`G1e-nonstat`). G4 debt: cross-SR low-end detections. **≠ G1 PASS.**
 - **Official G1b tip (2026-07-26):** Marco "ok" → cherry-pick spike series
   `a91ab7cf`…`c7f05871` onto product → code tip **`c81d2f22`** (tree =
   spike). Paths: `ml_v3/frontend/`, `ml_v3/benchmark/`, G1b tests, WS*
@@ -248,7 +245,7 @@ line, plugin installato, APVTS, preset, `Resources/Models/ml_weights.bin`,
   **0-diff** vs `2c88edad`. Spike WT retired-as-lab. **≠ G1 PASS.**
 - **Living next-path (post official G1b tip):** (1) Guardian/CC optional
   on tip; (2) **G1c** when Marco asks; (3) non-stat / sweep resta PARKED
-  fino a G1c/G1e; (4) debt F1 WAV / gate-8 non riapre G1a CLOSE. Mai:
+  fino a `G1e-nonstat`; (4) debt F1 WAV / gate-8 non riapre G1a CLOSE. Mai:
   0.25→media/p95; ship/Source; training; “G1 PASS”; terzo amend REV7;
   reopen A3. Short path: `docs/EMBER_CORE_PARALLEL_HANDOFF.md` §A.
 

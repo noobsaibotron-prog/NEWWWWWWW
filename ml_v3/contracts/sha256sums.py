@@ -41,10 +41,10 @@ __all__ = [
 G1A_SHA256SUMS_RELPATH = "ml_v3/fixtures/g1/SHA256SUMS"
 
 # Precomputed contract tripwire (PLAN durable debt). Reseal @ REV7 + G1c
-# determinism pins (§10.0 / §11.2); thresholds, aggregator, closing domain,
-# `R` and gates unchanged by those pins.
+# determinism pins (§10.0 / §11.2) + G1c scope closure; thresholds,
+# aggregator, closing domain, `R` and gates unchanged.
 CONTRACT_DOC_SHA256_TRIPWIRE = (
-    "1c18ec569e9db40ed9577c3553009735837a26f110dd6148c084a8b1294f7bf9"
+    "310d538647d71840c6dd8124f1e24281b758bb6dd3e4776aac4b34e5f658a5b0"
 )
 
 # Minimum G1a T5+M2+F3 coverage: contract doc + schema_registry_v1 (normative

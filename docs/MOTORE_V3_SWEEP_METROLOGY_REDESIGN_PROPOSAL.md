@@ -15,7 +15,7 @@ See `docs/MOTORE_V3_G1_GATE4_SCOPE_CLAUSE.md`. Tip at park ~`9b8f8305`.
 | **Authority** | Marco authorize docs-only residual POROUS (re-CC `1577733c` CRITICAL + delta RT `68a39a49` HIGH) on tip ~`81f10dea`; MEASURE NO; no CONTRACT/lock/Source |
 | **Mandate** | `docs/MOTORE_V3_SWEEP_METROLOGY_REDESIGN_MANDATE.md` (incl. stationary≠trajectory pin) |
 | **A3 status (status only)** | **RETIRED AS SOLUTION** — `docs/MOTORE_V3_LOG_SWEEP_A3_ARCHIVE_STAMP.md` |
-| **Freeze structure (read-only)** | Living: `docs/MOTORE_V3_G1_CONTRACT.md` **REV7 CONSOLIDATED** (gate-4 closing = stationary on `R`; this proposal stays PARKED G1c/G1e debt). Ancestor REV6 tip `6d254d0a`. |
+| **Freeze structure (read-only)** | Living: `docs/MOTORE_V3_G1_CONTRACT.md` **REV7 CONSOLIDATED** (gate-4 closing = stationary on `R`; this proposal stays PARKED `G1e-nonstat` debt). Ancestor REV6 tip `6d254d0a`. |
 | **Prior tip** | `81f10dea` (pin REPORT TSTAR nearest + match_ok in COMPLETE; residual POROUS — `source_time_selected:=` vacuous TSTAR; false RIDGE claim; P32 stale EQ_PUBLISH; filter-first useful nearest; unbound tie; PCM “not pinned”) |
 
 ---

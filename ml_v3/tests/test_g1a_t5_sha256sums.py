@@ -150,11 +150,12 @@ class G1aSha256sumsFixtureTests(unittest.TestCase):
             G1A_SHA256SUMS_COVERED,
         )
         self.assertTrue(is_sha256_hex(CONTRACT_DOC_SHA256_TRIPWIRE))
-        # Reseal @ REV7 + G1c determinism pins (§10.0 / §11.2). Independent
-        # literal: updating the module constant alone must not make this pass.
+        # Reseal @ REV7 + G1c determinism pins (§10.0 / §11.2) + scope
+        # closure. Independent literal: updating the module constant alone must
+        # not make this pass.
         self.assertEqual(
             CONTRACT_DOC_SHA256_TRIPWIRE,
-            "1c18ec569e9db40ed9577c3553009735837a26f110dd6148c084a8b1294f7bf9",
+            "310d538647d71840c6dd8124f1e24281b758bb6dd3e4776aac4b34e5f658a5b0",
         )
 
     def test_committed_sha256sums_verifies_against_tree(self):

@@ -29,9 +29,9 @@ G1a CLOSE                         GO
 REV7 CONSOLIDATED                 living CONTRACT authority (A+B only)
 gate-4 G1 closing set             stationary only (multitone, pseudo_noise) on R
 log_sweep                         hashed; report-only; does NOT close gate 4 in G1
-non-stat SR-parity                named G1c/G1e requirement (parked input)
+non-stat SR-parity                named G1e-nonstat requirement (parked input)
 A3                                ARCHIVED: SOUND + FALSIFIED + RETIRED AS SOLUTION
-SWEEP_METROLOGY_REDESIGN proposal PARKED — G1c/G1e input debt (~9b8f8305)
+SWEEP_METROLOGY_REDESIGN proposal PARKED — G1e-nonstat input debt (~9b8f8305)
 REV7 candidate                    SUPERSEDED by consolidate (package was 5e0d32fc)
 Guardian second GO                LANDED on tip 5e0d32fc
 REV7 consolidate                  YES (Marco "si" + Guardian CONSOLIDATE_AUTHORIZED)
@@ -44,7 +44,7 @@ Source/ ship-line vs 2c88edad     0-diff (no plugin DSP rewrite in tip)
 ```
 
 **Decisione Marco — option (C) + consolidate + G1b tip auth:** Gate-4 closing
-set in G1 = stationary on geometric `R`. Non-stat → G1c/G1e. **Exactly two**
+set in G1 = stationary on geometric `R`. Non-stat → `G1e-nonstat`. **Exactly two**
 REV7 amends in CONTRACT: (A) LF report-only ∉R; (B) gate-4 scope C. Package
 tip `5e0d32fc` + hygiene `0965f975` → Guardian CONSOLIDATE_AUTHORIZED → Marco
 "si". Rehash `4efc7598`. Poi Marco **"ok"** → promote spike frontend a tip
@@ -66,7 +66,7 @@ sweep as closing. ≠ threshold shopping. ≠ training / Ableton ship.
 | Stationary R closing measure | `8cf38625` | max\|Δ\|=0.1915 dB PASS on R |
 | Gate-4 scope clause | `31216df4` | amend B source |
 | LF report-only clause | `71159469` | amend A source |
-| Parked proposal tip | `9b8f8305` | SWEEP_METROLOGY_REDESIGN — G1c/G1e debt |
+| Parked proposal tip | `9b8f8305` | SWEEP_METROLOGY_REDESIGN — G1e-nonstat debt |
 | A3 falsification | `78da84dd` | FAIL honest — hypothesis falsified |
 | Code G1a | `a2186ac1` | F2/F3/F4; G1a CLOSE GO still holds |
 | Ancestor REV6 freeze | `6d254d0a` | superseded as living authority by REV7 |
@@ -76,7 +76,7 @@ sweep as closing. ≠ threshold shopping. ≠ training / Ableton ship.
 
 | | digest | stato |
 |---|---|---|
-| **VIVO** (autorità corrente) | `1c18ec569e9db40ed9577c3553009735837a26f110dd6148c084a8b1294f7bf9` | REV7 + pin determinismo G1c §10.0/§11.2, sigillato @ `52702f7b` |
+| **VIVO** (autorità corrente) | `310d538647d71840c6dd8124f1e24281b758bb6dd3e4776aac4b34e5f658a5b0` | REV7 + pin determinismo G1c §10.0/§11.2 + closure scope G1c |
 | storico REV7 A+B | `9fd2dd875d25c12c8b2206b5f637bef998b905f77402309014299df0ee6d519f` | @ `6fbf5b59`, prima dei pin — **non** più l'autorità viva |
 
 Il digest vivo è quello in `ml_v3/fixtures/g1/SHA256SUMS`, in
@@ -107,7 +107,7 @@ fixture_spec_sha256:
 - **G1a CLOSE: GO**; code tip `a2186ac1`.  
 - **CONTRACT living:** REVISIONE 7 CONSOLIDATA (A+B); digests unchanged.  
 - **A3: ARCHIVED**; ACTIVE closed. **No reopen.**  
-- **SWEEP proposal: PARKED** — G1c/G1e input debt.  
+- **SWEEP proposal: PARKED** — G1e-nonstat input debt.
 - **REV7 consolidate: YES.**  
 - **Official G1b tip: YES** (`c81d2f22`; lab frontend on product).  
   ≠ G1 PASS; ≠ G1b evaluator CLOSE (G1c+). Spike WT retired-as-lab.  
@@ -126,14 +126,14 @@ fixture_spec_sha256:
   se letto da solo dice overall FAIL perche include `log_sweep` nel close.
   L'autorita corrente e CONTRACT REV7 + `MOTORE_V3_G1_GATE4_SCOPE_CLAUSE.md`:
   in G1 chiudono solo `multitone` e `pseudo_noise` stazionari su `R`;
-  `log_sweep` resta hashed/report-only e debito G1c/G1e.
+  `log_sweep` resta hashed/report-only e debito `G1e-nonstat`.
 - `c81d2f22` e il tip codice G1b ufficiale. `31e6203a` e il tip branch attuale
   perche aggiunge soltanto il pin documentale di handoff.
 
 ### Debt — parity cross-SR non-stazionaria
 Parity cross-SR non-stazionaria: non verificata a G1. Input parcheggiati:
 mandato SWEEP_METROLOGY_REDESIGN + proposta S1/S2 (tip ~`9b8f8305`).
-Da riprendere a G1c/G1e. Independent CC WS4 (spike `c7f05871` / product
+Da riprendere a `G1e-nonstat`. Independent CC WS4 (spike `c7f05871` / product
 `c81d2f22`): accordo ~0.03 dB sulle bin con segnale 48k vs 44.1→48 —
 **evidence cite only**, non criterio.
 
@@ -166,7 +166,7 @@ c81d2f22  feat(v3): G1b WS4 … (official G1b code tip; +5 prior G1b commits)
 | LF report-only ∉R | **IN CONTRACT REV7** (amend A) |
 | Stationary closing set on `R` | **MEASURE-PASS** @ `8cf38625` |
 | REV7 consolidate | **YES** (exactly A+B) |
-| Sweep proposal | **PARKED** (G1c/G1e debt) |
+| Sweep proposal | **PARKED** (G1e-nonstat debt) |
 | A3 | **ARCHIVED** SOUND+FALSIFIED+RETIRED |
 | Official G1b tip | **YES** @ `c81d2f22` (≠ G1 PASS) |
 | G1 PASS | **NO** |
@@ -1492,8 +1492,9 @@ contro la baseline deterministica G2. Se invece un candidato dichiara una
 superficie ma non emette una prediction valida, l'esito e fail-closed: FN,
 errore di schema o fallimento del candidato secondo il caso, mai `N/A`.
 
-Il gate G2 rispetto a v2 usa un solo adapter omologo, congelato in G1c, sulle
-sei classi realmente attive in tutti e tre i candidati G0: `Resonance`,
+Il gate G2 rispetto a v2 usa un solo adapter omologo, serializzato e hashato da
+G1a T3; G1c lo valida e lo consuma senza modificarlo. Vale sulle sei classi
+realmente attive in tutti e tre i candidati G0: `Resonance`,
 `Muddiness`, `Boominess`, `Thinness`, `BoxyMidrange`, `DullSound`.
 `Harshness` e `Sibilance` sono mascherate nelle provenance G0 e restano `N/A`
 nel confronto v2; v3 le deve superare con i gate assoluti e contro G2, mai
@@ -1886,7 +1887,7 @@ Ordine obbligatorio:
 2. **G1b - canonical frontend**: resampler streaming, dual-resolution
    time-aligned, `V3FeatureFrame` Python e unit test.
 3. **G1c - evaluator**: parser fail-closed, matching, metriche, CI group-level,
-   adapter omologo v2-v3 e fixture di errore.
+   validazione adapter omologo v2-v3 T3 e fixture di errore.
 4. **G1d - competitor protocol harness**: manifest/config/hash e verifica dei
    render; nessun render proprietario nel repository.
 5. **G1e - report**: esecuzione completa dei gate, hash degli output e tabella
@@ -1967,7 +1968,7 @@ Questa REVISIONE 6 CONSOLIDATA + micro-amend non costituisce GO a G1a.
 > authoritative closing package was **only** amendments A (LF report-only ∉R)
 > and B (gate-4 scope C), packaged at `5e0d32fc`. That package is now
 > consolidated. Do **not** revive ACTIVE as a third REV7 amend. A3/ACTIVE
-> remain RETIRED/closed. Parked sweep redesign stays G1c/G1e debt.
+> remain RETIRED/closed. Parked sweep redesign stays `G1e-nonstat` debt.
 
 Living candidate file is a short SUPERSEDED pointer (not the old ACTIVE draft).
 Read CONTRACT REV7 + `MOTORE_V3_REV7_REPORT_ONLY_LF_CLAUSE.md` @ `71159469` +

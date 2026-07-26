@@ -29,8 +29,9 @@ report-only with mandatory publish (omit → report FAIL).
 
 ### B — Gate-4 scope (option C)
 Closing set = stationary `multitone` + `pseudo_noise` on `R`. `log_sweep`
-hashed, does **not** close (report-only). Non-stat SR-parity → G1c/G1e named
-debt. A3 RETIRED / ACTIVE closed.
+hashed, does **not** close (report-only). Non-stat SR-parity → `G1e-nonstat`
+named debt (post-scope-closure destination; this file remains historical).
+A3 RETIRED / ACTIVE closed.
 
 ### Immutables (unchanged)
 max aggregator · 0.25 dB · R definition · mandatory publish outside R ·
@@ -56,4 +57,4 @@ A3/ACTIVE retired.
 5. Official G1b tip — **STOP** until separate Marco auth
 
 Living next-path: G1b tip promotion (separate authorization). Parked sweep
-proposal remains G1c/G1e input debt.
+proposal remains `G1e-nonstat` input debt.
