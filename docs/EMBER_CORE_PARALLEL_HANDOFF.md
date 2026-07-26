@@ -1,6 +1,6 @@
 # Ember Core / Motore v3 — Handoff AUTOSUFFICIENTE per agenti esterni
 
-**Ultimo aggiornamento:** 2026-07-26 21:30 (UTC+2) — official G1b tip  
+**Ultimo aggiornamento:** 2026-07-26 21:44 (UTC+2) — post official G1b tip / handoff pin
 **Destinatario:** agente esterno **senza terminale / senza git**.  
 **Questo file** = quadro + testo completo snapshot.
 
@@ -8,6 +8,9 @@
 > WAV binari non dumpati: digests in SHA256SUMS + inventory.  
 > Evidence G1b WS4 (`G1B_SPIKE_WS4_*`) e ora sul tip prodotto (cherry-pick da
 > spike `c7f05871`); worktree spike = lab retired / sync note only.
+> Allineamento corrente: branch vivo `feature/motore-v3-offline` @ `31e6203a`.
+> Il tip codice G1b ufficiale resta `c81d2f22`; sopra ci sono solo stamp
+> documentali di handoff/status.
 
 ---
 
@@ -21,6 +24,7 @@
 
 ### Fotografia congelata (REV7 + official G1b tip)
 ```text
+feature/motore-v3-offline HEAD     31e6203a (handoff pin; no new code)
 G1a CLOSE                         GO
 REV7 CONSOLIDATED                 living CONTRACT authority (A+B only)
 gate-4 G1 closing set             stationary only (multitone, pseudo_noise) on R
@@ -32,6 +36,7 @@ REV7 candidate                    SUPERSEDED by consolidate (package was 5e0d32f
 Guardian second GO                LANDED on tip 5e0d32fc
 REV7 consolidate                  YES (Marco "si" + Guardian CONSOLIDATE_AUTHORIZED)
 G1b official tip                  YES — product code tip c81d2f22 (= spike c7f05871 tree)
+latest docs stamp                 31e6203a (HANDOFF only)
 0.25 dB / max / R                 intoccati (immutables restated)
 stationary R measure              8cf38625 MEASURE-PASS max|Δ|=0.1915 (~23% headroom)
 binding peak (closing cells)      level (broadband RMS / mid_level_dbfs) — watch
@@ -49,8 +54,10 @@ sweep as closing. ≠ threshold shopping. ≠ training / Ableton ship.
 ### Tip
 | Tip | Commit | Nota |
 |-----|--------|------|
+| Current branch HEAD | **`31e6203a`** | docs-only handoff pin; no code/contract rewrite |
 | Official G1b code tip | **`c81d2f22`** | WS4 harness + evidence (product remap of spike) |
-| Docs stamp (HANDOFF/PLAN) | **`b2a61584`** | status pointers only; CONTRACT digests unchanged |
+| Docs stamp (HANDOFF latest) | **`31e6203a`** | current file pinned after G1b tip |
+| Docs stamp (PLAN + HANDOFF) | `b2a61584` | status pointers only; CONTRACT digests unchanged |
 | G1b promote series | `46ee74b9`…`c81d2f22` | cherry-pick a91ab7cf…c7f05871 onto product |
 | Spike source tip (retired-as-lab) | `c7f05871` | tree-identical G1b paths vs product tip |
 | CONTRACT REV7 CONSOLIDATED | **`6fbf5b59`** | CONTRACT A+B (body unchanged by tip) |
@@ -63,6 +70,7 @@ sweep as closing. ≠ threshold shopping. ≠ training / Ableton ship.
 | A3 falsification | `78da84dd` | FAIL honest — hypothesis falsified |
 | Code G1a | `a2186ac1` | F2/F3/F4; G1a CLOSE GO still holds |
 | Ancestor REV6 freeze | `6d254d0a` | superseded as living authority by REV7 |
+| Old Rev7 dedicated WT | `6899c7a0` | branch `docs/motore-v3-g1-rev7`; stale Rev6, not living authority |
 
 **Freeze digest (CONTRACT file SHA-256):**
 `9fd2dd875d25c12c8b2206b5f637bef998b905f77402309014299df0ee6d519f`
@@ -83,7 +91,8 @@ fixture_spec_sha256:
 6. **REV7 CONSOLIDATED** (A+B only) @ `6fbf5b59`.  
 7. Lock/SHA rehash @ `4efc7598`.  
 8. **Official G1b tip** @ `c81d2f22` (Marco "ok"; spike `c7f05871` promoted).  
-9. **≠** G1 PASS · **≠** reopen A3 · 0.25 / max / R intact · Source 0-diff.
+9. Docs stamp @ `b2a61584`, handoff pin @ `31e6203a`.
+10. **≠** G1 PASS · **≠** reopen A3 · 0.25 / max / R intact · Source 0-diff.
 
 ### Stato fase
 - **G1a CLOSE: GO**; code tip `a2186ac1`.  
@@ -93,8 +102,24 @@ fixture_spec_sha256:
 - **REV7 consolidate: YES.**  
 - **Official G1b tip: YES** (`c81d2f22`; lab frontend on product).  
   ≠ G1 PASS; ≠ G1b evaluator CLOSE (G1c+). Spike WT retired-as-lab.  
+- **Current branch HEAD:** `31e6203a`, docs-only handoff pin above code tip.
+- **Pre-update worktree status:** no tracked diff; untracked agent mirror dirs
+  and `__pycache__` only. Current WIP updates this handoff plus CONTRACT §10.0
+  / §11.2 deterministic pins for G1c bootstrap/reductions.
 - Debt: F1 WAV, gate-8, G4 cross-SR LF detections, **non-stat SR-parity**,
   **stationary binding peak `level`**.
+
+### Anti-confusione per agenti esterni
+- Il worktree dedicato `motore-v3-g1-rev7-contract` e ancora a `6899c7a0`
+  (REV6). Non usarlo come autorita viva: la REV7 consolidata vive in
+  `feature/motore-v3-offline` / `docs/MOTORE_V3_G1_CONTRACT.md`.
+- `docs/MOTORE_V3_REV7_REMEASURE_R_FINAL.md` e una misura storica pre-option-C:
+  se letto da solo dice overall FAIL perche include `log_sweep` nel close.
+  L'autorita corrente e CONTRACT REV7 + `MOTORE_V3_G1_GATE4_SCOPE_CLAUSE.md`:
+  in G1 chiudono solo `multitone` e `pseudo_noise` stazionari su `R`;
+  `log_sweep` resta hashed/report-only e debito G1c/G1e.
+- `c81d2f22` e il tip codice G1b ufficiale. `31e6203a` e il tip branch attuale
+  perche aggiunge soltanto il pin documentale di handoff.
 
 ### Debt — parity cross-SR non-stazionaria
 Parity cross-SR non-stazionaria: non verificata a G1. Input parcheggiati:
@@ -111,7 +136,9 @@ non-stat / sweep debt.
 
 ### Catena tip (recente)
 ```text
-(this)    feat(v3): G1b WS4 … (official tip c81d2f22; +5 prior G1b commits)
+31e6203a  docs(v3): pin HANDOFF docs-stamp hash for G1b tip
+b2a61584  docs(v3): stamp official G1b tip after spike promote
+c81d2f22  feat(v3): G1b WS4 … (official G1b code tip; +5 prior G1b commits)
 7acde5c1  docs(v3): stamp REV7 rehash tip in handoff §A
 4efc7598  chore(v3): rehash metrology lock + SHA256SUMS after REV7
 6fbf5b59  docs(v3): consolidate REV7 — LF report-only + gate-4 scope (C)
@@ -139,8 +166,9 @@ non-stat / sweep debt.
 1. Consolidate A+B — done (`6fbf5b59`).  
 2. Rehash lock/SHA256SUMS — done (`4efc7598`).  
 3. Official G1b tip — **done** (`c81d2f22`; Marco "ok").  
-4. Next: Guardian/CC optional; **G1c** when Marco asks; non-stat/sweep PARKED.  
-5. Mai: 0.25→media/p95; ship/Source; training; claim G1 PASS; riaprire A3;
+4. Handoff/status pin — done (`31e6203a`).
+5. Next: Guardian/CC optional; **G1c** when Marco asks; non-stat/sweep PARKED.
+6. Mai: 0.25→media/p95; ship/Source; training; claim G1 PASS; riaprire A3;
    third REV7 amend; reopen POROUS on sweep to force G1 close.
 
 ### Vietato

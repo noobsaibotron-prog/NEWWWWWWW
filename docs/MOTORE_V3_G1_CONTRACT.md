@@ -51,6 +51,15 @@ di 0.25 / max / R.
 ≠ ACCEPT Ableton; ≠ reopen sweep come closing; ≠ threshold shopping;
 ≠ promozione spike `ml_v3/frontend/` a tip G1b.
 
+**Pin deterministici G1c (post-REV7, 2026-07-26):** le sezioni 10.0 e 11.2
+includono i sei pin deterministici per bootstrap, riduzioni annidate e power
+plan. Sono stati counter-checkati e **sono sigillati in SHA256SUMS** con questo
+commit; il digest del contratto in `ml_v3/fixtures/g1/SHA256SUMS` li include.
+La stringa di revisione resta REVISIONE 7: i pin chiudono operatori lasciati
+aperti da §10/§11.2, non modificano soglie, aggregatori, dominio di chiusura,
+`R` o gate. Il `metrology_lock` non cambia (lega il contratto per revisione,
+non per hash del contenuto).
+
 ## 1. Scopo e risultato atteso
 
 G1 congela il sistema di misura usato da tutte le fasi successive. Deve
@@ -646,6 +655,56 @@ infine macro-mediata con peso uguale fra gruppi. Numero di asset, segmenti,
 eventi o celle non aumenta il peso del gruppo. Le micro-medie vengono riportate
 solo come diagnostica.
 
+### 10.0 Pin deterministici per aggregazioni e bootstrap
+
+Questi pin chiudono gli operatori necessari a rendere vera la clausola "l'ordine
+dei file non puo cambiare i risultati". Valgono per G1c e per ogni evaluator
+successivo che produce report confrontabili byte-per-byte.
+
+1. **Ordine canonico dei gruppi.** Prima di qualunque aggregazione, bootstrap o
+   ricampionamento, i gruppi vengono ordinati per i byte UTF-8 di `group_id`
+   crescente. Ogni record derivato conserva tutti gli asset figli del gruppo
+   estratto. L'ordine originale di manifest, filesystem, prediction o annotation
+   record non entra mai nello stream RNG o nella riduzione.
+
+2. **Draw del bootstrap.** Il bootstrap a livello `group_id` usa
+   `numpy.random.Generator(numpy.random.PCG64(seed)).integers(0, G,
+   endpoint=False, dtype=np.int64)` sul vettore dei `G` gruppi gia ordinati. Quando
+   servono matrici di indici, gli indici sono generati in shape dichiarata e
+   consumati in ordine row-major C; `choice`, shuffle, iterazione su dict/set o
+   qualunque operatore equivalente non e ammesso come implementazione normativa.
+
+3. **Percentile e quantile.** Tutti i CI percentile e i quantili bootstrap usano
+   Hyndman-Fan type 7, equivalente a NumPy `method="linear"`: ordinare valori
+   finiti crescenti, porre `h = (N - 1) * q`, `lo = floor(h)`, `hi = ceil(h)` e
+   restituire `x[lo] + (h - lo) * (x[hi] - x[lo])` in binary64. Il CI 95% usa
+   esattamente `q = 0.025` e `q = 0.975`; il limite unilaterale usa esattamente
+   `q = 1 - alpha_plan`. Valori `NaN` o infiniti fanno fallire il report.
+
+4. **Ordine delle riduzioni annidate.** Tutti gli input numerici entrano nelle
+   riduzioni come IEEE-754 binary64 finiti. La media per
+   `evaluation_unit_id`, la media dentro `group_id`, la macro-media globale, la
+   macro per profilo/dominio e le varianze del piano di potenza usano sempre:
+   (a) record ordinati per chiave canonica
+   `(metric_id, profile, domain, group_id, evaluation_unit_id, asset_id,
+   segment_id, frame_or_band_id, event_id)` dove i campi mancanti valgono
+   stringa vuota; (b) prodotti `float64(weight) * float64(value)` calcolati in
+   quell'ordine; (c) l'operatore normativo `sum_pairwise64(values)`, non una
+   somma "pairwise" generica.
+
+   `sum_pairwise64` e definito cosi: se `N == 0` il chiamante deve produrre
+   `N/A` o report FAIL secondo la metrica; se `N == 1` restituisce
+   `float64(values[0])`; altrimenti `mid = floor(N/2)` e restituisce
+   `float64(sum_pairwise64(values[0:mid]) + sum_pairwise64(values[mid:N]))`.
+   Ogni addizione arrotonda a IEEE-754 binary64. Numeratore pesato e denominatore
+   dei pesi usano entrambi `sum_pairwise64` sul vettore gia ordinato.
+
+   Le varianze sono a due passate: prima la media con questa regola, poi la
+   somma `sum_pairwise64` degli scarti quadratici nello stesso ordine.
+   `numpy.sum`, `math.fsum`, Kahan, BLAS parallelo, reduction native su ordine
+   container, blocchi interni di libreria e `fast-math` sono vietati per gli
+   artefatti di gate anche quando producono differenze numeriche piccole.
+
 ### 10.1 Metriche tonali
 
 Per una prediction `p[120]` e target `t[120]`, i pesi sono:
@@ -911,7 +970,9 @@ trasla esattamente dell'effetto minimo dichiarato; non usa la media favorevole
 osservata come alternativa. La potenza e la quota di simulazioni che supera il
 critico unilaterale sotto la distribuzione centrata nulla ad `alpha_plan`. Si
 sceglie il primo `n` con potenza almeno 0.90; seed base `20260719`, derivato per
-metrica con SHA-256 del suo ID canonico.
+metrica con SHA-256 del suo ID canonico. La derivazione e:
+`metric_seed = uint64be(first8(SHA256(b"20260719" + b"\x00" + metric_id_utf8)))`;
+`metric_seed` e passato a `numpy.random.PCG64` come seed intero.
 
 Per clean actionable rate, `n_power` e il primo `n` per cui il test binomiale
 esatto unilaterale di `p >= 0.02` ha size non oltre `alpha_plan` e potenza almeno
@@ -934,19 +995,41 @@ alpha_nb = max(0, (sample_variance(counts) - mu_pilot)
                   / max(mu_pilot**2, 1e-12))
 ```
 
-`sample_variance` usa il denominatore `n - 1`. Si fissa sempre la media
-alternativa a `lambda = 0.25`, senza usare la media osservata. Per ogni
-`n >= 149`, 5000 simulazioni PCG64 estraggono `n` rate di
-gruppo da `Gamma(shape=1/alpha_nb, scale=0.25*alpha_nb)` e poi conteggi
-`Poisson(rate)`; con `alpha_nb = 0` usano direttamente `Poisson(0.25)`. Ogni
-simulazione calcola il limite Poisson esatto e, con 2000 resample interni dei
-gruppi, il quantile `1 - alpha_plan` della media dei conteggi da un minuto.
-Entrambi i limiti sono quindi espressi in eventi/minuto. Il seed interno e
-derivato dai primi 8 byte di
-`SHA256(metric_id + NUL + outer_simulation_index)`. Si sceglie il primo `n` per
-cui almeno il 90% delle simulazioni soddisfa entrambi i limiti `<= 0.5`. Il gate
-finale usa il limite esatto e 10000 resample per gruppi con il seed evaluator
-sul pool reale. Con zero eventi il limite Poisson simultaneo e
+`sample_variance` usa il denominatore `n - 1` e la regola di somma della
+sezione 10.0. Si fissa sempre la media alternativa a `lambda = 0.25`, senza
+usare la media osservata. Per ogni `n >= 149`, 5000 simulazioni PCG64 estraggono
+`n` rate di gruppo da `Gamma(shape=1/alpha_nb, scale=0.25*alpha_nb)` e poi
+conteggi `Poisson(rate)`; con `alpha_nb = 0` usano direttamente
+`Poisson(0.25)`. Ogni simulazione calcola il limite Poisson esatto e, con 2000
+resample interni dei gruppi, il quantile `1 - alpha_plan` della media dei
+conteggi da un minuto. Entrambi i limiti sono quindi espressi in eventi/minuto.
+
+Pin specifici della simulazione false-events:
+
+5. **Seed interno.** `outer_simulation_index` e zero-based (`0..4999`) e viene
+   serializzato come unsigned 64-bit big-endian. Il seed interno e l'intero
+   unsigned 64-bit big-endian formato dai primi 8 byte di
+   `SHA256(metric_id_utf8 + b"\x00" + outer_index_u64be)`, passato a
+   `numpy.random.PCG64`. Codifiche ASCII decimali, little-endian, 32-bit o
+   conversioni tramite stringa sono vietate.
+
+6. **Ordine dei draw annidati.** Per ogni `(metric_id, n)` si inizializza un
+   solo RNG esterno da `metric_seed` e si iterano gli
+   `outer_simulation_index = 0..4999` in ordine crescente. Dentro ciascuna
+   simulazione, se `alpha_nb > 0`, si consumano prima tutti i `n` draw Gamma in
+   ordine di indice gruppo `0..n-1`; poi si consumano tutti i `n` draw Poisson
+   applicati alle rate nello stesso ordine. Se `alpha_nb = 0`, si consumano
+   direttamente tutti i `n` draw `Poisson(0.25)` nello stesso ordine. E vietato
+   interlacciare Gamma e Poisson per gruppo. I 2000 resample interni usano il
+   seed interno sopra, generano una matrice `np.int64` di indici
+   `integers(0, n, endpoint=False)` con shape `(2000, n)`, consumata row-major;
+   ogni media di riga usa `sum_pairwise64` come definito nella sezione 10.0 e
+   il quantile usa il pin type-7 della sezione 10.0.
+
+Si sceglie il primo `n` per cui almeno il 90% delle simulazioni soddisfa
+entrambi i limiti `<= 0.5`. Il gate finale usa il limite esatto e 10000
+resample per gruppi con il seed evaluator sul pool reale, sempre con i pin
+della sezione 10.0. Con zero eventi il limite Poisson simultaneo e
 `-log(alpha_plan) / n`, mai zero. La dimensione del pool clean-safety e il
 massimo fra 149, `n_power` binomiale e i tre `n_power` false-events; lo stesso
 pool deve soddisfare tutti e quattro i gate.

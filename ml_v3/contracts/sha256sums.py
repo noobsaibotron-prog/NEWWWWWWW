@@ -40,9 +40,11 @@ __all__ = [
 # Repo-root-relative path of the committed sums file (not self-hashed).
 G1A_SHA256SUMS_RELPATH = "ml_v3/fixtures/g1/SHA256SUMS"
 
-# Precomputed contract tripwire (PLAN durable debt; freeze @ 6fbf5b59).
+# Precomputed contract tripwire (PLAN durable debt). Reseal @ REV7 + G1c
+# determinism pins (§10.0 / §11.2); thresholds, aggregator, closing domain,
+# `R` and gates unchanged by those pins.
 CONTRACT_DOC_SHA256_TRIPWIRE = (
-    "9fd2dd875d25c12c8b2206b5f637bef998b905f77402309014299df0ee6d519f"
+    "1c18ec569e9db40ed9577c3553009735837a26f110dd6148c084a8b1294f7bf9"
 )
 
 # Minimum G1a T5+M2+F3 coverage: contract doc + schema_registry_v1 (normative
