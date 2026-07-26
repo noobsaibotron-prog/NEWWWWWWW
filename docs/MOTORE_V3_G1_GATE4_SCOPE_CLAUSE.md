@@ -58,10 +58,18 @@ scope clause — not two REV7s. **Do not consolidate REV7 in this commit.**
 **Parity cross-SR non-stazionaria: non verificata a G1.** Input parcheggiati:
 mandato `SWEEP_METROLOGY_REDESIGN` + proposta S1/S2 (30 finding chiusi, ~15
 aperti al park). Da riprendere a G1c/G1e quando esiste un osservabile. Non è
-un difetto noto del frontend: gli spettri grezzi dei due percorsi coincidono a
-report lab ~0.03 dB on signal-bearing bins (cite:
-`docs/MOTORE_V3_G1_CONTRACT_REV7_CANDIDATE.md` — 44.1→48 resampled audio agree
-to ~0.03 dB on signal-bearing bins).
+un difetto noto del frontend: Independent CC su WS4 (spike tip `c7f05871`)
+ha misurato accordo ~0.03 dB sulle bin con segnale tra audio 48 kHz diretto e
+44.1→48 ricampionato (evidenza lab — **cite only**, non criterio / non soglia).
+
+**Stationary close — binding peak `level` (watch):** sulla misura di chiusura
+autoritativa `docs/MOTORE_V3_G1_STATIONARY_R_CLOSING_MEASURE.md` @ `8cf38625`,
+il peak in tutte e quattro le celle di chiusura è broadband **`level`**
+(MAIN-window RMS / `mid_level_dbfs`), non shape/psd per-banda. Causa fisica
+plausibile: bordo di passabanda del resampler vicino a ~20 kHz. È l’avvicinamento
+più stretto a 0.25 nel closing set (max|Δ|=0.1915 → ~23% headroom) — **watch
+item** per il futuro; **non** FAIL oggi. Distinto dal debito non-stat /
+sweep parcheggiato sopra.
 
 ---
 

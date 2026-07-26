@@ -32,6 +32,12 @@ Closing set = stationary assets only, evaluated on geometric `R`
 **Stationary closing aggregate:** `max|Δ| = 0.1915 dB` ≤ 0.25 → **PASS**  
 (worst cell: multitone@44100, peak field `level`).
 
+**Margin honesty:** headroom vs 0.25 is **~23%** (0.1915 / 0.25), not a
+multi-× “comfortable” margin. Prior incomplete lab scripts that omitted
+`mid_level_dbfs` / `side_level_dbfs` (~0.06 / ~0.02 on multitone) are **not**
+authoritative — §13.2 includes those scalars in the gate domain; peak field
+on all four closing cells is broadband **`level`**.
+
 Byte-reproduced vs prior formal R remeasure (`docs/MOTORE_V3_REV7_REMEASURE_R_FINAL.md`
 @ `b3d7f71b` stationary rows). No threshold or aggregator change.
 

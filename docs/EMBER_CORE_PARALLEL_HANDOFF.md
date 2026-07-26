@@ -1,6 +1,6 @@
 # Ember Core / Motore v3 — Handoff AUTOSUFFICIENTE per agenti esterni
 
-**Ultimo aggiornamento:** 2026-07-26 21:05 (UTC+2)  
+**Ultimo aggiornamento:** 2026-07-26 21:10 (UTC+2)  
 **Destinatario:** agente esterno **senza terminale / senza git**.  
 **Questo file** = quadro + testo completo snapshot.
 
@@ -16,7 +16,7 @@
 - Prodotto: **AI Equalizer Pro**. **Ember Core** = Motore / misura / AI.
 - Lane: lab **Motore v3 offline** (`feature/motore-v3-offline`). Spike G1b su branch/worktree separato.
 
-### Fotografia congelata (REV7 candidate packaged; awaiting Guardian second GO)
+### Fotografia congelata (REV7 candidate; Guardian 2nd GO on `5e0d32fc`; hygiene)
 ```text
 G1a CLOSE                         GO
 REV6                              authority corrente (freeze 6d254d0a)
@@ -26,10 +26,12 @@ non-stat SR-parity                named G1c/G1e requirement (parked input)
 A3                                ARCHIVED: SOUND + FALSIFIED + RETIRED AS SOLUTION
 SWEEP_METROLOGY_REDESIGN proposal PARKED — G1c/G1e input debt (~9b8f8305)
 REV7 candidate                    PACKAGED (LF report-only + gate-4 scope C)
-REV7 consolidate                  NO — needs Guardian second GO
+Guardian second GO                LANDED on tip 5e0d32fc (≠ reopen)
+REV7 consolidate                  NO — awaits Marco-authorized consolidate
 G1b official tip                  NON esiste
 0.25 dB / max / R                 intoccati
-stationary R measure              8cf38625 MEASURE-PASS max|Δ|=0.1915
+stationary R measure              8cf38625 MEASURE-PASS max|Δ|=0.1915 (~23% headroom)
+binding peak (closing cells)      level (broadband RMS / mid_level_dbfs) — watch
 ```
 
 **Decisione Marco — option (C):** stop POROUS litigation on
@@ -38,15 +40,16 @@ Gate-4 closing set in G1 = stationary on geometric `R`. Non-stat → G1c/G1e.
 **One** REV7 candidate packaged:
 `docs/MOTORE_V3_G1_CONTRACT_REV7_CANDIDATE.md` = LF report-only
 (`71159469`) **+** gate-4 scope C (`31216df4`); evidence stationary measure
-`8cf38625`. **Ready for Guardian second GO — not self-GO.** ≠ G1 PASS.
-≠ CONTRACT/lock/SHA consolidate in the packaging commit.
+`8cf38625`. **Guardian second GO landed on `5e0d32fc`** — hygiene (honest
+margin + level-peak debt) before Marco-authorized consolidate; **≠** reopen
+GO. ≠ G1 PASS. ≠ CONTRACT/lock/SHA consolidate in hygiene commits.
 
 ### Tip
 | Tip | Commit | Nota |
 |-----|--------|------|
-| HEAD (docs living) | *(this REV7 candidate package)* | ready for Guardian 2nd GO; ≠ consolidate |
-| REV7 candidate | `docs/MOTORE_V3_G1_CONTRACT_REV7_CANDIDATE.md` | exactly 2 amends: LF ∉R + scope C |
-| Stationary R closing measure | `8cf38625` | max\|Δ\|=0.1915 dB PASS on R |
+| HEAD (docs living) | *(hygiene after 2nd GO)* | honest margin + level-peak debt; ≠ consolidate |
+| REV7 candidate package | **`5e0d32fc`** | Guardian 2nd GO tip; LF ∉R + scope C |
+| Stationary R closing measure | `8cf38625` | max\|Δ\|=0.1915 dB PASS on R (~23% headroom; peak=`level`) |
 | Gate-4 scope clause | **`31216df4`** | stationary close; park non-stat |
 | Parked proposal tip | **`9b8f8305`** | SWEEP_METROLOGY_REDESIGN — G1c/G1e debt |
 | LF report-only clause | **`71159469`** | joins scope clause in one REV7 |
@@ -64,27 +67,40 @@ Gate-4 closing set in G1 = stationary on geometric `R`. Non-stat → G1c/G1e.
 4. A/A3 stamped → falsified → **RETIRED AS SOLUTION**.  
 5. SWEEP_METROLOGY_REDESIGN drafted; POROUS litigation **stopped**.  
 6. **Option (C)** — scope clause `31216df4`; proposal **PARKED**.  
-7. Stationary R closing measure `8cf38625` — MEASURE-PASS (0.1915 dB).  
-8. **REV7 candidate packaged** (LF + scope C) — awaiting Guardian second GO.  
-9. **≠** G1 PASS · **≠** consolidate · **≠** G1b tip · 0.25 / max / R intact.
+7. Stationary R closing measure `8cf38625` — MEASURE-PASS (0.1915 dB; ~23% headroom; peak=`level`).  
+8. **REV7 candidate packaged** (LF + scope C) @ `5e0d32fc` — Guardian second GO **landed**.  
+9. Hygiene: honest margin + binding-`level` debt (this tip) — **≠** reopen GO.  
+10. **≠** G1 PASS · **≠** consolidate · **≠** G1b tip · 0.25 / max / R intact.
 
 ### Stato fase
 - **G1a CLOSE: GO**; code tip `a2186ac1`.  
 - **A3: ARCHIVED**; ACTIVE closed. **No reopen.**  
 - **SWEEP proposal: PARKED** — G1c/G1e input debt.  
-- **REV7 candidate: PACKAGED** — consolidate **NO** until Guardian second GO.  
+- **REV7 candidate: PACKAGED** @ `5e0d32fc`; Guardian second GO **landed**.  
+- **Consolidate: NO** until Marco-authorized.  
 - Spike ≠ official G1b tip.  
-- Debt: F1 WAV, gate-8, G4 cross-SR LF detections, **non-stat SR-parity** (below).
+- Debt: F1 WAV, gate-8, G4 cross-SR LF detections, **non-stat SR-parity**,
+  **stationary binding peak `level`** (below).
 
 ### Debt — parity cross-SR non-stazionaria
 Parity cross-SR non-stazionaria: non verificata a G1. Input parcheggiati:
 mandato SWEEP_METROLOGY_REDESIGN + proposta S1/S2 (tip ~`9b8f8305`).
-Da riprendere a G1c/G1e. Spettri grezzi lab ~0.03 dB on signal-bearing bins
-(cite prior REV7 candidate / measure chain).
+Da riprendere a G1c/G1e. Independent CC WS4 (spike `c7f05871`): accordo
+~0.03 dB sulle bin con segnale 48k vs 44.1→48 — **evidence cite only**,
+non criterio.
+
+### Debt — stationary closing binding peak `level` (watch)
+Su `8cf38625`, peak in tutte e quattro le celle di chiusura = broadband
+**`level`** (MAIN-window RMS / `mid_level_dbfs`), non shape/psd per-banda.
+Causa plausibile: bordo passabanda resampler ~20 kHz. Closest approach to
+0.25 (0.1915 → ~23% headroom) — watch item; **not** FAIL today. **Distinct**
+from parked non-stat / sweep debt. Incomplete scripts omitting
+`mid_level_dbfs` (~0.06/0.02) are **not** authoritative.
 
 ### Catena tip (recente)
 ```text
-(this)    docs(v3): package REV7 candidate — LF report-only + gate-4 scope (C)  ← HEAD
+(this)    docs(v3): debt level-peak watch; honest margin; fix 0.03 cite  ← HEAD
+5e0d32fc  docs(v3): package REV7 candidate — LF report-only + gate-4 scope (C)  ← 2nd GO
 8cf38625  docs(v3): stationary R closing measure under gate-4 scope (C)
 31216df4  docs(v3): G1 gate-4 scope — stationary close; park non-stat (C)
 9b8f8305  docs(v3): kill source_time_selected := mirror; fix RIDGE claim; P32
@@ -98,7 +114,7 @@ b3d7f71b  docs: final REV7 R remeasure (stat PASS, sweep FAIL)
 ### Working tree (this branch)
 | Path | Stato |
 |------|--------|
-| Motore docs | living @ REV7 candidate package; freeze untouched |
+| Motore docs | living @ hygiene after 2nd GO; freeze untouched |
 | `ml_v3/frontend/` + spike test | untracked lab spike ≠ tip |
 | agents / .cursor | untracked |
 
@@ -107,26 +123,30 @@ b3d7f71b  docs: final REV7 R remeasure (stat PASS, sweep FAIL)
 |------|--------|
 | G1a CLOSE | **GO** |
 | Option (C) / gate-4 scope | **DECIDED** @ `31216df4` |
-| Stationary closing set on `R` | **MEASURE-PASS** @ `8cf38625` (max\|Δ\|=0.1915) |
-| REV7 candidate package | **PACKAGED** — `MOTORE_V3_G1_CONTRACT_REV7_CANDIDATE.md` |
+| Stationary closing set on `R` | **MEASURE-PASS** @ `8cf38625` (max\|Δ\|=0.1915; ~23% headroom; peak=`level`) |
+| REV7 candidate package | **PACKAGED** @ `5e0d32fc` — `MOTORE_V3_G1_CONTRACT_REV7_CANDIDATE.md` |
+| Guardian second GO | **LANDED** on `5e0d32fc` |
 | Sweep proposal | **PARKED** (G1c/G1e debt; no redteam now) |
 | A3 | **ARCHIVED** SOUND+FALSIFIED+RETIRED |
-| Guardian second GO / consolidate / G1 PASS / G1b tip | **NO** (next = Guardian) |
+| Consolidate / G1 PASS / G1b tip | **NO** (next = Marco OK → consolidate) |
 
 ### Sequenza restante
 1. Scope clause + stationary measure — **done**.  
-2. **One** REV7 candidate package — **done** (this tip): LF (`71159469`) +
+2. **One** REV7 candidate package — **done** @ `5e0d32fc`: LF (`71159469`) +
    scope C (`31216df4`); evidence `8cf38625`.  
-3. **Guardian second GO** on the candidate → **consolidate** → **rehash**
-   lock/SHA256SUMS → **official G1b tip**.  
-4. Non-stat / sweep remains **PARKED** until G1c/G1e.  
-5. Mai: 0.25→media/p95; ship/Source; training; claim G1 PASS; riaprire A3;
-   amend CONTRACT freeze without Guardian GO; self-GO.
+3. **Guardian second GO** — **done** on `5e0d32fc`.  
+4. Hygiene (honest margin + level-peak debt) — **this tip**.  
+5. Marco-authorized **consolidate** → **rehash** lock/SHA256SUMS →
+   **official G1b tip**.  
+6. Non-stat / sweep remains **PARKED** until G1c/G1e.  
+7. Mai: 0.25→media/p95; ship/Source; training; claim G1 PASS; riaprire A3;
+   amend CONTRACT freeze without GO; self-GO; reopen POROUS on sweep.
 
 ### Vietato
-G1 PASS; REV7 consolidate prima del secondo Guardian GO; tip G1b ufficiale;
+G1 PASS; REV7 consolidate senza OK Marco; tip G1b ufficiale;
 riaprire ACTIVE A3/A4; riprendere POROUS / redteam sulla sweep proposal ora;
-toccare 0.25 / max / R / lock / SHA256SUMS in packaging commits; ship Ableton.
+toccare 0.25 / max / R / lock / SHA256SUMS in hygiene/packaging commits;
+ship Ableton.
 
 ---
 

@@ -106,9 +106,10 @@ Normative intent for future consolidate (verbatim spirit of the six points):
 | Stationary `R` MEASURE-PASS | `8cf38625` / `docs/MOTORE_V3_G1_STATIONARY_R_CLOSING_MEASURE.md` | closing set max\|Δ\| = **0.1915** dB ≤ 0.25 (stat only on `R`) |
 | Prior formal R remeasure | `b3d7f71b` / `docs/MOTORE_V3_REV7_REMEASURE_R_FINAL.md` | byte-aligned stationary rows |
 
-**Interpretation:** MEASURE-PASS under option C supports packaging readiness for
-Guardian review. It does **not** authorize G1 PASS, ACCEPT, consolidate, or
-official G1b tip by itself.
+**Interpretation:** MEASURE-PASS under option C supported packaging for Guardian
+second GO (landed on package tip `5e0d32fc`). Headroom is ~23% (0.1915 vs
+0.25) — not multi-×. It does **not** authorize G1 PASS, ACCEPT, consolidate,
+or official G1b tip by itself.
 
 ---
 
@@ -122,6 +123,17 @@ litigation to force a G1 close.
 
 Debt mirror: **Parity cross-SR non-stazionaria: non verificata a G1.**
 
+### 5.1 Stationary closing — binding peak `level` (watch; ≠ FAIL)
+
+Authoritative closing measure `docs/MOTORE_V3_G1_STATIONARY_R_CLOSING_MEASURE.md`
+@ `8cf38625`: aggregate max|Δ| = **0.1915** ≤ 0.25 (**MEASURE-PASS**);
+headroom ~**23%** (not multi-×). Peak field on all four closing cells =
+broadband **`level`** (MAIN-window RMS / `mid_level_dbfs`), not per-band
+shape/psd. Plausible cause: resampler passband edge near ~20 kHz. Closest
+approach to 0.25 in the closing set — **watch item** for future; not a FAIL
+today. **Distinct** from parked non-stat / sweep debt above. Incomplete lab
+scripts that omitted `mid_level_dbfs` are not authoritative.
+
 ---
 
 ## 6. Explicit non-claims (this commit / this file)
@@ -131,24 +143,25 @@ Debt mirror: **Parity cross-SR non-stazionaria: non verificata a G1.**
 ≠ REV7 consolidated into CONTRACT freeze
 ≠ metrology_lock / SHA256SUMS updated
 ≠ official G1b tip
-≠ Guardian second GO (this package is ready FOR that GO — not a self-GO)
+Guardian second GO: LANDED on package tip 5e0d32fc (≠ self-GO; ≠ reopen)
 ```
 
 Frozen technical authority remains CONTRACT @ `6d254d0a` (REV6) until a later
-Guardian consolidate GO lands a coordinated CONTRACT + lock + SHA256SUMS
+Marco-authorized consolidate lands a coordinated CONTRACT + lock + SHA256SUMS
 update.
 
 ---
 
 ## 7. Sequence remaining
 
-1. **Guardian second GO** on this candidate package (docs-verify + evidence).
-2. **Consolidate** the two amendments into `docs/MOTORE_V3_G1_CONTRACT.md`
-   (single REV7 — not REV7a/b).
-3. **Rehash** metrology lock + SHA256SUMS (coordinated; never silent).
-4. **Official G1b tip** only after 1–3 (spike ≠ tip until then).
+1. **Guardian second GO** on this candidate package — **done** @ `5e0d32fc`.
+2. Hygiene (honest margin + binding-`level` debt) — docs-only; ≠ reopen GO.
+3. Marco-authorized **consolidate** the two amendments into
+   `docs/MOTORE_V3_G1_CONTRACT.md` (single REV7 — not REV7a/b).
+4. **Rehash** metrology lock + SHA256SUMS (coordinated; never silent).
+5. **Official G1b tip** only after 3–4 (spike ≠ tip until then).
 
-Until steps 1–3 complete: **REV7 consolidate = NO.** Product gate-4 claims
+Until steps 3–4 complete: **REV7 consolidate = NO.** Product gate-4 claims
 must not assert G1 PASS under this candidate alone.
 
 ---
