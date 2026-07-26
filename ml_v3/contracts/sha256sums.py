@@ -106,12 +106,6 @@ def g1a_sha256sums_audio_required() -> tuple[str, ...]:
 G1A_SHA256SUMS_AUDIO_REQUIRED = g1a_sha256sums_audio_required
 
 
-def _g1c_required_present(root: Path) -> tuple[str, ...]:
-    """G1c required relpaths that exist in the tree (bind once present)."""
-    return tuple(
-        rel for rel in G1C_SHA256SUMS_REQUIRED if (Path(root) / rel).is_file())
-
-
 def build_sha256sums_entries(
     root: Path,
     relative_paths: tuple[str, ...] | list[str],
@@ -149,10 +143,10 @@ def render_g1a_sha256sums(root: Path | None = None) -> str:
         listed = tuple(parse_sha256sums(sums_path.read_text(encoding="utf-8")))
         # Ensure minimum coverage is always present even if a path was dropped.
         paths = tuple(dict.fromkeys(
-            (*G1A_SHA256SUMS_COVERED, *_g1c_required_present(root), *listed)))
+            (*G1A_SHA256SUMS_COVERED, *G1C_SHA256SUMS_REQUIRED, *listed)))
     else:
         paths = tuple(dict.fromkeys(
-            (*G1A_SHA256SUMS_COVERED, *_g1c_required_present(root))))
+            (*G1A_SHA256SUMS_COVERED, *G1C_SHA256SUMS_REQUIRED)))
     entries = build_sha256sums_entries(root, paths)
     contract_digest = entries["docs/MOTORE_V3_G1_CONTRACT.md"]
     if contract_digest != CONTRACT_DOC_SHA256_TRIPWIRE:
@@ -225,8 +219,7 @@ def verify_g1a_sha256sums(root: Path | None = None) -> dict[str, str]:
         raise Sha256SumsError(
             "SHA256SUMS missing required audio inventory: "
             f"{missing_audio}")
-    missing_g1c = [
-        path for path in _g1c_required_present(root) if path not in entries]
+    missing_g1c = [path for path in G1C_SHA256SUMS_REQUIRED if path not in entries]
     if missing_g1c:
         raise Sha256SumsError(
             f"SHA256SUMS missing required G1c inventory: {missing_g1c}")

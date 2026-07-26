@@ -17,6 +17,7 @@ from ml_v3.contracts.sha256sums import (
     CONTRACT_DOC_SHA256_TRIPWIRE,
     G1A_SHA256SUMS_COVERED,
     G1A_SHA256SUMS_RELPATH,
+    G1C_SHA256SUMS_REQUIRED,
     Sha256SumsError,
     build_sha256sums_entries,
     g1a_sha256sums_audio_required,
@@ -200,6 +201,32 @@ class G1aSha256sumsFixtureTests(unittest.TestCase):
             with self.assertRaises(Sha256SumsError) as ctx:
                 verify_g1a_sha256sums(troot)
             self.assertIn("missing required audio inventory", str(ctx.exception))
+
+    def test_verify_rejects_g1c_registry_file_and_sums_line_stripped(self):
+        """Removing both the registry artifact and its SHA line must not PASS."""
+        root = repo_root_from_here()
+        full = load_g1a_sha256sums()
+        stripped = {
+            path: digest
+            for path, digest in full.items()
+            if path not in G1C_SHA256SUMS_REQUIRED
+        }
+        self.assertEqual(len(full), 49)
+        self.assertEqual(len(stripped), 48)
+        with tempfile.TemporaryDirectory() as tmp:
+            troot = Path(tmp)
+            for rel, digest in stripped.items():
+                absolute = troot / rel
+                absolute.parent.mkdir(parents=True, exist_ok=True)
+                src = root / rel
+                absolute.write_bytes(src.read_bytes())
+                self.assertEqual(sha256_of_file(absolute), digest)
+            sums_path = troot / G1A_SHA256SUMS_RELPATH
+            sums_path.parent.mkdir(parents=True, exist_ok=True)
+            sums_path.write_text(sha256sums_text(stripped), encoding="utf-8")
+            with self.assertRaises(Sha256SumsError) as ctx:
+                verify_g1a_sha256sums(troot)
+            self.assertIn("missing required G1c inventory", str(ctx.exception))
 
     def test_verify_detects_tampered_digest(self):
         root = repo_root_from_here()
