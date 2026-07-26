@@ -72,9 +72,18 @@ sweep as closing. ≠ threshold shopping. ≠ training / Ableton ship.
 | Ancestor REV6 freeze | `6d254d0a` | superseded as living authority by REV7 |
 | Old Rev7 dedicated WT | `6899c7a0` | branch `docs/motore-v3-g1-rev7`; stale Rev6, not living authority |
 
-**Freeze digest (CONTRACT file SHA-256):**
-`9fd2dd875d25c12c8b2206b5f637bef998b905f77402309014299df0ee6d519f`
-(CONTRACT tip commit `6fbf5b59` — **not** rewritten by G1b tip). Lock digest
+**CONTRACT file SHA-256 — due digest, non confonderli:**
+
+| | digest | stato |
+|---|---|---|
+| **VIVO** (autorità corrente) | `1c18ec569e9db40ed9577c3553009735837a26f110dd6148c084a8b1294f7bf9` | REV7 + pin determinismo G1c §10.0/§11.2, sigillato @ `52702f7b` |
+| storico REV7 A+B | `9fd2dd875d25c12c8b2206b5f637bef998b905f77402309014299df0ee6d519f` | @ `6fbf5b59`, prima dei pin — **non** più l'autorità viva |
+
+Il digest vivo è quello in `ml_v3/fixtures/g1/SHA256SUMS`, in
+`CONTRACT_DOC_SHA256_TRIPWIRE` e nel letterale indipendente del test T5: se i
+tre non coincidono, il contratto è stato modificato senza risigillo. La
+revisione resta REVISIONE 7 (i pin chiudono operatori, non toccano soglie,
+aggregatore, dominio di chiusura, `R` o gate). Lock digest
 after rehash:
 `a68e2a29beba12d2a2524f4988bd6545f3f2b4557a7beae72ba5f98d3a18456d`.
 adapter_mapping_sha256:
