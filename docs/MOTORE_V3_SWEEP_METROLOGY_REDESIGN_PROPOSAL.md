@@ -1,17 +1,18 @@
 # Motore v3 — Proposal: SWEEP METROLOGY REDESIGN (S1 + S2)
 
 **Suggested commit title:**  
-`docs(v3): close SWEEP redesign proposal full POROUS (CC+RT)`
+`docs(v3): pin executable veto+companions+menu on SWEEP redesign proposal`
 
 | Field | Value |
 |-------|--------|
-| **Status** | **PROPOSAL DRAFT** — document-only; **not** self-SOUND; CC + redteam POROUS closure applied; ready for **re-CC**; **MEASURE_AUTHORIZED NO** |
+| **Status** | **PROPOSAL DRAFT** — document-only; **not** self-SOUND; residual POROUS must-fix (re-CC + delta re-redteam) pinned executable; ready for **re-CC**; **MEASURE_AUTHORIZED NO** |
 | **≠** | G1 PASS · ACCEPT · measure · REV7 consolidate · G1b tip · CONTRACT/lock/T6 edit · A3 reopen · A4 ACTIVE |
 | **Date** | 2026-07-26 |
-| **Authority** | Marco **"ok"** on mandate open + this untainted proposal write |
+| **Authority** | Marco authorize docs-only residual POROUS must-fix (re-CC NO-GO) + interrupt merge delta re-redteam |
 | **Mandate** | `docs/MOTORE_V3_SWEEP_METROLOGY_REDESIGN_MANDATE.md` (incl. stationary≠trajectory pin) |
 | **A3 status (status only)** | **RETIRED AS SOLUTION** — `docs/MOTORE_V3_LOG_SWEEP_A3_ARCHIVE_STAMP.md` |
 | **Freeze structure (read-only)** | `docs/MOTORE_V3_G1_CONTRACT.md` REV6 @ `6d254d0a`; lock / `fixture_spec` **structure** as frozen quantities |
+| **Prior tip** | `800cf561` (full POROUS prose; still POROUS — formulas not executable / menu open) |
 
 ---
 
@@ -32,9 +33,12 @@ It did **not** open, cite, or use:
 
 - `docs/MOTORE_V3_LOG_SWEEP_A3_FALSIFICATION_MEASURE.md`;
 - any A3 FAIL dB values, margin tables, failing-band inventories, or peak-band
-  indices from prior runs;
+  indices from prior runs (incl. b106 / 6.435-class magnitudes);
 - any remeasure JSON/output;
 - Claude numeric conclusions as design inputs.
+
+Residual POROUS pins in this revision derive constants only from frozen
+`N` / hop / `fs_c` / floor −120 / triangular + Hann ENBW–main-lobe geometry.
 
 If a reviewer later finds latent gate-failure magnitudes steering a formula
 constant here, this proposal is **void** and must be rewritten by a fresh
@@ -108,16 +112,16 @@ Group delay is already folded into `source_time`. Cross-SR alignment remains on
 | ID | Decision | Status in this doc |
 |----|----------|--------------------|
 | D1 | S1 = **guard regions** on checkpoint closing domain, from aperture geometry only | **PROPOSED** |
-| D2 | S2 candidate = **analytic-trajectory ridge level (ATRL)** + mandatory companions / side gate | **PROPOSED** (alts **S2-ALT1/2/3** CC-open; not “A3”) |
-| D3 | Off-ridge **closing conjunction:** ATRL≤0.25 **AND** artifact-veto=false; report alone **does not** close | **LOCKED (fail-closed)** |
+| D2 | S2 closing package = **ATRL** + CONTRACT companions + artifact veto (+ side-gate hardness) | **LOCKED (menu freeze)** — alts **S2-ALT\*** archival only; not “A3” |
+| D3 | Off-ridge **closing conjunction:** ATRL_OK **∧** COMPANIONS_OK **∧** VETO_OK **∧** SIDE_GATE_OK; report alone **does not** close | **LOCKED (fail-closed)** |
 | D4 | Immutable: max aggregator; 0.25 dB; stationary `R`; report-only ∉`R`; no post-hoc mask; no threshold shopping | **LOCKED by mandate** |
 | D5 | No CONTRACT / lock / T6 / SHA256SUMS / `Source/` edit in this phase | **LOCKED** |
 | D6 | No measure; no ACCEPT / PASS / G1b tip claim | **LOCKED** |
 | D7 | REV7 = **one** future package after S1+S2 CC — not consolidated here | **LOCKED** |
 | D8 | \|CHK_CLOSE\| floor ≥7; empty set → FAIL; `T_MEM=0` locked | **LOCKED (fail-closed)** |
-| D9 | `mid_valid=false` / unmatched / empty activity-union → FAIL | **LOCKED (fail-closed)** |
+| D9 | `mid_valid=false` / unmatched / empty activity-union on required domains → FAIL | **LOCKED (fail-closed)** |
 | D10 | CHK_REPORT publish obligatory; TRANSPORT≠PASS if REPORT absent | **LOCKED (fail-closed)** |
-| D11 | S2/alt **menu freeze** before any measure authorization | **LOCKED** |
+| D11 | **Menu freeze:** single closing package = ATRL + §5.3 companions + §6.2 veto (+ §5.3 side-gate hardness). Open menu → no SOUND / no measure | **LOCKED** |
 
 ---
 
@@ -299,34 +303,66 @@ For each gate SR path \(\in\{44100,48000,96000\}\) and each
    the single scalar \(|L_{\mathrm{ref}}-L_{\mathrm{sr}}|\) at that
    `(CHK_CLOSE checkpoint × SR-vs-ref pair)`.
 
-**Activity union (fail-closed):** off-ridge / companion band sets use the
-**frozen** floor/union activity predicate (REV6 structure). If the
-activity-admitted set for a required comparison is **empty** when the
-predicate demands a non-empty admission (or both paths inactive when veto
-expects a defined polarity) → **FAIL**. Empty union is never treated as
-PASS-by-absence.
+**Activity / floor primitives (frozen REV6 — reused, not retuned):**
 
-**ATRL companions / side gate (mandatory — no silent drop):** ATRL level
-alone does **not** exhaust shape/prominence/side structure. Normative closing
-requires **either**:
+```text
+FLOOR_DB     = −120          # §6.1 clamp / lock ACTIVITY_FLOOR_DB
+ACTIVE(b)    ⇔  max(mid_psd_db_ref[b], mid_psd_db_sr[b]) > FLOOR_DB
+AT_FLOOR(x)  ⇔  x is the stored post-clamp float32 and x == FLOOR_DB
+ONE_SIDED(b) ⇔  AT_FLOOR(mid_psd_db_ref[b]) XOR AT_FLOOR(mid_psd_db_sr[b])
+```
 
-- **Companions (default menu):** preregistered scalar companions published and
-  gated with the same max / 0.25 dB / fail-closed missing rules, derived a
-  priori from frozen triangular geometry + floor (not from FAIL dB tables):
-  - **prominence:** \(L[b^\star] - \mathrm{median}(L[b])\) over activity-admitted
-    off-ridge bands (or FAIL if that set empty when prominence is required);
-  - **side asymmetry:** \(|L[b^\star_{-}]-L[b^\star_{+}]|\) for the two
-    nearest activity-admitted neighbour bands when they exist; if fewer than
-    two neighbours exist under frozen geometry at that \(f^\star\), publish
-    explicit `side_n/a` and route through the **side gate** below rather than
-    dropping the cell;
-- **or** an explicit **FAIL-closed side gate** (boolean): a preregistered
-  one-sided shape/side predicate from floor + triangular geometry that **must**
-  evaluate false for close; missing evaluation → FAIL.
+**Empty-union (fail-closed, menu-locked):** with veto + companions in the
+frozen closing menu, any **required** activity domain that evaluates empty →
+**FAIL**. In particular: ridge cell \(b^\star\) must satisfy `ACTIVE(b★)` on
+every close cell (else FAIL). Empty union is never PASS-by-absence.
+Polarity `ONE_SIDED(b)` is **total** on every band where veto/side-gate
+reads it: missing / NaN / Inf `mid_psd_db` → **FAIL** (not `false`).
 
-Silent drop of prominence / side / shape is **REJECT** (S2-R7). Companion
-thresholds remain 0.25 dB max where numeric; boolean side gate is separate
-and must not encode measured FAIL dB.
+**ATRL companions (mandatory AND — not OR-shopping; no custom median):**
+ATRL level alone does **not** close. Companions are the **CONTRACT §7**
+scalars at the analytic ridge band — not a custom off-ridge median
+prominence and not a “when prominence is required” escape:
+
+```text
+# Per (CHK_CLOSE × SR-vs-ref); aggregator = max; threshold = 0.25 dB
+SHAPE_OK       ⇔  |mid_shape_db_ref[b★] − mid_shape_db_sr[b★]| ≤ 0.25
+PROMINENCE_OK  ⇔  |mid_prominence_db_ref[b★] − mid_prominence_db_sr[b★]| ≤ 0.25
+
+# Side pair (CONTRACT side_* at b★) — polarity total:
+#   both side_valid=false → side pair not required (mid companions still AND)
+#   exactly one path side_valid → FAIL
+#   both side_valid → same 0.25 dB max on side_shape_db[b★] and
+#                     side_prominence_db[b★]
+SIDE_PAIR_OK   ⇔  (side polarity rule above)
+
+COMPANIONS_OK  ⇔  SHAPE_OK ∧ PROMINENCE_OK ∧ SIDE_PAIR_OK
+```
+
+Missing / null any required companion field → **FAIL**. Forbidden: replacing
+`mid_prominence_db[b★]` with \(L[b^\star]-\mathrm{median}(L[b])\) over
+off-ridge; forbidden: dropping prominence when an off-ridge set is empty.
+
+**Side gate (AND hardness only — never a substitute for companions):**
+
+```text
+# Triangular adjacency under frozen 120-band partition (§6.1)
+b− = b★ − 1
+b+ = b★ + 1
+# Close-eligible f★ maps to interior b★ under D1 geometry; if b★∈{0,119}
+# → FAIL (no silent neighbour collapse)
+
+SIDE_ASYM(path) = |mid_psd_db_path[b−] − mid_psd_db_path[b+]|
+
+SIDE_GATE_FIRE  ⇔  ONE_SIDED(b−) ∨ ONE_SIDED(b+)
+                 ∨  |SIDE_ASYM(ref) − SIDE_ASYM(sr)| > 0.25
+                 ∨  missing evaluation of any operand
+
+SIDE_GATE_OK    ⇔  SIDE_GATE_FIRE = false
+```
+
+Side gate **adds** hardness (`∧ SIDE_GATE_OK`). It does **not** replace
+`COMPANIONS_OK`. OR-shopping “companions **or** side gate” is **REJECT**.
 
 **ATRL level rule (component):**
 
@@ -354,19 +390,26 @@ stationary predicates; ATRL does **not** rewrite them.
 | Instrument-native | Uses the same fused `mid_psd_db` field the stationary gate already speaks. |
 | Minimal surface | Does not require a second FFT definition; leaves Hann/FFT/fusion untouched. |
 
-### 5.5 Alternatives (CC-open; same physics budget)
+### 5.5 Alternatives (archival only — menu frozen)
 
 Identifiers **S2-ALT1 / S2-ALT2 / S2-ALT3** only — **do not** use bare **A3**
 (collides with retired ACTIVE A3 solution lane).
 
-| Alt | Idea | When it might beat ATRL |
-|-----|------|-------------------------|
-| **S2-ALT1 — Dechirp then stationary PSD** | Demodulate by analytic phase law inside the Hann aperture; compare residual spectrum on a preregistered band set | If redteam shows single-band ATRL under-detects SR path differences distributed along the trajectory through the window |
-| **S2-ALT2 — Trajectory path integral** | Integrate fused power along \(f(t)\) for \(t\) in the selected aperture, Hann-weighted in time | If a single timestamp \(t^\star\) is judged too thin vs the joint window motion |
-| **S2-ALT3 — Main-lobe ridge neighbourhood** | ATRL band plus neighbours whose centres lie inside the frozen Hann main-lobe half-width of \(f^\star\) (width from §6 geometry, not from a run) | If single-band triangular support is thinner than the instrument’s spectral resolution at that \(f^\star\) |
+**D11 menu freeze (normative):** the **single** closing observable package is
+**ATRL + §5.3 companions + §6.2 artifact veto (+ §5.3 side-gate hardness)**.
+S2-ALT\* rows below are **archival / non-closing** under this proposal.
+Selecting an alt, leaving the menu open, or OR-shopping ATRL vs alt → **no
+SOUND / no measure authorization**. A later package swap requires a **fresh
+untainted amend** + CC — not a silent menu reopen.
 
-Any alt must still obey: max aggregator; 0.25 dB; no post-hoc mask; off-ridge
-policy (§6); no CONTRACT edit in this phase.
+| Alt | Idea | Status under D11 |
+|-----|------|------------------|
+| **S2-ALT1 — Dechirp then stationary PSD** | Demodulate by analytic phase law inside the Hann aperture; compare residual spectrum on a preregistered band set | **Archival** — not closing |
+| **S2-ALT2 — Trajectory path integral** | Integrate fused power along \(f(t)\) for \(t\) in the selected aperture, Hann-weighted in time | **Archival** — not closing |
+| **S2-ALT3 — Main-lobe ridge neighbourhood** | ATRL band plus neighbours whose centres lie inside the frozen Hann main-lobe half-width of \(f^\star\) (`MAIN_LOBE_HALF_BINS = 2` from periodic Hann; not from a run) | **Archival** — not closing |
+
+Any future alt amend must still obey: max aggregator; 0.25 dB; no post-hoc
+mask; off-ridge policy (§6); no CONTRACT edit in this phase.
 
 ### 5.6 S2 REJECT rows
 
@@ -378,9 +421,13 @@ policy (§6); no CONTRACT edit in this phase.
 | S2-R4 | Replace max with mean/p95; raise 0.25 dB | **REJECT** — immutable |
 | S2-R5 | Peak-pick \(b^\star\) from measured PSD argmax | **REJECT** — not analytic-trajectory; SR-dependent selection |
 | S2-R6 | Silent drop of off-ridge bands from all reporting | **REJECT** — see §6 |
-| S2-R7 | Silent drop of shape / prominence / side (ATRL level-only close) | **REJECT** — companions or side gate required |
+| S2-R7 | Silent drop of shape / prominence / side (ATRL level-only close) | **REJECT** — companions **∧** veto required |
 | S2-R8 | Close on ATRL report alone without artifact-veto conjunction | **REJECT** — see §6 |
 | S2-R9 | Encode artifact-veto / companions from measured FAIL dB tables | **REJECT** — contamination |
+| S2-R10 | Companions **or** side gate (OR-shopping); “when prominence required” escape | **REJECT** — AND only; CONTRACT prominence always |
+| S2-R11 | Custom median off-ridge prominence instead of `mid_prominence_db[b★]` | **REJECT** |
+| S2-R12 | Leave S2-ALT\* menu open / close on an alt without fresh amend | **REJECT** — D11 freeze ATRL+package |
+| S2-R13 | Label activity-admitted off-ridge \|Δ\|>0.25 as diagnostic-only (veto escape) | **REJECT** — see §6.2 |
 
 ---
 
@@ -395,26 +442,65 @@ For each close-eligible checkpoint frame, publish at least:
 - \(b^\star\), \(f^\star\), \(t^\star\);
 - `mid_psd_db[b^\star]` per SR path + `mid_valid`;
 - ATRL companions / side-gate fields (§5.3);
-- **off-ridge report:** max `|Δ|` (and argmax band) over
-  \(\{b : b\neq b^\star\}\) that are activity-admitted under the **frozen**
-  floor/union predicate (REV6 structure), labeled **diagnostic** when not
-  part of the veto predicate.
+- **off-ridge report:** max `|Δ|` (and argmax band) over activity-admitted
+  \(b\in B_{\mathrm{OFF}}\) — publish obligatory; **does not** escape
+  `OFF_RIDGE_DELTA_FIRE` when `|Δ| > 0.25` on any admitted cell (§6.2).
 
 **Missing any required off-ridge / companion / veto field → FAIL.**
 
-### 6.2 Artifact veto (normative closing conjunct)
+### 6.2 Artifact veto (normative closing conjunct — executable)
 
-**Artifact veto** is **not** an optional alternate. It is a **required closing
-conjunct**, written a priori from **floor + triangular geometry** only
-(examples of admissible form: one path activity-admitted far from \(b^\star\)
-while the other is at floor; polarity/support mismatch under frozen union).
-**Forbidden:** fitting veto thresholds or band lists from measured FAIL dB /
-margin tables.
+**Artifact veto** is **not** an optional alternate and **not** example-only.
+It is a **required closing conjunct**. Formula uses only frozen floor,
+triangular partition, and (for non-emptiness of off-ridge obligation) Hann
+ENBW / main-lobe geometry constants — **not** measured FAIL dB / band lists.
+
+**A priori geometry sets (definitions only):**
 
 ```text
-ARTIFACT_VETO_FIRE  ∈ {true, false}   # missing evaluation → FAIL
-VETO_OK             ⇔  ARTIFACT_VETO_FIRE = false
+# Frozen triangular partition (§6.1): unique b★ contains f★
+B_OFF(f★)  :=  { b ∈ {0,…,119} : b ≠ b★ }
+
+# Classical periodic Hann (structure only; not run-fitted):
+ENBW_HANN_BINS          = 1.5
+MAIN_LOBE_HALF_BINS     = 2          # centre → first null
+# Off-ridge obligation is non-vacuous: |B_OFF| = 119 ≥ ceil(ENBW) and
+# triangular supports exist outside b★. These constants justify the set;
+# they do **not** shrink the veto domain below B_OFF.
+
+B_GEOM(f★) := B_OFF(f★)             # full off-ridge index set
 ```
+
+**Executable veto (per CHK_CLOSE × SR-vs-ref cell; then OR over cells for fire):**
+
+```text
+OFF_RIDGE_DELTA_FIRE  ⇔
+    ∃ b ∈ B_OFF(f★) :
+        ACTIVE(b)
+        ∧  |mid_psd_db_ref[b] − mid_psd_db_sr[b]| > 0.25
+
+SUPPORT_POLARITY_MISMATCH  ⇔
+    ∃ b ∈ B_GEOM(f★) : ONE_SIDED(b)
+
+ARTIFACT_VETO_FIRE  ⇔
+    OFF_RIDGE_DELTA_FIRE
+    ∨  SUPPORT_POLARITY_MISMATCH
+    ∨  missing / NaN / Inf evaluation of any operand above
+
+VETO_OK  ⇔  ARTIFACT_VETO_FIRE = false
+```
+
+**Fail-closed pins:**
+
+- Missing veto fields → **FAIL** (never-fire / unevaluated veto **forbidden**).
+- Activity-admitted off-ridge with `|Δ| > 0.25` **cannot** be relabeled
+  diagnostic-only to escape FIRE — report may still publish argmax, but the
+  predicate above is closing.
+- `ONE_SIDED` polarity is **total** on `B_GEOM` (missing L → FIRE via missing
+  branch / FAIL). Empty activity-admitted off-ridge does **not** skip
+  polarity evaluation.
+- **Forbidden:** fitting veto thresholds, band lists, or `B_GEOM` shrinks
+  from measured FAIL dB / margin tables / b106 / 6.435.
 
 ### 6.3 Sweep TRANSPORT close (normative)
 
@@ -422,14 +508,16 @@ VETO_OK             ⇔  ARTIFACT_VETO_FIRE = false
 SWEEP_TRANSPORT_CLOSE  ⇔
     N_close ≥ 7
     ∧  ATRL_OK                         # §5.3 level ≤ 0.25 dB max
-    ∧  COMPANIONS_OR_SIDE_GATE_OK      # §5.3 — no silent drop
-    ∧  VETO_OK                         # artifact-veto false
+    ∧  COMPANIONS_OK                   # §5.3 CONTRACT shape/prominence (+ side pair)
+    ∧  VETO_OK                         # §6.2 artifact-veto false
+    ∧  SIDE_GATE_OK                    # §5.3 AND hardness only
     ∧  CHK_REPORT_PUBLISH_COMPLETE     # §4.5
-    ∧  no mid_valid=false / unmatched / empty-union FAIL (§5.3)
+    ∧  no mid_valid=false / unmatched / empty-union-on-required FAIL (§5.3)
 ```
 
-**Report alone does not close.** ATRL≤0.25 alone does not close. Veto must
-evaluate and be false. Any missing conjunct field → **FAIL**.
+**Report alone does not close.** ATRL≤0.25 alone does not close. Companions
+**and** veto **and** side-gate hardness all required. Any missing conjunct
+field → **FAIL**.
 
 ---
 
@@ -445,9 +533,9 @@ evaluate and be false. Any missing conjunct field → **FAIL**.
 | Threshold shopping | **forbidden** |
 | `T_MEM` | **0** locked (GD already in `source_time`) |
 | \|CHK_CLOSE\| | **≥7**; empty → FAIL |
-| Off-ridge close | ATRL_OK **∧** VETO_OK **∧** companions/side gate; report≠close |
+| Off-ridge close | ATRL_OK **∧** COMPANIONS_OK **∧** VETO_OK **∧** SIDE_GATE_OK; report≠close |
 | A3 / A4 ACTIVE | **closed** — A3 retired-as-solution; no A4 |
-| Menu freeze | S2 primary + **S2-ALT\*** menu **frozen before measure** |
+| Menu freeze | **ATRL + companions + veto (+ side-gate hardness)**; S2-ALT\* archival |
 
 ---
 
@@ -469,7 +557,7 @@ together:
 
 - geometric `R` + report-only ∉`R`,
 - S1 guard / `CHK_CLOSE` rule,
-- S2 observable (ATRL or CC-selected alt),
+- S2 observable package (ATRL + companions + veto; menu already frozen here),
 - off-ridge policy,
 - fixture / T6 consequences,
 - lock / hash update,
@@ -488,10 +576,10 @@ Partial consolidate (LF-only, stationary-only, S1-only, S2-only) remains
 | This proposal = product ACCEPT / gate PASS | **NO** |
 | This proposal = CONTRACT-SOUND by self-declaration | **NO** — re-CC required after this closure |
 | S1 guard direction | **PROPOSED** (D1) + cardinality / REPORT fail-closed |
-| S2 ATRL candidate | **PROPOSED** (D2) + companions/side gate; alts **S2-ALT1/2/3** |
-| Off-ridge vanishing | **NO** — close = ATRL_OK ∧ VETO_OK ∧ companions/side |
+| S2 package | **LOCKED menu** — ATRL + CONTRACT companions + executable veto (+ side-gate AND); S2-ALT\* archival |
+| Off-ridge vanishing | **NO** — close = ATRL_OK ∧ COMPANIONS_OK ∧ VETO_OK ∧ SIDE_GATE_OK |
 | Self-SOUND / MEASURE | **NO** — not self-SOUND; **MEASURE_AUTHORIZED NO** |
-| Next lab action | re-CC on full POROUS closure → menu freeze → only then measure auth |
+| Next lab action | re-CC on executable pins → only then measure auth (still NO until non-POROUS CC) |
 
 ---
 
@@ -502,13 +590,15 @@ Partial consolidate (LF-only, stationary-only, S1-only, S2-only) remains
 | P1 | CC | ATRL closing max Cartesian `{valid mid channels}` | **CLOSED** — one scalar \|L_ref−L_sr\| per (CHK_CLOSE × SR-vs-ref); L=mid_psd_db[b★] |
 | P2 | CC | Additive T_MEM CC-open shopping | **CLOSED** — normative `T_MEM=0`; non-zero needs fresh untainted amend |
 | P3 | CC | S2 alt id “A3” collides retired ACTIVE A3 | **CLOSED** — renamed **S2-ALT1/2/3** |
-| P4 | RT CRITICAL | Off-ridge report-alone / optional veto | **CLOSED** — close iff ATRL_OK ∧ VETO_OK; report≠close; missing→FAIL; veto a priori floor+geometry |
-| P5 | RT CRITICAL | Silent drop shape/prominence/side | **CLOSED** — companions **or** FAIL-closed side gate mandatory |
+| P4 | RT CRITICAL | Off-ridge report-alone / optional / example-only veto | **CLOSED** — executable `ARTIFACT_VETO_FIRE` §6.2; report≠close; missing→FAIL; no diagnostic escape |
+| P5 | RT / re-CC CRITICAL | Companions vs side-gate OR-shopping; custom median; “when required” escape | **CLOSED** — COMPANIONS_OK = CONTRACT `mid_shape_db`/`mid_prominence_db` (+ side pair) **∧** VETO_OK; side gate AND-hardness only |
 | P6 | RT HIGH | CHK_REPORT soft / TRANSPORT PASS without REPORT | **CLOSED** — §4.5 publish schema; missing→FAIL; TRANSPORT≠PASS if REPORT absent |
-| P7 | RT HIGH | mid_valid=false / unmatched / empty activity skipped | **CLOSED** — FAIL; activity union; empty set→FAIL |
+| P7 | RT HIGH | mid_valid=false / unmatched / empty activity skipped | **CLOSED** — FAIL; required empty-union→FAIL; polarity total |
 | P8 | RT HIGH | \|CHK_CLOSE\| vacuous / under-populated; T_MEM drift | **CLOSED** — \|CHK_CLOSE\|<7 or ∅ → FAIL; `T_MEM=0` locked |
-| P9 | RT MED | REPORT schema / menu freeze | **CLOSED** — §4.5 fields; D11 menu freeze before measure |
+| P9 | RT / re-CC CRITICAL | Open S2/alt menu | **CLOSED** — D11 freeze ATRL+package; S2-ALT\* archival |
 | P10 | RT MED | Deep LF-per-checkpoint aperture | **NOTE only** — §4.6 deferred; not redesigned here |
+| P11 | re-CC + delta RT | Never-fire / unevaluated veto | **CLOSED** — missing operands → FIRE/FAIL; formula pinned §6.2 |
+| P12 | delta RT | Empty-union soft when veto/companions in menu | **CLOSED** — required domains empty→FAIL; `ACTIVE(b★)` required |
 
 ---
 
@@ -516,11 +606,11 @@ Partial consolidate (LF-only, stationary-only, S1-only, S2-only) remains
 
 | Lane | Ask |
 |------|-----|
-| Independent CC / guardian | **Re-CC** full POROUS closure table (§11); no SOUND / no measure without fresh CC |
-| `ember-metrology-redteam` | Attack remaining false-PASS surface on conjunction + companions; do not wait on parallel lanes |
+| Independent CC / guardian | **Re-CC** executable pins (§5.3, §6.2, D11); no SOUND / no measure without fresh CC |
+| `ember-metrology-redteam` | Delta-attack veto/companions/menu pins; leftover NOTES only unless new CRITICAL |
 | `ember-phase-builder` | Idle on code until GO post-CC |
-| `ember-parity-lab` | No measure until authorized + menu freeze |
+| `ember-parity-lab` | No measure until authorized |
 
-**§A (one-line):** Full POROUS closure (CC+RT) in this doc only — still not self-SOUND; ready for re-CC; **MEASURE_AUTHORIZED NO**.
+**§A (one-line):** Executable veto + CONTRACT companions∧veto + ATRL menu freeze pinned — still not self-SOUND; ready for re-CC; **MEASURE_AUTHORIZED NO**.
 
 **END PROPOSAL — not self-SOUND.**
