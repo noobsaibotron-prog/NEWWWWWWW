@@ -1,103 +1,104 @@
 # Ember Core / Motore v3 — Handoff AUTOSUFFICIENTE per agenti esterni
 
-**Ultimo aggiornamento:** 2026-07-26 (UTC+2)  
+**Ultimo aggiornamento:** 2026-07-26 19:50 (UTC+2)  
 **Destinatario:** agente esterno **senza terminale / senza git**.  
-**Sezione A** = quadro vivo. **Sezione B** = snapshot (può essere stale; vince git + §A).
+**Questo file** = quadro + testo completo snapshot.
 
-> Non eseguire comandi se reviewer document-only.  
-> WAV: digests in SHA256SUMS + inventory — non dump binari.
+> Se ricevi solo questo markdown, hai tutto il necessario. **Non eseguire comandi.**  
+> WAV binari non dumpati: digests in SHA256SUMS + inventory.  
+> JSON evidence pesante della spike (`G1B_*` runner output) vive sul branch `spike/motore-v3-g1b-frontend` — qui i report docs-only.
 
 ---
 
 ## A. Quadro in chiaro
 
 ### Cos’è
-- Prodotto: **AI Equalizer Pro**.
-- **Ember Core** = nucleo misura / Motore / AI.
-- Lane: lab **Motore v3 offline** (non ship).
+- Prodotto: **AI Equalizer Pro**. **Ember Core** = Motore / misura / AI.
+- Lane: lab **Motore v3 offline** (`feature/motore-v3-offline`). Spike G1b su branch/worktree separato.
+
+### Fotografia congelata (mandate open)
+```text
+G1a CLOSE                         GO
+REV6                              authority corrente
+stationary parity su R            evidence positiva
+streaming spike                   feasibility positiva
+sweep full-vector                 FAIL
+A3                                falsificata come soluzione (archival CC/redteam in flight)
+REV7                              NON consolidated
+G1b official tip                  NON esiste
+0.25 dB                           intoccato
+```
+
+**Decisione:** smettere di far passare il test sweep full-vector corrente;
+stabilire se chiede una proprietà fisicamente ben definita. Stationary ≈ sì;
+evidenza chirp dice no — concentrare lì. Mandato:
+`docs/MOTORE_V3_SWEEP_METROLOGY_REDESIGN_MANDATE.md`.
 
 ### Tip
 | Tip | Commit | Nota |
 |-----|--------|------|
-| **HEAD** | **`04e47b39`** | A3 formula CLOSED (POROUS holes) — falsification measure next |
-| A3 falsification measure | *(this commit / see evidence)* | **FAIL honest** — `docs/MOTORE_V3_LOG_SWEEP_A3_FALSIFICATION_MEASURE.md` (b106 ACTIVE ~6.44/5.84; chk 20 Hz unreachable; no PASS-claim; consolidate still NO) |
-| Formula freeze | `81e86dc5` / close `04e47b39` | log_sweep HF A3 admission formula |
-| Living next-path | `2c69606f` | log_sweep HF before G1b tip |
-| Final R-remeasure | `b3d7f71b` | stationary PASS, sweep FAIL (~6.44 dB @ b106) |
-| G1a CLOSE stamp | `57b31bf1` | Guardian re-CLOSE GO (ancora valido) |
-| Codice G1a remediation | **`a2186ac1`** | F2/F3/F4 closed — tip codice |
-| T6 / M2 | `501a4e00` / `e9916319` | generators+WAV; fixture-spec `513c3baf…` |
-| Lock / adapter | `d2c35ccc…` / `6a978c01…` | metrology + adapter mapping |
-| SHA256SUMS | 48 entries | verify OK @ gate venv 3.12.13 |
-| Freeze G1 | `6d254d0a` | REV6; **REV7 consolidate: NO** |
-| Spike G1b (altro WT) | `c7f05871` @ `spike/motore-v3-g1b-frontend` | WS4 gate-4 RED |
+| HEAD (docs living) | *(mandate+handoff commit)* | SWEEP_METROLOGY_REDESIGN mandate open; A3 retirement path frozen |
+| A3 falsification | **`78da84dd`** | FAIL honest — retired-as-solution (archival CC/redteam in flight) |
+| A3 formula tip | `04e47b39` | archival prose only; **not** next ACTIVE-family fix |
+| Living next-path | redesign mandate | S1 reachability + S2 non-stat observable (proposal later) |
+| Final R remeasure | `b3d7f71b` | stationary PASS; sweep FAIL |
+| Code G1a | **`a2186ac1`** | F2/F3/F4; G1a CLOSE GO still holds |
+| T6 / M2 | `501a4e00` / `e9916319` | digests unchanged (`513c3baf…`, 48 SUMS) |
+| Freeze CONTRACT | `6d254d0a` | **REV7 consolidate: NO** |
 
-### Stato fase (una frase)
-**G1a CLOSED (GO).** A3 formula @ `04e47b39`; falsification measure
-`docs/MOTORE_V3_LOG_SWEEP_A3_FALSIFICATION_MEASURE.md` = **FAIL honest**
-(b106 ACTIVE ~6.44/5.84; chk 20 Hz unreachable). **≠ PASS-claim.**
-**REV7 consolidate: NO. No G1 PASS. No ship.**
+### Progresso da handoff 05:15 (25 Jul) → ora
+1. G1b spike WS4 **RED** → REV7 **candidate draft only**.  
+2. Product decision: **report-only LF** (gate on geometric `R`; ∉R published debt).  
+3. Final re-measure `R`: stationary **PASS**; overall **FAIL** on `log_sweep` HF.  
+4. A/A3 stamped → formula → falsification @ `78da84dd` **FAIL honest**.  
+5. **A3 retired-as-solution**; **no A4+**. Open
+   `docs/MOTORE_V3_SWEEP_METROLOGY_REDESIGN_MANDATE.md` (S1+S2; ridge =
+   direction family only).  
+6. **≠** G1 PASS · **≠** REV7 consolidate · **≠** G1b tip · 0.25 intact.
 
-### Progresso dopo CLOSE G1a
-1. G1b spike P1–P7 pinned (Marco OK) → WS0 worktree.  
-2. WS4: gate-4 **RED** max|Δ|≈9.54 dB (REV6 activity); streaming/proof (b) PASS.  
-3. REV7 **candidate draft only** — non freeze.  
-4. Product decision: **report-only LF** (gate chiude solo su bande geometriche `R`; ∉`R` si pubblica, non chiude; no shopping dB).  
-5. Final R-remeasure `b3d7f71b`: multitone/noise su `R` **PASS** (~0.19 / ~0.05); overall **FAIL** su `log_sweep` HF floor-union skirt (~6.44 dB @ b106).  
-6. Evidence: `docs/MOTORE_V3_REV7_REMEASURE_R_FINAL.md`.  
-7. Living next-path registered `2c69606f`.  
-8. **Proposal STAMPED:** `docs/MOTORE_V3_LOG_SWEEP_HF_ADMISSION_PROPOSAL.md`
-   (Marco 2026-07-26: **A / A3 / fuori REV7 LF**).
-9. Formula freeze `81e86dc5` + POROUS close `04e47b39`.
-10. **A3 falsification measure (FAIL honest):**
-    `docs/MOTORE_V3_LOG_SWEEP_A3_FALSIFICATION_MEASURE.md`
-    — b106 ACTIVE ~6.44/5.84; chk 20 Hz unreachable; no PASS-claim.
+### Stato fase
+- **G1a CLOSE: GO**; code tip `a2186ac1`.  
+- **REV7 consolidate: NO** — wait S1+S2, then **one** REV7 package.  
+- Spike ≠ official G1b tip.  
+- Debt: F1 WAV, gate-8, G4 cross-SR LF detections (report-only).
+
+### Catena tip (recente)
+```text
+(this)    docs: open SWEEP_METROLOGY_REDESIGN mandate   ← HEAD
+78da84dd  docs: A3 falsification measure (FAIL honest)
+04e47b39  docs: close A3 formula POROUS holes
+81e86dc5  docs: freeze log_sweep HF A3 admission formula
+2c69606f  docs: living next-path (log_sweep HF before G1b tip)
+b3d7f71b  docs: final REV7 R remeasure (stat PASS, sweep FAIL)
+…
+6d254d0a  freeze REV6
+```
+
+### Working tree (this branch)
+| Path | Stato |
+|------|--------|
+| Motore docs | living @ mandate open |
+| `ml_v3/frontend/` + spike test | untracked lab spike ≠ tip |
+| agents / .cursor | untracked |
 
 ### Checklist
 | Voce | Stato |
 |------|--------|
-| G1a T1–T6 + M2 + remediation | FATTO |
 | G1a CLOSE | **GO** |
-| REV7 consolidate | **NO** |
-| log_sweep HF admission formula | **CLOSED** @ `04e47b39` |
-| A3 falsification measure | **FAIL honest** (evidence doc; ≠ PASS-claim) |
-| G1 PASS | **NO** |
-| G1b tip ufficiale | **NO** (spike ≠ tip; WT locale stub `ml_v3/frontend/` untracked) |
-| Ship Source vs `2c88edad` | **0-diff** |
-| Training / Ableton V3 | **NO** |
-
-### Debt durabile (non riapre CLOSE)
-gate-8 residual (§8-pieno) · F1 WAV in-repo (~22MB) · G4 low-end cross-SR · hygiene SHA256SUMS minori
-
-### Working tree (questo lab)
-| Path | Stato |
-|------|--------|
-| Tip committed | HEAD `04e47b39` (+ this measure-evidence commit) |
-| A3 measure evidence | `docs/MOTORE_V3_LOG_SWEEP_A3_FALSIFICATION_MEASURE.md` |
-| `ml_v3/frontend/` + `test_g1b_t1_*` | **untracked** stub ≠ tip (codice vero nello spike WT) |
-| handoff / `agents/ember/` | untracked mirrors |
-| Perimetro Source/CMake/Resources | 0 |
+| Stationary parity su `R` | evidence **positiva** |
+| Sweep full-vector | **FAIL** |
+| A3 | **retired-as-solution** (archival stamps in flight) |
+| SWEEP_METROLOGY_REDESIGN | **mandate OPEN** (no formula/measure yet) |
+| REV7 consolidate / G1 PASS / G1b tip | **NO** |
 
 ### Sequenza restante
-**Autorità short-path (counsel Marco — document-only). Non consolidare REV7 ora.**
-
-**Consiglio:** A3 measure = **FAIL honest** sul dominio scritto (ACTIVE_sweep); stazionario su `R` resta PASS storico. Consolidare ora = shopping admission/soglia, non metrology.
-
-**Percorso (ordine):**
-1. ~~Counter-check A vs B~~ — **DONE** (stamped **A / A3 / fuori REV7 LF**).
-2. ~~Formula freeze + POROUS close~~ — **DONE** (`81e86dc5` / `04e47b39`).
-3. ~~Falsification-only remeasure~~ — **DONE: FAIL honest** (evidence doc).
-4. Lab choice a-priori (Marco): amend admission further, change frontend/PSD under contract, or keep debt explicit — **not** mean/p95 / 0.25 relax / ∩R laundering / REV7 consolidate.
-5. G1b tip ufficiale solo dopo path ACCEPT/override Marco:
-   - se amend GO → tip sotto contratto aggiornato + lock re-hash;
-   - tip-with-debt (B) **non** è il path locked (serve nuovo override Marco).
-6. Spike locale (`ml_v3/frontend/`): lab only; ≠ tip; **non** next step ora.
-7. Mai: rilassare 0.25→media/p95; ship/Source/Ableton; training; “G1 PASS”; consolidate REV7 ora.
-
-**Una riga:** A3 measure FAIL honest (b106 ACTIVE ~6.44/5.84; 20 Hz unreachable); no PASS-claim; REV7 consolidate: NO.
+1. Archival redteam/CC stamps on A3 (close record; do **not** reopen A4+).  
+2. Untainted **proposal** under redesign mandate (S1+S2 + off-ridge) — docs only.  
+3. After S1+S2: redteam → CC → **one** fresh measure → Guardian GO → **one** REV7 package → rehash → official G1b tip.  
+4. Spike ≠ tip. Mai: 0.25→media/p95; ship/Source; training; claim G1 PASS.
 
 ### Vietato
-Claim G1 PASS; REV7 consolidate senza impossibilità falsificabile + Guardian; trattare spike come tip; rilassare 0.25 dB; ship Ableton; history-rewrite WAV.
+G1 PASS; REV7 consolidate prima di S1+S2 + secondo Guardian GO; tip G1b ufficiale; riaprire ACTIVE A4+; trattare FAIL A3 come PASS; formula/measure/lock in questa fase; ship Ableton; riaprire digests G1a.
 
 ---
 
@@ -106,11 +107,11 @@ Claim G1 PASS; REV7 consolidate senza impossibilità falsificabile + Guardian; t
 
 ---
 
-## B.0 AUDIO INVENTORY (no binary dump; @ T6 501a4e00; F1 debt)
+## B.0 AUDIO INVENTORY (no binary; T6 @ 501a4e00; F1 debt)
 
-**Count:** 37 WAV  
-**schema_registry_sha256:** `fa506142afd8a0794f2093a428841b445b130e2ee0f681e18609b1a9b9cd5247`  
-**Authority for bytes:** digests in committed SHA256SUMS (48 lines).
+**Count:** 37 WAV · **SHA256SUMS:** 48 lines  
+**fixture_spec_sha256:** `513c3baf7aaed8eb1a15f7d2e875a3015479fc2ece0378e75cfceadefe68a6ef`  
+**schema_registry_sha256:** `fa506142afd8a0794f2093a428841b445b130e2ee0f681e18609b1a9b9cd5247`
 
 ### Path + bytes
 
@@ -199,11 +200,11 @@ c984bf0fc462ffc5ed5ce91d3ec87cb326e58d1bfaee3a3e029c6675b42ef29e  ml_v3/fixtures
 
 ---
 
-## B.1 FILE: `docs/MOTORE_V3_PLAN.md (@ HEAD 57b31bf1 — G1a CLOSE GO re-CLOSE stamp)`
+## B.1 FILE: `docs/MOTORE_V3_PLAN.md (@ HEAD 78da84dd)`
 
 **Path logico:** `docs/MOTORE_V3_PLAN.md`  
-**Bytes:** 20415  
-**Lines:** 358
+**Bytes:** 23105  
+**Lines:** 398
 
 ```markdown
 # Motore v3 - Sviluppo a contratti per fase
@@ -230,8 +231,10 @@ Il piano descrive un progetto a contratti. Ad oggi, su questo branch:
   codice remediation, tip T6, e tip PLAN. **Stato corrente: G1a CLOSE: GO**
   (questo stamp) — REOPENED **non** e piu lo stato vivente.
 - **GO G1a**: aperto (2026-07-25) dal reviewer (Marco) sul freeze `6d254d0a`.
-  Apertura fase ≠ CLOSE; CLOSE ora = GO sotto. **REV7: NO** (nessun amend
-  contratto autorizzato).
+  Apertura fase ≠ CLOSE; CLOSE ora = GO sotto. **REV7 consolidate: NO.**
+  Candidate draft open: `docs/MOTORE_V3_G1_CONTRACT_REV7_CANDIDATE.md`
+  (activity/admission gate 4 only; 0.25 dB immutable; ≠ freeze amend until
+  second Guardian GO + lock re-hash).
 - **G1a codice in git** (remediation tip `a2186ac1`): T1 `94dc9991`
   (primitives/split/coverage) + T2 `1908fc45` / T2.1 `918b3dde` (JSON
   schemas, validators, golden canonical) + T3 `9aa19295` (adapter v2↔v3
@@ -262,9 +265,11 @@ Il piano descrive un progetto a contratti. Ad oggi, su questo branch:
   invariato; lock
   `d2c35ccc12643f2520c8a50d2e27fd3631216bb9a8ce63a34193412e74d1c10e`;
   SHA256SUMS 48 verify OK; F2/F3/F4 closed; gate-8 + F1 WAV remain durable
-  debt (no rewrite). **No G1 PASS.** **REV7: NO.** History: false CLOSE
-  `1746a058` withdrawn; REOPEN `284228d6`. **Product G1b may unfreeze after
-  this stamp** (spike `ml_v3/frontend/` ≠ tip).
+  debt (no rewrite). **No G1 PASS.** **REV7 consolidate: NO** (candidate
+  draft only — see `docs/MOTORE_V3_G1_CONTRACT_REV7_CANDIDATE.md` after
+  spike WS4 RED). History: false CLOSE `1746a058` withdrawn; REOPEN
+  `284228d6`. **Product G1b may unfreeze after this stamp** (spike
+  `ml_v3/frontend/` ≠ tip).
   - **F2 (code-closed @ `a2186ac1`)**: commitment↔reveal match on
     non-null reveal via `verify_commitment`; golden dd/ee REJECT when
     mismatch. **Residual debt** (not F2 reopen): §8.2.4 gate 8 premature
@@ -279,6 +284,10 @@ Il piano descrive un progetto a contratti. Ad oggi, su questo branch:
   - **MED F1 (durable debt)**: 37 WAV ~22MB in-repo vs CONTRACT §2 — **no
     history rewrite**; forward WAV remediation tranche (not a CLOSE blocker;
     debt/decision).
+  - **G4 debt (REV7 report-only LF)**: cross-SR detection stability on
+    low-end classes (mud/boom/boxy) — not satisfied by G1 gate 4 PASS on
+    geometric `R` alone; see
+    `docs/MOTORE_V3_REV7_REPORT_ONLY_LF_CLAUSE.md` §5.
   - Sequenza chiusa: REOPENED → F4 env evidence PASS → F2+F3 code tip
     `a2186ac1` → PLAN pre-stamp `805fb34d` → Guardian re-CLOSE GO →
     **this PLAN stamp** → F1 forward WAV tranche (debt) → product G1b may
@@ -389,13 +398,45 @@ line, plugin installato, APVTS, preset, `Resources/Models/ml_weights.bin`,
   `75cb6902`. **G1a CLOSE: GO** (Guardian re-CLOSE 2026-07-25) on
   `a2186ac1` + `805fb34d`; contract freeze `6d254d0a` invariato; lock
   `d2c35ccc…`; SHA256SUMS 48 verify OK; F2/F3/F4 closed; gate-8 + F1 WAV
-  durable debt (no rewrite); **REV7: NO**. **No G1 PASS.** **Product G1b
-  may unfreeze after this stamp** (spike ≠ tip).
+  durable debt (no rewrite); **REV7 consolidate: NO**. **No G1 PASS.**
+  **Product G1b may unfreeze after this stamp** (spike ≠ tip).
+- **G1b spike WS4 (2026-07-25):** tip `c7f05871` @
+  `spike/motore-v3-g1b-frontend` → gate-4 **RED** (max|Δ|=9.537 dB) under
+  REV6 activity `max(psd)>−120`; streaming/proof (b) PASS; P1–P7
+  unchanged. Guardian: impossibilita del **predicato di admission**, non
+  della soglia 0.25. Candidate + ACTIVE proposal + redteam
+  BROKEN→POROUS; independent re-measure on ENBW+floor / §7-on-`R` →
+  still **RED** (`docs/MOTORE_V3_REV7_REMEASURE_R_REPORT.md`: noise
+  9.54→1.24; multitone ~4.77; **dense probe (iii) ~1.19 FAIL** — sparse
+  excitation insufficient; residual = inter-band inseparability under
+  Hann main lobe). **Product decision: report-only LF** (gate on `R` only;
+  ∉`R` mandatory publish; no LF dB shopping). Clause:
+  `docs/MOTORE_V3_REV7_REPORT_ONLY_LF_CLAUSE.md`. **REV7 consolidate: NO.**
+  Final re-measure recorded: `docs/MOTORE_V3_REV7_REMEASURE_R_FINAL.md` —
+  stationary on `R` **PASS** (~0.19 / ~0.05 dB); overall gate still **FAIL**
+  on `log_sweep` HF floor-union skirt (b106, ~6.44 dB). Report-only ∉`R`
+  published. **REV7 consolidate: NO** until sweep admission amend a priori.
+  G4 debt: cross-SR low-end detections. **≠ G1 PASS.**
+- **Living next-path (post-`b3d7f71b`, counsel — no REV7 consolidate now):**
+  stazionario su `R` PASS; FAIL = `log_sweep` HF skirt (floor-union), non
+  geometria LF. Ordine: (1) chiudere `log_sweep` HF a priori (admission /
+  one-sided-floor fixture; docs + redteam + CC → solo allora candidato amend
+  REV7 o debt esplicito no-amend); (2) tip G1b ufficiale solo dopo quella
+  decisione (amend GO → tip + lock re-hash; no amend → tip REV6 + debt
+  scritto; hard 0.25 dB intatto); (3) spike `ml_v3/frontend/` = lab only ≠
+  tip; (4) debt parallelo F1 WAV / gate-8 non riapre G1a CLOSE. Mai:
+  0.25→media/p95; ship/Source; training; “G1 PASS”.   Short path:
+  `docs/EMBER_CORE_PARALLEL_HANDOFF.md` §A Sequenza restante.
+  **Proposal STAMPED (document-only, post-`2c69606f`, Marco 2026-07-26):**
+  `docs/MOTORE_V3_LOG_SWEEP_HF_ADMISSION_PROPOSAL.md` — **A / A3 / fuori REV7 LF**;
+  next = redteam + independent CC (leave uncommitted); ≠ REV7 consolidate;
+  ≠ G1b tip.
+
 - GO G1b — mandato storico in PLAN `37f6ac60` (2026-07-25) con REV7:
   amend solo se l'implementazione dimostra **impossibilita falsificabile**
   (non inconvenienza); un redteam + un CC indipendente per tranche;
   stop-rule semantica (stesso bullet sopra). **Product G1b may unfreeze
-  after this G1a CLOSE stamp**; uncommitted `ml_v3/frontend/` = spike /
+  after this G1a CLOSE stamp**; uncommitted / spike `ml_v3/frontend/` =
   feasibility probe (not gate proof; spike ≠ tip) until official G1b tip /
   M3+M4. Nessun ship Ableton.
 - Dati, cache e modelli restano in `~/aieq_data/motore_v3/`; nel repository
@@ -568,7 +609,7 @@ semantiche del futuro V3**:
 
 ---
 
-## B.2 FILE: `docs/MOTORE_V3_G1_CONTRACT.md (freeze @ 6d254d0a)`
+## B.2 FILE: `docs/MOTORE_V3_G1_CONTRACT.md (freeze @ 6d254d0a — NOT amended)`
 
 **Path logico:** `docs/MOTORE_V3_G1_CONTRACT.md`  
 **Bytes:** 63636  
@@ -1824,7 +1865,2965 @@ Questa REVISIONE 6 CONSOLIDATA + micro-amend non costituisce GO a G1a.
 
 ---
 
-## B.3 FILE: `ml_v3/reports/G0_FREEZE_REPORT.md`
+## B.3 FILE: `docs/MOTORE_V3_G1_CONTRACT_REV7_CANDIDATE.md (CANDIDATE — NOT consolidated)`
+
+**Path logico:** `docs/MOTORE_V3_G1_CONTRACT_REV7_CANDIDATE.md`  
+**Bytes:** 13399  
+**Lines:** 272
+
+```markdown
+# Motore v3 — CONTRACT REV7 CANDIDATE (document-only)
+
+**Status:** CANDIDATE DRAFT — **NOT CONSOLIDATED** — ≠ amend of freeze `6d254d0a`  
+**Date:** 2026-07-25  
+**Authority:** Guardian GO (scoped draft) after G1b spike WS4 RED + independent CC  
+**Spike tip (evidence):** `c7f05871` @ `spike/motore-v3-g1b-frontend`  
+(`motore-v3-g1b-spike` worktree)
+
+**This document does NOT:**
+- consolidate REV7 into `docs/MOTORE_V3_G1_CONTRACT.md`;
+- authorize silent edit of `metrology_lock.json` / SHA256SUMS;
+- claim G1 PASS or product G1b tip;
+- relax the 0.25 dB hard max;
+- invent a replacement numeric threshold by fitting spike RED cells (9.537 dB).
+
+**This document DOES:**
+- record the falsifiable impossibility of a **specific REV6 clause**;
+- authorize only the next step: design the replacement admission predicate
+  under the constraints below, then redteam + re-measure, then a **second**
+  Guardian GO before any consolidate.
+
+---
+
+## 1. Trigger (falsifiable impossibility)
+
+Under REV6 §13.2 gate 4, with implementation faithful to §5/§6/§7 and a-priori
+pins P1–P7 (unchanged; `changed_to_pass: false`), the G1b adversarial spike
+measures:
+
+| evidence | value |
+|----------|--------|
+| overall `max\|Δ\|` | **9.537 dB** (threshold 0.25 dB) |
+| worst cell | `pseudo_noise@44100`, `mid_shape_db[18]` (~56.9 Hz) |
+| all 6 SR cells | RED |
+| pins rewritten to pass? | **no** |
+| streaming / proof (b) | PASS on spike schedules |
+
+Artifacts:
+- `ml_v3/reports/G1B_SPIKE_WS4_EVIDENCE.md` (spike worktree tip `c7f05871`)
+- `ml_v3/reports/G1B_SPIKE_WS4_EVIDENCE.json`
+- harness: `ml_v3/benchmark/sr_parity.py` (implements lock predicate literally)
+
+Independent CC (not stored as hashed G1a artifact) additionally showed that
+**FFT bins within ~20 dB of the spectral peak** between 48 kHz direct and
+44.1→48 resampled audio agree to ~**0.03 dB** — i.e. the resampler/frontend
+path is not the failure mode on signal-bearing bins. That corroborates the
+amend **direction** (admission, not 0.25). It is **not** a partial PASS and
+must **not** be used to pick a new numeric cut.
+
+---
+
+## 2. Clause that fails (narrow)
+
+REV6 §13.2 gate 4 currently states (product freeze `6d254d0a`):
+
+> Predicato di attivita (nessuna maschera post-hoc): una cella di PSD e
+> attiva sse `max(psd_db_ref, psd_db_sr) > -120` (unione: strettamente sopra
+> il floor …). … Shape e prominence della stessa banda ereditano l'attivita
+> della PSD del medesimo canale. … **Una sola cella attiva fuori soglia →
+> FAIL dell'intero gate.** … `max_i |x_i(sr) - x_i(48k)| <= 0.25 dB`
+
+**What is impossible under pinned degrees of freedom:** requiring
+`max|Δ| ≤ 0.25 dB` on the **full set of cells admitted by**
+`max(psd_ref, psd_sr) > -120` when that set includes cells whose energy is
+dominated by **inter-component window leakage / interference** (and
+near-floor union one-sided activations), especially on P2 single-bin /
+LF-pure geometry (~50–70 Hz). Those cells are construction- and
+sub-sample-phase-sensitive; no remaining implementable freedom (window,
+FFT sizes, band geometry, fuse, resampler coeffs, P1–P7) removes the
+failure without amending admission or illicitly relaxing the threshold.
+
+**What is NOT claimed impossible:** the 0.25 dB hard max on cells that
+actually carry stable signal content. Spike + CC evidence points the other
+way. **REV7 must not raise, replace, or soft-max the 0.25 dB threshold.**
+
+Smoking-gun shape (from spike evidence JSON, illustrative of the clause):
+- `log_sweep` peak: `psd_ref = -120.0`, `psd_sr ≈ -113.6` → admitted only via
+  union; `|Δ| ≈ 6.4 dB` on `mid_psd_db`.
+- `pseudo_noise` / `multitone` peaks: `psd_ref ≈ -119.0…-119.3` (a hair above
+  floor) driving `mid_shape_db` deltas of several dB on single-bin bands.
+
+---
+
+## 3. Amend target (scoped)
+
+### In scope (updated after metrology-redteam 2026-07-25)
+
+**Original draft scope:** replace the gate-4 activity / domain-admission
+predicate in §13.2 item 4 (+ lock string on consolidate).
+
+**Scope reopen (judge-endorsed, redteam VERDICT CONTRACT-BROKEN):** the amend
+target may also need to include **one or more** of:
+
+- an explicit **domain** carve-out for geometrically unresolvable bands
+  (preferred durable form for 0/1-bin material occupancy — pick **either**
+  domain wording **or** predicate exclusion, not dual optional packaging);
+- fail-closed rules for **shape/prominence coupling**: excluding a PSD cell
+  from the max does **not** remove that band’s energy from §7’s global
+  shape normalizer (`sum` over 120) nor from prominence’s ±16 kernel — so
+  “inherit ACTIVE” alone is insufficient;
+- a normative narrowing of candidate constraint 4 (ENBW-aperture-only) **or**
+  an a-priori anti-leakage operator (disclaimer/residual ≠ satisfaction of a
+  normative constraint);
+- a corrected **MATERIAL** rule (equal-energy `W_MATERIAL` bound is not
+  worst-case);
+- hashed/pinned `N_BINS` / `ACTIVE` mask procedure + vacuous FAIL per
+  §13.1 portion and valid channel.
+
+Invalid channels remain ignored as §7. **0.25 dB hard max and max
+aggregator remain immutable.**
+
+**Product decision (Marco, 2026-07-25) — report-only LF:** geometric
+domain `R` from ENBW `N_MIN=2` ∧ Rayleigh `SEPARATION_MIN_BINS=2` (scope
+rewrite). Gate 4 closes only on `i ∈ R`. Bands `i ∉ R` are **report-only**:
+measured and **must** be published (omit table → report FAIL); they do not
+enter the gate-closing max. Explicit CONTRACT why-sentence required (grid
+finer than window separation). G4 debt: cross-SR low-end detection
+stability. Normative prose:
+`docs/MOTORE_V3_REV7_REPORT_ONLY_LF_CLAUSE.md`. No LF alternate dB
+tolerance. No option-1 blindness.
+
+### Out of scope (forbidden in this REV7)
+
+- Changing `0.25 dB` hard max or replacing max with mean/p95/RMSE.
+- Dropping `shape` / `prominence` / `level` from the declared domain
+  **without** a fail-closed replacement definition that closes coupling
+  (redefinition of domain membership or of shape/prominence for gate 4 may
+  be in scope; silent drop to hide FAIL is not).
+- Post-hoc prominence clamp; changing aggregator; changing P1–P7.
+- Raising `N_MIN` after a FAIL to chase PASS (threshold shopping).
+- Changing §10 evaluator −100 dBFS/Hz criteria (different gate).
+- Product frontend “fixes” under an unconsolidated candidate rule.
+- Silent lock / SHA256SUMS mutation.
+
+---
+
+## 4. Replacement admission — design constraints (a priori)
+
+The concrete formula is **not chosen in this draft** (to avoid threshold
+shopping against the 9.537 dB cells). Any successor predicate MUST satisfy
+all of the following **before** consolidate:
+
+1. **A priori.** Written into CONTRACT (and then lock) **before** the
+   re-measurement that claims PASS. Forbidden: pick cutoffs by scanning
+   spike RED cells / margin tables until `max|Δ| ≤ 0.25`.
+2. **No post-hoc mask.** Still forbidden to hide bands after seeing errors
+   on a run (same spirit as REV6).
+3. **Preserve one-sided artifact intent.** A defect that appears at 44.1/96
+   but not at 48 must not vanish from the max solely because the reference
+   sits at the floor. Pure “intersection both > −120” is **insufficient**
+   as a complete replacement (multitone peaks have both sides above floor
+   and still fail).
+4. **Signal-bearing admission (REV7 perimeter — narrowed).** For this amend,
+   admission is **ENBW-aperture resolvability** on every positive-weight
+   fusion path plus the floor/union cut — stated in CONTRACT language
+   **without** fitting to spike RED magnitudes. Inter-component leakage /
+   sidelobe domination is **out of scope** for `ACTIVE` unless a separate
+   a-priori anti-leakage operator is added by a further authorized amend.
+   (Proposal §2.0; residual disclaimer ≠ satisfaction.)
+5. **Inheritance + coupling close.** Shape/prominence of band *b* inherit PSD
+   activity of band *b* on that channel **after** gate-4 shape/prominence
+   are redefined on `R = {RESOLVED}` so excluded-band energy cannot
+   contaminate ACTIVE cells (proposal §2.7 choice B); invalid channels ignored.
+6. **Vacuous-PASS fail-closed.** If a run admits **zero** active cells on a
+   required asset/portion, the gate **FAILS** (empty domain ≠ PASS).
+7. **0.25 dB immutable.** Domain fields and max aggregator unchanged.
+8. **Re-measure required.** After the formula is written, re-run the spike
+   adversarial subset (and redteam attacks in §5) on the gate platform;
+   PASS/FAIL is that measurement, not this draft.
+
+**Open slot (filled in proposal prose — not consolidated):**
+
+See `docs/MOTORE_V3_REV7_ACTIVE_FORMULA_PROPOSAL.md` (redteam closure draft).
+Packaging summary (normative intent; byte-equivalent max set):
+
+```text
+RESOLVED(b)  ⇔  every path with w_path(center[b]) > 0 has N_BINS(b,N_path) ≥ 2
+DOMAIN       :  ¬RESOLVED(b) ⇒ b outside gate-4 PSD/shape/prominence domain
+ACTIVE(b,ch) ⇔  RESOLVED(b) ∧ max(psd_ref, psd_sr)[b,ch] > -120
+GATE-4 shape/prominence := §7 formulas on R={i: RESOLVED(i)} only
+CONSTRAINT-4 := ENBW aperture + floor/union only (leakage out of scope)
+VACUOUS      :  empty active set on any §13.1 portion × valid channel → FAIL
+N_MIN = 2 = ceil(ENBW_Hann); 0.25 dB unchanged; no W_MATERIAL
+```
+
+Constraint 4 of this candidate §4 is **narrowed** for REV7 admission to the
+ENBW + floor perimeter above (proposal §2.0). Dual optional 0/1-bin wording
+is forbidden: domain amend is the sole normative packaging.
+
+---
+
+## 5. Required before consolidate (second GO)
+
+1. **Write** the concrete `ACTIVE(…)` (+ domain / coupling / MATERIAL
+   clauses from §3 scope reopen) — **done in proposal** (closure draft);
+   pending delta redteam acceptance.
+2. **`ember-metrology-redteam`:** first pass → **CONTRACT-BROKEN**; judge
+   endorsed five must-fixes. Prose closure + **delta redteam** →
+   **CONTRACT-POROUS** (2026-07-25): five must-fixes closed; residuals
+   remain (prominence-on-R dual reading; ENBW↛occupancy isomorphism;
+   MATERIAL center vs support wings; vacuous vs level scalars; A15
+   wording). **Independent re-measure authorized YES** under residual
+   acceptances A–F in the delta redteam handoff (ENBW-only PASS wording;
+   harness §7-on-R; pin one prominence algorithm before lock; no N_MIN
+   raise; no leakage-solved claim). ≠ consolidate GO.
+3. **Independent re-measure** (judge lineage) — **DONE → RED**.
+   Report: `docs/MOTORE_V3_REV7_REMEASURE_R_REPORT.md`.
+   Stationary subset under ENBW+floor / §7-on-`R`: still FAIL (multitone
+   ~4.77; noise 9.54→1.24 still FAIL). **Dense probe (iii)** — one tone per
+   band centre, same rules — also FAIL (~1.19 dB, `prom` b24): sparse
+   excitation **insufficient**; residual diagnosis = **inter-band
+   inseparability** (neighbour centres inside Hann main lobe) on
+   `RESOLVED` bands. **Forbidden:** fit cuts / raise `N_MIN` / shop
+   constants against 4.77 / 1.24 / 1.19. **log_sweep** still owed before
+   formal close. Next: untainted rewrite of domain/fields and/or a-priori
+   geometric criterion (ENBW vs main-lobe separation re-openable on
+   diagnostic grounds only) → redteam → re-measure → Guardian.
+   ≠ consolidate GO.
+4. **Guardian second GO** — **blocked** until scope rewrite addresses §3
+   reopen (domain/fields / coupling) consistent with re-measure RED; then
+   consolidate path into `docs/MOTORE_V3_G1_CONTRACT.md` only after a later
+   PASS re-measure under the rewritten scope.
+5. **Lock reopen / re-hash** (mandatory on consolidate): G1a freeze pins
+   `predicate: max(psd_db_ref, psd_db_sr) > -120` and
+   `threshold_max_abs_db: 0.25` under digest `d2c35ccc…`. Consolidate
+   implies coordinated lock + SHA256SUMS update — never silent edit.
+
+Until steps 1–5 complete: **REV7 consolidate = NO.** Product G1b tip must
+not claim gate-4 PASS under REV6 admission.
+
+### Redteam must-fix (paper; no N_MIN raise) — closure mapping
+
+1. Coupling → proposal §2.7 choice **(B)** (gate-4 shape/prominence on `R`).
+2. Constraint-4 → proposal §2.0 **narrowed** (ENBW + floor; leakage OOS).
+3. 0/1-bin → proposal §2.5 **domain amend only** (predicate set-equivalent).
+4. MATERIAL → proposal §2.2 **`w_path > 0`** (`W_MATERIAL` withdrawn).
+5. Pin + vacuous → proposal §2.1 + §2.8.
+
+---
+
+## 6. Lock / G1a consequence (when consolidated)
+
+| item | action |
+|------|--------|
+| `threshold_max_abs_db: 0.25` | **unchanged** |
+| activity predicate string | replace with consolidated `ACTIVE(…)` |
+| `metrology_lock_sha256` | recompute |
+| SHA256SUMS | update affected entries |
+| spike harness | align to new predicate only after consolidate GO |
+
+---
+
+## 7. PLAN / lab state impact (until consolidate)
+
+- Frozen technical authority remains CONTRACT @ `6d254d0a` (REV6).
+- This file is a **candidate** under PLAN lab authority.
+- Spike remains ≠ G1 PASS; ≠ Ableton readiness.
+- Official product G1b gate-4 claims stay blocked on REV6 admission until
+  consolidate + re-measure PASS (or a different authorized path).
+
+---
+
+## 8. Handoff
+
+| agent | next |
+|-------|------|
+| untainted author | closure draft in `MOTORE_V3_REV7_ACTIVE_FORMULA_PROPOSAL.md` |
+| ember-metrology-redteam | **delta** pass on closure prose; re-measure still forbidden if BROKEN |
+| ember-parity-lab | re-measure only after delta non-BROKEN |
+| ember-contract-guardian | second GO for consolidate only |
+
+≠ G1 PASS. ≠ REV7 consolidated. 0.25 dB not touched.
+```
+
+---
+
+## B.4 FILE: `docs/MOTORE_V3_REV7_ACTIVE_FORMULA_MANDATE.md`
+
+**Path logico:** `docs/MOTORE_V3_REV7_ACTIVE_FORMULA_MANDATE.md`  
+**Bytes:** 6313  
+**Lines:** 129
+
+```markdown
+# MANDATO — FORMULA ACTIVE(b, ch) per §13.2 gate 4 (candidato REV7)
+
+**Status:** AUTHORIZED TO START (2026-07-25) — formula writer must be untainted  
+**Draft commit (diagnosis frozen first):** `2eac2387`  
+**Candidate doc (do not use §1 numbers):** `docs/MOTORE_V3_G1_CONTRACT_REV7_CANDIDATE.md`
+
+**Destinatario:** NON chi ha prodotto o letto l'evidenza WS4 (lineage contaminato).  
+Counter-check giudica la formula, non la scrive: ha visto i RED.
+
+**Deliverable path:** write formula + constant derivations into  
+`docs/MOTORE_V3_REV7_ACTIVE_FORMULA_PROPOSAL.md`  
+(Do **not** paste RED numbers into that file. Do **not** edit CONTRACT freeze,
+lock, or SHA256SUMS. Optionally note the open slot reference in the candidate
+doc without copying §1 evidence tables.)
+
+---
+
+## Compito
+
+Scrivere la definizione concreta di `ACTIVE(b, ch)` — il predicato che ammette
+una cella (banda `b`, canale `ch`) nel massimo del gate 4 di sample-rate
+parity — rispettando i vincoli 1–8 sotto.
+
+## La domanda fisica a cui rispondere
+
+Quando la misura di una banda è determinata dal contenuto spettrale **dentro**
+il proprio supporto, e quando invece è determinata da leakage di componenti
+**fuori** dal supporto o dall'instabilità del floor numerico?
+
+Il predicato deve ammettere le prime ed escludere le seconde.
+
+## Geometria congelata (tutto derivabile a priori, nessuna misura)
+
+- Analisi **sempre** a `fs_c = 48000` Hz: la geometria delle bande è identica
+  per ogni sample rate sorgente.
+- 120 bande, centri `center[i] = 20 * (20000/20)**(i/119)`, estremi pinnati a
+  `20.0` e `20000.0` Hz. Rapporto fra centri adiacenti
+  `r = 1000**(1/119) ≈ 1.05955` (larghezza relativa ~5.96%).
+- Supporto triangolare su `log2(f)`: la banda `i` copre
+  `center[i-1]..center[i+1]`; per le bande 0 e 119 si usano centri virtuali
+  allo stesso rapporto `r`.
+- Due griglie FFT: MAIN 4096 (~11.719 Hz/bin) e LF 8192 (~5.859 Hz/bin).
+- Finestra Hann **periodica**: `w[n] = 0.5 - 0.5*cos(2*pi*n/N)`. Le sue
+  proprietà di leakage (livello del primo lobo laterale, decadimento,
+  larghezza del lobo principale in bin) sono la fonte legittima delle
+  costanti.
+- Fusione: LF puro `<= 160` Hz, MAIN puro `>= 320` Hz, crossfade raised-cosine
+  su `log2` fra i due. Sotto 160 Hz la banda è alimentata **solo** da LF.
+- PSD: floor lineare `1e-12`, poi clamp `[-120, +12]` dB. DC e bin oltre
+  20000 Hz esclusi.
+
+Allowed reads for geometry only: `docs/MOTORE_V3_G1_CONTRACT.md` §6/§7
+(structure), `ml_v3/contracts/` band/grid helpers, `ml_v3/fixtures/g1/metrology_lock.json`
+for **non-outcome** frozen constants (FFT sizes, window name, floors).  
+Do **not** treat the current activity predicate string as sacred — replacing
+it is the point of this candidate — but do **not** invent numbers from
+measurement runs.
+
+## Conseguenza geometrica già calcolabile (NON è un risultato di misura)
+
+Incrociando i supporti triangolari con le due griglie si ottiene, per pura
+aritmetica:
+
+- griglia MAIN 4096: **14** bande con ZERO bin nel supporto, **21** con UN SOLO bin;
+- griglia LF 8192: **6** bande con ZERO bin, **17** con UN SOLO bin.
+
+Le bande interessate stanno nell'estremo basso della griglia. Chiunque può
+riprodurlo in cinque righe dai centri e dalle griglie: usalo.
+
+## Vincoli 1–8 (da REV7 candidate §4 — senza numeri di run)
+
+1. **A priori.** Scritto prima della ri-misura che reclama PASS. Vietato
+   scegliere cutoff scansionando celle/margini di una run fino a
+   `max|Δ| ≤ 0.25`.
+2. **No post-hoc mask.** Vietato nascondere bande dopo aver visto errori.
+3. **Preserve one-sided artifact intent.** Un difetto presente a 44.1/96 ma
+   non a 48 non deve sparire dal max solo perché il riferimento sta al floor.
+   La sola intersezione `both > −120` è **insufficiente** come sostituto
+   completo.
+4. **Signal-bearing admission.** Escludere celle dominate da leakage /
+   interferenza inter-componente o instabilità del floor numerico; trattenere
+   celle con energia di segnale stabile rilevante per la SR parity. Definizione
+   operativa in linguaggio da contratto **senza** fit a magnitudini di run.
+5. **Inheritance unchanged.** Shape/prominence della banda `b` ereditano
+   l'attività PSD della banda `b` sullo stesso canale; canali invalidi ignorati.
+6. **Vacuous-PASS fail-closed.** Zero celle attive su un asset/portion
+   richiesto → gate **FAIL** (dominio vuoto ≠ PASS).
+7. **0.25 dB immutable.** Dominio e aggregatore max invariati.
+8. **Re-measure required.** Dopo che la formula è scritta — non in questo
+   task — si ri-misura. Questo task **non** esegue la ri-misura per “vedere
+   se passa”.
+
+## Standard di accettazione
+
+Per **ogni** costante numerica nella formula si deve poter indicare da quale
+quantità congelata deriva: lobi laterali Hann, larghezza lobo principale in
+bin, spaziatura bin, rapporto `r` fra centri, soglie già nel contratto.
+Una costante non derivabile da queste è un fit → formula respinta.
+
+## Divieti
+
+- NON chiedere, cercare o usare risultati numerici della run WS4: né
+  `max|Δ|`, né quali bande/asset/SR hanno fallito, né tabelle di margine.
+  Se ti vengono offerti, rifiutali e dichiaralo.
+- NON aprire / leggere:
+  - `ml_v3/reports/G1B_SPIKE_WS4_EVIDENCE.*`
+  - `ml_v3/benchmark/` evidence outputs keyed to WS4 runs
+  - agent transcripts about WS4 RED diagnostics
+  - §1 “Trigger” tables inside `MOTORE_V3_G1_CONTRACT_REV7_CANDIDATE.md`
+    (contengono numeri di run — i vincoli 1–8 sono già copiati qui)
+- NON toccare 0.25 dB, aggregatore max, campi dominio, P1–P7, criteri
+  −100 dBFS/Hz di §10.
+- NON modificare CONTRACT REV6 (`6d254d0a`), metrology lock, SHA256SUMS.
+- NON eseguire la ri-misura in questo task.
+
+## Esito atteso
+
+1. La formula, in linguaggio da contratto, in
+   `docs/MOTORE_V3_REV7_ACTIVE_FORMULA_PROPOSAL.md`.
+2. Per ogni costante, una riga di derivazione da geometria/finestra.
+3. Dichiarazione esplicita se ritieni che **nessun** criterio principiato
+   possa ammettere in modo stabile le bande a zero/uno bin — in tal caso
+   dillo invece di forzare una formula (scoperta: emendare il **dominio**
+   del gate, non solo il predicato).
+
+## Dopo (fuori scope di questo mandato)
+
+metrology-redteam (false-PASS) → counter-check indipendente (ri-misura) →
+secondo GO. Nessun consolidate prima.
+```
+
+---
+
+## B.5 FILE: `docs/MOTORE_V3_REV7_ACTIVE_FORMULA_PROPOSAL.md`
+
+**Path logico:** `docs/MOTORE_V3_REV7_ACTIVE_FORMULA_PROPOSAL.md`  
+**Bytes:** 19947  
+**Lines:** 397
+
+```markdown
+# REV7 proposal — `ACTIVE(b, ch)` for §13.2 gate 4
+
+**Status:** FORMULA PROPOSAL — REDTEAM CLOSURE DRAFT (untainted writer; a priori geometry/window only)  
+**Authority for task:** `docs/MOTORE_V3_REV7_ACTIVE_FORMULA_MANDATE.md`  
+**Open amend vehicle (reference only):** `docs/MOTORE_V3_G1_CONTRACT_REV7_CANDIDATE.md`  
+**Does not edit:** CONTRACT freeze REV6, metrology lock, SHA256SUMS, `Source/`  
+**Does not contain:** run margins, max|Δ|, failing band/asset lists, WS4 evidence  
+**Re-measure:** forbidden until delta redteam returns non-BROKEN on this prose
+
+---
+
+## 1. Physical question (operative, scoped)
+
+**Normative perimeter of this amend (constraint 4 narrowed — see §2.0):**
+
+Gate-4 **admission** answers only:
+
+1. **ENBW aperture:** is the triangular support wide enough, on every fusion
+   path with positive weight, to contain at least one Hann ENBW of in-support
+   bins? (`N_BINS ≥ N_MIN = 2`)
+2. **Floor / union:** is the cell strictly above the §6.1 clamp floor on the
+   reference **or** under-test render?
+
+Cells that fail (1) are **outside the gate-4 SR-parity domain** (domain amend).
+Cells that fail (2) are inactive (floor).
+
+**Explicitly out of scope for `ACTIVE`:** whether in-support content dominates
+out-of-support **leakage** from strong neighbours. That is a different physical
+question; this amend does **not** claim an anti-leakage operator. Constraint 4
+of the candidate is hereby narrowed to the ENBW-aperture + floor-union perimeter
+above. A residual disclaimer is not the normative statement — §2.0 is.
+
+---
+
+## 2. Contract-language definition
+
+Let `fs_c = 48000`. Analysis geometry is identical for every host sample rate.
+Band centres and triangular supports are those of §6.1. Fusion weights
+`w_LF(f)`, `w_MAIN(f)` are those of §6.2. Grids: MAIN `N_MAIN = 4096`,
+LF `N_LF = 8192`. Window: periodic Hann of §6.2.
+
+### 2.0 Normative constraint-4 perimeter (ENBW + floor only)
+
+**Normative (replaces any broader “leakage-dominated exclusion” reading of
+candidate constraint 4 for this amend):**
+
+> Gate-4 cell admission is exactly ENBW-aperture resolvability on every
+> positive-weight fusion path (§2.2–2.3) conjoined with the floor/union cut
+> (§2.4). Inter-component leakage / sidelobe domination is **out of scope**
+> for the `ACTIVE` predicate and for the geometric domain carve-out. No
+> a-priori anti-leakage operator is introduced in REV7 by this proposal.
+
+### 2.1 Bin occupancy (pure geometry; bit-stable)
+
+For band index `b ∈ {0,…,119}` and FFT length `N ∈ {N_LF, N_MAIN}`:
+
+```text
+Δf(N)        = fs_c / N
+lo(b), hi(b) = triangular support of b on log2(f)
+               (virtual centres at ratio r outside 0 and 119; §6.1)
+N_BINS(b, N) = #{ k ≥ 1 : lo(b) < k·Δf(N) < hi(b) ∧ k·Δf(N) ≤ 20000 }
+```
+
+DC and bins above 20000 Hz remain excluded (§6.1).
+
+**Bit-stable / hashable evaluation procedure (normative):**
+
+1. Centres and virtual endpoints: closed form of §6.1 in IEEE-754 binary64,
+   same expressions as `ml_v3/contracts` centre helpers (no measured tables).
+2. Support edges `lo(b)`, `hi(b)`: evaluate in binary64 from those centres.
+3. Bin loop: integer `k` from `1` to `floor(20000/Δf(N))` inclusive; admit `k`
+   iff `lo(b) < k·Δf(N)` and `k·Δf(N) < hi(b)` and `k·Δf(N) ≤ 20000`, with
+   products `k·Δf(N)` in binary64 (`Δf = fs_c/N` in binary64).
+4. `N_BINS(b,N)` is the cardinality of that set (non-negative integer).
+5. Canonical mask bytes (for lock / SHA256SUMS on consolidate): concatenate,
+   for `b = 0..119` in order, the bits
+   `RESOLVED(b)`, then for each valid channel role the per-cell activity bits
+   as packed in the consolidate lock schema — all bits derived only from
+   (1)–(4), §2.2–2.4, and the PSD floor test on the two renders. No run-time
+   float tolerance beyond binary64 evaluation of the predicates above.
+
+### 2.2 Material fusion paths (worst-case: any positive weight)
+
+A fusion path is **material** for band `b` when its weight at `center[b]` is
+strictly positive. Any path with `w > 0` can dominate the fused power under
+adversarial energy ratios; equal-energy bounds are **not** used.
+
+```text
+MATERIAL_LF(b)   ⇔  w_LF(center[b])   > 0
+MATERIAL_MAIN(b) ⇔  w_MAIN(center[b]) > 0
+```
+
+(At least one of the two always holds because `w_LF + w_MAIN = 1` with
+non-negative weights. Pure-LF bands have `w_MAIN = 0`; pure-MAIN have
+`w_LF = 0`; crossfade bands have both material.)
+
+The immutable gate threshold `0.25 dB` is **not** an input to MATERIAL. It
+remains only the max-|Δ| hard threshold of §13.2.
+
+### 2.3 Geometric resolvability
+
+Hann periodic ENBW = `1.5` bins (frozen window property; §3). ENBW is the
+width of a rectangular filter that collects the same noise power as the
+analysis window: it is the noise-equivalent aperture of one DFT bin
+measurement under Hann. For a triangular support average to be an
+**ENBW-aperture-resolved** measurement, the open support must be wide enough
+to contain at least one full ENBW of aperture **inside** the support.
+
+The smallest integer bin occupancy with width ≥ `ENBW_Hann` is therefore:
+
+```text
+N_MIN = ceil(ENBW_Hann) = ceil(1.5) = 2
+
+RESOLVED(b) ⇔
+    ( ¬MATERIAL_LF(b)   ∨ N_BINS(b, N_LF)   ≥ N_MIN )
+  ∧ ( ¬MATERIAL_MAIN(b) ∨ N_BINS(b, N_MAIN) ≥ N_MIN )
+```
+
+This criterion does **not** claim main-lobe isolation (null-to-null width) and
+does **not** claim leakage immunity (§2.0).
+
+### 2.4 Floor / union (one-sided artifact intent)
+
+With the §6.1 clamp domain and linear floor `1e-12`:
+
+```text
+ABOVE_FLOOR(b, ch) ⇔
+    max( psd_db_ref[b, ch], psd_db_sr[b, ch] ) > -120
+```
+
+Strict inequality: cells stuck on the clamp floor are inactive. The `max`
+(union across reference 48 kHz and under-test SR) preserves gate-4 intent that
+an artifact present on only one side remains eligible for the max |Δ|.
+
+### 2.5 Domain amend for unresolvable bands (sole normative packaging for 0/1-bin)
+
+**Normative packaging (domain amend — not optional, not dual):**
+
+> Band indices `b` with `RESOLVED(b) = false` under §2.2–2.3 (equivalently:
+> material-path bin occupancy `N_BINS < 2` on at least one path with
+> `w_path(center[b]) > 0`) are **outside the gate-4 SR-parity domain** for
+> PSD, shape, and prominence on every channel. They do not contribute cells
+> to the gate-4 max |Δ|.
+
+**Equivalence of the max cell set (stated, not optional dual form):**
+
+Let `D_domain` be the set of gate-4 cells after applying the domain sentence
+above and then admitting PSD cells by `ABOVE_FLOOR` only inside the remaining
+band set. Let `D_pred` be the set of cells with
+`ACTIVE(b,ch) ⇔ RESOLVED(b) ∧ ABOVE_FLOOR(b,ch)` under §2.6, with shape /
+prominence inheritance as amended in §2.7. Then `D_domain = D_pred` as sets
+of `(field, b, ch)` cells entering the max. Implementations may compute via
+the predicate; the **normative prose form** for 0/1-bin exclusion is the
+domain sentence, not a second parallel “optional” wording.
+
+There is **no** principled amplitude rule that can stably *admit* bands with
+material occupancy `N_BINS ∈ {0,1}` as ENBW-aperture-resolved cells (§4).
+
+### 2.6 Predicate (implementational form; set-equivalent to §2.5)
+
+For a PSD cell on channel `ch ∈ {mid, side}` with that channel valid (§7):
+
+```text
+ACTIVE(b, ch) ⇔ RESOLVED(b) ∧ ABOVE_FLOOR(b, ch)
+```
+
+- Scalars `mid_level_dbfs` / `side_level_dbfs` stay in the gate domain when the
+  respective channel is valid; they are not band-indexed and do not use
+  `RESOLVED(b)`.
+- Channels with `*_valid == false` are ignored (§7); their vectors do not
+  contribute cells.
+
+### 2.7 Shape / prominence coupling — choice (B) (CRITICAL)
+
+**Problem:** §7 defines
+
+- `shape_db` = PSD minus `10*log10(sum(10**(psd_db/10)))` over **all 120** bands;
+- `prominence_db` = shape minus a Gaussian convolution on the log-band axis,
+  kernel `j ∈ [-16..16]`, on that shape vector.
+
+Excluding cell `(b,ch)` from the max via `ACTIVE` / domain carve-out does
+**not** remove band `b`’s energy from those formulas. Predicate-only
+“inherit ACTIVE” therefore leaves excluded-band energy able to move ACTIVE
+cells’ shape/prominence — a false-PASS surface if those contaminants are
+omitted from the max while still driving ACTIVE neighbours.
+
+**Choice (A) rejected for closure:** keeping above-floor unresolved bands in
+the max for shape/prominence measures the contaminant cells themselves but
+does **not** stop their energy from altering ACTIVE neighbours’ shape /
+prominence through the global sum and ±16 kernel. It is fail-closed for the
+sparse cells’ own fields, not a coupling close.
+
+**Choice (B) — normative (domain + gate-4 field redefinition):**
+
+> For **gate-4 evaluation only**, let `R = { i ∈ {0,…,119} : RESOLVED(i) }`.
+> Gate-4 `shape_db[b,ch]` and `prominence_db[b,ch]` are the §7 formulas with
+> support restricted to `R`:
+>
+> - shape normalizer sums `10**(psd_db[i,ch]/10)` only over `i ∈ R`;
+> - prominence kernel includes only offsets `j` with `b+j ∈ R` (renormalize
+>   the retained kernel weights to sum one; reflect padding is applied only
+>   within the `R`-indexed sequence in band order).
+>
+> Bands with `b ∉ R` are outside the gate-4 shape/prominence domain (no cells).
+> For `b ∈ R`, shape/prominence are active in the max iff `ACTIVE(b,ch)` on
+> that channel’s PSD (i.e. also `ABOVE_FLOOR`).
+>
+> **Testable statement:** mutating `psd_db[u,ch]` for any `u ∉ R` must leave
+> every gate-4 `shape_db[b,ch]` and `prominence_db[b,ch]` for `b ∈ R`
+> unchanged (bit-identical under the same binary64 reduction order as the
+> consolidate harness). Mutating `psd_db[u,ch]` for `u ∈ R` may change those
+> fields exactly as §7-on-`R` predicts.
+
+Product §7 vectors used by other gates are untouched by this sentence; only
+the gate-4 comparison domain and the fields entering the gate-4 max use the
+`R`-restricted definitions.
+
+Honesty note: closing coupling requires this **domain / derived-field amend**
+for gate 4; a predicate-only mask on the existing §7 full-120 fields cannot
+make the testable statement true.
+
+### 2.8 Vacuous FAIL (fail-closed; no N/A skip)
+
+**Normative:**
+
+> For every asset/portion required by §13.1, and for every channel `ch` that
+> is valid for that portion (`mid_valid` / `side_valid` as applicable), if the
+> set of active gate-4 cells on that (portion, channel) is empty — counting
+> PSD/shape/prominence cells under §2.5–2.7 and level scalars when in domain —
+> then gate 4 is **FAIL** for that portion. Empty domain ≠ PASS. Implementations
+> must not skip a required (portion, valid channel) with N/A, soft-pass, or
+> “no cells to compare.”
+
+Threshold `0.25 dB` and aggregator `max` over the declared gate-4 dB domain
+remain immutable. No post-hoc band mask after seeing errors.
+
+---
+
+## 3. Per-constant derivation (frozen window / grid / contract only)
+
+| Constant | Value | Derivation |
+|---|---|---|
+| `fs_c` | `48000` | §6 / lock timing |
+| `N_MAIN` | `4096` | §6.2 / lock |
+| `N_LF` | `8192` | §6.2 / lock |
+| `Δf(N)` | `fs_c/N` | FFT bin spacing |
+| centres / `r` | §6.1 closed form | `center[i]=20*(20000/20)**(i/119)`; endpoints pinned |
+| triangular support | `center[b-1]..center[b+1]` | §6.1; virtual ends via same `r` |
+| fusion split | `160` / `320` Hz | §6.2 pure LF / pure MAIN |
+| `w_LF`, `w_MAIN` | raised-cosine on `log2` | §6.2 formula |
+| window | periodic Hann `0.5-0.5*cos(2πn/N)` | §6.2 |
+| `ENBW_Hann` | `1.5` bins | classical ENBW of periodic Hann (noise-equivalent bandwidth of one DFT bin under the frozen window) |
+| `N_MIN` | `2` | `ceil(ENBW_Hann)` — minimum integer occupancy whose support width ≥ one Hann ENBW; guarantees the noise-equivalent aperture of the band average can lie inside the triangular support (see §2.3). Occupancy `1 < 1.5` fails that coverage; main-lobe null-to-null width is not used |
+| PSD floor linear | `1e-12` | §6.1 / lock |
+| activity floor dB | `-120` | `10*log10(1e-12)` after §6.1 clamp lower edge |
+| `ABOVE_FLOOR` cut | `> -120` | strict above clamp floor; union via `max(ref,sr)` preserves one-sided artifacts |
+| gate threshold | `0.25` dB | §13.2 immutable — **not** used to define MATERIAL |
+| MATERIAL rule | `w_path(center[b]) > 0` | worst-case: any positive-weight path can dominate fused power under adversarial energy ratios; equal-energy `W_MATERIAL` bound withdrawn |
+
+No constant above is taken from a measured max|Δ|, margin table, or band-failure list. `W_MATERIAL = 1 - 10**(-0.25/10)` is **removed** from this proposal.
+
+### 3.1 A priori occupancy consequence (arithmetic, not a run)
+
+Crossing triangular supports with the two grids (mandate § “Conseguenza geometrica”) yields on MAIN: 14 bands with `N_BINS=0`, 21 with `N_BINS=1`; on LF: 6 with `0`, 17 with `1`. Under `RESOLVED` with `N_MIN=2` and `w > 0` materiality, the non-resolvable set is exactly the bands whose **material** occupancy is `0` or `1` (low-frequency edge; in the crossfade, both grids must clear `N_MIN`). That identity is a check of the formula against geometry, not a fit to errors.
+
+---
+
+## 4. Why 0/1-bin bands stay outside the domain
+
+**Claim (honest):** there is **no** principled amplitude rule that can stably
+*admit* bands with material occupancy `N_BINS ∈ {0,1}` as ENBW-aperture-resolved
+cells under §2.3.
+
+Reasons (geometry / window only — ENBW, not main-lobe isolation):
+
+1. **Zero bins.** No FFT bin lies inside the open triangular support on the
+   material path. Support width is `0 < ENBW_Hann`; the band average has no
+   in-support content. Any finite dB value is empty-support / floor behaviour,
+   not a measurement of in-band spectrum.
+2. **One bin.** Support width is `1` bin. Hann ENBW is `1.5` bins, so
+   `1 < ENBW_Hann`: the noise-equivalent aperture of the single DFT bin
+   measurement is wider than the triangular support. By the ENBW definition,
+   out-of-support content is required to fill that aperture; the cell cannot
+   be ENBW-aperture-resolved. Raising the level threshold cannot widen the
+   support to ≥ `ENBW_Hann`.
+
+Therefore the sole normative packaging is the **domain amend** of §2.5
+(`N_MIN = ceil(ENBW_Hann) = 2` kept). Bands with material `N_BINS ≥ 2` remain
+eligible; admission inside the domain is then only `ABOVE_FLOOR` (union).
+
+---
+
+## 5. Explicit non-goals / non-claims
+
+- This note does **not** claim gate PASS and does **not** report a re-measure.
+- Re-measure after adoption is mandatory (mandate constraint 8) and is out of
+  scope for this writer; it remains **forbidden** until delta redteam clears
+  the closure surface.
+- §10 evaluator criteria (`−100` dBFS/Hz, etc.) are untouched.
+- Replacing the REV6 string `max(psd_db_ref, psd_db_sr) > -120` is intentional;
+  the floor/union factor is retained; geometric domain / `RESOLVED` is added;
+  gate-4 shape/prominence are redefined on `R` (§2.7).
+- No sidelobe-vs-neighbour dB cut is proposed: mapping Hann’s first sidelobe
+  (`≈ −31.5` dB in bin space) onto band-index neighbours is not an isomorphism
+  fixed by §6 alone, so it is rejected as a constant source here — and, under
+  §2.0, leakage exclusion is out of scope for ACTIVE rather than half-solved
+  by a weak residual.
+- Main-lobe null-to-null width (`4` bins for periodic Hann) is **not** used to
+  set `N_MIN`. That isolation argument would force `N_MIN ≥ 4` and is a
+  different physical claim; this proposal commits only to ENBW aperture
+  coverage (`N_MIN = ceil(1.5) = 2`).
+- Forbidden: raise `N_MIN` to chase PASS; use run margins; edit CONTRACT freeze /
+  lock / SHA256SUMS from this note.
+
+---
+
+## 6. Packaging sketch for the candidate (normative intent for consolidate prose)
+
+Contract-shaped replacement for the gate-4 activity / domain block:
+
+> **Domain (0/1-bin):** Band indices with `RESOLVED(b) = false` —
+> `RESOLVED(b)` iff every fusion path with `w_path(center[b]) > 0` has
+> `N_BINS(b, N_path) ≥ 2 = ceil(ENBW_Hann)` — are outside the gate-4
+> PSD/shape/prominence domain.
+>
+> **PSD activity** on remaining bands: `ACTIVE(b,ch) ⇔ ABOVE_FLOOR(b,ch)` with
+> `max(psd_db_ref, psd_db_sr) > -120` (equivalently
+> `RESOLVED(b) ∧ ABOVE_FLOOR` over all `b`, same max cell set).
+>
+> **Gate-4 shape/prominence:** §7 formulas restricted to
+> `R = {i : RESOLVED(i)}` (normalizer and ±16 kernel); test: PSD outside `R`
+> does not change gate-4 shape/prominence on `R`. Active in the max iff
+> `ACTIVE(b,ch)`.
+>
+> **Constraint-4 perimeter:** admission = ENBW aperture + floor/union only;
+> leakage domination out of scope for ACTIVE.
+>
+> **Vacuous:** empty active set on any §13.1 portion × valid channel → FAIL.
+> Max aggregator and `0.25` dB unchanged. Mask bits from §2.1 procedure.
+
+---
+
+## 7. Writer contamination statement
+
+Allowed inputs used: mandate; CONTRACT §6/§7 structure; `ml_v3/contracts/`
+centre helpers / constants; `metrology_lock.json` non-outcome fields (FFT
+sizes, floor, clamp, fusion timing); candidate scope-reopen / must-fix list
+wording (no §1 trigger tables). No WS4 evidence files, no `sr_parity.py`,
+no agent transcripts, no REV7 candidate §1 trigger tables, no run reports
+listing max|Δ| or failing bands were opened for this formula.
+
+---
+
+## 8. Scope statement (normative, not a residual hedge)
+
+Independent coherence judgment previously noted that ENBW-only is narrower
+than “leakage-dominated exclusion.” That narrowing is now **normative §2.0**,
+not a §8 disclaimer. The formula is internally consistent under the ENBW +
+floor perimeter. Leakage sufficiency is not claimed; an anti-leakage operator
+is not smuggled via residual text.
+
+Re-measure (when authorized) decides PASS/FAIL under this scoped rule — not
+this note.
+
+---
+
+## 9. Pre-registered governance (before any re-measure)
+
+Frozen **before** re-measure so the outcome cannot rewrite the rule:
+
+1. If re-measure **FAILS** under `N_MIN = 2`, it is **forbidden** to raise
+   `N_MIN` (or otherwise retune constants) until the gate appears to PASS.
+   That would be threshold shopping.
+2. Admissible responses to FAIL only:
+   - a re-derivation from a **different** frozen window/grid property,
+     justified on its own terms (not by the FAIL magnitudes); or
+   - a further **domain** / derived-field amend authorized by a new GO —
+     not silent threshold edits.
+3. Sequence: **delta metrology-redteam on this closure prose** → then
+   independent re-measure from scratch (only if non-BROKEN) → then second
+   Guardian GO. No consolidate while this proposal is uncommitted / unaccepted.
+4. `0.25 dB` is immutable as the gate threshold, not a shopping knob for
+   MATERIAL or `N_MIN`.
+
+---
+
+## 10. Redteam closure (must-fix 1–5)
+
+| # | Must-fix | Closure in this prose |
+|---|---|---|
+| 1 | Shape/prominence coupling (CRITICAL) | **Choice (B).** §2.7 redefines gate-4 shape/prominence on `R = {RESOLVED}`; testable bit-stability vs PSD outside `R`. Choice (A) rejected as insufficient to stop contamination of ACTIVE neighbours. Coupling closed only by domain/derived-field amend — stated honestly. |
+| 2 | Constraint 4 perimeter | **Narrowed yes (normative).** §2.0: admission = ENBW-aperture + floor-union only; leakage out of scope for ACTIVE. No anti-leakage operator added. §8 is no longer a hedge — it restates the normative perimeter. |
+| 3 | Single form for 0/1-bin | **Domain amend xor** (domain is the sole normative packaging). §2.5; predicate `RESOLVED=false` is implementationally set-equivalent (§2.5 equivalence), not an optional second contract sentence. Dual “optional” wording removed. |
+| 4 | MATERIAL worst-case | **`w_path > 0` must be resolved** (§2.2). Equal-energy `W_MATERIAL` withdrawn. `0.25 dB` not used in MATERIAL; remains gate threshold only. |
+| 5 | Pin + vacuous | §2.1 bit-stable `N_BINS`/`RESOLVED`/`ACTIVE` mask procedure; §2.8 vacuous FAIL per §13.1 portion **and** per required valid channel; no N/A skip. |
+
+`N_MIN = 2` retained (`ceil(ENBW_Hann)`); not raised.
+```
+
+---
+
+## B.6 FILE: `docs/MOTORE_V3_REV7_SCOPE_REWRITE_MANDATE.md`
+
+**Path logico:** `docs/MOTORE_V3_REV7_SCOPE_REWRITE_MANDATE.md`  
+**Bytes:** 3322  
+**Lines:** 74
+
+```markdown
+# MANDATO — riapertura scopo REV7 (post ri-misura + sonda densa)
+
+**Status:** AUTHORIZED TO START — untainted writer only  
+**Date:** 2026-07-25
+
+## Destinatario
+
+NON chi ha prodotto o letto i numeri di esito (WS4 / ri-misura / sonda
+densa) per scegliere costanti. Counter-check giudica, non scrive.
+
+**Contenimento:** non consultare report di ri-misura, evidenze di spike
+WS4, né il candidate REV7 (contengono magnitudini di fail). Se ti vengono
+offerti, rifiutali e dichiaralo. La propria proposta ACTIVE precedente
+può essere riusata **a memoria / da copia locale già nota** senza
+riaprire documenti che la citano insieme agli esiti.
+
+**Test di integrità:** se ti accorgi di conoscere l’entità numerica di
+qualunque fallimento di gate (max|Δ|, bande colpevoli, asset/SR che
+falliscono), dichiaralo **prima** di scrivere e fermati — la
+contaminazione deve emergere, non restare implicita.
+
+## Diagnosi consegnata (fisica / geometria — non una costante)
+
+1. Under-resolution 0/1-bin: già indirizzata da domain-on-`R` /
+   criterio ENBW con `N_MIN = 2` nella proposta precedente.
+2. Ipotesi “solo fixture sparse / valli vuote” (**iii**): **testata** —
+   l’eccitazione densa (una componente per centro di banda, stesse regole
+   di ammissione) **non ha chiuso il gate**. Quindi (iii) è
+   **insufficiente** come spiegazione completa. Nessuna cifra di esito
+   è fornita qui di proposito.
+3. Residuo diagnostico: su bande ancora `RESOLVED` sotto ENBW, i **centri
+   delle bande vicine** possono stare **dentro il lobo principale** della
+   Hann periodica congelata → inseparabilità inter-banda / interferenza
+   locale. Questo è un fatto di geometria finestra↔griglia.
+
+## Geometria congelata (riuso del mandato ACTIVE; nessuna misura)
+
+- `fs_c = 48000`; 120 bande; `center[i] = 20*(20000/20)**(i/119)`;
+  `r = 1000**(1/119)`; supporto triangolare su `log2(f)`.
+- MAIN 4096 / LF 8192; Hann periodica; fusione 160/320 Hz.
+- Occupancy geometrica (aritmetica): MAIN 14 zero-bin + 21 single-bin;
+  LF 6 zero-bin + 17 single-bin.
+- Proprietà Hann legittime come fonte costanti: ENBW = 1.5 bin;
+  lobo principale null-to-null = 4 bin; primo sidelobe classico.
+
+## Compito
+
+Riscrivere lo scopo dell’emendamento (document-only) in  
+`docs/MOTORE_V3_REV7_SCOPE_REWRITE_PROPOSAL.md`  
+scegliendo e giustificando a priori **una** direzione coerente:
+
+- domain / field-definition amend; e/o
+- criterio geometrico ripartendo da proprietà finestra/griglia
+  (ENBW aperture **oppure** main-lobe separation **oppure** altro
+  derivabile) — **sui propri termini**, senza chiedere “cosa passa”.
+
+## Divieti
+
+- NON chiedere / usare max|Δ| di run, tabelle margine, “quale N_MIN passa”.
+- NON alzare `N_MIN` perché una misura è FAIL.
+- NON toccare 0.25 dB, CONTRACT freeze, lock, SHA256SUMS.
+- NON eseguire ri-misura in questo task.
+- NON aprire file il cui nome suggerisce evidenza/esito di run
+  (`*REMEASURE*`, `*WS4*EVIDENCE*`, `*REV7_CANDIDATE*`, `sr_parity`
+  evidence dumps).
+
+## Esito
+
+1. Proposta aggiornata + tabella costanti con derivazione; **oppure**
+   dichiarazione onesta che serve emendare il dominio/campi e non un
+   predicato di ammissione.
+2. Dichiarazione di non-contaminazione (o stop se contaminato).
+
+Poi (fuori scope): redteam → ri-misura da giudice → secondo GO.
+```
+
+---
+
+## B.7 FILE: `docs/MOTORE_V3_REV7_SCOPE_REWRITE_PROPOSAL.md`
+
+**Path logico:** `docs/MOTORE_V3_REV7_SCOPE_REWRITE_PROPOSAL.md`  
+**Bytes:** 13331  
+**Lines:** 263
+
+```markdown
+# REV7 — Scope rewrite proposal (document-only)
+
+**Status:** PROPOSAL — product packaging = report-only LF (Marco)  
+**Date:** 2026-07-25  
+**Authority for this write:** `docs/MOTORE_V3_REV7_SCOPE_REWRITE_MANDATE.md`  
+**Report-only clause:** `docs/MOTORE_V3_REV7_REPORT_ONLY_LF_CLAUSE.md`  
+**Kind:** scope rewrite of the SR-parity admission domain and geometric resolvability predicates + report-only packaging for ∉`R`.  
+**Not in scope of this document:** remeasure, lock edits, SHA256SUMS, CONTRACT freeze edits, threshold shopping.
+
+---
+
+## 0. Contamination statement
+
+**CLEAN.**
+
+This write used only:
+
+- the cleaned scope-rewrite mandate;
+- geometry / field structure from `docs/MOTORE_V3_G1_CONTRACT.md` §6–§7;
+- band-centre helpers in `ml_v3/contracts/grid.py` / `constants.py`;
+- lock *non-outcome* timing/floor names (`fs_c`, `N_LF`, hop `H`, `floor_linear`) without reading run tables.
+
+It did **not** open `*REMEASURE*`, `*WS4*EVIDENCE*`, `*REV7_CANDIDATE*`, or `sr_parity` evidence dumps.  
+It does **not** know, and does not use, any measured `max|Δ|`, margin table, failing asset/SR list, or measured failing band-index list from a gate run.
+
+Structural band counts below are **a priori** consequences of frozen window↔grid arithmetic, of the same kind as the mandate’s occupancy census (zero-bin / single-bin). They are not run outcomes.
+
+If a reviewer later discovers latent numeric gate-failure knowledge in the author, this proposal is void and must be rewritten by a fresh untainted writer.
+
+---
+
+## 1. Chosen direction (one coherent package)
+
+**Domain amend of admissible set `R`, driven by a main-lobe separation predicate** — not a raise of `N_MIN`, and not a change of the 0.25 dB gate number.
+
+Package:
+
+1. **Keep** the prior ACTIVE under-resolution layer: domain-on-`R` with ENBW occupancy and `N_MIN = 2` (already justified from Hann ENBW = 1.5 bin; **not** raised here).
+2. **Add** a second, independent geometric predicate on the same bands: **neighbor centres must lie outside the periodic-Hann main lobe** of a tone at the band centre, evaluated in the FFT bin metric of every path that contributes weight after fusion.
+3. **Interpret** failure of (2) as *domain exclusion* (band ∉ `R`), not as evidence to loosen or tighten the dB gate.
+
+### Why this direction
+
+Mandate diagnosis, used only as physics/geometry:
+
+| Layer | Status |
+|---|---|
+| 0/1-bin under-resolution | Already addressed by ENBW + `N_MIN = 2` on `R` |
+| “Sparse fixtures / empty valleys” alone | Tested by dense one-tone-per-centre excitation under the same admission rules; **insufficient** as a complete explanation (no outcome magnitudes used) |
+| Residual on bands still ENBW-`RESOLVED` | Neighbor centres can sit **inside** the frozen Hann main lobe → local inter-band inseparability |
+
+ENBW occupancy answers “does this band own enough equivalent noise bandwidth?”  
+Main-lobe separation answers “is the next centre even a distinct spectral peak under this window?”  
+Those are different questions; passing the first does not imply the second on a log-spaced 120-band grid against MAIN 4096 / LF 8192.
+
+Raising `N_MIN` because a measure failed is **forbidden** and also **misaligned**: the residual is centre-to-centre geometry inside the main lobe, not a thicker occupancy requirement.
+
+---
+
+## 2. Frozen geometry reused (no measure)
+
+From contract §6 and the mandate’s freeze list:
+
+| Symbol | Value | Source |
+|---|---|---|
+| `fs_c` | 48000 | §6 / lock timing |
+| `N_MAIN` | 4096 | §6.2 |
+| `N_LF` | 8192 | §6.2 / lock `timing.N_LF` |
+| `H` | 1024 | §6.2 / lock |
+| Window | periodic Hann `0.5 - 0.5*cos(2πn/N)` | §6.2 |
+| PSD floor (linear) | `1e-12` then clamp `[-120, +12]` dBFS/Hz | §6.1 / lock activity floor |
+| Centres | `center[i] = 20 * (20000/20)**(i/119)`, `i = 0..119` | §6.1 |
+| Ratio | `r = 1000**(1/119)` | equivalent closed form |
+| Support | triangular on `log2(f)` | §6.1 |
+| Fusion | LF pure ≤160 Hz; MAIN pure ≥320 Hz; raised-cosine crossfade on `log2(f)` in (160, 320) | §6.2 |
+
+Legitimate Hann constants (classical, not fitted to a run):
+
+| Property | Bins |
+|---|---|
+| ENBW | 1.5 |
+| Main lobe null-to-null | 4 |
+| Main lobe half-width (centre → first null) | 2 |
+| First sidelobe | classical Hann location/level (informational; not used as a gate constant here) |
+
+Bin widths:
+
+```text
+Δf_MAIN = fs_c / N_MAIN = 48000 / 4096 = 11.71875 Hz
+Δf_LF   = fs_c / N_LF   = 48000 / 8192 =  5.859375 Hz
+```
+
+Mandate occupancy census (unchanged, arithmetic only): MAIN 14 zero-bin + 21 single-bin; LF 6 zero-bin + 17 single-bin.
+
+---
+
+## 3. Domain and field definition
+
+### 3.1 Fields under the SR-parity claim
+
+Unchanged surface from §7: the parity claim for this amend continues to address **stationary mid (and side, when valid) `*_psd_db[120]` band energies** after the frozen PSD / fusion / dB path.
+
+Still excluded from the parity domain (lock already names delta exclusion; this proposal does not reopen that list): frame-to-frame `*_delta_db`, and any field whose contract meaning is not a per-band fused PSD level.
+
+**No change** to the numeric gate threshold 0.25 dB.  
+**No change** to FFT sizes, window name, floors, fusion knees, grid, or SHA256SUMS in this task.
+
+### 3.2 Admissible set `R`
+
+A band index `i` at a compared frame is in `R` iff **all** of the following hold on every FFT path `p ∈ contributing_paths(i)`:
+
+1. **Under-resolution (prior ACTIVE, retained):** ENBW-aware occupancy of the triangular support in path `p` satisfies `N_eff(i, p) ≥ N_MIN` with `N_MIN = 2`.
+2. **Main-lobe separation (this rewrite):** nearest-neighbor centre separation in path-`p` bins is at least the Hann main-lobe half-width:
+
+```text
+sep_bins(i, p) = min_{j ∈ {i-1, i+1} ∩ [0,119]} |center[j] - center[i]| / Δf_p
+sep_bins(i, p) ≥ SEPARATION_MIN_BINS
+SEPARATION_MIN_BINS = 2   # = null-to-null / 2 = centre→first-null
+```
+
+3. **Path contribution after fusion:**
+
+| Centre frequency | `contributing_paths(i)` |
+|---|---|
+| `center[i] ≤ 160` | `{LF}` |
+| `center[i] ≥ 320` | `{MAIN}` |
+| `160 < center[i] < 320` | `{LF, MAIN}` (fail-closed: both must satisfy (1) and (2)) |
+
+Bands failing (1) or (2) are **not scored** for the SR-parity max-|Δ| claim: they are outside `R` (reportable as `EXCLUDED_GEOMETRY`), never silent PASS.
+
+Endpoint bands use only the single existing neighbor (`i=0` → `{1}`; `i=119` → `{118}`).
+
+---
+
+## 4. Constants table with a priori derivation
+
+| Constant | Value | Derivation |
+|---|---|---|
+| `ENBW_BINS` | 1.5 | Classical periodic Hann equivalent noise bandwidth |
+| `N_MIN` | 2 | Prior ACTIVE under-resolution floor: smallest integer occupancy strictly above one ENBW bin in spirit of “more than a single ENBW cell”; **retained, not raised** |
+| `MAIN_LOBE_NULL_TO_NULL_BINS` | 4 | Classical periodic Hann main-lobe null-to-null width |
+| `SEPARATION_MIN_BINS` | 2 | `MAIN_LOBE_NULL_TO_NULL_BINS / 2` — neighbour must not lie strictly inside the main lobe |
+| `Δf_MAIN` | `48000/4096` | Frozen MAIN FFT |
+| `Δf_LF` | `48000/8192` | Frozen LF FFT |
+| `r` | `1000**(1/119)` | Geometric centre ratio from §6.1 |
+| Gate dB | 0.25 | Untouched |
+
+### 4.1 Closed-form frequency thresholds (consequence, not knobs)
+
+For interior bands, `|center[i+1] - center[i]| = center[i]·(r − 1)`.  
+The half-lobe predicate `sep_bins ≥ 2` is equivalent to:
+
+```text
+center[i] ≥ SEPARATION_MIN_BINS · Δf_p / (r − 1)
+```
+
+Numerically (documentation aid only; implementation should use the bin formula in §3.2):
+
+| Path | `2 · Δf_p / (r − 1)` |
+|---|---|
+| MAIN | ≈ 392.1528 Hz |
+| LF | ≈ 196.0764 Hz |
+
+Crossfade bands must clear **both** thresholds in the bin metric (i.e. the MAIN bin test is stricter).
+
+### 4.2 A priori structural census under `SEPARATION_MIN_BINS = 2`
+
+Using only centres + `Δf_p` (no audio, no Δ tables):
+
+| Path | Band indices with `sep_bins < 2` to nearest neighbour |
+|---|---|
+| MAIN | 53 bands (low end of the grid up through the band whose centre is still below the MAIN threshold above) |
+| LF | 41 bands (same construction with `Δf_LF`) |
+
+After fusion path selection (§3.2), the admissible `R` is the intersection of ENBW-`N_MIN` survival and this separation survival on contributing paths. Exact set membership is a pure function of frozen geometry; it must be bit-stable on the gate platform.
+
+**Why not `SEPARATION_MIN_BINS = 4`?**  
+Null-to-null (= 4) would demand a full main-lobe *width between centres*, i.e. the neighbour at the far null. The residual diagnosis is membership **inside** the lobe (distance from centre to neighbour below the first null). The matching predicate is therefore half-width = 2. Choosing 4 would be a different, stricter physical claim and is not selected here.
+
+**Why not raise `N_MIN`?**  
+Forbidden by mandate when motivated by FAIL magnitudes; also orthogonal to centre-in-lobe inseparability.
+
+---
+
+## 5. What this amend claims — and what it refuses to claim
+
+**Claims (document intent):**
+
+- Per-band SR parity is only a well-posed independent-band claim on `R`, where each admitted centre is both ENBW-occupied and main-lobe-separated from its grid neighbours under the frozen Hann and the contributing FFT path(s).
+- Exclusion is geometric and pre-registered; it is not outcome-conditional.
+
+**Refuses:**
+
+- Fitting `N_MIN` / `SEPARATION_MIN_BINS` / fusion knees / FFT sizes to a remeasure table.
+- Treating dense multi-tone excitation as a substitute for fixing an ill-posed band claim.
+- Touching 0.25 dB, CONTRACT freeze bytes, metrology lock payload, or `SHA256SUMS` in this proposal step.
+
+---
+
+## 6. Honest alternative considered (and not chosen as primary)
+
+A pure **field-definition** rewrite (e.g. replace 120-band PSD parity with a coarser projection, or declare the entire fused vector incomparable) would also remove the ill-posed claim, but would discard band identity that remains geometrically separable at high centres under MAIN/LF. The main-lobe predicate keeps the §7 `*_psd_db[120]` field and removes only the bands for which neighbour centres are definitionally inside the window main lobe.
+
+If redteam shows that even main-lobe-separated bands cannot carry an independent-band SR claim under the frozen frontend for a *non-outcome* structural reason not listed in the mandate, the fallback is a further domain/field amend — not threshold shopping.
+
+---
+
+## 7. Implementation notes (for a later builder; not authorized here)
+
+Document-only now. A future GO’d builder would:
+
+1. Serialize `SEPARATION_MIN_BINS = 2` and the contributing-path rule beside the existing ENBW/`N_MIN` predicate.
+2. Emit per-band admission tags: `IN_R` | `EXCLUDED_UNDERRESOLVED` | `EXCLUDED_MAINLOBE` (names illustrative).
+3. Compute the gate max-|Δ| **only** on `i ∈ R`.
+4. Leave lock FFT/window/floor bytes unchanged unless a separate freeze GO says otherwise.
+
+---
+
+## 8. Exit criteria for this proposal artifact
+
+1. Direction chosen and justified a priori: **domain-on-`R` + main-lobe separation (`SEPARATION_MIN_BINS = 2`), retaining ENBW `N_MIN = 2`.**
+2. Constants table with derivation present (§4).
+3. Contamination: **CLEAN** (§0).
+4. Out of scope here: redteam → judge remeasure → second GO.
+
+---
+
+## 9. Judge coherence + geometric consequence (2026-07-25)
+
+**Coherence: OK.** Two predicates, two window properties (`ENBW` → `N_MIN=2`; main-lobe null-to-null/2 → Rayleigh `SEPARATION_MIN_BINS=2`). Guardrail “`N_MIN` not raised” respected. Audit note: both constants equal `2` for different reasons — keep both derivations visible in normative text.
+
+**A-priori geometric consequence** (bin arithmetic on frozen centres; not a run outcome):
+
+| quantity | value |
+|----------|--------|
+| `\|R\|` / 120 | **67** / 120 (~56%) |
+| first `IN_R` band | index **53** (~433.7 Hz); last excluded **52** (~409.2 Hz) |
+| 20–80 Hz held | **0** / 24 |
+| 80–200 Hz held | **0** / 16 |
+| 200–500 Hz held | **3** / 16 |
+| ≥500 Hz held | **64** / 64 |
+
+Crossfade bands must clear **both** path tests → MAIN half-lobe (~392 Hz closed-form) dominates → effectively **no SR-parity claim below ~409 Hz**.
+
+**Product decision required (Marco) — re-measure BLOCKED until answered:**
+
+Separate two claims:
+
+1. *Metrology:* below ~400 Hz, band-to-band SR parity is not well-posed under this grid+window (geometry demonstrates).
+2. *Product:* therefore we verify **nothing** below ~400 Hz (does **not** follow automatically).
+
+Alternatives that are not silent inheritance of (1): different low-band instrument (longer window / pre-band PSD), report-only LF region, or a-priori wider LF tolerance — each is a separate amend, not shopping after a PASS number.
+
+**Product decision (Marco, 2026-07-25): report-only LF** — not option-1
+blindness, not a wider LF dB tolerance, not a second instrument this tranche.
+Bands ∉ `R` do **not** close gate 4; their per-band / per-SR max|Δ| **must**
+be published (fail-closed if omitted). Contract must state *why* (grid finer
+than window separation). G4 debt: cross-SR low-end detection stability.
+Mandate for normative prose: `docs/MOTORE_V3_REV7_REPORT_ONLY_LF_MANDATE.md`.
+
+**Re-measure:** authorized **after** the report-only clause is written and
+paper-redteamed — gate max on `i ∈ R` only; report-only table mandatory for
+∉`R`.
+```
+
+---
+
+## B.8 FILE: `docs/MOTORE_V3_REV7_REPORT_ONLY_LF_MANDATE.md`
+
+**Path logico:** `docs/MOTORE_V3_REV7_REPORT_ONLY_LF_MANDATE.md`  
+**Bytes:** 3040  
+**Lines:** 62
+
+```markdown
+# MANDATO — clausola report-only LF (decisione prodotto Marco)
+
+**Status:** AUTHORIZED 2026-07-25 — untainted writer  
+**Product decision:** under the geometric resolvability limit of the frozen
+120-band grid + periodic Hann, SR-parity **does not close** gate 4, but
+**must** be measured and published (report-only). Not option-1 blindness.
+Not a wider LF dB tolerance (forbidden: invent X dB from run residuals).
+Not a second instrument (longer FFT / pre-band PSD) in this tranche.
+
+## Destinatario
+
+Untainted writer. Do **not** open remeasure/WS4 evidence / REV7 candidate
+run tables. Do **not** use measured max|Δ| to pick constants.
+
+## What is already decided (do not re-litigate)
+
+1. Coherent geometric package from scope rewrite: ENBW `N_MIN=2` **and**
+   main-lobe Rayleigh `SEPARATION_MIN_BINS=2` → domain `R` (a priori).
+2. Consequence: `R` starts only above ~409 Hz under frozen geometry
+   (documentation aid already in scope-rewrite proposal §4 / §9). That
+   frequency is a **consequence of the predicates**, not a new knob.
+3. Product: bands ∉ `R` are **report-only** for SR-parity — they do **not**
+   contribute to the gate-closing max|Δ| ≤ 0.25, but their per-band /
+   per-SR max|Δ| **must** appear in the G1e (or successor) numeric report.
+4. **0.25 dB unchanged** on `i ∈ R`. No soft-max, no LF alternate threshold.
+5. Contract must **state why** report-only: the 120-band grid is finer than
+   the analysis window can separate below the geometric limit — not leave
+   that as an implied side-effect of a formula.
+6. Durable debt: G4 must carry an explicit cross-SR detection-stability
+   check on low-end classes (mud/boom/boxy) — registered now, not discovered
+   later. Writer drafts the debt sentence; does not invent G4 metrics.
+
+## Compito
+
+Update / write document-only:
+
+1. Extend `docs/MOTORE_V3_REV7_SCOPE_REWRITE_PROPOSAL.md` (or a sibling
+   `docs/MOTORE_V3_REV7_REPORT_ONLY_LF_CLAUSE.md`) with **normative**
+   contract-shaped prose for:
+   - gate-closing domain = `i ∈ R` only (predicates already specified);
+   - report-only domain = geometrically excluded bands, mandatory publication
+     fields (max|Δ| per band, per SR vs 48k, per required asset/portion);
+   - explicit “why report-only” sentence (grid finer than window separation);
+   - fail-closed: omitting the report-only table → G1e report **FAIL**
+     (not optional appendix);
+   - G4 debt registration sentence (cross-SR low-end detection stability).
+2. Sync a short status note into
+   `docs/MOTORE_V3_G1_CONTRACT_REV7_CANDIDATE.md` § product decision
+   (without copying run magnitudes).
+
+## Divieti
+
+- No LF tolerance constant X dB.
+- No raising `N_MIN` / retuning `SEPARATION_MIN_BINS` from outcomes.
+- No CONTRACT freeze / lock / SHA256SUMS edit.
+- No re-measure in this task.
+- No opening `*REMEASURE*`, `*WS4*EVIDENCE*` outcome tables.
+
+## Esito
+
+Normative clause + contamination statement. Then: redteam on the clause →
+independent re-measure (gate on `R` + mandatory report-only table for ∉`R`).
+```
+
+---
+
+## B.9 FILE: `docs/MOTORE_V3_REV7_REPORT_ONLY_LF_CLAUSE.md`
+
+**Path logico:** `docs/MOTORE_V3_REV7_REPORT_ONLY_LF_CLAUSE.md`  
+**Bytes:** 5423  
+**Lines:** 129
+
+```markdown
+# REV7 — Report-only LF SR-parity (normative candidate prose)
+
+**Status:** DOCUMENT-ONLY CLAUSE — ≠ CONTRACT consolidated — ≠ G1 PASS  
+**Date:** 2026-07-25  
+**Authority:** Marco product decision (report-only under geometric limit) via  
+`docs/MOTORE_V3_REV7_REPORT_ONLY_LF_MANDATE.md`  
+**Geometry package:** `docs/MOTORE_V3_REV7_SCOPE_REWRITE_PROPOSAL.md`  
+(ENBW `N_MIN = 2` ∧ Rayleigh `SEPARATION_MIN_BINS = 2` → domain `R`)
+
+**Does not:** change 0.25 dB; invent an LF alternate dB tolerance; raise
+`N_MIN`; retune `SEPARATION_MIN_BINS`; edit freeze CONTRACT / lock /
+SHA256SUMS.
+
+---
+
+## 1. Why report-only (must appear in CONTRACT language)
+
+Under the frozen §6 geometry (120-band log grid, triangular supports,
+periodic Hann, dual FFT MAIN 4096 / LF 8192, fusion 160/320 Hz), neighbour
+band centres can lie inside the analysis main lobe at low centres. Those
+bands are **not independently separable** by the frozen window. Therefore
+sample-rate parity of per-band features below the geometric resolvability
+limit is **not a well-posed closing claim** for gate 4 — not because the
+0.25 dB threshold is wrong, and not because the frontend is exempt from
+scrutiny there.
+
+This reason must be stated explicitly in the consolidated CONTRACT. It must
+not be left as an unspoken side-effect of an admission formula.
+
+---
+
+## 2. Domains
+
+Let `R` be the a-priori set of band indices that satisfy both:
+
+1. under-resolution / ENBW occupancy on every fusion-contributing path
+   (`N_MIN = 2 = ceil(ENBW_Hann)`), and
+2. neighbour-centre separation on every fusion-contributing path
+   (`sep_bins ≥ SEPARATION_MIN_BINS = 2 = main-lobe null-to-null / 2`),
+
+as specified in the scope-rewrite proposal (fail-closed on crossfade: both
+LF and MAIN paths must satisfy).
+
+| domain | role |
+|--------|------|
+| `i ∈ R` | **Gate-closing** SR-parity domain for PSD / shape / prominence (and valid-channel level scalars as already scoped). `max\|Δ\| ≤ 0.25` dB closes or fails gate 4. |
+| `i ∉ R` | **Report-only** SR-parity domain. Does **not** enter the gate-closing max. Must still be measured and published. |
+
+Shape/prominence for gate-closing cells remain computed under the prior
+fail-closed choice: §7 formulas restricted to support compatible with `R`
+(proposal choice B / redteam closure). Report-only bands are tagged
+`EXCLUDED_GEOMETRY` (or finer: under-resolved vs main-lobe) — never silent
+PASS.
+
+---
+
+## 3. Mandatory publication (fail-closed)
+
+The G1e frontend/benchmark numeric report (or the successor report named in
+PLAN for the G1 close package) **MUST** include a table (or machine-readable
+equivalent) with at least:
+
+- asset id / portion id (§13.1);
+- host sample rate under test (44.1 and 96 vs 48);
+- band index `i` for **every** `i ∉ R` (no subsetting / “interesting band”
+  cherry-pick); if a field is inactive under the same floor/union rule used
+  for gate cells, publish the cell as inactive / N/A with the rule named —
+  do not omit the band row;
+- field id (`mid_psd_db` / `mid_shape_db` / `mid_prominence_db` / … as
+  applicable on that channel);
+- `|Δ|` dB vs the 48 kHz reference on the aligned frame (when both sides
+  admit the cell under the named activity rule);
+- per-asset and overall `max|Δ|` restricted to active cells with `i ∉ R`
+  (report-only max — **not** used to close gate 4).
+
+**Omitting this table, or publishing only a prose summary without per-band
+numbers, is a report FAIL** — same severity class as omitting a required
+gate-4 artifact. Report-only is **not** an optional appendix.
+
+Gate 4 PASS/FAIL language in the report must state the perimeter:
+
+> Gate-closing claim applies only to bands in `R`. Bands outside `R` are
+> report-only because the 120-band grid is finer than periodic-Hann
+> neighbour separation under the frozen analysis.
+
+Forbidden PASS wording: “SR-parity verified across the full 20 Hz–20 kHz
+band grid” while `R` excludes the low region.
+
+---
+
+## 4. What this clause does not authorize
+
+- An alternate LF threshold (e.g. “tolerate X dB below 400 Hz”).
+- Dropping shape/prominence/level from the declared domain to hide FAIL.
+- Treating empty report-only domain as PASS.
+- Silent lock / SHA256SUMS mutation.
+- Claiming G1 PASS or Ableton readiness.
+
+---
+
+## 5. Durable debt — G4 cross-SR low-end detections
+
+Register now (PLAN debt list + CONTRACT pointer on consolidate):
+
+> G4 MUST include an explicit verification of cross-sample-rate stability of
+> detections on low-end problem classes (at minimum the product classes that
+> depend on content below the geometric resolvability limit of the G1 band
+> grid — mud / boom / boxy-mid as named in the product taxonomy). This is
+> **not** satisfied by G1 gate 4 PASS on `R` alone.
+
+Exact G4 metrics are out of scope for this clause; the debt existence and
+trigger (“low-end classes × host SR”) are in scope and mandatory.
+
+---
+
+## 6. Consolidation binding
+
+On Guardian consolidate GO, this clause merges into
+`docs/MOTORE_V3_G1_CONTRACT.md` §13.2 gate 4 beside the `R` predicates, and
+the metrology lock gains the hashed admission mask procedure for `R` plus a
+flag that report-only publication is required. Until then: candidate only.
+
+---
+
+## 7. Contamination
+
+Writer path: mandate + geometric proposal structure. No run-magnitude
+shopping. Product decision (report-only vs blind vs alternate instrument)
+was taken by Marco before this prose.
+```
+
+---
+
+## B.10 FILE: `docs/MOTORE_V3_REV7_REMEASURE_R_REPORT.md`
+
+**Path logico:** `docs/MOTORE_V3_REV7_REMEASURE_R_REPORT.md`  
+**Bytes:** 6022  
+**Lines:** 88
+
+```markdown
+# REV7 independent re-measure — ACTIVE / domain-on-R (ENBW+floor)
+
+**Status:** EVIDENCE — ≠ G1 PASS — ≠ consolidate GO — ≠ anti-leakage claim  
+**Date:** 2026-07-25  
+**Judge:** independent CC lineage (reproduced WS4 RED; does not author ACTIVE)  
+**Perimeter (acceptance A):** ENBW aperture + floor/union only; **leakage OOS** for ACTIVE  
+**Harness:** implemented from proposal normative text (§7-on-`R`, choice B) — **not** product spike `sr_parity.py` relay  
+**Proposal:** `docs/MOTORE_V3_REV7_ACTIVE_FORMULA_PROPOSAL.md` (redteam closure)  
+**Governance:** `N_MIN` not raised; no new anti-leakage cut fitted to these numbers
+
+---
+
+## 1. Geometry (a priori)
+
+| quantity | value |
+|----------|--------|
+| `\|R\|` / 120 | **96** / 120 |
+| unresolved (material) | bands `0–23` except `21`, plus `36` (~161.7 Hz crossover) |
+| historical sparse offenders vs R | `b16`, `b18` **out of R**; `b21` **in R** |
+
+---
+
+## 2. Stationary adversarial cells (useful window)
+
+| asset | sr vs 48k | REV6 max\|Δ\| (WS4) | this re-measure (on R) | verdict | peak |
+|-------|-----------|---------------------|------------------------|---------|------|
+| multitone | 44100 | 4.780 | **4.771** | **FAIL** | `shape` b35 |
+| multitone | 96000 | 4.488 | **4.479** | **FAIL** | `shape` b35 |
+| pseudo_noise | 44100 | 9.537 | **1.237** | **FAIL** | `psd` b28 |
+| pseudo_noise | 96000 | 8.993 | **1.136** | **FAIL** | `psd` b28 |
+
+Vacuous FAIL: **not** triggered. Threshold 0.25 dB unchanged.
+
+**log_sweep:** not executed this round (two stationary assets already determine FAIL). Required before any formal consolidate claim.
+
+---
+
+## 3. What the cure did / did not (sparse fixtures)
+
+- **Did (geometry / under-resolution):** pseudo_noise 9.54 → 1.24 dB (~7.7×). Sparse 0/1-bin bands leave the domain; shape/prominence contamination via full-120 §7 is stopped by choice (B) on `R`.
+- **Partial (sparse valleys):** multitone ~unchanged (~4.78 → ~4.77) on shape b35 — RESOLVED band between tones, near-floor skirts. Noise residual on psd b28 similarly sits between partials.
+- **Hypothesis (iii) — sparse excitation as sole cause:** tested with dense probe (§4). **Refuted as complete explanation** (4.77 → 1.19 under dense, still FAIL). Do not correct the narrative by adding (iii) as the remaining fix; record that (iii) was measured and is **insufficient**.
+
+---
+
+## 4. Dense-excitation probe (hypothesis (iii) — tested)
+
+**Hypothesis (iii):** residual FAIL on sparse fixtures (multitone / noise) is mostly empty-band / distant-leakage; a dense excitation with one sinusoid at every frozen band centre should largely clear the gate under the same ENBW+floor / §7-on-`R` rules.
+
+**Construction (a priori fixture geometry, not fitted):** 120 equal-amplitude tones at `band_centers_hz()`, total RMS −24 dBFS, analytic render at each host rate, same useful window / nearest `source_time` / ACTIVE / §7-on-`R` pipeline as §2.
+
+| probe | sr vs 48k | max\|Δ\| dB | verdict | peak |
+|-------|-----------|------------|---------|------|
+| 120 components | 44100 | **1.188** | **FAIL** | `prom` b24 (~81 Hz) |
+| 120 components | 96000 | **1.094** | **FAIL** | `prom` b24 (~81 Hz) |
+
+**Result:** hypothesis (iii) is **refuted as a complete explanation**. Sparse excitation mattered (multitone peak ~4.77 → ~1.19 under dense) but is **not sufficient**.
+
+**Diagnostic (geometry of frozen window/grid — not a prescribed constant):** peak at band 24 (~80.6 Hz); neighbour centres ~4.54 Hz apart ≈ **0.78 LF bins**; Hann main-lobe half-width = 2 bins → adjacent band components lie inside each other’s main lobe. Residual failure mode is **inter-band inseparability under the analysis window**, not only distant leakage into empty bands. ENBW occupancy (`N_MIN=2`) can mark such a band `RESOLVED` while neighbours still co-interfere.
+
+Zone sketch (pure geometry; centres vs main-lobe widths): on LF, adjacent centres exceed 2-bin separation only above ~204 Hz; full 4-bin separation only above ~409 Hz (MAIN thresholds higher). No claim here that any particular `N_MIN` would PASS — that measurement is intentionally not run by the contaminated judge.
+
+---
+
+## 5. Structural conclusion (updated after dense probe)
+
+1. Narrowing constraint 4 to ENBW+floor was honest packaging; under that perimeter the gate still **FAILS** on sparse fixtures **and** on the dense probe.
+2. Residual after R-restriction is **not** only “distant leakage into empty bands.” Dense probe shows **band-to-band separation** under the frozen Hann main lobe is also in play on `RESOLVED` cells.
+3. Next amend must still target **domain and/or field definitions** and/or a **re-opened a-priori geometric criterion** justified from window/grid (including whether ENBW aperture vs main-lobe separation is the right property) — written **before** any further PASS chase. Contaminated judge delivers **diagnosis only**, not a chosen constant.
+4. **Forbidden:** raise `N_MIN` / add anti-leakage or separation cuts chosen to clear 4.771 / 1.237 / 1.188; shopping “which N_MIN passes” after seeing these numbers.
+
+---
+
+## 6. Honesty notes on this measure
+
+- Prominence text ambiguity (renorm retained weights vs reflect on R-sequence): implemented **renormalization**. Dense-probe peak is on prominence — dual reading residual C remains material for lock time; does not reverse FAIL under renorm.
+- Acceptance B: fields compared are §7-on-`R`, not product §7-120 + mask.
+- `log_sweep` still owed before any formal consolidate claim.
+
+---
+
+## 7. Verdict
+
+**RED** under the ENBW+floor / domain-on-`R` candidate perimeter.
+
+Diagnosis: under-resolution sparse bands **addressed** by R; sparse-fixture leakage **partial**; residual **inter-band inseparability** on geometrically `RESOLVED` low bands (dense probe). Hypothesis (iii) tested → **insufficient**.
+
+**REV7 consolidate: NO.** Hand off to untainted scope rewrite with diagnosis “band separation under main lobe” — **without** a prescribed constant from this judge.
+```
+
+---
+
+## B.11 FILE: `docs/MOTORE_V3_REV7_REMEASURE_R_FINAL.md`
+
+**Path logico:** `docs/MOTORE_V3_REV7_REMEASURE_R_FINAL.md`  
+**Bytes:** 2895  
+**Lines:** 68
+
+```markdown
+# REV7 final re-measure — gate on `R` + report-only `∉R`
+
+**Status:** EVIDENCE — ≠ G1 PASS — ≠ consolidate GO  
+**Date:** 2026-07-25  
+**Platform:** CPython 3.12.13 / numpy 2.5.1 (`~/aieq_data/motore_v3/env/venv`)  
+**Spike runner:** `motore-v3-g1b-spike` / `ml_v3/reports/run_rev7_remeasure_r.py`  
+**JSON:** spike `ml_v3/reports/G1B_REV7_REMEASURE_R_REPORT.json`  
+**Perimeter:** ENBW `N_MIN=2` ∧ Rayleigh `SEPARATION_MIN_BINS=2` → `|R|=67` (first ≈433.7 Hz);  
+report-only packaging per `docs/MOTORE_V3_REV7_REPORT_ONLY_LF_CLAUSE.md`
+
+---
+
+## Gate-closing (`i ∈ R`, §7-on-`R`, ABOVE_FLOOR union)
+
+| asset | vs 48k | max\|Δ\| dB | verdict | peak |
+|-------|--------|------------|---------|------|
+| multitone | 44100 | **0.1915** | **PASS** | level |
+| multitone | 96000 | **0.1898** | **PASS** | level |
+| pseudo_noise | 44100 | **0.0458** | **PASS** | level |
+| pseudo_noise | 96000 | **0.0464** | **PASS** | level |
+| log_sweep | 44100 | **6.4350** | **FAIL** | psd b106 (~9404 Hz) |
+| log_sweep | 96000 | **5.8381** | **FAIL** | psd b106 (~9404 Hz) |
+
+**Overall gate:** **FAIL** — `max|Δ| = 6.435 dB` (threshold 0.25).
+
+Stationary adversarial subset **PASSes** under the new perimeter with margin.
+`log_sweep` checkpoint mode still fails.
+
+### log_sweep peak (diagnostic)
+
+At checkpoint **16 kHz** (`t_cross≈1.7096`): `psd_ref[106]=−120.0`,
+`psd_sr[106]≈−113.56` → admitted by union `max>−120` though reference is on
+the clamp floor; instantaneous sweep peak in that frame is near b111
+(~12.6 kHz), not b106. Same one-sided floor/union skirt pattern as WS4
+smoke on HF checkpoints — **not** an LF geometry issue (b106 ∈ `R`).
+
+---
+
+## Report-only (`i ∉ R` — does **not** close gate)
+
+| asset | vs 48k | max\|Δ\| dB | peak |
+|-------|--------|------------|------|
+| multitone | 44100 | 4.780 | shape b35 (~152.5 Hz) |
+| multitone | 96000 | 4.488 | shape b35 |
+| pseudo_noise | 44100 | 9.537 | shape b18 (~56.9 Hz) |
+| pseudo_noise | 96000 | 8.993 | shape b18 |
+| log_sweep | 44100 | 108.021 | shape b2 (~22.5 Hz) |
+| log_sweep | 96000 | 1.563 | shape b51 (~386 Hz) |
+
+These numbers are **published debt**, not gate-closing. Omitting them would
+be a report FAIL under the report-only clause.
+
+---
+
+## Verdict
+
+1. Geometric `R` + report-only LF packaging **works as designed** for
+   multitone / pseudo_noise (gate PASS).
+2. Gate still **FAIL** on `log_sweep` HF checkpoint skirts via floor-union
+   activity — separate from the LF inseparability problem already moved to
+   report-only.
+3. **REV7 consolidate: NO** until sweep admission / checkpoint rule is
+   addressed a priori (not by shopping on 6.435). Options belong to a
+   follow-up amend (e.g. require both sides above floor + margin, or
+   checkpoint band neighbourhood tied to instantaneous peak) — **not**
+   raising `N_MIN` / widening 0.25.
+
+≠ G1 PASS. ≠ Ableton readiness.
+```
+
+---
+
+## B.12 FILE: `docs/MOTORE_V3_REV7_REMEASURE_R_FINAL.json`
+
+**Path logico:** `docs/MOTORE_V3_REV7_REMEASURE_R_FINAL.json`  
+**Bytes:** 2554  
+**Lines:** 104
+
+```json
+{
+  "artifact": "G1B_REV7_REMEASURE_R_REPORT",
+  "first_in_R_hz": 433.67506219748697,
+  "gate": [
+    {
+      "asset": "multitone",
+      "fs": 44100,
+      "max_abs_db": 0.19149398803710938,
+      "n_pairs": 77,
+      "peak": "level",
+      "verdict": "PASS"
+    },
+    {
+      "asset": "multitone",
+      "fs": 96000,
+      "max_abs_db": 0.1897754669189453,
+      "n_pairs": 77,
+      "peak": "level",
+      "verdict": "PASS"
+    },
+    {
+      "asset": "pseudo_noise",
+      "fs": 44100,
+      "max_abs_db": 0.04581642150878906,
+      "n_pairs": 77,
+      "peak": "level",
+      "verdict": "PASS"
+    },
+    {
+      "asset": "pseudo_noise",
+      "fs": 96000,
+      "max_abs_db": 0.04635047912597656,
+      "n_pairs": 77,
+      "peak": "level",
+      "verdict": "PASS"
+    },
+    {
+      "asset": "log_sweep",
+      "fs": 44100,
+      "max_abs_db": 6.4350128173828125,
+      "n_pairs": 10,
+      "peak": "psd b106 (9403.7Hz)",
+      "verdict": "FAIL"
+    },
+    {
+      "asset": "log_sweep",
+      "fs": 96000,
+      "max_abs_db": 5.838142395019531,
+      "n_pairs": 10,
+      "peak": "psd b106 (9403.7Hz)",
+      "verdict": "FAIL"
+    }
+  ],
+  "n_R": 67,
+  "note": "\u2260 G1 PASS; \u2260 consolidate; report-only max not used to close gate",
+  "overall_gate_max_abs_db": 6.4350128173828125,
+  "overall_gate_verdict": "FAIL",
+  "perimeter": "ENBW N_MIN=2 \u2227 SEPARATION_MIN_BINS=2 \u2192 R; report-only \u2209R",
+  "report_only": [
+    {
+      "asset": "multitone",
+      "fs": 44100,
+      "max_abs_db": 4.779563903808594,
+      "n_active_cells_sum_over_pairs": 10275,
+      "peak": "shape b35 (152.5Hz)"
+    },
+    {
+      "asset": "multitone",
+      "fs": 96000,
+      "max_abs_db": 4.487525939941406,
+      "n_active_cells_sum_over_pairs": 10254,
+      "peak": "shape b35 (152.5Hz)"
+    },
+    {
+      "asset": "pseudo_noise",
+      "fs": 44100,
+      "max_abs_db": 9.537364959716797,
+      "n_active_cells_sum_over_pairs": 10857,
+      "peak": "shape b18 (56.9Hz)"
+    },
+    {
+      "asset": "pseudo_noise",
+      "fs": 96000,
+      "max_abs_db": 8.993476867675781,
+      "n_active_cells_sum_over_pairs": 10857,
+      "peak": "shape b18 (56.9Hz)"
+    },
+    {
+      "asset": "log_sweep",
+      "fs": 44100,
+      "max_abs_db": 108.02138137817383,
+      "n_active_cells_sum_over_pairs": 582,
+      "peak": "shape b2 (22.5Hz)"
+    },
+    {
+      "asset": "log_sweep",
+      "fs": 96000,
+      "max_abs_db": 1.5628204345703125,
+      "n_active_cells_sum_over_pairs": 441,
+      "peak": "shape b51 (386.1Hz)"
+    }
+  ],
+  "threshold_db": 0.25
+}
+```
+
+---
+
+## B.13 FILE: `docs/MOTORE_V3_LOG_SWEEP_HF_ADMISSION_PROPOSAL.md (A/A3 stamped)`
+
+**Path logico:** `docs/MOTORE_V3_LOG_SWEEP_HF_ADMISSION_PROPOSAL.md`  
+**Bytes:** 18819  
+**Lines:** 350
+
+```markdown
+# Motore v3 — Proposal: log_sweep HF admission (one-sided floor-union)
+
+**Suggested commit title (if/when Marco authorizes commit):**  
+`docs(v3): stamp log_sweep HF admission decisions (A / A3 / fuori REV7 LF)`
+
+| Field | Value |
+|-------|--------|
+| **Status** | **DECISION STAMPED** — document-only; living choices locked; **uncommitted** until post-redteam/CC |
+| **≠** | G1 PASS · REV7 consolidate · G1b tip ufficiale · freeze amend · lock re-hash |
+| **Date** | 2026-07-26 |
+| **Branch / tip at draft** | `feature/motore-v3-offline` @ `2c69606f` (living next-path) |
+| **Freeze contract** | `docs/MOTORE_V3_G1_CONTRACT.md` @ `6d254d0a` (REV6) |
+| **Lock digest (unchanged)** | `d2c35ccc12643f2520c8a50d2e27fd3631216bb9a8ce63a34193412e74d1c10e` |
+| **Trigger evidence** | `docs/MOTORE_V3_REV7_REMEASURE_R_FINAL.md` (+ `.json`) @ `b3d7f71b` |
+| **Living path authority** | PLAN bullet post-`2c69606f`; handoff §A |
+
+## DECISION STAMP (2026-07-26)
+
+| Field | Value |
+|-------|--------|
+| **Date** | 2026-07-26 |
+| **Reviewer** | Marco (confirmed **"ok"** on living choices) |
+| **Path** | **Option A** — a-priori admission amend (NOT Option B tip-with-debt) |
+| **Mechanism** | **A3** — BOTH: sweep-scoped activity predicate **AND** neighbourhood = **solo `F_TRAJ`** (support ∩ window chirp image + `T_MEM`; **not** peak-local ±K) |
+| **REV7 packaging** | Sweep-HF stays **outside** the REV7 LF / geometric-`R` vehicle until measure **PASS** under the new admission; closing max on sweep **must not** silently use `ACTIVE∩R` |
+| **Still true** | **REV7 consolidate: NO** · ≠ G1 PASS · ≠ G1b tip ufficiale |
+| **Next** | Redteam/CC delta again on patched formula (CC + third redteam + CC-delta empty-N were **POROUS**; HIGH#1/#2 / MED#2 / LOW#3 closed in `MOTORE_V3_LOG_SWEEP_HF_ADMISSION_FORMULA.md` incl. `CHK_CHIRP_REACHABLE` / T18) — measure still blocked until non-POROUS; formula must not self-stamp SOUND; **then** Marco authorizes commit |
+| **Concrete formula** | `docs/MOTORE_V3_LOG_SWEEP_HF_ADMISSION_FORMULA.md` (A3 executable boolean; document-only; tip packaging `81e86dc5`; POROUS closures HIGH#1/#2 / MED#2 / LOW#3 in prose) |
+
+**REV7 consolidate: NO** — this document does **not** merge candidate REV7 prose
+into the freeze CONTRACT. It addresses only the remaining gate-4 FAIL on
+`log_sweep` HF under geometric `R` + report-only LF packaging already decided.
+
+---
+
+## 0. Verdict language (prefer NO-GO)
+
+| Claim | Status |
+|-------|--------|
+| Gate-4 closable under current REV6 activity on sweep checkpoints | **NO-GO** (measured FAIL) |
+| Stationary adversarial subset on geometric `R` | **PASS** (measured; does not close overall gate) |
+| This proposal = G1 PASS / G1b tip / REV7 consolidate | **NO** |
+| Recommended next lab action | Redteam/CC delta again on patched **A/A3** formula (POROUS closures incl. empty-N `CHK_CHIRP_REACHABLE` / T18 in formula prose) — **not** frontend implement; measure blocked until non-POROUS; commit only after that |
+
+---
+
+## 1. Problem statement (falsifiable, with evidence)
+
+### 1.1 Measured FAIL (final R-remeasure)
+
+Under perimeter ENBW `N_MIN=2` ∧ Rayleigh `SEPARATION_MIN_BINS=2` → `|R|=67`
+(first ≈433.7 Hz), gate-closing cells use §7-on-`R` + REV6-style floor-union
+`max(psd_ref, psd_sr) > −120`, with report-only packaging for `i ∉ R`
+(`docs/MOTORE_V3_REV7_REPORT_ONLY_LF_CLAUSE.md`).
+
+From `docs/MOTORE_V3_REV7_REMEASURE_R_FINAL.md` / `.json`:
+
+| asset | vs 48k | max\|Δ\| dB | verdict | peak |
+|-------|--------|------------|---------|------|
+| multitone | 44100 / 96000 | **0.1915 / 0.1898** | **PASS** | level |
+| pseudo_noise | 44100 / 96000 | **0.0458 / 0.0464** | **PASS** | level |
+| log_sweep | 44100 / 96000 | **6.4350 / 5.8381** | **FAIL** | psd **b106** (~9404 Hz) |
+
+**Overall gate:** **FAIL** — `max|Δ| = 6.435 dB` (hard threshold **0.25 dB**).
+
+### 1.2 Smoking-gun cell (HF checkpoint skirt)
+
+At checkpoint **16 kHz** (`t_cross≈1.7096`):
+
+- `psd_ref[106] = −120.0` (clamp floor)
+- `psd_sr[106] ≈ −113.56`
+- admitted solely by union `max > −120` while the reference sits **on** the floor
+- instantaneous sweep peak in that frame is near **b111** (~12.6 kHz), **not** b106
+
+Same one-sided floor/union skirt pattern as WS4 smoke on HF checkpoints
+(`docs/MOTORE_V3_G1_CONTRACT_REV7_CANDIDATE.md` §2). This is **not** an LF
+geometry / inseparability issue.
+
+### 1.3 Contract clauses that admit the cell (REV6 freeze)
+
+Freeze `6d254d0a` §13.1 (sweep) + §13.2 gate 4:
+
+- **Sweep:** parity uses the preregistered checkpoint grid only (lock:
+  `SWEEP_CHECKPOINT_HZ` = 20, 45, 60, 80, 250, 1000, 3500, 8000, **16000**,
+  20000 Hz) — nearest frame to `t_cross`, ≤ one hop; missing checkpoint → FAIL.
+- **Activity:** cell active iff `max(psd_db_ref, psd_db_sr) > −120` (union);
+  shape/prominence inherit PSD activity; **one** active cell above 0.25 →
+  entire gate FAIL.
+- Lock pin (G1a T4, digest `d2c35ccc…`):
+  `activity.predicate = "max(psd_db_ref, psd_db_sr) > -120"`,
+  `threshold_max_abs_db = 0.25`, aggregator `max` (mean/p95/RMSE forbidden).
+
+The FAIL is therefore a **predicate / checkpoint-domain admission** question
+on a non-stationary fixture — not a resampler impossibility on stationary
+content (already PASS on `R`).
+
+---
+
+## 2. Why report-only LF does **not** solve this
+
+Report-only LF (`docs/MOTORE_V3_REV7_REPORT_ONLY_LF_CLAUSE.md`) moves
+`i ∉ R` out of the gate-closing max because neighbour centres lie inside the
+Hann main lobe at **low** centres.
+
+| fact | implication |
+|------|-------------|
+| `first_in_R ≈ 433.7 Hz`, `|R|=67` | geometric carve-out is **LF** |
+| peak FAIL band **b106 ≈ 9404 Hz** | **b106 ∈ R** |
+| checkpoint 16 kHz is an HF §13.1 obligation | not excludable by ENBW/Rayleigh LF geometry |
+
+Therefore: publishing ∉`R` tables (even the huge report-only `log_sweep`
+shape deltas) **cannot** close or excuse the gate-closing FAIL at b106.
+Consolidating REV7 **only** with report-only LF + ENBW domain would leave
+this FAIL intact — consolidating now would be admission shopping, not
+metrology (PLAN living counsel @ `2c69606f`).
+
+---
+
+## 3. Options considered (a priori; ≥3)
+
+Hard constraints common to all options:
+
+- **0.25 dB** hard max on the declared closing domain remains immutable.
+- No replace max → mean / p95 / RMSE / post-hoc band subset.
+- No `Source/` / ship / Ableton / training in this path.
+- No consolidate REV7 inside this document.
+- No fitting a new numeric cut against 6.435 / 5.838 (dB shopping).
+
+### Option A — A-priori admission amend for sweep / checkpoint HF one-sided floor-union
+
+**Idea (narrow):** before any consolidate or tip claim, write into candidate
+CONTRACT language (then lock, only after GO) a **sweep-specific** or
+**checkpoint-HF** admission rule that refuses to close the gate on cells
+admitted solely by one-sided floor-union when the reference (or under-test)
+is at the §6.1 clamp **and** the cell is not in the instantaneous
+signal-bearing neighbourhood of the sweep peak at that checkpoint frame.
+
+Concrete formula **not frozen here** (avoids shopping against 6.435). Design
+slot must satisfy, a priori:
+
+1. **Preserve one-sided artifact intent** for true SR defects (a real tone /
+   artifact present only at 44.1/96 must still enter the max — pure
+   “intersection both > −120” alone is **insufficient** as a complete
+   replacement; see REV7 candidate §4 constraint 3).
+2. **Target the skirt class:** cells where one side is exactly at floor and
+   the other is a leakage/skirt residue far from the instantaneous chirp
+   peak (diagnostic shape already recorded: peak near b111, FAIL at b106).
+3. **Fail-closed vacuous:** empty active set on a required checkpoint ×
+   valid channel → FAIL (not PASS).
+4. **Stationary assets unchanged:** multitone / pseudo_noise closing rules
+   on `R` must not be silently rewritten by the sweep clause.
+5. **Written before** the re-measure that claims PASS.
+
+| tradeoff | |
+|----------|--|
+| Pro | Closes the metrology question that currently blocks honest tip; aligns with living next-path `2c69606f`; keeps 0.25 intact; stationary PASS evidence remains meaningful. |
+| Contro | Requires redteam + CC + later lock re-hash if accepted; risk of over-narrowing one-sided intent if poorly worded; **not** a tip authorization by itself. |
+| Risk if skipped | Tip under REV6 would still claim a domain that measured FAIL — false progress. |
+
+### Option B — Stay REV6 + durable debt + proceed G1b tip with explicit non-closing of sweep HF
+
+**Idea:** do **not** amend admission. Tip G1b ufficiale under freeze REV6 /
+lock `d2c35ccc…`, with PLAN + tip report stating explicitly that
+**gate-4 SR-parity is not closed for `log_sweep` checkpoint HF** (durable
+debt), while stationary-on-`R` results may be published as diagnostic /
+partial evidence only — **never** as gate-4 PASS.
+
+| tradeoff | |
+|----------|--|
+| Pro | No lock/CONTRACT mutation; fastest path to “tip exists”; honest if debt is loud and FAIL-closed in wording. |
+| Contro | Product G1b tip ships with a known unmet §13.1/§13.2 obligation on a mandatory fixture; easy to launder into “almost PASS”; still blocks any true gate-4 PASS claim. |
+| When justified | Only if Marco explicitly accepts **permanent** (or long-lived) non-closing of sweep HF as debt, with stop-rule that tip ≠ G1 PASS and ≠ gate-4 green. |
+
+### Option C — Honest fixture / comparison-mode change (no dB shopping)
+
+**Idea:** keep REV6 activity predicate for stationary assets; change the
+**sweep comparison mode** a priori (hashed in lock) so the closing max only
+includes bands in a preregistered **neighbourhood of the instantaneous
+sweep frequency** at each checkpoint (e.g. bands whose triangular support
+contains `f_inst(t_cross)` and/or ±K neighbour indices pinned before
+measure) — **or** replace checkpoint PSD max with a preregistered
+peak-tracking comparator that does not admit far skirts at floor.
+
+This is **not** “drop b106 after seeing 6.435.” Neighbourhood width / rule
+must be justified from window geometry (Hann main lobe / triangular
+support) **before** re-measure.
+
+| tradeoff | |
+|----------|--|
+| Pro | Attacks the mismatch “checkpoint frequency vs band that carries the chirp energy”; may preserve global union predicate for stationary tests; still a priori. |
+| Contro | Amends §13.1 sweep closing procedure (lock `checkpoint_hz` / reachability / new neighbourhood constants) — still a contract/lock change later; must not shrink neighbourhood post-hoc to hide FAIL; redteam must attack vacuous PASS and cherry-picked K. |
+| Forbidden variant | Deleting 16 kHz / 8 kHz checkpoints after FAIL; raising floor; widening 0.25. |
+
+---
+
+## 4. Locked decision (was: recommended option)
+
+**LOCKED (Marco 2026-07-26):** **Option A** + mechanism **A3**
+(sweep-scoped predicate **AND** neighbourhood of the instantaneous sweep
+trajectory). **Normative reading (post-CC):** “around `f_inst`” =
+triangular support ∩ `F_TRAJ` (PSD-window chirp image + lock `T_MEM`) as
+pinned in the formula — **not** Option C’s peak-local ±K band pad (that
+pad is explicitly REJECT). Option C’s geometry intuition is absorbed only
+via `F_TRAJ`, not as a silent third freeze.
+**Option B (tip-with-debt) rejected** as the living path.
+Sweep-HF remains **fuori** dal veicolo REV7 LF / geometric-`R` until
+measure PASSes under the new admission; sweep closing domain must not
+silently become `ACTIVE∩R`.
+
+Rationale (counsel already in PLAN @ `2c69606f`; now stamped):
+
+1. Stationary-on-`R` already **PASS** — the open question is specifically
+   sweep HF admission under floor-union, not LF inseparability.
+2. Consolidating REV7 without closing this = shopping.
+3. Option B is honest only as an explicit **debt tip**; Marco did **not**
+   authorize tip-with-debt — A/A3 is the path.
+4. Option C alone without admission language risks becoming a post-hoc
+   band mask; packaging C **under** A’s a-priori constraints (A3) keeps
+   fail-closed intent.
+
+**Lab stance (locked):** **NO-GO** on G1b tip and **NO** on REV7
+consolidate until A/A3 is redteamed + independently counter-checked
+(ACCEPT or REJECT per §5).
+
+---
+
+## 5. Falsifiable ACCEPT / REJECT criteria
+
+### 5.1 What a follow-up experiment / CC must produce
+
+After a concrete formula draft under **A/A3** (sweep-scoped predicate +
+neighbourhood around `f_inst`) is written **without** using 6.435 as a
+fit target:
+
+| outcome | verdict |
+|---------|---------|
+| Re-measure on gate platform (CPython 3.12.13 / lock env): `log_sweep` 44.1 & 96 vs 48, all preregistered checkpoints, under the **written** rule → `max\|Δ\| ≤ 0.25` on the **declared closing cell set**, **and** vacuous-FAIL checks pass, **and** stationary multitone/noise on `R` remain ≤ 0.25 without formula retune | **ACCEPT** candidate for later Guardian amend path (still ≠ consolidate in this doc; still ≠ G1 PASS) |
+| Same re-measure still FAIL, but FAIL cells are **signal-bearing** both-sides-above-floor near `f_inst` (true SR defect) | **REJECT** “skirt-only” story → escalate: either deeper frontend bug hypothesis **or** Option B debt (not threshold shopping) |
+| Formula only PASSes after widening neighbourhood / raising floor / dropping checkpoints / fitting K to 6.435 | **REJECT** as dB/admission shopping → **NO-GO** |
+| Formula excludes all one-sided cells globally such that a planted SR-only artifact at 44.1 vanishes from the max | **REJECT** (violates one-sided artifact intent) |
+| Empty active set on any required checkpoint × valid channel treated as PASS | **REJECT** (vacuous) |
+
+### 5.2 Paper attacks redteam must run (before implement)
+
+1. **One-sided intent:** construct (on paper) a cell with `psd_ref = −120`,
+   `psd_sr = −100` at a band that **is** the instantaneous peak band —
+   must remain ACTIVE / gate-visible.
+2. **Skirt exclusion:** cell with ref at floor, sr above floor, band far
+   from `f_inst` relative to pinned neighbourhood — must be inactive for
+   closing max.
+3. **No LF laundering:** confirm b106-class HF cannot be moved to report-only
+   via `R`.
+4. **Stationary non-regression:** A must not alter multitone/noise closing
+   domain except by explicit shared predicates already accepted for `R`.
+5. **Lock binding:** list exact lock keys that would change (§6).
+
+**Redteam verdict language:** prefer
+`CONTRACT-BROKEN | CONTRACT-POROUS | CONTRACT-SOUND` on the **proposal
+formula**, not on this options doc alone. This file alone is **not**
+SOUND for consolidate.
+
+---
+
+## 6. Explicit non-goals
+
+| non-goal | |
+|----------|--|
+| Relax 0.25 → mean / p95 / RMSE / “soft max” | forbidden |
+| Edit `Source/`, CMake, Resources, Ableton ship | forbidden |
+| Training / model promotion | forbidden |
+| Consolidate REV7 in this document | forbidden (**REV7 consolidate: NO**) |
+| Claim G1 PASS or official G1b tip | forbidden |
+| Mutate `metrology_lock` / SHA256SUMS claiming freeze | forbidden in this tranche |
+| Implement `ml_v3/frontend` to “prove” the proposal | forbidden as next step (lab spike ≠ tip; measure only after formula + redteam non-BROKEN) |
+| Raise `N_MIN` / shop Rayleigh constants against 6.435 | forbidden |
+| Delete or demote HF checkpoints after seeing FAIL | forbidden |
+
+---
+
+## 7. Binding to metrology lock / SHA256SUMS (IF amend later chosen)
+
+**This proposal does not re-hash anything.** If Option A (or C-under-A) later
+receives Guardian GO to amend:
+
+| artifact | action |
+|----------|--------|
+| `ml_v3/contracts/metrology_lock.py` → `sample_rate_parity.activity.predicate` (and any new sweep-neighbourhood / checkpoint-admission keys) | replace string(s); keep `threshold_max_abs_db: 0.25`; keep aggregator `max` |
+| `union_cross_sr` / vacuous-FAIL flags | retain intent; extend only as formula requires |
+| `SWEEP_CHECKPOINT_HZ` / reachability | unchanged unless Option C neighbourhood adds **new** hashed constants (not removals post-hoc) |
+| `metrology_lock_sha256` (`d2c35ccc…`) | **recompute** |
+| `fixture_spec` / dependencies embedding lock digest | update if digest-bound |
+| `ml_v3/fixtures/g1/SHA256SUMS` | update **only** entries whose bytes change; do not self-hash SUMS |
+| Freeze CONTRACT @ `6d254d0a` | superseded only by a later consolidate commit — **not** this proposal |
+
+Silent lock edit without CONTRACT amend GO → **FAIL** / stop-rule BLOCKER.
+
+---
+
+## 8. Next permitted action (after DECISION STAMP)
+
+**Living choices locked** (see DECISION STAMP). **In order:**
+
+1. ~~Marco counter-check A vs B~~ — **DONE** 2026-07-26 (A / A3 / fuori REV7 LF).
+2. ~~Concrete A/A3 formula draft~~ — **DONE** (doc-only):
+   `docs/MOTORE_V3_LOG_SWEEP_HF_ADMISSION_FORMULA.md`
+   (`ACTIVE_sweep`, F1, `N`:=support∩`F_TRAJ`, vacuous/report/anti-launder).
+3. ~~Tip packaging + independent CC @ `81e86dc5`~~ — **DONE**: verdict
+   **CONTRACT-POROUS**; must-fixes 1–7 closed in formula prose (uncommitted
+   until Marco OK). Formula **must not** self-declare `CONTRACT-SOUND`.
+4. **Redteam/CC delta again** on the patched formula (empty-N /
+   `CHK_CHIRP_REACHABLE` / T18 + tie-break / b106 lattice / level pins) —
+   not on frontend code. **Re-measure blocked** until verdict ≠
+   `CONTRACT-POROUS` / `CONTRACT-BROKEN`.
+5. Only then: candidate CONTRACT amend path for **sweep admission**
+   (still **separate** from full REV7 consolidate of LF+R; sweep-HF stays
+   outside that vehicle until measure PASS; no `ACTIVE∩R` closing on sweep).
+   Marco authorizes **commit** of this stamp / formula only after
+   non-POROUS CC (or explicitly sooner).
+
+**Not permitted as next step:** implement/close gate in `ml_v3/frontend/`;
+ship; training; claim PASS from stationary-only tables; consolidate REV7
+“because R PASS”; tip-with-debt (B) without a new Marco override.
+
+---
+
+## 9. Open questions for Marco — CLOSED (stamped)
+
+| # | Question | Decision (2026-07-26) |
+|---|----------|------------------------|
+| 1 | Option A vs B tip-with-debt? | **A** (NOT B) |
+| 2 | Mechanism: sweep-scoped / neighbourhood / both? | **A3 — BOTH** |
+| 3 | Sweep-HF inside REV7 LF/`R` vehicle before PASS? | **NO — fuori** until measure PASS under new admission |
+
+---
+
+## 10. References (authority order used)
+
+1. `docs/MOTORE_V3_PLAN.md` — living next-path @ `2c69606f`
+2. `docs/MOTORE_V3_G1_CONTRACT.md` @ `6d254d0a` — §13.1 sweep, §13.2 gate 4
+3. `docs/MOTORE_V3_REV7_REMEASURE_R_FINAL.md` + `.json`
+4. `docs/MOTORE_V3_REV7_REPORT_ONLY_LF_CLAUSE.md`
+5. `docs/MOTORE_V3_G1_CONTRACT_REV7_CANDIDATE.md`,
+   `docs/MOTORE_V3_REV7_ACTIVE_FORMULA_PROPOSAL.md`,
+   `docs/MOTORE_V3_REV7_SCOPE_REWRITE_PROPOSAL.md` — context only; **not**
+   consolidated here
+6. `docs/EMBER_CORE_PARALLEL_HANDOFF.md` §A
+
+---
+
+≠ G1 PASS. ≠ REV7 consolidate. ≠ G1b tip. ≠ Ableton readiness.
+```
+
+---
+
+## B.14 FILE: `docs/MOTORE_V3_LOG_SWEEP_HF_ADMISSION_FORMULA.md (@ 04e47b39 POROUS closures)`
+
+**Path logico:** `docs/MOTORE_V3_LOG_SWEEP_HF_ADMISSION_FORMULA.md`  
+**Bytes:** 40091  
+**Lines:** 784
+
+```markdown
+# Motore v3 — Concrete formula: log_sweep A3 admission (`ACTIVE_sweep`)
+
+**Suggested commit title (if/when Marco authorizes commit):**  
+`docs(v3): close CC/third-redteam POROUS on log_sweep A3 formula`
+
+| Field | Value |
+|-------|--------|
+| **Status** | **FORMULA DRAFT — third-redteam + CC-delta POROUS closures** — document-only; tip packaging `81e86dc5`; independent CC + third redteam + CC delta returned **CONTRACT-POROUS**; this prose keeps CC must-fixes 1–7 and closes HIGH#1 (tie-break), HIGH#2 (empty-N / `CHK_CHIRP_REACHABLE`), MED#2 (b106 lattice), LOW#3 (level); **ready for redteam/CC delta again**; this document **must not** self-declare `CONTRACT-SOUND` (only independent redteam/CC may stamp that verdict); **re-measure still blocked** until non-POROUS acceptance; falsification-only still OK after non-POROUS |
+| **Parent stamp** | `docs/MOTORE_V3_LOG_SWEEP_HF_ADMISSION_PROPOSAL.md` (A · A3 · fuori REV7 LF) |
+| **Decisions** | **A** (a-priori admission amend) + **A3** (sweep-scoped predicate **AND** neighbourhood = **solo `F_TRAJ`** — **not** peak-local ±K) |
+| **Date** | 2026-07-26 |
+| **Freeze contract** | `docs/MOTORE_V3_G1_CONTRACT.md` @ `6d254d0a` (REV6) — **not edited** |
+| **Lock digest** | `d2c35ccc12643f2520c8a50d2e27fd3631216bb9a8ce63a34193412e74d1c10e` — **not re-hashed** |
+| **SHA256SUMS** | untouched |
+| **Contamination guard** | No constant fitted to 6.435 / 5.838 dB; widths from §6 + fixture_spec + lock delay only |
+
+**≠** G1 PASS · ≠ REV7 consolidate · ≠ G1b tip · ≠ frontend implement · ≠ re-measure authorization · ≠ self-`CONTRACT-SOUND`
+
+---
+
+## 0. Closing statement (normative boolean — not deferred)
+
+This note pins a single executable boolean
+
+```text
+ACTIVE_sweep(b, ch, chk) ∈ {true, false}
+```
+
+and the gate-4 closing cell set for `log_sweep` checkpoint portions. There is
+**no** “formula deferred” slot. Downstream **independent** redteam/CC judges
+this prose and alone may emit `CONTRACT-SOUND` / `CONTRACT-POROUS` /
+`CONTRACT-BROKEN`. This document **forbids** self-stamping `CONTRACT-SOUND`
+(including via commit-message authority shopping). Re-measure remains
+**blocked** until a non-POROUS / non-BROKEN acceptance and Marco OK.
+
+---
+
+## 0.1 Must-fix changelog (this draft)
+
+Independent CC @ tip `81e86dc5` returned **CONTRACT-POROUS**; third
+redteam returned **CONTRACT-POROUS** again (HIGH#1 / MED#2; empty-N /
+chirp-reachability as HIGH#2). Closures in this prose (no remeasure; no
+lock/CONTRACT/SHA256SUMS edit):
+
+| # | Must-fix | Closure |
+|---|-----------|---------|
+| 1 | A3 = solo `F_TRAJ`, non peak-local ±K | §1 / §4.0 / §4.2 / T1 rewrite / T12: neighbourhood := support ∩ `F_TRAJ` only; any peak-local / ±K / PSD-neighbour pad → REJECT |
+| 2 | Vietare closing `ACTIVE∩R` sul sweep | §3.2 / §3.3 / §6.3 / T13: closing domain = `{ACTIVE_sweep}` alone until Guardian consolidate GO; `ACTIVE_sweep ∩ R` / `i∉R` / `EXCLUDED_GEOMETRY` on sweep closing max → report FAIL |
+| 3 | `AT_FLOOR` float32 pin | §3.1: `AT_FLOOR` ⇔ stored post-clamp `float32` `psd_db == −120`; near-floor / ε-tolerance forbidden |
+| 4 | Lattice warm-up consistency | §2.3: eligible frames only on useful-segment lattice (`frame_end = N_LF + m·H`) with `source_time` in §13.1 common useful window; pre-warm-up / off-lattice → FAIL |
+| 5 | Pairing cross-SR pin | §2.3.1: each `sr ∈ {44100,96000}` selects its own nearest useful frame to `t_cross`; compare pair `(ref_48k*, sr*)`; `N`/`f_inst` only from ref; other pairing → FAIL |
+| 6 | Portion hashed identity | §1.1: `portion_id = checkpoint_grid` is the sole A3 portion token; mismatch / alias → FAIL; future lock key sketched (not hashed this tranche) |
+| 7 | Status ≠ self-SOUND | header / §0 / §10: no self-`CONTRACT-SOUND`; ready for redteam/CC delta; remeasure blocked until non-POROUS |
+| **HIGH#1** | Tie-break order ≠ lock | §2.3 / §2.3.1 / §8.1 / T21: `alignment.tie_break` = `[smaller_frame_index, then smaller_frame_end_sample]` — byte-identical to lock digest `d2c35ccc…` / `metrology_lock.py`; inverted order deleted |
+| **HIGH#2** | Empty `N` at chk 20 Hz / `st* ∉ [t_start,t_end]` | §2.3.2 / §4.1 / §5 / T18: **one** fail-closed rule — `CHK_CHIRP_REACHABLE ⇔ t_start ≤ source_time* ≤ t_end`; else checkpoint **FAIL** (no skip, no `t_cross` proxy, no clamp `st*` into chirp, no blanket `ONE_SIDED` exemption / 6.44 shopping) |
+| **MED#2** | Escape «different hashed lattice» → `b106∉N` | §4.2 / §6.2 / T19: under lock digest `d2c35ccc…` + §2.3/§4, `b106_in_N_at_16k` **MUST** be `true`; alternate lattice only after Guardian lock amend; private / unamended hashes → geometric **FAIL** |
+| **LOW#3** | `level_dbfs` vs N/ONE_SIDED | §3.1 / §3.3 / T20: `level_dbfs` enters gate-4 max iff channel valid on both paired frames; **not** subject to `N` / `ONE_SIDED_FLOOR_UNION` exemption |
+
+**Preserved prior SOUND closures (unchanged intent):** nearest-frame REF-48k
+`N`; lock `T_MEM`; §6.2 window binding; honest `b106 ∈ N(16000)`; F1
+boolean; analytic `f_inst`; vacuous FAIL; immutable `0.25` dB / aggregator
+`max` (no relax).
+
+---
+
+## 1. Scope (A3 only)
+
+Let `asset`, `portion`, `ch`, `b`, `chk` denote asset id, §13.1 portion,
+channel role, band index `b ∈ {0,…,119}`, and preregistered sweep checkpoint.
+
+```text
+SWEEP_A3_SCOPE(asset, portion) ⇔
+    asset = log_sweep
+  ∧ portion = checkpoint_grid
+```
+
+| case | activity rule |
+|------|----------------|
+| `SWEEP_A3_SCOPE` | `ACTIVE_sweep` of §3 (this note) |
+| all other §13.1 assets / portions (multitone, pseudo_noise, …) | **unchanged** stationary / REV6 (or later consolidated geometric-`R`) activity — **not** rewritten by A3 |
+
+**A3 neighbourhood meaning (normative disambiguation):** the phrase
+“neighbourhood around `f_inst`” in the parent stamp **means exclusively**
+the geometry of §4: triangular support ∩ `F_TRAJ(chk)`, where `F_TRAJ` is
+the analytic chirp image of the §6.2 PSD window (+ `T_MEM`). It does **not**
+mean a peak-local band pad (±K indices around the band containing `f_inst`),
+PSD-argmax neighbours, or any Hz disk centred on `f_inst` alone.
+
+**REV7 LF packaging:** sweep-HF admission stays **outside** the report-only
+`i ∉ R` / `EXCLUDED_GEOMETRY` vehicle until a later measure **PASS** under this
+formula (parent stamp). A3 is **not** an `EXCLUDED_GEOMETRY` reason.
+
+### 1.1 Portion identity (fail-closed — not re-hashed this tranche)
+
+```text
+A3_PORTION_ID := "checkpoint_grid"
+```
+
+- `SWEEP_A3_SCOPE` holds only when `portion = A3_PORTION_ID` exactly
+  (string identity).
+- Renaming, aliasing, splitting, or merging sweep portions to avoid A3 or to
+  mix stationary / geometric-`R` rules → report **FAIL**.
+- Future lock binding (sketch only; **not** hashed in this tranche):
+  `sample_rate_parity.sweep.portion_id = "checkpoint_grid"`. Until that key
+  exists, evaluators **MUST** hard-pin the same string; mismatch with this
+  note → FAIL.
+
+---
+
+## 2. Anchors (frozen geometry / fixture_spec only)
+
+### 2.1 Analysis geometry (§6)
+
+| symbol | value | authority |
+|--------|-------|-----------|
+| `fs_c` | `48000` | §6 / lock |
+| `N_MAIN` | `4096` | §6.2 |
+| `N_LF` | `8192` | §6.2 |
+| `H` | `1024` | §6.2 / lock |
+| `T_MAIN` | `N_MAIN / fs_c` | derived |
+| `T_LF` | `N_LF / fs_c` | derived |
+| `T_HOP` | `H / fs_c` | match radius §13.1 / fixture_spec |
+| `Δf(N)` | `fs_c / N` | FFT bin spacing |
+| window | periodic Hann `0.5 - 0.5·cos(2πn/N)` | §6.2 |
+| `MAIN_LOBE_NULL_TO_NULL_BINS` | `4` | classical periodic Hann (same pin as scope-rewrite) |
+| `W_LOBE_MAIN_HZ` | `(MAIN_LOBE_NULL_TO_NULL_BINS / 2) · Δf(N_MAIN)` = `2 · fs_c / N_MAIN` | half null-to-null in Hz on MAIN |
+| centres | `center[i] = 20 · (20000/20)**(i/119)`, ends pinned | §6.1 / `band_centers_hz` |
+| triangular support | `lo(b), hi(b)` from previous/next centre; virtual ends via same ratio | §6.1 |
+| fusion knees | LF pure `≤160`, MAIN pure `≥320`, raised-cosine crossfade | §6.2 |
+| PSD floor / clamp | linear `1e-12`, clamp dB `[-120, +12]` | §6.1 |
+| gate threshold | `0.25` dB, aggregator `max` | §13.2 **immutable** |
+
+### 2.2 Log-sweep law (fixture_spec)
+
+Pinned by `ml_v3/contracts/fixture_spec.py` / frozen fixture-spec artifact:
+
+```text
+t_start = 1/2 s
+t_end   = 7/4 s
+T_active = t_end - t_start
+f_start = 20 Hz
+f_end   = 20000 Hz
+
+for t ∈ [t_start, t_end]:
+  u(t) = (t - t_start) / T_active
+  f(t) = f_start · (f_end / f_start) ** u(t)     # instantaneous_freq_hz
+
+t_cross(f_chk) = sweep_crossing_time(f_chk)       # inverse of f(·) at f_chk
+```
+
+`SWEEP_CHECKPOINT_HZ` and reachability (`nearest useful frame` within
+`T_HOP`) are unchanged.
+
+`t_cross` is used **only** as the checkpoint target for frame selection
+(§2.3). It is **forbidden** as a substitute for `source_time*` when computing
+`f_inst`, `t_win_*`, `F_TRAJ`, or `N` membership (§8 quarantine).
+
+### 2.3 Checkpoint frame, `f_inst`, lattice eligibility, and single cross-SR `N`
+
+**Reference stream for neighbourhood geometry:** after cross-SR pairing
+(§2.3.1), `N(chk)` and `f_inst(chk)` are computed **once** from the
+**reference 48 kHz** selected frame. The same `N(chk)` applies to every
+host-rate cell of that checkpoint. Per-host recomputation of `N` / `f_inst`
+from 44.1 kHz or 96 kHz frames is **forbidden**.
+
+**Useful-segment lattice (normative — reconciles §8.2 with CONTRACT §13.1):**
+
+```text
+# Per gate rate fs (identity at 48 kHz ⇒ gd = 0):
+frame_end_sample ∈ { N_LF + m·H | m ∈ ℕ₀ }
+source_time(fs)  = frame_end_sample / fs_c − resampler_group_delay_seconds(fs)
+
+# Eligible iff source_time lies in the §13.1 common useful window:
+useful_start = max_fs warm_up_seconds(fs)     # additive warm-up; lock
+useful_end   = T_asset − coda_seconds()
+eligible(fs) ⇔ useful_start ≤ source_time(fs) ≤ useful_end
+```
+
+Only **eligible** frames may be selected. Pre-warm-up frames, coda frames,
+and off-lattice `frame_end_sample` values are **not** candidates. Choosing a
+non-eligible in-radius stamp to shift `F_TRAJ` → report **FAIL**.
+
+For each checkpoint `chk` with frequency `f_chk ∈ SWEEP_CHECKPOINT_HZ`:
+
+1. `t_cross = sweep_crossing_time(f_chk)` — selection target only.
+2. On the **48 kHz** eligible lattice, select the `V3FeatureFrame` whose
+   `source_time` minimizes `|source_time - t_cross|`. Tie-break equals lock
+   `alignment.tie_break` byte-identical under digest `d2c35ccc…`:
+   **smaller `frame_index`, then smaller `frame_end_sample`**
+   (`metrology_lock.py` / `metrology_lock.json`). Require that distance
+   `≤ T_HOP`; else checkpoint-missing **FAIL** (§13.1).
+3. Let `source_time*(chk)` and `frame_end_sample*(chk)` be that **48 kHz**
+   frame’s stamps. Let
+   `dt(chk) := source_time*(chk) - t_cross`.
+4. Apply §2.3.2 chirp-reachability **before** `f_inst` / `t_win_*` / `N`.
+
+```text
+f_inst(chk) := f( source_time*(chk) )     # only if CHK_CHIRP_REACHABLE (§2.3.2)
+```
+
+**Forbidden as neighbourhood centre (normative):**
+`argmax_b psd_db[b]` on either render, any smoothed peak tracker, or any
+other data-dependent frequency. Diagnostic peak quotes (e.g. “energy near
+b111”) are **not** inputs to `N`.
+
+**Forbidden as membership evidence:** using `t_cross` (or any other
+in-radius frame than the §2.3 minimizer) in place of `source_time*` when
+building `F_TRAJ` / `N`.
+
+**Forbidden as neighbourhood definition:** peak-local ±K band pads, “bands
+whose support contains `f_inst` only”, Hz disks about `f_inst`, or any
+construction other than §4 `F_TRAJ` (§4.0).
+
+`T_HOP` enters **only** as the locked frame-selection match radius that
+defines which `source_time*` is admissible. It does **not** further dilate
+the frequency aperture of `N` (§4.2) — dilation would double-count the same
+timing budget and is rejected. `|dt| ≤ T_HOP` alone does **not** imply
+chirp reachability (§2.3.2).
+
+### 2.3.1 Cross-SR pairing (normative)
+
+For every under-test rate `sr ∈ {44100, 96000}` at checkpoint `chk`:
+
+```text
+frame_sr*(chk) := argmin_{eligible frames at sr} |source_time − t_cross|
+                  tie-break: smaller frame_index, then smaller frame_end_sample
+                  # = lock alignment.tie_break under digest d2c35ccc…
+require |source_time(frame_sr*) − t_cross| ≤ T_HOP   else FAIL (checkpoint missing)
+
+compare cell (b, ch, chk) on the pair:
+  ( frame_ref_48k*(chk), frame_sr*(chk) )
+```
+
+- `N(chk)` / `f_inst(chk)` / `t_win_*` come **only** from `frame_ref_48k*`.
+- Manual shifts, ±1-hop shopping to minimize `|Δ|`, pairing by raw output
+  index, or any host↔ref match other than the per-rate nearest-to-`t_cross`
+  rule → report **FAIL** (lock `alignment` intent; this note makes the
+  sweep pairing explicit).
+- PSD / shape / prominence values are read from the paired frames; membership
+  `b ∈ N(chk)` never uses the host-rate stamps.
+- Host `frame_sr*` is still selected by §2.3.1 even when ref fails
+  §2.3.2; the checkpoint outcome remains **FAIL** (pairing does not repair
+  chirp-unreachability).
+
+### 2.3.2 Chirp reachability / empty-`N` pin (HIGH#2 — one fail-closed rule)
+
+**Chosen a-priori rule (sole normative pin for this porosity):**
+
+```text
+CHK_CHIRP_REACHABLE(chk) ⇔
+    t_start ≤ source_time*(chk) ≤ t_end
+```
+
+where `source_time*` is the §2.3 REF-48k nearest-to-`t_cross` stamp
+(after `|dt| ≤ T_HOP` and lock tie-break).
+
+**If `¬CHK_CHIRP_REACHABLE(chk)` → gate-4 FAIL for that checkpoint**
+(chirp-unreachable / N-geometry unreachable). This is mandatory for every
+`chk ∈ SWEEP_CHECKPOINT_HZ`, including **chk 20 Hz**, where nearest REF-48k
+under the lock lattice yields `source_time* ≈ 0.4907 < t_start = 0.5`
+while still `|dt| ≤ T_HOP`.
+
+**Forbidden repairs (any one → report FAIL / REJECT):**
+
+| repair | why forbidden |
+|--------|----------------|
+| Skip / N/A / soft-pass the checkpoint | mandatory chk must score |
+| Substitute `t_cross` for `source_time*` in `f_inst` / `t_win_*` / `N` | §2.3 / §8.1 quarantine |
+| Clamp / project `source_time*` into `[t_start, t_end]` | changes the selected frame’s law |
+| Widen `t_win_*`, drop `T_MEM`, or otherwise force non-empty `N` | free aperture shopping |
+| Treat `N(chk) = ∅` as blanket `ONE_SIDED_FLOOR_UNION` exemption then PASS | empty-N porosity / repair shopping |
+| Shop constants from measured 6.435 / 5.838 dB | contamination (§0.1 / T8) |
+
+Only after `CHK_CHIRP_REACHABLE` may the evaluator compute `f_inst`,
+`t_win_*`, `F_TRAJ`, and `N` (§4). Empty `N` is therefore **not** an
+admission escape: either the checkpoint already FAILed on §2.3.2, or an
+inverted window after clamps FAILs under §4.1 / §5.
+
+### 2.4 Resampler memory (lock-derived — no dB fit)
+
+Fail-closed FIR / group-delay memory for the trajectory aperture, a priori
+from the frozen lock only:
+
+```text
+T_MEM := max_{fs ∈ GATE_SAMPLE_RATES} resampler_group_delay_seconds(fs)
+       = max_fs (num_taps(fs) - 1) / (2 · up(fs) · fs)     # identity → 0
+```
+
+Under the current lock (`GATE_SAMPLE_RATES = {44100, 48000, 96000}`):
+
+| `fs` | `num_taps` | `resampler_group_delay_seconds` |
+|------|------------|----------------------------------|
+| 48000 | identity (`None`) | `0` |
+| 44100 | `20481` | `16/11025` ≈ `0.001451247` s |
+| 96000 | `257` | `1/750` = `0.001333…` s |
+
+Hence `T_MEM = 16/11025` s. No dB fit, no taps count chosen from FAIL bands.
+
+---
+
+## 3. Normative boolean `ACTIVE_sweep`
+
+### 3.1 Floor / union atoms (REV6 intent retained — float32 pin)
+
+On the checkpoint-paired frames of `chk` (§2.3.1), channel `ch` (only if that
+channel is valid on both paired renders; else the cell is ignored as in §7 /
+§13.2). PSD values may come from any host rate under test; membership
+`b ∈ N(chk)` always uses the single 48 kHz neighbourhood of §2.3 / §4.
+
+**`level_dbfs` pin (LOW#3):** `level_dbfs` enters the gate-4 closing max
+**iff** the channel is valid on **both** paired frames. It is **not**
+subject to `N(chk)` membership or `ONE_SIDED_FLOOR_UNION` exemption —
+those restrict only PSD / inherited shape / prominence cells under F1.
+
+**Type pin:** `psd_db_*` atoms below are the **stored post-clamp `float32`**
+fields of `V3FeatureFrame` after §6.1 floor/clamp. Recomputing in float64,
+promoting, or applying a “near floor” tolerance is **forbidden**.
+
+```text
+ABOVE_FLOOR_UNION(b, ch, chk) ⇔
+    max( psd_db_ref[b, ch, chk], psd_db_sr[b, ch, chk] ) > -120
+
+AT_FLOOR(x) ⇔ (x is float32) ∧ (x == float32(-120))
+            # exact equality on the stored post-clamp value; no ε, no “≈ −120”
+
+ONE_SIDED_FLOOR_UNION(b, ch, chk) ⇔
+    ABOVE_FLOOR_UNION(b, ch, chk)
+  ∧ ( AT_FLOOR(psd_db_ref[b, ch, chk]) ∨ AT_FLOOR(psd_db_sr[b, ch, chk]) )
+```
+
+`ONE_SIDED_FLOOR_UNION` is exactly the class admitted solely by floor-union
+while at least one side sits on the §6.1 clamp (the smoking-gun skirt class).
+
+Both-sides-strictly-above-floor cells have
+`¬ONE_SIDED_FLOOR_UNION` and are **not** restricted by `N`.
+
+### 3.2 F1 pin (neighbourhood = exemption restrictor — not closing domain)
+
+**F1 (normative):** The neighbourhood `N(chk)` restricts **only** the
+continued admission of the `ONE_SIDED_FLOOR_UNION` class. It does **not**
+replace the gate-4 closing domain with “bands in `N` only.”
+
+Consequences:
+
+1. If `ABOVE_FLOOR_UNION ∧ ¬ONE_SIDED_FLOOR_UNION` → cell is ACTIVE whether
+   or not `b ∈ N(chk)` (true both-sides signal / SR content stays gate-visible
+   everywhere in the 120-band grid). Geometric `R` does **not** enter this
+   implication for sweep (see §3.3 / §6.3).
+2. If `ONE_SIDED_FLOOR_UNION ∧ b ∈ N(chk)` → cell is ACTIVE (one-sided
+   artifact **inside** the signal-bearing neighbourhood remains gate-visible).
+3. If `ONE_SIDED_FLOOR_UNION ∧ b ∉ N(chk)` → cell is **inactive** for the
+   gate-4 max (far skirt / leakage residue).
+4. **Rejected alternate form:** `closing_domain := N(chk)` alone. That form
+   is **not** adopted here.
+5. **Rejected alternate form:** `closing_domain := ACTIVE_sweep ∩ R` (or any
+   silent intersection with geometric `R` / `i ∉ R` / report-only LF) on
+   `log_sweep` / `checkpoint_grid`. Vehicles stay separate (§6.3).
+
+### 3.3 Single closing predicate and closing domain
+
+```text
+ACTIVE_sweep(b, ch, chk) ⇔
+    SWEEP_A3_SCOPE
+  ∧ ABOVE_FLOOR_UNION(b, ch, chk)
+  ∧ (
+        ¬ ONE_SIDED_FLOOR_UNION(b, ch, chk)
+      ∨   b ∈ N(chk)
+    )
+```
+
+Shape / prominence cells on the same `(b, ch, chk)` **inherit**
+`ACTIVE_sweep` from the channel PSD exactly as §13.2 inheritance works for
+REV6 activity.
+
+**Level scalars:** `level_dbfs` enters the closing max iff the channel is
+valid on both paired frames (§3.1). It does **not** inherit
+`ACTIVE_sweep` / `N` / `ONE_SIDED_FLOOR_UNION` exemption.
+
+**Closing domain (fail-closed, until Guardian consolidate / amend GO):**
+
+```text
+CLOSING_CELLS_sweep := { (b, ch, chk) | ACTIVE_sweep(b, ch, chk) = true }
+```
+
+Gate-4 aggregator on the sweep checkpoint portion:
+
+```text
+max |Δ|  over CLOSING_CELLS_sweep
+         (PSD / inherited shape / prominence)
+         ∪ { level_dbfs on channels valid on both paired frames }
+```
+
+**Forbidden closing domains on sweep (report FAIL if used):**
+
+- `ACTIVE_sweep ∩ R`
+- `ACTIVE_sweep \ {i ∉ R}` / any `EXCLUDED_GEOMETRY` filter on the closing max
+- `N(chk)` alone
+- any post-hoc band subset fitted to measured `|Δ|`
+
+Hard threshold `0.25` dB and aggregator `max` remain immutable. One active
+cell above threshold → entire gate FAIL. Geometric-`R` / report-only LF remain
+a **separate** vehicle and must not silently intersect the sweep closing max.
+
+---
+
+## 4. Neighbourhood `N(chk)` (frozen geometry — no dB fit)
+
+### 4.0 Sole definition — `F_TRAJ` only (CC must-fix 1)
+
+```text
+N(chk) := { b | (lo(b), hi(b)) intersects F_TRAJ(chk) }
+```
+
+**Normative:** A3 neighbourhood **=** §4.1–§4.2 only.
+
+**Forbidden neighbourhood definitions (any one → REJECT / report FAIL):**
+
+| forbidden form | why |
+|----------------|-----|
+| ±K band indices about `argmin_b |center[b] − f_inst|` | peak-local pad; drops smoking-gun skirts (e.g. b106 at 16 kHz) while keeping the `f_inst` band |
+| `{ b | f_inst ∈ (lo(b), hi(b)) }` alone | peak-containment only; not the window chirp image |
+| Hz disk / lobe pad about `f_inst` (incl. ±`W_LOBE_MAIN_HZ`) | free dilation knob; `W_LOBE` is documentation-only (§2.1) |
+| PSD-argmax ±K / peak-tracker neighbours | data-dependent; §2.3 already forbids PSD centre |
+
+`f_inst` enters **only** as (a) the analytic stamp for `N_ANAL` knee
+selection in §4.1 and (b) the upper end of `F_TRAJ` via `t_win_hi =
+source_time*` under the chirp law — **not** as a local band-pad centre.
+
+### 4.1 Analysis time support = §6.2 causal PSD window image (+ lock memory)
+
+Normative binding: the trajectory interval is the **source-time image of the
+same causal right-aligned sample window** used for the fused PSD of the
+selected **48 kHz** frame (§6.2), extended on the low side by `T_MEM`
+(§2.4).
+
+At identity 48 kHz (`resampler_group_delay_seconds(48000) = 0`):
+
+```text
+source_time*(chk) = frame_end_sample*(chk) / fs_c
+
+# §6.2: samples [frame_end_sample* - N_ANAL, frame_end_sample*) at fs_c
+N_ANAL(f_inst) :=
+    N_LF    if f_inst(chk) < 320 Hz    # LF material (pure or crossfade)
+    N_MAIN  if f_inst(chk) ≥ 320 Hz    # MAIN-pure
+
+T_ANAL(f_inst) := N_ANAL(f_inst) / fs_c
+
+# Continuous source-time image of that sample window, fail-closed + T_MEM:
+t_win_hi(chk) := min( t_end,   source_time*(chk) )
+t_win_lo(chk) := max( t_start, source_time*(chk) - T_ANAL(f_inst(chk)) - T_MEM )
+```
+
+Proof of stamp identity at REF-48k: with `gd = 0`, the exclusive-end sample
+`frame_end_sample*` maps to `source_time*`, and the first sample of the
+right-aligned window maps to `source_time* - T_ANAL`. `T_MEM` then extends
+`t_win_lo` earlier by the lock max group-delay so FIR memory at non-identity
+gate rates cannot shrink the aperture. No look-ahead past `t_win_hi`.
+
+**Precondition:** §2.3.2 `CHK_CHIRP_REACHABLE` must hold; otherwise do **not**
+evaluate `t_win_*` / `N` — checkpoint already FAIL.
+
+If `t_win_lo > t_win_hi` after clamping despite `CHK_CHIRP_REACHABLE` →
+`N(chk)` is undefined for admission; gate-4 **FAIL** for that checkpoint
+(§5). Do **not** interpret inverted-window / empty `N` as a blanket
+`ONE_SIDED_FLOOR_UNION` exemption or soft-pass.
+
+**Derivation:** HF checkpoints (incl. 8/16/20 kHz) are MAIN-pure, so the
+binding aperture is the MAIN window image of the chirp (+ `T_MEM`). LF /
+crossfade checkpoints use the longer LF window fail-closed when LF is
+material. `W_LOBE_MAIN_HZ` is recorded in §2.1 as the Hann half-lobe scale;
+at HF it is ≪ one triangular support width, so it is **not** used as an
+extra Hz dilation of the aperture (a ±`W_LOBE` pad is a free parameter that
+is not required once triangular supports discretize the trajectory — and is
+rejected to avoid padding knobs).
+
+### 4.2 Chirp image and band membership
+
+```text
+F_TRAJ(chk) := { f(t) | t ∈ [t_win_lo(chk), t_win_hi(chk)] }
+            = [ f(t_win_lo(chk)), f(t_win_hi(chk)) ]
+              # monotone increasing log-chirp on the active interval
+
+b ∈ N(chk)  ⇔  (lo(b), hi(b)) intersects F_TRAJ(chk) as open intervals
+            ⇔  lo(b) < f(t_win_hi(chk))  ∧  hi(b) > f(t_win_lo(chk))
+```
+
+Bit-stable evaluation: centres / `lo` / `hi` / `f(·)` in IEEE-754 binary64
+with the same closed forms as fixture_spec + §6.1 (virtual ends via ratio
+`r = (20000/20)**(1/119)`). No measured tables. No dependence on PSD values.
+`N(chk)` is a function of the 48 kHz stamps of §2.3 only.
+
+**Honesty pin (efficacy, not a PASS path — MED#2):** under lock digest
+`d2c35ccc12643f2520c8a50d2e27fd3631216bb9a8ce63a34193412e74d1c10e` and the
+normative §2.3 / §4 path at 16 kHz, `b106 ∈ N(16000)` (§8.2) is
+**mandatory**. A report that claims evaluation under this formula and
+publishes `b106 ∉ N(16000)` / `b106_in_N_at_16k = false` → geometric
+**FAIL**. Alternate lattices (different hop / warm-up / selection) are
+admissible **only** after an explicit Guardian lock amend that re-hashes
+`alignment` / lattice keys; private hashes, unamended digests, or
+“different hashed lattice proof” attachments that are not that amend →
+geometric **FAIL**. If frontend PSD are unchanged, falsification measure
+is still expected to **FAIL** on that ACTIVE cell — that is honest
+ACCEPT=FAIL territory, not a licence to shrink `N`.
+
+### 4.3 Constants table (hashable later; not hashed in this tranche)
+
+| Constant | Value | Derivation (a priori) |
+|----------|-------|------------------------|
+| `fs_c` | `48000` | §6 |
+| `N_MAIN` | `4096` | §6.2 |
+| `N_LF` | `8192` | §6.2 |
+| `H` | `1024` | §6.2 |
+| `T_MAIN` | `4096/48000` | window duration MAIN |
+| `T_LF` | `8192/48000` | window duration LF |
+| `T_HOP` | `1024/48000` | frame match radius only (§2.3) |
+| `T_MEM` | `16/11025` s | `max` lock `resampler_group_delay_seconds` over gate rates (§2.4) |
+| `MAIN_LOBE_NULL_TO_NULL_BINS` | `4` | periodic Hann main lobe |
+| `W_LOBE_MAIN_HZ` | `2 · 48000/4096 = 23.4375` Hz | half null-to-null; **non-dilating** documentation constant |
+| `T_ANAL` split | `320` Hz | §6.2 MAIN-pure knee |
+| `t_start`, `t_end` | `1/2`, `7/4` | fixture_spec active interval |
+| `f_start`, `f_end` | `20`, `20000` | fixture_spec |
+| `f_inst` | `f(source_time*)` at **48 kHz** selected frame | analytic law; **not** PSD-argmax |
+| `t_win_*` | §6.2 PSD window source-time image − `T_MEM` on lo | §4.1 |
+| `N` membership | triangular support ∩ `F_TRAJ` **only** | §4.0–§4.2; **≠** peak-local ±K |
+| `A3_PORTION_ID` | `checkpoint_grid` | §1.1 |
+| floor cut | `> -120` on stored float32 | §6.1 / REV6 union |
+| `AT_FLOOR` | stored float32 `== -120` | §3.1 |
+| `ONE_SIDED_FLOOR_UNION` | union ∧ either side `AT_FLOOR` | skirt class |
+| F1 | N restricts exemption only | closing domain ≠ only N |
+| closing domain | `{ACTIVE_sweep}` alone | **≠** `ACTIVE∩R` |
+| `level_dbfs` | valid on both paired frames | **not** N / ONE_SIDED exempt (§3.1 / §3.3) |
+| tie-break | `smaller_frame_index`, then `smaller_frame_end_sample` | lock `alignment.tie_break` @ `d2c35ccc…` |
+| `CHK_CHIRP_REACHABLE` | `t_start ≤ source_time* ≤ t_end` | §2.3.2; else chk FAIL (empty-N pin) |
+| `b106_in_N_at_16k` | `true` under current lock | §4.2 / §6.2 / §8.2; no private-hash escape |
+| threshold | `0.25` dB | immutable |
+
+**Explicit non-inputs:** any function of measured `max|Δ|`, band-failure lists,
+or the numeric pair `(6.435, 5.838)`.
+
+---
+
+## 5. Vacuous FAIL / empty-`N` FAIL (fail-closed)
+
+**Normative (three fail-closed cases — no shopping):**
+
+1. **Chirp-unreachable (§2.3.2):** if `¬CHK_CHIRP_REACHABLE(chk)`
+   (`source_time* ∉ [t_start, t_end]`), gate 4 is **FAIL** for that
+   checkpoint. Applies in particular to mandatory chk **20 Hz** under
+   nearest REF-48k when `source_time* < t_start`.
+2. **Inverted window / empty `N` (§4.1):** if `CHK_CHIRP_REACHABLE` holds
+   but `t_win_lo > t_win_hi` (or `N(chk) = ∅` after §4), gate 4 is
+   **FAIL** for that checkpoint. Empty `N` **≠** blanket
+   `ONE_SIDED_FLOOR_UNION` exemption and **≠** PASS.
+3. **Empty ACTIVE set:** for every `chk ∈ SWEEP_CHECKPOINT_HZ` and every
+   channel `ch` that is valid on the paired checkpoint frames
+   (`mid_valid` / `side_valid` as applicable; `log_sweep` is mono → `mid`
+   only), if `{ b | ACTIVE_sweep(b, ch, chk) } = ∅`, then gate 4 is
+   **FAIL** for that checkpoint × channel. Empty active set ≠ PASS.
+
+No N/A skip, soft-pass, “no cells to compare,” `t_cross` proxy, or clamp
+of `source_time*` into the chirp interval. Case 3 also applies when
+`N(chk)` is non-empty but every in-`N` cell is at floor on both sides and
+every out-`N` one-sided cell has been exempted away.
+
+---
+
+## 6. Mandatory report (anti-laundering)
+
+### 6.1 A3 inactivation table (required)
+
+Any numeric report that claims to evaluate gate 4 under this formula **MUST**
+publish (machine-readable OK) every cell such that:
+
+```text
+ABOVE_FLOOR_UNION(b, ch, chk) = true
+∧ ACTIVE_sweep(b, ch, chk) = false
+```
+
+Minimum columns:
+
+| column | content |
+|--------|---------|
+| `asset` | `log_sweep` |
+| `portion` | `checkpoint_grid` (= `A3_PORTION_ID`) |
+| `chk_hz` | checkpoint frequency |
+| `source_time_star` | selected **48 kHz** frame `source_time*` |
+| `frame_end_sample_star` | selected **48 kHz** `frame_end_sample*` |
+| `dt_to_t_cross` | `source_time* − t_cross` |
+| `f_inst` | analytic `f(source_time*)` |
+| `N_sorted` | sorted band-index list of `N(chk)` |
+| `band` | `b` |
+| `channel` | `mid` / `side` |
+| `psd_db_ref`, `psd_db_sr` | stored post-clamp **float32** values |
+| `reason` | enum below |
+
+**Reason enum (closed):**
+
+| `reason` | meaning |
+|----------|---------|
+| `A3_ONE_SIDED_OUT_OF_N` | `ONE_SIDED_FLOOR_UNION` and `b ∉ N(chk)` |
+
+No other A3 inactivation reason exists in this formula. Omitting the table
+when any such cell exists → report **FAIL**.
+
+### 6.2 Neighbourhood geometry report (required even when no inactivation)
+
+Independently of §6.1, every gate-4 report under this formula **MUST** publish
+per checkpoint:
+
+| field | content |
+|-------|---------|
+| `chk_hz` | checkpoint frequency |
+| `t_cross` | `sweep_crossing_time(f_chk)` (selection target only) |
+| `source_time_star` | 48 kHz `source_time*` |
+| `frame_end_sample_star` | 48 kHz `frame_end_sample*` |
+| `dt_to_t_cross` | `source_time* − t_cross` |
+| `f_inst` | analytic `f(source_time*)` |
+| `t_win_lo`, `t_win_hi` | §4.1 interval |
+| `T_MEM` | lock value used |
+| `N_sorted` | ascending list of band indices in `N(chk)` |
+| `b106_in_N_at_16k` | required when `chk_hz = 16000`: boolean; **MUST** be `true` under lock digest `d2c35ccc…` + §2.3/§4 / §8.2; `false` or omitted → geometric **FAIL**; alternate lattice only after Guardian lock amend (private / unamended hashes → FAIL) |
+
+Omitting these fields → report **FAIL**.
+
+### 6.3 Anti-laundering vs REV7 LF `EXCLUDED_GEOMETRY` / geometric `R`
+
+| rule | |
+|------|--|
+| Forbidden | Tagging an A3-inactivated HF skirt cell as `EXCLUDED_GEOMETRY`, `i ∉ R`, or report-only LF solely to remove it from the gate-closing max |
+| Forbidden | Moving band **b106-class** HF checkpoint cells into the REV7 LF report-only vehicle because they fail under REV6 union |
+| Forbidden | Closing max on `ACTIVE_sweep ∩ R` (or any silent `R` / `i∉R` filter) for `log_sweep` / `checkpoint_grid` before Guardian consolidate GO — **report FAIL**, not a soft warning |
+| Required | A3 inactivations use reason `A3_ONE_SIDED_OUT_OF_N` only; LF geometry exclusions (if/when consolidated) remain a **separate** table with `EXCLUDED_GEOMETRY` |
+| Required | Gate-4 PASS/FAIL prose must state that sweep checkpoint activity is `ACTIVE_sweep` (F1), closing domain = `{ACTIVE_sweep}`, neighbourhood = `F_TRAJ` only — not “domain = N”, not “∉ R”, not “peak ±K” |
+
+---
+
+## 7. Paper acceptance tests (redteam / CC must-fix surface)
+
+These are **paper** tests on the formula (no re-measure in this tranche):
+
+| # | Construction | Required outcome |
+|---|--------------|------------------|
+| T1 | `psd_ref = -120`, `psd_sr = -100` (stored float32), band `b ∈ N(chk)` with `f_inst ∉ (lo(b), hi(b))` (one-sided **in-`F_TRAJ`** but not peak-local) | `ONE_SIDED_FLOOR_UNION` ∧ `ACTIVE_sweep = true` |
+| T2 | Same one-sided floor pattern on a band `b ∉ N(chk)` (skirt outside MAIN/LF window chirp image + `T_MEM`) | `ACTIVE_sweep = false`; appears in §6.1 table with `A3_ONE_SIDED_OUT_OF_N` |
+| T3 | Both sides `> -120` on a band outside `N(chk)` | `ACTIVE_sweep = true` (F1: domain ≠ only N) |
+| T4 | Claim that b106-class HF FAIL is report-only via `R` / `EXCLUDED_GEOMETRY` without A3 | **REJECT** / laundering (§6.3) |
+| T5 | Empty `ACTIVE_sweep` set on any required checkpoint × valid channel scored as PASS | **REJECT** (vacuous) |
+| T6 | Neighbourhood centre taken from PSD-argmax | **REJECT** (§2.3) |
+| T7 | Stationary multitone / pseudo_noise closing predicate altered by this note | **REJECT** (§1) |
+| T8 | `N` width chosen by targeting 6.435 / 5.838 or by post-hoc dropping 16 kHz | **REJECT** (contamination) |
+| T9 | `N` / `F_TRAJ` built from `t_cross` proxy or any non-minimizer in-hop frame | **REJECT** (§2.3 / §8) |
+| T10 | Distinct `N` per host rate after cross-SR pairing | **REJECT** (§2.3: single 48 kHz `N`) |
+| T11 | `t_win_*` not equal to the §6.2 PSD window source-time image (plus `T_MEM` on lo); **or** selected frame not on eligible useful-segment lattice (`N_LF + m·H` ∩ §13.1 useful window) | **REJECT** (§2.3 / §4.1) |
+| T12 | Redefine `N` as peak-local ±K (or peak-containment only) such that `f_inst`’s band stays in `N` but `b106 ∉ N(16000)` | **REJECT** (§4.0) |
+| T13 | Closing max := `ACTIVE_sweep ∩ R` (or apply `i∉R` / `EXCLUDED_GEOMETRY` to sweep closing cells) | **REJECT** / report FAIL (§3.3 / §6.3) |
+| T14 | `AT_FLOOR` via float64 recompute or “near −120” tolerance | **REJECT** (§3.1) |
+| T15 | Host↔ref pairing other than per-rate nearest-to-`t_cross` on eligible lattices | **REJECT** (§2.3.1) |
+| T16 | `portion ≠ checkpoint_grid` while claiming A3 / or aliasing portion to dodge A3 | **REJECT** (§1.1) |
+| T17 | Formula/report self-declares `CONTRACT-SOUND` without independent redteam/CC | **REJECT** (§0 / §10) |
+| T18 | Nearest REF-48k `source_time* ∉ [t_start,t_end]` (e.g. chk 20 Hz with `st* ≈ 0.4907 < 0.5`) scored as skip / N/A / soft-pass; **or** clamp `st*` into chirp; **or** `t_cross` proxy; **or** treat empty `N` as blanket `ONE_SIDED` exemption / 6.44 repair | **REJECT** / checkpoint FAIL (§2.3.2 / §5) |
+| T19 | Publish `b106 ∉ N(16000)` / `b106_in_N_at_16k = false` under lock digest `d2c35ccc…`, or attach a private / unamended “different hashed lattice” escape | **REJECT** / geometric FAIL (§4.2 / §6.2) |
+| T20 | Exempt `level_dbfs` via `N` / `ONE_SIDED_FLOOR_UNION`, or include it when channel invalid on either paired frame | **REJECT** (§3.1 / §3.3) |
+| T21 | Tie-break order `smaller_frame_end_sample` before `smaller_frame_index` (inverted vs lock `alignment.tie_break`) | **REJECT** (§2.3 / §2.3.1) |
+
+---
+
+## 8. Worked geometry check (illustrative — normative path only)
+
+### 8.1 Quarantine: `t_cross` proxy is non-normative
+
+A prior draft illustrated 16 kHz with
+`source_time* := t_cross(16000)`, yielding
+`F_TRAJ ≈ [9984.35, 16000]` and `N = {107,…,116}` with `b106 ∉ N`.
+
+That construction is **quarantined**. It **MUST NOT** be cited as
+membership evidence. Normative `N` uses only the §2.3 nearest-frame
+`source_time*` after `|dt|` minimization (tie: smaller `frame_index`,
+then smaller `frame_end_sample` — lock `alignment.tie_break`) on the
+reference 48 kHz **eligible** lattice.
+
+### 8.2 Honest nearest-frame identity at 16 kHz (REF-48k)
+
+Locked hop lattice at 48 kHz (`frame_end_sample = N_LF + m·H` for useful
+frames; identity `gd = 0` ⇒ `source_time = frame_end_sample / fs_c`).
+Eligibility requires `source_time` in the §13.1 common useful window
+(additive warm-up / coda). Binary64 / fixture_spec law; `T_MEM = 16/11025`;
+MAIN-pure aperture:
+
+```text
+f_chk              = 16000
+t_cross            ≈ 1.7096208279 s
+source_time*       = 81920 / 48000 = 1.706666… s
+frame_end_sample*  = 81920   # = N_LF + 72·H; eligible (post warm-up)
+dt                 = source_time* − t_cross ≈ −0.00295416 s
+                   (|dt| ≈ 2.95 ms < T_HOP; next in-hop frame at 1.728 s
+                    has larger |dt| and is NOT selected)
+
+f_inst             = f(source_time*) ≈ 15740.92 Hz
+T_ANAL             = T_MAIN = 4096/48000
+t_win_lo           = source_time* − T_MAIN − T_MEM ≈ 1.619882 s
+t_win_hi           = source_time* ≈ 1.706667 s
+F_TRAJ             ≈ [9744.22, 15740.92] Hz
+N(chk)             = {106, 107, 108, 109, 110, 111, 112, 113, 114, 115}
+```
+
+**Honest membership:** `b106 ∈ N(16000)` under the normative nearest-frame
+path. Band `106` support `(center[105], center[107]) ≈ (8873.4, 9965.7)`
+intersects `F_TRAJ` because `hi(106) ≈ 9965.7 > 9744.22`. Therefore a
+`ONE_SIDED_FLOOR_UNION` cell at b106 on this checkpoint remains
+`ACTIVE_sweep = true` (F1). A3 does **not** paper-exempt the known smoking-gun
+skirt at this checkpoint under nearest-frame geometry.
+
+**Contrast (forbidden peak-local):** ±K about the band containing
+`f_inst ≈ 15741` keeps ~b114–b115 and **excludes** b106 — that pad is
+exactly the porosity §4.0 / T12 forbid.
+
+(The quarantined `t_cross` proxy had `Flo ≈ 9984.35 > hi(106)`, which falsely
+excluded b106 — that is exactly the porosity §8.1 forbids.)
+
+This is a consequence of §6 + chirp law + MAIN window + lock `T_MEM` + hop
+lattice selection — not a fit to the FAIL magnitude.
+
+---
+
+## 9. Lock / CONTRACT binding (future amend only — not this tranche)
+
+**This note does not edit** freeze CONTRACT, `metrology_lock`, or SHA256SUMS.
+
+If a later Guardian GO amends, expected new hashed keys (sketch only):
+
+| key | intent |
+|-----|--------|
+| `sample_rate_parity.activity.sweep_predicate` | string form of `ACTIVE_sweep` |
+| `sample_rate_parity.activity.sweep_f1_exemption` | `ONE_SIDED_FLOOR_UNION` definition |
+| `sample_rate_parity.activity.at_floor` | `float32_stored_psd_db == -120` |
+| `sample_rate_parity.sweep.portion_id` | `checkpoint_grid` |
+| `sample_rate_parity.sweep_neighbourhood.rule` | support ∩ `F_TRAJ` (**forbid** peak-local ±K) |
+| `sample_rate_parity.sweep_neighbourhood.T_anal_split_hz` | `320` |
+| `sample_rate_parity.sweep_neighbourhood.f_inst` | `analytic_chirp_at_source_time_star_48k` |
+| `sample_rate_parity.sweep_neighbourhood.ref_stream` | `48000` |
+| `sample_rate_parity.sweep_neighbourhood.T_mem` | `max_gate_resampler_group_delay_seconds` |
+| `sample_rate_parity.sweep_neighbourhood.t_win` | `§6.2_psd_window_source_time_image` |
+| `sample_rate_parity.sweep_pairing` | per-rate nearest-to-`t_cross` on eligible lattice |
+| `sample_rate_parity.sweep_closing_domain` | `ACTIVE_sweep_only` (no ∩`R` until consolidate GO) |
+| keep | `threshold_max_abs_db = 0.25`, aggregator `max`, `SWEEP_CHECKPOINT_HZ`, reachability, warm-up additive |
+
+Silent lock edit without CONTRACT amend GO → BLOCKER.
+
+---
+
+## 10. Next permitted action
+
+| step | status |
+|------|--------|
+| Parent decisions A / A3 / fuori REV7 LF | stamped |
+| Tip packaging for first independent CC | `81e86dc5` |
+| Independent CC @ `81e86dc5` | **CONTRACT-POROUS** (must-fixes 1–7) |
+| Third redteam | **CONTRACT-POROUS** (HIGH#1 / MED#2; LOW#3 pinned) |
+| CC delta (empty-N @ 20 Hz) | **CONTRACT-POROUS** → closed by §2.3.2 / T18 (`CHK_CHIRP_REACHABLE`) |
+| This concrete formula (POROUS closures in prose) | **ready for redteam/CC delta again** |
+| Self-declaration of `CONTRACT-SOUND` | **forbidden** (only independent redteam/CC) |
+| Independent redteam/CC under written rule | **authorized** as the next judge step |
+| Re-measure on gate platform | **blocked** until non-POROUS acceptance + Marco OK |
+| Falsification-only measure | OK **after** non-POROUS acceptance (not ACCEPT remeasure) |
+| Frontend implement / tip / REV7 consolidate | **forbidden** as next step |
+
+**Ready for redteam/CC delta again; remeasure ACCEPT still blocked until non-POROUS acceptance. Falsification-only still OK after non-POROUS. This file does not claim CONTRACT-SOUND.**
+
+---
+
+## 11. References
+
+1. `docs/MOTORE_V3_LOG_SWEEP_HF_ADMISSION_PROPOSAL.md` — A / A3 stamp
+2. `docs/MOTORE_V3_G1_CONTRACT.md` @ `6d254d0a` — §6, §13.1–13.2
+3. `ml_v3/contracts/fixture_spec.py` — `sweep_crossing_time`, useful lattice, active interval
+4. `ml_v3/contracts/metrology_lock.py` — `resampler_group_delay_rational` / `T_MEM` / alignment
+5. `docs/MOTORE_V3_REV7_REPORT_ONLY_LF_CLAUSE.md` — `EXCLUDED_GEOMETRY` (anti-launder foil)
+6. `docs/MOTORE_V3_REV7_SCOPE_REWRITE_PROPOSAL.md` — Hann null-to-null pin
+7. `docs/MOTORE_V3_REV7_REMEASURE_R_FINAL.md` — trigger evidence only (not a fit target)
+
+---
+
+≠ G1 PASS. ≠ REV7 consolidate. ≠ G1b tip. ≠ re-measure GO. ≠ lock mutate.
+≠ self-CONTRACT-SOUND.
+```
+
+---
+
+## B.15 FILE: `docs/MOTORE_V3_LOG_SWEEP_A3_FALSIFICATION_MEASURE.md (FAIL honest @ 78da84dd)`
+
+**Path logico:** `docs/MOTORE_V3_LOG_SWEEP_A3_FALSIFICATION_MEASURE.md`  
+**Bytes:** 4228  
+**Lines:** 95
+
+```markdown
+# Motore v3 — A3 falsification measure (`ACTIVE_sweep` only)
+
+| Field | Value |
+|-------|--------|
+| **Status** | **EVIDENCE — FALSIFICATION ONLY** |
+| **Date** | 2026-07-26 |
+| **Formula HEAD** | `04e47b39610e8fda24b36a57eb8283388565b62b` (`feature/motore-v3-offline`) |
+| **Formula doc** | `docs/MOTORE_V3_LOG_SWEEP_HF_ADMISSION_FORMULA.md` @ that HEAD |
+| **Closing domain** | `{ACTIVE_sweep}` alone — **not** `ACTIVE∩R` / `i∉R` / `EXCLUDED_GEOMETRY` |
+| **Threshold** | `0.25` dB hard; aggregator `max` (immutable; no mean/p95) |
+| **Platform** | CPython 3.12.13 / numpy 2.5.1 / macOS-15.5-arm64 (`~/aieq_data/motore_v3/env/venv`) |
+| **Runner** | spike `motore-v3-g1b-spike` / `ml_v3/reports/run_a3_falsification_measure.py` |
+| **JSON** | spike `ml_v3/reports/G1B_A3_FALSIFICATION_MEASURE.json` |
+
+**≠** G1 PASS · **≠** REV7 consolidate · **≠** ACCEPT product path · **≠** PASS-claim
+
+---
+
+## Command
+
+```bash
+cd /Users/marco/Desktop/NEWWWWWWW/.claude/worktrees/motore-v3-g1b-spike
+PYTHONPATH=$PWD ~/aieq_data/motore_v3/env/venv/bin/python \
+  ml_v3/reports/run_a3_falsification_measure.py
+```
+
+Formula applied as written at HEAD `04e47b39…`:
+
+- neighbourhood `N(chk) :=` triangular support ∩ `F_TRAJ` (analytic chirp image + `T_MEM`)
+- `ACTIVE_sweep ⇔ ABOVE_FLOOR_UNION ∧ (¬ONE_SIDED_FLOOR_UNION ∨ b∈N)` with float32 `AT_FLOOR`
+- `CHK_CHIRP_REACHABLE ⇔ t_start ≤ source_time* ≤ t_end` (else checkpoint FAIL)
+- lock tie-break: smaller `frame_index`, then smaller `frame_end_sample`
+- **no** intersection with geometric `R`; **no** threshold shopping
+
+---
+
+## Gate-closing domain (`log_sweep` / `checkpoint_grid`)
+
+| chk Hz | CHK_CHIRP_REACHABLE | \|N\| | b106∈N | max\|Δ\| dB (worst host) | peak | verdict |
+|--------|---------------------|------|--------|--------------------------|------|---------|
+| 20 | **false** (`st*≈0.490667 < 0.5`) | — | — | — | — | **FAIL** |
+| 45 | true | 15 | no | 1.4048 | shape b23 @44.1k | **FAIL** |
+| 60 | true | 18 | no | 1.4056 | shape b33 @44.1k | **FAIL** |
+| 80 | true | 18 | no | 0.7405 | psd b35 @44.1k | **FAIL** |
+| 250 | true | 18 | no | 1.7522 | shape b51 @44.1k | **FAIL** |
+| 1000 | true | 11 | no | 2.5751 | shape b69 @44.1k | **FAIL** |
+| 3500 | true | 10 | no | 4.6642 | shape b89 @44.1k | **FAIL** |
+| 8000 | true | 10 | no | 5.3797 | shape b103 @44.1k | **FAIL** |
+| **16000** | true | **10** | **yes** | **6.4350** | **psd b106 (~9404 Hz) @44.1k** | **FAIL** |
+| 20000 | true | 10 | no | 4.1235 | shape b119 @44.1k | **FAIL** |
+
+### Smoking-gun cell (16 kHz) — still ACTIVE
+
+| vs 48k | max\|Δ\| dB | peak | `b106∈N` | `n_active` |
+|--------|------------|------|----------|------------|
+| 44100 | **6.4350** | psd b106 (~9403.7 Hz) | **true** | 10 |
+| 96000 | **5.8381** | psd b106 (~9403.7 Hz) | **true** | 10 |
+
+`N(16000) = {106…115}` under REF-48k `source_time*≈1.706667`,
+`F_TRAJ≈[9744.2, 15740.9]` Hz. Honesty pin MED#2 satisfied:
+`b106_in_N_at_16k = true` (no private-lattice escape).
+
+### Empty-N / 20 Hz pin (HIGH#2)
+
+Nearest REF-48k useful frame for chk **20 Hz**: `source_time*≈0.490667`
+with `|dt|≤T_HOP`, but `st* < t_start=0.5` →
+`¬CHK_CHIRP_REACHABLE` → checkpoint **FAIL** (no skip, no `t_cross` proxy,
+no clamp into chirp).
+
+---
+
+## Verdict (gate-closing domain only)
+
+**FAIL**
+
+- Overall `max|Δ| = 6.4350` dB (threshold 0.25) at chk 16 kHz / vs44100 / psd b106
+- Independently: chk 20 Hz unreachable under §2.3.2
+- `b106` **stayed ACTIVE** (in `N` ∧ one-sided floor-union)
+
+### Explicit non-claims
+
+- **No PASS-claim** for G1 / gate-4 product path
+- **No ACCEPT** for product / tip packaging
+- **No REV7 consolidate**
+- This note falsifies “A3 formula closes sweep HF under current frontend PSD”
+  for the declared closing domain; it does **not** authorize threshold relax,
+  `ACTIVE∩R` shopping, or shrinking `N`
+
+---
+
+## Next (for Marco)
+
+1. Treat this as honest **ACCEPT=FAIL** evidence on the written A3 domain (optional commit of this note alone).
+2. Do **not** consolidate REV7 / claim G1 PASS.
+3. Lab choice remains a-priori: amend admission further, change frontend/PSD path under contract, or keep debt explicit — not mean/p95 / 0.25 relax / ∩R laundering.
+```
+
+---
+
+## B.16 FILE: `ml_v3/reports/G0_FREEZE_REPORT.md`
 
 **Path logico:** `ml_v3/reports/G0_FREEZE_REPORT.md`  
 **Bytes:** 2848  
@@ -1904,20 +4903,21 @@ contract and benchmark design; no training or runtime integration is enabled.
 
 ---
 
-## B.4 FILE: `ml_v3/reports/G1B_SPIKE_PLAN.md (UNTRACKED — PLAN ONLY; not G1b tip)`
+## B.17 FILE: `ml_v3/reports/G1B_SPIKE_PLAN.md (tracked; PLAN ONLY ≠ tip)`
 
 **Path logico:** `ml_v3/reports/G1B_SPIKE_PLAN.md`  
-**Bytes:** 25801  
-**Lines:** 459
+**Bytes:** 29747  
+**Lines:** 535
 
 ```markdown
 # G1b Frontend Spike Plan — REV6 feasibility (0.25 dB + streaming≡offline)
 
 **Status:** PLAN ONLY — not G1b tip, not gate proof, not G1 PASS  
-**Date:** 2026-07-25 (refined: isolation + adversarial subset + P1–P7 + AMBRA)  
+**Date:** 2026-07-25 (P7 ACCEPTED — Marco OK; P1–P7 pinned; WS0 worktree create unblocked)  
 **Contract:** `docs/MOTORE_V3_G1_CONTRACT.md` @ freeze `6d254d0a` (REV6)  
-**Lab state:** `docs/MOTORE_V3_PLAN.md` — G1a CLOSE: GO @ tip `a2186ac1`; product G1b may unfreeze; **REV7: NO** until falsifiable impossibility  
-**Authority for this doc:** planning spike under Marco mandate; does not amend CONTRACT
+**Lab state:** `docs/MOTORE_V3_PLAN.md` — G1a CLOSE: GO @ tip `a2186ac1`; product G1b may unfreeze; spike WS4 **RED** → REV7 **candidate draft** `docs/MOTORE_V3_G1_CONTRACT_REV7_CANDIDATE.md` (admission only; 0.25 immutable); **REV7 consolidate: NO** until formula + redteam + second GO  
+**Authority for this doc:** planning spike under Marco mandate; does not amend CONTRACT  
+**Pin readiness:** **P1–P7 ACCEPTED** (P7 = Marco OK 2026-07-25 on restricted spike-only `{silence, level_below_threshold}`); **worktree create unblocked**
 
 ```text
 PHASE:            G1b-SPIKE-PLAN (planning + inventory; not product G1b)
@@ -1965,7 +4965,7 @@ Verdict taxonomy (spike overall uses the pair below; see §4):
 | Closing gain/M/S/anti-alias/split/evaluator gates | Out of spike scope (note only) |
 | F1 WAV relocation | Durable debt; use in-repo T6 WAVs as-is |
 | Full 7 streaming schedules in spike | Adversarial subset only (§3.1); full set = official G1b |
-| Creating spike worktree in this plan session | Documented in WS0; execute only after Marco OK on P1–P7 |
+| Creating spike worktree before P7 pin | Documented in WS0; **unblocked** after Marco OK on **P7** (2026-07-25) |
 | Mutating hashed G1a artifacts | lock / SHA256SUMS / fixture-spec / WAVs stay frozen |
 
 ---
@@ -2087,22 +5087,90 @@ Unpinned §6/§7 choices that **silently change measured quantities**.
 **Choices MUST be written here (or amended by Marco) before any product/spike
 coding run.** Changing a pin after seeing numbers → at best AMBRA.
 
-| ID | Ambiguity | Contract cite | Proposed default (conservative) | Needs Marco? |
-|----|-----------|---------------|-----------------------------------|--------------|
-| **P1** | Band energy weighted-mean denominator: `Σ(w·psd)/Σw` vs `Σ(w·psd)/N_bins` | §6.1 «media pesata lineare della PSD» | **`Σ(w·psd)/Σw`** (true weighted mean). Empty `Σw` → P2 | No (cite «media pesata») |
-| **P2** | Empty triangular support on MAIN 4096 (no FFT bin weight) | §6.1 bande triangolari; DC/>20 kHz non contribuiscono; **no** nearest-bin fallback in REV6 | **No silent import of v2 nearest-bin.** Empty support → contribute **0** to weighted sum; if `Σw==0` for a band after fuse inputs, band energy = floor linear `1e-12` before dB/clamp. Document per-band empty-support counts in evidence | No (fail-closed; forbid v2 fallback) |
-| **P3** | Prominence padding: numpy `reflect` vs `symmetric` | §7 «padding reflect» | **`reflect`** (as written). Not `symmetric`, not `edge`, not wrap | No (explicit) |
-| **P4** | `shape_db` from clamped vs pre-clamp `psd_db` | §6.1 floor→clamp then dB; §7 `shape_db` uses `psd_db` | **Clamped `psd_db`** (the emitted field): `shape = psd_db - 10*log10(sum(10**(psd_db/10)))` on 120 bands | No (field name + §6.1 order) |
-| **P5** | `float64→float32` cast point + reduction association | §7 frame float32; gate3 bit-identity; lock `gate_platform_float_tol=0` | **Accumulate FIR/FFT/band sums in float64; cast each emitted frame float field to float32 once at write.** Same association offline and streaming (left-to-right on frozen index order). No Kahan / blocked reassoc without new pin | Confirm only if you want a different cast (e.g. cast after FFT before band mean) — default above is spike baseline |
-| **P6** | Floor values for invalid-channel vectors | §7 «vettori di un canale non valido sono al floor»; clamp PSD `[-120,+12]`; level floor −120 dBFS | Invalid channel: all `*_psd/shape/prominence/delta_db[120] = -120.0`; `*_level_dbfs = -120.0`; valid flags false as §7 | No (floor = clamp lower / level floor) |
-| **P7** | `reason` enumeration when `valid=false` | §7 «motivo enumerato quando falso» — **enum not listed** on contract surface; stub accepts any non-empty `str` | **Provisional spike-only set** (not CONTRACT amend): `silence`, `non_finite_input`, `unsupported_sr`, `insufficient_samples`, `channel_invalid` — used consistently offline≡streaming. Official enum = freeze-from-prose debt for G1b tip | **YES — Marco must accept provisional set or supply canonical enum** |
+**Meta (2026-07-25):** **P1–P7 ACCEPTED** (P7 = Marco OK on restricted
+spike-only enum); **worktree create unblocked**.
+No CONTRACT amend invented here.
+
+| ID | Status | Ambiguity | Contract cite | Default (conservative) | Needs Marco? |
+|----|--------|-----------|---------------|------------------------|--------------|
+| **P1** | **ACCEPTED** (Codex) | Band energy weighted-mean denominator: `Σ(w·psd)/Σw` vs `Σ(w·psd)/N_bins` | §6.1 «media pesata lineare della PSD» | **`Σ(w·psd)/Σw`** (true weighted mean). Empty `Σw` → P2 | No |
+| **P2** | **ACCEPTED** + evidence obligations (Codex refine) | Empty triangular support on MAIN 4096 (no FFT bin weight) | §6.1 bande triangolari; DC/>20 kHz non contribuiscono; **no** nearest-bin fallback in REV6 | See **P2 detail** below | No (fail-closed; forbid v2 fallback) |
+| **P3** | **ACCEPTED** (Codex) | Prominence padding: numpy `reflect` vs `symmetric` | §7 «padding reflect» | **`reflect`** (as written). Not `symmetric`, not `edge`, not wrap | No |
+| **P4** | **ACCEPTED** (Codex) | `shape_db` from clamped vs pre-clamp `psd_db` | §6.1 floor→clamp then dB; §7 `shape_db` uses `psd_db` | **Clamped `psd_db`** (the emitted field): `shape = psd_db - 10*log10(sum(10**(psd_db/10)))` on 120 bands | No |
+| **P5** | **ACCEPTED** (Codex) | `float64→float32` cast point + reduction association | §7 frame float32; gate3 bit-identity; lock `gate_platform_float_tol=0` | **Accumulate FIR/FFT/band sums in float64; cast each emitted frame float field to float32 once at write.** Same association offline and streaming (left-to-right on frozen index order). No Kahan / blocked reassoc without new pin | No (default is spike baseline) |
+| **P6** | **ACCEPTED** (Codex correct; was inconsistent) | Floor / zero values for invalid-channel vectors | §7 floor for invalid channel; PSD clamp `[-120,+12]`; `delta_db` clamp `[-24,+24]`; first-valid / history-reset → zeros | See **P6 detail** below | No |
+| **P7** | **ACCEPTED** (Marco OK 2026-07-25) | `reason` when `valid=false` (frame emitted) | §7 «motivo enumerato quando falso» — **enum not listed** on contract surface; stub accepts any non-empty `str` | See **P7 detail** below — restricted spike-only `{silence, level_below_threshold}`; hard errors out of frame `reason` | No (restricted set accepted; ≠ CONTRACT amend) |
+
+### P2 detail (fail-closed default + quantified evidence obligations)
+
+**Keep (fail-closed):**
+- **No** silent import of v2 nearest-bin.
+- Empty triangular support → contribute **0** to the weighted sum.
+- If `Σw==0` for a band after fuse inputs → band energy = linear floor
+  `1e-12` before dB/clamp.
+
+**Evidence obligations (verified geometry notes; declare in spike evidence):**
+- Analysis always at `fs_c=48k` → band geometry identical across source rates →
+  P2 choice largely cancels in cross-rate Δ (reduces “measuring the choice”
+  risk for gate 4).
+- MAIN 4096: ~14 empty-support bands (indices scattered 0–23, centres
+  ~20–76 Hz) + ~21 single-bin bands.
+- LF 8192: ~6 empty bands (~20–37.9 Hz) + ~17 single-bin.
+- ~6 LF-pure bands below 160 Hz can be structurally dead (always floor /
+  inactive) — declare honestly in evidence; does **not** alone break gate.
+- **Preregister watch-list:** single-bin bands are primary suspects if
+  `max|Δ|` exceeds 0.25 dB — report whether the max lands there.
+
+### P6 detail (corrected; prior −120 on `delta_db` was INVALID)
+
+Prior draft set `*_delta_db = -120` for invalid channel — **INVALID**: violates
+§7 `delta_db` clamp `[-24, +24]`.
+
+**NEW default (invalid channel):**
+- `*_psd_db` / `*_shape_db` → **-120.0** (PSD/level floor; matches §6.1 clamp lower)
+- `*_level_dbfs` → **-120.0**
+- `*_delta_db[120]` → **0.0** (natural zero; matches §7 first-valid-frame /
+  history-reset zeros)
+- `*_prominence_db` → prefer **0.0** (residual centered at 0), not −120 —
+  note lightly if prominence also gains a declared numeric range later;
+  REV6 surface does not list a separate prominence clamp beyond derivation
+  from shape
+- `mid_valid` / `side_valid` / `valid` false as §7
+
+### P7 detail (ACCEPTED — Marco OK 2026-07-25)
+
+**Supersedes** the prior provisional 5-value set
+`{silence, non_finite_input, unsupported_sr, insufficient_samples,
+channel_invalid}`. That set is **withdrawn** for two reasons:
+
+1. **Category error:** it conflates hard-error / no-frame paths
+   (`unsupported_sr`, `non_finite_input`, `insufficient_samples` — §4.1 /
+   §6.2 fail-closed: frame never emitted) with frame-emitted-but-invalid
+   (`valid == false` ⇒ both channels level < −100 dBFS).
+2. **Gate-3 risk:** `silence` vs `channel_invalid` were non-disjoint →
+   offline vs streaming can pick different strings → false RED on bit-identity
+   of `reason`.
+
+**Pinned spike-only enum** (Marco OK 2026-07-25; ≠ REV7 / ≠ CONTRACT amend):
+
+| reason | when (deterministic, disjoint) |
+|--------|--------------------------------|
+| `silence` | both channels at level floor (−120 dBFS) |
+| `level_below_threshold` | both channels in (−120, −100) dBFS (below validity threshold but not at floor) |
+
+**Rules:**
+- Hard errors stay **out of** frame `reason`: raise / fail-closed on path;
+  never emit a frame with those labels.
+- Exactly one string chosen by the rule above; same offline ≡ streaming.
+- Spike-only + freeze-from-prose debt for the official G1b enum at tip.
 
 ### P* workflow
 
-1. Marco approves table (or amends cells) **before** worktree coding.  
+1. ~~Marco OK on **P7**~~ → **DONE** (2026-07-25): restricted set accepted.  
 2. Spike code may only implement pinned cells.  
 3. If a pin must change to pass → record AMBRA + debt; do not silently rewrite this table after the run.  
-4. AMBRA pins that product G1b will inherit → write into G1b tranche preregistration (still ≠ REV7).
+4. AMBRA pins that product G1b will inherit → write into G1b tranche preregistration (still ≠ REV7).  
+5. **Worktree create unblocked** (P1–P7 pinned).
 
 ---
 
@@ -2110,30 +5178,33 @@ coding run.** Changing a pin after seeing numbers → at best AMBRA.
 
 Order is dependency order. Spike may stop early on RED / AMBRA-necessity.
 
-### WS0 — Hygiene / isolation / freeze baseline (plan-approved; execute after P1–P7 OK)
+### WS0 — Hygiene / isolation / freeze baseline (**P7 OK → execute**)
 
 **Close isolation ambiguity (do not use `feature/motore-v3-offline` tip for spike commits):**
 
 ```text
-Worktree path:  .claude/worktrees/motore-v3-g1b-spike
-                (absolute under repo parent worktrees layout)
+Worktree path:  /Users/marco/Desktop/NEWWWWWWW/.claude/worktrees/motore-v3-g1b-spike
 Branch:         spike/motore-v3-g1b-frontend
-Base commit:    a2186ac1   # G1a remediation tip (code)
+Base commit:    a2186ac1   # G1a remediation tip (code); PLAN wins over later docs tips
 Seed:           COPY (not merge) uncommitted trees from motore-v3-offline:
                   - ml_v3/frontend/
                   - ml_v3/tests/test_g1b_t1_resampler_coeffs.py
 Policy:         NO commits on feature/motore-v3-offline from the spike
                 NO CONTRACT / lock / SHA256SUMS / fixture-spec mutation
+                Seed left UNCOMMITTED until WS1 / tranche 1 unless otherwise asked
+Pins:           P1–P7 ACCEPTED (spike-only; ≠ G1 PASS; ≠ official G1b tip)
+Gate Python:    /Users/marco/aieq_data/motore_v3/env/venv = CPython 3.12.13
 ```
 
-Setup steps (**after Marco OK on P1–P7; not in this plan session**):
+Setup steps (**authorized after Marco OK on P7 2026-07-25**):
 
 ```bash
-# From main repo / worktree parent — illustrative; run only post-approval
+# From main repo / worktree parent — post-approval
 git worktree add -b spike/motore-v3-g1b-frontend \
-  .claude/worktrees/motore-v3-g1b-spike a2186ac1
+  /Users/marco/Desktop/NEWWWWWWW/.claude/worktrees/motore-v3-g1b-spike a2186ac1
 # Then copy uncommitted frontend + T1 test from motore-v3-offline into the
 # new worktree working tree (cp -R); do not merge offline tip.
+# Prefer leave seed uncommitted until WS1 (tranche 1 lands seed as tip on spike).
 ```
 
 Also in WS0:
@@ -2141,7 +5212,8 @@ Also in WS0:
 - Re-verify lock digest + SHA256SUMS (48) on gate venv (F4 pattern).  
 - Do **not** treat uncommitted frontend as tip.  
 - Reuse G1a artifacts; **zero** CONTRACT edits.  
-- Evidence only on `/Users/marco/aieq_data/motore_v3/env/venv` (3.12.13).
+- Evidence only on `/Users/marco/aieq_data/motore_v3/env/venv` (3.12.13).  
+- Short WS0 note in spike worktree documenting P1–P7 pin freeze.
 
 ### WS1 — Resampler coeffs (T1) → streaming apply (T1b)
 
@@ -2279,10 +5351,10 @@ edit CONTRACT from this spike.
 
 ---
 
-## 9. Suggested commit tranche order (AFTER Marco approves P1–P7 + this plan)
+## 9. Suggested commit tranche order (AFTER Marco OK on P7 + this plan)
 
-Do **not** implement product in the plan session. Do **not** create the
-worktree until Marco OK. After approval:
+P7 ACCEPTED (2026-07-25). Worktree create + WS0 seed are unblocked.
+Do **not** land spike product code on `feature/motore-v3-offline`. After WS0:
 
 | # | Tranche | Paths (typical) | DoD slice |
 |---|---------|-----------------|-----------|
@@ -2320,7 +5392,7 @@ Last command must be empty. Spike commits stay on
 | Prominence reflect pad + σ=4 (P3) | Edge bands sensitive | Include in domain; do not drop |
 | Float32 reduction order FFT/sum (P5) | Streaming≡offline bit-identity | Freeze association; test schedules `1` and `8193` first |
 | Margin-thin SR-parity | 0.24 dB “pass” is AMBRA not GREEN | Report margin column |
-| Unpinned `reason` enum (P7) | Offline/streaming string mismatch → false RED | Pin provisional set before WS2 |
+| Unpinned / non-disjoint `reason` enum (P7) | Offline/streaming string mismatch → false RED on gate 3 | Pin restricted `{silence, level_below_threshold}` before WS2; hard errors out of frame |
 | Delta history across assets | also-required (a) | Explicit reset API in harness |
 | Mis-alignment on `source_time` | False RED/GREEN | Unit-test warm-up formulas vs lock rationals |
 | Transient onset sub-gate | Out of primary scope; latent product risk | Declared; do not claim covered by spike GREEN |
@@ -2350,8 +5422,8 @@ Last command must be empty. Spike commits stay on
 
 | Agent | Action after plan + P1–P7 approval |
 |-------|-------------------------------------|
-| **Marco** | Approve P1–P7 defaults (esp. **P7** enum); then authorize worktree create + WS1 |
-| **ember-phase-builder** | Create worktree; implement one WS/tranche at a time inside ALLOWED_PATHS on spike branch |
+| **Marco** | **P7 ACCEPTED** (2026-07-25) restricted `{silence, level_below_threshold}`. P1–P7 pinned. WS0 unblocked; authorize WS1 when ready |
+| **ember-phase-builder** | WS0: create worktree + seed; then implement one WS/tranche at a time inside ALLOWED_PATHS on spike branch |
 | **ember-parity-lab** | When WS4 emits numbers: verify digests / max|Δ| / margin tables |
 | **ember-contract-guardian** | Counter-check each tip; REV7 only if spike RED + write-up; AMBRA → debt not amend |
 | **ember-metrology-redteam** | Attack false-PASS in harness (window, activity, platform, P* post-hoc) |
@@ -2369,12 +5441,15 @@ Last command must be empty. Spike commits stay on
 - **AMBRA ≠ REV7**; it is preregistration debt.  
 - Spike worktree/branch isolation: no commits on `feature/motore-v3-offline`
   from spike.  
-- This plan session stops **before** worktree creation and product code.
+- Plan docs may land on `feature/motore-v3-offline`; spike product code stays
+  on `spike/motore-v3-g1b-frontend` only.  
+- **P1–P7 ACCEPTED** (P7 Marco OK 2026-07-25); **worktree create unblocked**;
+  spike ≠ official G1b; **no G1 PASS**.
 ```
 
 ---
 
-## B.5 FILE: `ALIGNMENT_MANIFEST.md`
+## B.18 FILE: `ALIGNMENT_MANIFEST.md`
 
 **Path logico:** `ALIGNMENT_MANIFEST.md`  
 **Bytes:** 5184  
@@ -2495,7 +5570,7 @@ test matrix, and reproduced from a clean checkout/release package:
 
 ---
 
-## B.6 FILE: `agents/ember/README.md`
+## B.19 FILE: `agents/ember/README.md`
 
 **Path logico:** `agents/ember/README.md`  
 **Bytes:** 2855  
@@ -2569,7 +5644,7 @@ agents/ember/           ← canonical (edit here)
 
 ---
 
-## B.7 FILE: `agents/ember/AUDIT_CATALOG.md`
+## B.20 FILE: `agents/ember/AUDIT_CATALOG.md`
 
 **Path logico:** `agents/ember/AUDIT_CATALOG.md`  
 **Bytes:** 5761  
@@ -2679,7 +5754,7 @@ Queste concern mapano agli audit:
 
 ---
 
-## B.8 FILE: `agents/ember/ember-contract-guardian.md`
+## B.21 FILE: `agents/ember/ember-contract-guardian.md`
 
 **Path logico:** `agents/ember/ember-contract-guardian.md`  
 **Bytes:** 7587  
@@ -2847,7 +5922,7 @@ NEXT PERMITTED ACTION:
 
 ---
 
-## B.9 FILE: `agents/ember/ember-phase-builder.md`
+## B.22 FILE: `agents/ember/ember-phase-builder.md`
 
 **Path logico:** `agents/ember/ember-phase-builder.md`  
 **Bytes:** 4440  
@@ -2966,7 +6041,7 @@ REFUSE_OR_BLOCK_RISKS: <se presenti>
 
 ---
 
-## B.10 FILE: `agents/ember/ember-parity-lab.md`
+## B.23 FILE: `agents/ember/ember-parity-lab.md`
 
 **Path logico:** `agents/ember/ember-parity-lab.md`  
 **Bytes:** 3611  
@@ -3066,7 +6141,7 @@ HANDOFF:
 
 ---
 
-## B.11 FILE: `agents/ember/ember-rt-sentinel.md`
+## B.24 FILE: `agents/ember/ember-rt-sentinel.md`
 
 **Path logico:** `agents/ember/ember-rt-sentinel.md`  
 **Bytes:** 3720  
@@ -3171,7 +6246,7 @@ HANDOFF:
 
 ---
 
-## B.12 FILE: `agents/ember/ember-audit-blade.md`
+## B.25 FILE: `agents/ember/ember-audit-blade.md`
 
 **Path logico:** `agents/ember/ember-audit-blade.md`  
 **Bytes:** 5119  
@@ -3305,7 +6380,7 @@ Vedi anche `.cursor/agents/AUDIT_CATALOG.md` e package prompt in
 
 ---
 
-## B.13 FILE: `agents/ember/ember-metrology-redteam.md`
+## B.26 FILE: `agents/ember/ember-metrology-redteam.md`
 
 **Path logico:** `agents/ember/ember-metrology-redteam.md`  
 **Bytes:** 4242  
@@ -3429,7 +6504,7 @@ Definizioni verdetto:
 
 ---
 
-## B.14 FILE: `ml_v3/contracts/__init__.py`
+## B.27 FILE: `ml_v3/contracts/__init__.py`
 
 **Path logico:** `ml_v3/contracts/__init__.py`  
 **Bytes:** 1889  
@@ -3505,7 +6580,7 @@ __all__ = [
 
 ---
 
-## B.15 FILE: `ml_v3/contracts/constants.py`
+## B.28 FILE: `ml_v3/contracts/constants.py`
 
 **Path logico:** `ml_v3/contracts/constants.py`  
 **Bytes:** 5296  
@@ -3652,7 +6727,7 @@ SCHEMA_IDS: Final[dict[str, str]] = {
 
 ---
 
-## B.16 FILE: `ml_v3/contracts/canonical.py`
+## B.29 FILE: `ml_v3/contracts/canonical.py`
 
 **Path logico:** `ml_v3/contracts/canonical.py`  
 **Bytes:** 10587  
@@ -3935,7 +7010,7 @@ def parse_sha256sums(text: object) -> dict[str, str]:
 
 ---
 
-## B.17 FILE: `ml_v3/contracts/grid.py`
+## B.30 FILE: `ml_v3/contracts/grid.py`
 
 **Path logico:** `ml_v3/contracts/grid.py`  
 **Bytes:** 1972  
@@ -3997,7 +7072,7 @@ def region_index_of_band(band_index: int) -> int | None:
 
 ---
 
-## B.18 FILE: `ml_v3/contracts/profiles.py`
+## B.31 FILE: `ml_v3/contracts/profiles.py`
 
 **Path logico:** `ml_v3/contracts/profiles.py`  
 **Bytes:** 4439  
@@ -4121,7 +7196,7 @@ def map_legacy_profile(legacy_name: str) -> dict[str, object]:
 
 ---
 
-## B.19 FILE: `ml_v3/contracts/coverage.py`
+## B.32 FILE: `ml_v3/contracts/coverage.py`
 
 **Path logico:** `ml_v3/contracts/coverage.py`  
 **Bytes:** 15567  
@@ -4493,7 +7568,7 @@ def check_stratum_calibrator_allowed(positive_groups: Iterable[str],
 
 ---
 
-## B.20 FILE: `ml_v3/contracts/split.py`
+## B.33 FILE: `ml_v3/contracts/split.py`
 
 **Path logico:** `ml_v3/contracts/split.py`  
 **Bytes:** 26697  
@@ -5105,7 +8180,7 @@ def validate_manifest_split_invariants(assets: list[dict],
 
 ---
 
-## B.21 FILE: `ml_v3/contracts/schemas.py (F3 schema registry surface)`
+## B.34 FILE: `ml_v3/contracts/schemas.py`
 
 **Path logico:** `ml_v3/contracts/schemas.py`  
 **Bytes:** 26193  
@@ -5800,7 +8875,7 @@ def schema_registry_sha256() -> str:
 
 ---
 
-## B.22 FILE: `ml_v3/contracts/validate.py (F2 verify_commitment on reveal)`
+## B.35 FILE: `ml_v3/contracts/validate.py`
 
 **Path logico:** `ml_v3/contracts/validate.py`  
 **Bytes:** 33661  
@@ -6566,7 +9641,7 @@ def validate_schema_id(document: object, expected_schema_id: str) -> None:
 
 ---
 
-## B.23 FILE: `ml_v3/contracts/adapter.py`
+## B.36 FILE: `ml_v3/contracts/adapter.py`
 
 **Path logico:** `ml_v3/contracts/adapter.py`  
 **Bytes:** 12359  
@@ -6893,7 +9968,7 @@ def validate_adapter_mapping_claim(claim: object) -> dict[str, Any]:
 
 ---
 
-## B.24 FILE: `ml_v3/contracts/metrology_lock.py (F4 interpreter pin 3.12.13)`
+## B.37 FILE: `ml_v3/contracts/metrology_lock.py`
 
 **Path logico:** `ml_v3/contracts/metrology_lock.py`  
 **Bytes:** 37263  
@@ -7764,7 +10839,7 @@ def require_gate_platform_python() -> str:
 
 ---
 
-## B.25 FILE: `ml_v3/contracts/sha256sums.py`
+## B.38 FILE: `ml_v3/contracts/sha256sums.py`
 
 **Path logico:** `ml_v3/contracts/sha256sums.py`  
 **Bytes:** 9239  
@@ -8005,7 +11080,7 @@ def verify_g1a_sha256sums(root: Path | None = None) -> dict[str, str]:
 
 ---
 
-## B.26 FILE: `ml_v3/contracts/fixture_spec.py`
+## B.39 FILE: `ml_v3/contracts/fixture_spec.py`
 
 **Path logico:** `ml_v3/contracts/fixture_spec.py`  
 **Bytes:** 37333  
@@ -8898,7 +11973,7 @@ def validate_fixture_spec_claim(claim: object) -> dict[str, Any]:
 
 ---
 
-## B.27 FILE: `ml_v3/fixtures/__init__.py`
+## B.40 FILE: `ml_v3/fixtures/__init__.py`
 
 **Path logico:** `ml_v3/fixtures/__init__.py`  
 **Bytes:** 79  
@@ -8910,7 +11985,7 @@ def validate_fixture_spec_claim(claim: object) -> dict[str, Any]:
 
 ---
 
-## B.28 FILE: `ml_v3/fixtures/g1/render_signals.py`
+## B.41 FILE: `ml_v3/fixtures/g1/render_signals.py`
 
 **Path logico:** `ml_v3/fixtures/g1/render_signals.py`  
 **Bytes:** 14798  
@@ -9349,7 +12424,7 @@ if __name__ == "__main__":
 
 ---
 
-## B.29 FILE: `ml_v3/fixtures/g1/adapter_v2_v3_mapping.json`
+## B.42 FILE: `ml_v3/fixtures/g1/adapter_v2_v3_mapping.json`
 
 **Path logico:** `ml_v3/fixtures/g1/adapter_v2_v3_mapping.json`  
 **Bytes:** 2338  
@@ -9361,7 +12436,7 @@ if __name__ == "__main__":
 
 ---
 
-## B.30 FILE: `ml_v3/fixtures/g1/metrology_lock.json`
+## B.43 FILE: `ml_v3/fixtures/g1/metrology_lock.json`
 
 **Path logico:** `ml_v3/fixtures/g1/metrology_lock.json`  
 **Bytes:** 9264  
@@ -9373,7 +12448,7 @@ if __name__ == "__main__":
 
 ---
 
-## B.31 FILE: `ml_v3/fixtures/g1/fixture_spec_v1.json (digest 513c3baf…)`
+## B.44 FILE: `ml_v3/fixtures/g1/fixture_spec_v1.json (digest 513c3baf…)`
 
 **Path logico:** `ml_v3/fixtures/g1/fixture_spec_v1.json`  
 **Bytes:** 8260  
@@ -9385,7 +12460,7 @@ if __name__ == "__main__":
 
 ---
 
-## B.32 FILE: `ml_v3/fixtures/g1/schema_registry_v1.json (F3 @ a2186ac1)`
+## B.45 FILE: `ml_v3/fixtures/g1/schema_registry_v1.json (fa506142…)`
 
 **Path logico:** `ml_v3/fixtures/g1/schema_registry_v1.json`  
 **Bytes:** 19608  
@@ -9397,7 +12472,7 @@ if __name__ == "__main__":
 
 ---
 
-## B.33 FILE: `ml_v3/fixtures/g1/SHA256SUMS (48 entries post-remediation)`
+## B.46 FILE: `ml_v3/fixtures/g1/SHA256SUMS (48 entries)`
 
 **Path logico:** `ml_v3/fixtures/g1/SHA256SUMS`  
 **Bytes:** 6027  
@@ -9456,7 +12531,7 @@ fa506142afd8a0794f2093a428841b445b130e2ee0f681e18609b1a9b9cd5247  ml_v3/fixtures
 
 ---
 
-## B.34 FILE: `ml_v3/fixtures/g1/examples/asset_manifest.json`
+## B.47 FILE: `ml_v3/fixtures/g1/examples/asset_manifest.json`
 
 **Path logico:** `ml_v3/fixtures/g1/examples/asset_manifest.json`  
 **Bytes:** 735  
@@ -9468,7 +12543,7 @@ fa506142afd8a0794f2093a428841b445b130e2ee0f681e18609b1a9b9cd5247  ml_v3/fixtures
 
 ---
 
-## B.35 FILE: `ml_v3/fixtures/g1/examples/admission_batch.json`
+## B.48 FILE: `ml_v3/fixtures/g1/examples/admission_batch.json`
 
 **Path logico:** `ml_v3/fixtures/g1/examples/admission_batch.json`  
 **Bytes:** 608  
@@ -9480,7 +12555,7 @@ fa506142afd8a0794f2093a428841b445b130e2ee0f681e18609b1a9b9cd5247  ml_v3/fixtures
 
 ---
 
-## B.36 FILE: `ml_v3/fixtures/g1/examples/annotation.json`
+## B.49 FILE: `ml_v3/fixtures/g1/examples/annotation.json`
 
 **Path logico:** `ml_v3/fixtures/g1/examples/annotation.json`  
 **Bytes:** 2318  
@@ -9492,7 +12567,7 @@ fa506142afd8a0794f2093a428841b445b130e2ee0f681e18609b1a9b9cd5247  ml_v3/fixtures
 
 ---
 
-## B.37 FILE: `ml_v3/fixtures/g1/examples/prediction.json`
+## B.50 FILE: `ml_v3/fixtures/g1/examples/prediction.json`
 
 **Path logico:** `ml_v3/fixtures/g1/examples/prediction.json`  
 **Bytes:** 2341  
@@ -9504,7 +12579,7 @@ fa506142afd8a0794f2093a428841b445b130e2ee0f681e18609b1a9b9cd5247  ml_v3/fixtures
 
 ---
 
-## B.38 FILE: `ml_v3/fixtures/g1/examples/calibration_policy.json`
+## B.51 FILE: `ml_v3/fixtures/g1/examples/calibration_policy.json`
 
 **Path logico:** `ml_v3/fixtures/g1/examples/calibration_policy.json`  
 **Bytes:** 1499  
@@ -9516,7 +12591,7 @@ fa506142afd8a0794f2093a428841b445b130e2ee0f681e18609b1a9b9cd5247  ml_v3/fixtures
 
 ---
 
-## B.39 FILE: `ml_v3/fixtures/g1/examples/benchmark_power_plan.json`
+## B.52 FILE: `ml_v3/fixtures/g1/examples/benchmark_power_plan.json`
 
 **Path logico:** `ml_v3/fixtures/g1/examples/benchmark_power_plan.json`  
 **Bytes:** 1210  
@@ -9528,7 +12603,7 @@ fa506142afd8a0794f2093a428841b445b130e2ee0f681e18609b1a9b9cd5247  ml_v3/fixtures
 
 ---
 
-## B.40 FILE: `ml_v3/tests/test_g1a_identity_canonical.py`
+## B.53 FILE: `ml_v3/tests/test_g1a_identity_canonical.py`
 
 **Path logico:** `ml_v3/tests/test_g1a_identity_canonical.py`  
 **Bytes:** 7670  
@@ -9746,7 +12821,7 @@ if __name__ == "__main__":
 
 ---
 
-## B.41 FILE: `ml_v3/tests/test_g1a_role_intervals.py`
+## B.54 FILE: `ml_v3/tests/test_g1a_role_intervals.py`
 
 **Path logico:** `ml_v3/tests/test_g1a_role_intervals.py`  
 **Bytes:** 6283  
@@ -9919,7 +12994,7 @@ if __name__ == "__main__":
 
 ---
 
-## B.42 FILE: `ml_v3/tests/test_g1a_t1_gates.py`
+## B.55 FILE: `ml_v3/tests/test_g1a_t1_gates.py`
 
 **Path logico:** `ml_v3/tests/test_g1a_t1_gates.py`  
 **Bytes:** 10920  
@@ -10227,7 +13302,7 @@ if __name__ == "__main__":
 
 ---
 
-## B.43 FILE: `ml_v3/tests/_g1a_t2_fixtures.py`
+## B.56 FILE: `ml_v3/tests/_g1a_t2_fixtures.py`
 
 **Path logico:** `ml_v3/tests/_g1a_t2_fixtures.py`  
 **Bytes:** 7667  
@@ -10476,7 +13551,7 @@ def benchmark_power_plan(**overrides: object) -> dict:
 
 ---
 
-## B.44 FILE: `ml_v3/tests/test_g1a_t2_schemas.py`
+## B.57 FILE: `ml_v3/tests/test_g1a_t2_schemas.py`
 
 **Path logico:** `ml_v3/tests/test_g1a_t2_schemas.py`  
 **Bytes:** 14317  
@@ -10891,7 +13966,7 @@ if __name__ == "__main__":
 
 ---
 
-## B.45 FILE: `ml_v3/tests/test_g1a_t3_adapter.py`
+## B.58 FILE: `ml_v3/tests/test_g1a_t3_adapter.py`
 
 **Path logico:** `ml_v3/tests/test_g1a_t3_adapter.py`  
 **Bytes:** 9165  
@@ -11127,7 +14202,7 @@ if __name__ == "__main__":
 
 ---
 
-## B.46 FILE: `ml_v3/tests/test_g1a_t4_metrology_lock.py`
+## B.59 FILE: `ml_v3/tests/test_g1a_t4_metrology_lock.py`
 
 **Path logico:** `ml_v3/tests/test_g1a_t4_metrology_lock.py`  
 **Bytes:** 24541  
@@ -11673,7 +14748,7 @@ if __name__ == "__main__":
 
 ---
 
-## B.47 FILE: `ml_v3/tests/test_g1a_t5_sha256sums.py`
+## B.60 FILE: `ml_v3/tests/test_g1a_t5_sha256sums.py`
 
 **Path logico:** `ml_v3/tests/test_g1a_t5_sha256sums.py`  
 **Bytes:** 8773  
@@ -11908,7 +14983,7 @@ if __name__ == "__main__":
 
 ---
 
-## B.48 FILE: `ml_v3/tests/test_g1a_t6_fixture_spec.py`
+## B.61 FILE: `ml_v3/tests/test_g1a_t6_fixture_spec.py`
 
 **Path logico:** `ml_v3/tests/test_g1a_t6_fixture_spec.py`  
 **Bytes:** 16632  
@@ -12312,7 +15387,7 @@ if __name__ == "__main__":
 
 ---
 
-## B.49 FILE: `ml_v3/tests/test_g1a_t6_generators.py`
+## B.62 FILE: `ml_v3/tests/test_g1a_t6_generators.py`
 
 **Path logico:** `ml_v3/tests/test_g1a_t6_generators.py`  
 **Bytes:** 10512  
@@ -12604,7 +15679,7 @@ if __name__ == "__main__":
 
 ---
 
-## B.50 FILE: `ml_v3/tests/test_g1a_f4_interpreter.py (F4)`
+## B.63 FILE: `ml_v3/tests/test_g1a_f4_interpreter.py`
 
 **Path logico:** `ml_v3/tests/test_g1a_f4_interpreter.py`  
 **Bytes:** 951  
@@ -12644,7 +15719,7 @@ if __name__ == "__main__":
 
 ---
 
-## B.51 FILE: `ml_v3/frontend/__init__.py (SPIKE — not official G1b tip)`
+## B.64 FILE: `ml_v3/frontend/__init__.py (SPIKE lab — ≠ G1b tip; evidence on spike branch)`
 
 **Path logico:** `ml_v3/frontend/__init__.py`  
 **Bytes:** 758  
@@ -12685,7 +15760,7 @@ __all__ = [
 
 ---
 
-## B.52 FILE: `ml_v3/frontend/resampler_coeffs.py (SPIKE)`
+## B.65 FILE: `ml_v3/frontend/resampler_coeffs.py (SPIKE)`
 
 **Path logico:** `ml_v3/frontend/resampler_coeffs.py`  
 **Bytes:** 3982  
@@ -12818,7 +15893,7 @@ def fir_lowpass_coefficients(fs_in: int) -> np.ndarray:
 
 ---
 
-## B.53 FILE: `ml_v3/frontend/feature_frame.py (SPIKE)`
+## B.66 FILE: `ml_v3/frontend/feature_frame.py (SPIKE)`
 
 **Path logico:** `ml_v3/frontend/feature_frame.py`  
 **Bytes:** 4772  
@@ -12990,7 +16065,7 @@ def validate_feature_frame_stub(frame: Mapping[str, Any]) -> dict[str, Any]:
 
 ---
 
-## B.54 FILE: `ml_v3/tests/test_g1b_t1_resampler_coeffs.py (SPIKE)`
+## B.67 FILE: `ml_v3/tests/test_g1b_t1_resampler_coeffs.py (SPIKE)`
 
 **Path logico:** `ml_v3/tests/test_g1b_t1_resampler_coeffs.py`  
 **Bytes:** 6735  
@@ -13192,4 +16267,4 @@ if __name__ == "__main__":
 
 ## C. Fine snapshot
 
-Handoff aggiornato: HEAD `57b31bf1` (**G1a CLOSE: GO** re-CLOSE); code tip `a2186ac1` (F2/F3/F4); false CLOSE `1746a058` withdrawn; REV7 NO; No G1 PASS; G1b may unfreeze; spike/plan ≠ tip. Non rilassare gate.
+Handoff aggiornato: HEAD `78da84dd`; G1a CLOSE GO; A3 falsification **FAIL honest** (6.435 dB); REV7 consolidate NO; No G1 PASS; no G1b tip. Next: non-POROUS redteam/CC on A3 formula, then tip decision. Non rilassare gate.
