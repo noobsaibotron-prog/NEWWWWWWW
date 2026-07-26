@@ -1,11 +1,11 @@
 # Motore v3 — Proposal: SWEEP METROLOGY REDESIGN (S1 + S2)
 
 **Suggested commit title:**  
-`docs(v3): untainted SWEEP_METROLOGY_REDESIGN proposal (S1+S2)`
+`docs(v3): close SWEEP redesign proposal full POROUS (CC+RT)`
 
 | Field | Value |
 |-------|--------|
-| **Status** | **PROPOSAL DRAFT** — document-only; **not** self-SOUND; POROUS must-fixes applied; ready for **re-CC / redteam**; **MEASURE_AUTHORIZED NO** |
+| **Status** | **PROPOSAL DRAFT** — document-only; **not** self-SOUND; CC + redteam POROUS closure applied; ready for **re-CC**; **MEASURE_AUTHORIZED NO** |
 | **≠** | G1 PASS · ACCEPT · measure · REV7 consolidate · G1b tip · CONTRACT/lock/T6 edit · A3 reopen · A4 ACTIVE |
 | **Date** | 2026-07-26 |
 | **Authority** | Marco **"ok"** on mandate open + this untainted proposal write |
@@ -40,8 +40,9 @@ If a reviewer later finds latent gate-failure magnitudes steering a formula
 constant here, this proposal is **void** and must be rewritten by a fresh
 untainted writer.
 
-**Self-SOUND is forbidden.** This document marks itself ready for redteam/CC
-only; it does **not** claim CONTRACT-SOUND, PASS, or ACCEPT.
+**Self-SOUND is forbidden.** This document marks itself ready for **re-CC**
+only; it does **not** claim CONTRACT-SOUND, PASS, ACCEPT, or measure
+authorization.
 
 ---
 
@@ -107,12 +108,16 @@ Group delay is already folded into `source_time`. Cross-SR alignment remains on
 | ID | Decision | Status in this doc |
 |----|----------|--------------------|
 | D1 | S1 = **guard regions** on checkpoint closing domain, from aperture geometry only | **PROPOSED** |
-| D2 | S2 candidate = **analytic-trajectory ridge level (ATRL)** | **PROPOSED** (direction family = ridge/trajectory; alts **S2-ALT1/2/3** CC-open) |
-| D3 | Off-ridge = **mandatory preregistered report** (default) with **artifact-veto** as CC-open alternate | **PROPOSED** |
+| D2 | S2 candidate = **analytic-trajectory ridge level (ATRL)** + mandatory companions / side gate | **PROPOSED** (alts **S2-ALT1/2/3** CC-open; not “A3”) |
+| D3 | Off-ridge **closing conjunction:** ATRL≤0.25 **AND** artifact-veto=false; report alone **does not** close | **LOCKED (fail-closed)** |
 | D4 | Immutable: max aggregator; 0.25 dB; stationary `R`; report-only ∉`R`; no post-hoc mask; no threshold shopping | **LOCKED by mandate** |
 | D5 | No CONTRACT / lock / T6 / SHA256SUMS / `Source/` edit in this phase | **LOCKED** |
 | D6 | No measure; no ACCEPT / PASS / G1b tip claim | **LOCKED** |
 | D7 | REV7 = **one** future package after S1+S2 CC — not consolidated here | **LOCKED** |
+| D8 | \|CHK_CLOSE\| floor ≥7; empty set → FAIL; `T_MEM=0` locked | **LOCKED (fail-closed)** |
+| D9 | `mid_valid=false` / unmatched / empty activity-union → FAIL | **LOCKED (fail-closed)** |
+| D10 | CHK_REPORT publish obligatory; TRANSPORT≠PASS if REPORT absent | **LOCKED (fail-closed)** |
+| D11 | S2/alt **menu freeze** before any measure authorization | **LOCKED** |
 
 ---
 
@@ -146,11 +151,14 @@ CHK_REPORT(f) ⇔  f ∈ SWEEP_CHECKPOINT_HZ  ∧  ¬CHK_CLOSE(f)
 **Semantics:**
 
 - The preregistered checkpoint **grid is unchanged** (no checkpoint removal).
-- `CHK_REPORT` checkpoints remain **obligatory to publish** (presence +
-  nearest-frame distance + observables) but **do not enter** the gate-closing
-  max.
+- `CHK_REPORT` checkpoints remain **obligatory to publish** (see §4.5 schema)
+  but **do not enter** the ATRL closing max.
 - Missing nearest frame within hop for any checkpoint (close or report) remains
   **FAIL** under the frozen match rule — guards do not invent frames.
+- **Cardinality floor (fail-closed):** let \(N_{\mathrm{close}}=|\mathrm{CHK\_CLOSE}|\).
+  If \(N_{\mathrm{close}}=\emptyset\) **or** \(N_{\mathrm{close}}<7\) → **FAIL**
+  (vacuous / under-populated closing domain). Under the definitional partition
+  in §4.3, \(N_{\mathrm{close}}=7\) (60…16000 Hz); the floor pins that geometry.
 
 **Rationale for `T_LEAD`:** worst-case selected `source_time` is
 \(t_\times - T_{\mathrm{HOP}}\); LF aperture looks back `T_WIN_LF`; require
@@ -201,6 +209,38 @@ law + frozen checkpoint list. It is not a post-hoc mask of a measured band.
 | S1-R4 | Manual time shift / proxy timestamps | **REJECT** |
 | S1-R5 | Widen/narrow guards after seeing a Δ table | **REJECT** — threshold/domain shopping |
 | S1-R6 | Treat lead/trail REPORT checkpoints as if they never existed | **REJECT** — must remain observable in report |
+| S1-R7 | Treat missing CHK_REPORT fields as soft / ignore for TRANSPORT PASS | **REJECT** — see §4.5 |
+| S1-R8 | Silent `T_MEM>0` widening under CC without fresh untainted amend | **REJECT** — `T_MEM=0` locked |
+
+### 4.5 CHK_REPORT publish schema (fail-closed)
+
+For **every** `f` with `CHK_REPORT(f)`, each gate SR path **must** publish at
+least:
+
+| Field | Requirement |
+|-------|-------------|
+| `checkpoint_hz` | frozen grid value |
+| `role` | `REPORT` |
+| `t_cross` | analytic crossing time |
+| `source_time_selected` | nearest useful-segment match, or explicit missing |
+| `match_distance_s` | \|selected − t_cross\|; or missing marker |
+| `match_ok` | boolean; `false` if outside hop radius |
+| `b_star`, `f_star`, `t_star` | analytic ridge identity at selected frame (same law as ATRL) when `match_ok` |
+| `L` = `mid_psd_db[b★]` | when `match_ok` and mid valid; else missing marker |
+| `mid_valid` | boolean from frozen instrument |
+
+**Fail-closed:** any missing / null required field on any CHK_REPORT cell →
+**FAIL**. TRANSPORT (sweep branch) **≠ PASS** if any CHK_REPORT publication is
+absent or incomplete — report presence is a **hard precondition**, not a soft
+diagnostic. CHK_REPORT still does **not** enter the ATRL max; it blocks PASS
+when absent.
+
+### 4.6 NOTE — LF-per-checkpoint aperture (deferred)
+
+A deeper per-checkpoint LF/MAIN aperture redesign (finer than the single
+worst-case `T_WIN_LF` lead guard) is **out of scope** for this POROUS closure.
+Tracked as NOTE only; any change requires a fresh untainted amend + CC. Not a
+shopping surface for the current guard constants.
 
 ---
 
@@ -252,24 +292,55 @@ For each gate SR path \(\in\{44100,48000,96000\}\) and each
 6. Observable: \(L = \texttt{mid_psd_db}[b^\star]\) after frozen fusion/floor/clamp
    — **one scalar per path** at that checkpoint (not a multi-band / multi-channel
    Cartesian product).
-7. For each SR-vs-ref pair (ref = 48 kHz path), the closing contribution is the
-   single scalar \(|L_{\mathrm{ref}}-L_{\mathrm{sr}}|\) at that
+7. **Validity / match (fail-closed):** if frame unmatched within hop, or
+   `mid_valid=false` on either path for \(b^\star\), or \(L\) is NaN/Inf/missing
+   → **FAIL** (no silent skip of that cell).
+8. For each SR-vs-ref pair (ref = 48 kHz path), the ATRL closing contribution is
+   the single scalar \(|L_{\mathrm{ref}}-L_{\mathrm{sr}}|\) at that
    `(CHK_CLOSE checkpoint × SR-vs-ref pair)`.
 
-**Closing rule (sweep branch only):**
+**Activity union (fail-closed):** off-ridge / companion band sets use the
+**frozen** floor/union activity predicate (REV6 structure). If the
+activity-admitted set for a required comparison is **empty** when the
+predicate demands a non-empty admission (or both paths inactive when veto
+expects a defined polarity) → **FAIL**. Empty union is never treated as
+PASS-by-absence.
+
+**ATRL companions / side gate (mandatory — no silent drop):** ATRL level
+alone does **not** exhaust shape/prominence/side structure. Normative closing
+requires **either**:
+
+- **Companions (default menu):** preregistered scalar companions published and
+  gated with the same max / 0.25 dB / fail-closed missing rules, derived a
+  priori from frozen triangular geometry + floor (not from FAIL dB tables):
+  - **prominence:** \(L[b^\star] - \mathrm{median}(L[b])\) over activity-admitted
+    off-ridge bands (or FAIL if that set empty when prominence is required);
+  - **side asymmetry:** \(|L[b^\star_{-}]-L[b^\star_{+}]|\) for the two
+    nearest activity-admitted neighbour bands when they exist; if fewer than
+    two neighbours exist under frozen geometry at that \(f^\star\), publish
+    explicit `side_n/a` and route through the **side gate** below rather than
+    dropping the cell;
+- **or** an explicit **FAIL-closed side gate** (boolean): a preregistered
+  one-sided shape/side predicate from floor + triangular geometry that **must**
+  evaluate false for close; missing evaluation → FAIL.
+
+Silent drop of prominence / side / shape is **REJECT** (S2-R7). Companion
+thresholds remain 0.25 dB max where numeric; boolean side gate is separate
+and must not encode measured FAIL dB.
+
+**ATRL level rule (component):**
 
 ```text
-max |L_ref − L_sr| over {CHK_CLOSE checkpoints} × {SR-vs-ref pairs}
-  where L = mid_psd_db[b★]   (one scalar per path per checkpoint)
-  ≤  0.25 dB
+ATRL_OK  ⇔  max |L_ref − L_sr| over {CHK_CLOSE} × {SR-vs-ref pairs}
+              where L = mid_psd_db[b★]   (one scalar per path per checkpoint)
+            ≤  0.25 dB
 aggregator = max   (mean / p95 / RMSE forbidden)
 ```
 
-**Pin (closes POROUS leftover):** the closing max domain is **not**
-`{valid mid channels}` and **not** a Cartesian product over mid bands /
-channels. Exactly one \(L\) per path per close-eligible checkpoint
-(\(b^\star\) only); exactly one \(|L_{\mathrm{ref}}-L_{\mathrm{sr}}|\) per
-`(CHK_CLOSE × SR-vs-ref)` cell.
+**Pin (CC POROUS):** the ATRL max domain is **not** `{valid mid channels}` and
+**not** a Cartesian product over mid bands / channels. Exactly one \(L\) per
+path per close-eligible checkpoint (\(b^\star\) only); exactly one
+\(|L_{\mathrm{ref}}-L_{\mathrm{sr}}|\) per `(CHK_CLOSE × SR-vs-ref)` cell.
 
 Stationary assets (multitone / pseudo_noise) keep geometric `R` + existing
 stationary predicates; ATRL does **not** rewrite them.
@@ -307,31 +378,58 @@ policy (§6); no CONTRACT edit in this phase.
 | S2-R4 | Replace max with mean/p95; raise 0.25 dB | **REJECT** — immutable |
 | S2-R5 | Peak-pick \(b^\star\) from measured PSD argmax | **REJECT** — not analytic-trajectory; SR-dependent selection |
 | S2-R6 | Silent drop of off-ridge bands from all reporting | **REJECT** — see §6 |
+| S2-R7 | Silent drop of shape / prominence / side (ATRL level-only close) | **REJECT** — companions or side gate required |
+| S2-R8 | Close on ATRL report alone without artifact-veto conjunction | **REJECT** — see §6 |
+| S2-R9 | Encode artifact-veto / companions from measured FAIL dB tables | **REJECT** — contamination |
 
 ---
 
-## 6. Off-ridge policy
+## 6. Off-ridge policy (fail-closed closing conjunction)
 
 Off-ridge energy / artifacts **cannot vanish**.
 
-**Default proposed:** **mandatory preregistered report**
+### 6.1 Mandatory report (necessary, not sufficient)
 
 For each close-eligible checkpoint frame, publish at least:
 
 - \(b^\star\), \(f^\star\), \(t^\star\);
-- `mid_psd_db[b^\star]` per SR path;
+- `mid_psd_db[b^\star]` per SR path + `mid_valid`;
+- ATRL companions / side-gate fields (§5.3);
 - **off-ridge report:** max `|Δ|` (and argmax band) over
   \(\{b : b\neq b^\star\}\) that are activity-admitted under the **frozen**
-  floor/union predicate (REV6 structure), clearly labeled
-  **non-closing / diagnostic**.
+  floor/union predicate (REV6 structure), labeled **diagnostic** when not
+  part of the veto predicate.
 
-**CC-open alternate:** **artifact veto** — FAIL-closed if a preregistered
-one-sided off-ridge predicate fires (e.g. one path active far from \(b^\star\)
-while the other is at floor), with the predicate written a priori from floor +
-triangular geometry, not from a run list.
+**Missing any required off-ridge / companion / veto field → FAIL.**
 
-Choosing report vs veto (or both) is left to redteam/CC; vanishing is not an
-option.
+### 6.2 Artifact veto (normative closing conjunct)
+
+**Artifact veto** is **not** an optional alternate. It is a **required closing
+conjunct**, written a priori from **floor + triangular geometry** only
+(examples of admissible form: one path activity-admitted far from \(b^\star\)
+while the other is at floor; polarity/support mismatch under frozen union).
+**Forbidden:** fitting veto thresholds or band lists from measured FAIL dB /
+margin tables.
+
+```text
+ARTIFACT_VETO_FIRE  ∈ {true, false}   # missing evaluation → FAIL
+VETO_OK             ⇔  ARTIFACT_VETO_FIRE = false
+```
+
+### 6.3 Sweep TRANSPORT close (normative)
+
+```text
+SWEEP_TRANSPORT_CLOSE  ⇔
+    N_close ≥ 7
+    ∧  ATRL_OK                         # §5.3 level ≤ 0.25 dB max
+    ∧  COMPANIONS_OR_SIDE_GATE_OK      # §5.3 — no silent drop
+    ∧  VETO_OK                         # artifact-veto false
+    ∧  CHK_REPORT_PUBLISH_COMPLETE     # §4.5
+    ∧  no mid_valid=false / unmatched / empty-union FAIL (§5.3)
+```
+
+**Report alone does not close.** ATRL≤0.25 alone does not close. Veto must
+evaluate and be false. Any missing conjunct field → **FAIL**.
 
 ---
 
@@ -345,7 +443,11 @@ option.
 | ∉`R` | **report-only** (does not close) |
 | Post-hoc mask | **forbidden** |
 | Threshold shopping | **forbidden** |
+| `T_MEM` | **0** locked (GD already in `source_time`) |
+| \|CHK_CLOSE\| | **≥7**; empty → FAIL |
+| Off-ridge close | ATRL_OK **∧** VETO_OK **∧** companions/side gate; report≠close |
 | A3 / A4 ACTIVE | **closed** — A3 retired-as-solution; no A4 |
+| Menu freeze | S2 primary + **S2-ALT\*** menu **frozen before measure** |
 
 ---
 
@@ -384,24 +486,41 @@ Partial consolidate (LF-only, stationary-only, S1-only, S2-only) remains
 | Claim | Status |
 |-------|--------|
 | This proposal = product ACCEPT / gate PASS | **NO** |
-| This proposal = CONTRACT-SOUND by self-declaration | **NO** — redteam/CC required |
-| S1 guard direction | **PROPOSED** (D1) |
-| S2 ATRL candidate | **PROPOSED** (D2); alts **S2-ALT1/2/3** CC-open (not “A3”) |
-| Off-ridge vanishing | **NO** |
-| Self-SOUND / MEASURE | **NO** — not self-SOUND; **MEASURE_AUTHORIZED NO** until re-CC |
-| Next lab action | re-CC / redteam on this must-fix revision → only then measure authorization |
+| This proposal = CONTRACT-SOUND by self-declaration | **NO** — re-CC required after this closure |
+| S1 guard direction | **PROPOSED** (D1) + cardinality / REPORT fail-closed |
+| S2 ATRL candidate | **PROPOSED** (D2) + companions/side gate; alts **S2-ALT1/2/3** |
+| Off-ridge vanishing | **NO** — close = ATRL_OK ∧ VETO_OK ∧ companions/side |
+| Self-SOUND / MEASURE | **NO** — not self-SOUND; **MEASURE_AUTHORIZED NO** |
+| Next lab action | re-CC on full POROUS closure → menu freeze → only then measure auth |
 
 ---
 
-## 11. Handoff
+## 11. Closed POROUS findings (this revision)
+
+| ID | Source | Finding | Closure in this doc |
+|----|--------|---------|---------------------|
+| P1 | CC | ATRL closing max Cartesian `{valid mid channels}` | **CLOSED** — one scalar \|L_ref−L_sr\| per (CHK_CLOSE × SR-vs-ref); L=mid_psd_db[b★] |
+| P2 | CC | Additive T_MEM CC-open shopping | **CLOSED** — normative `T_MEM=0`; non-zero needs fresh untainted amend |
+| P3 | CC | S2 alt id “A3” collides retired ACTIVE A3 | **CLOSED** — renamed **S2-ALT1/2/3** |
+| P4 | RT CRITICAL | Off-ridge report-alone / optional veto | **CLOSED** — close iff ATRL_OK ∧ VETO_OK; report≠close; missing→FAIL; veto a priori floor+geometry |
+| P5 | RT CRITICAL | Silent drop shape/prominence/side | **CLOSED** — companions **or** FAIL-closed side gate mandatory |
+| P6 | RT HIGH | CHK_REPORT soft / TRANSPORT PASS without REPORT | **CLOSED** — §4.5 publish schema; missing→FAIL; TRANSPORT≠PASS if REPORT absent |
+| P7 | RT HIGH | mid_valid=false / unmatched / empty activity skipped | **CLOSED** — FAIL; activity union; empty set→FAIL |
+| P8 | RT HIGH | \|CHK_CLOSE\| vacuous / under-populated; T_MEM drift | **CLOSED** — \|CHK_CLOSE\|<7 or ∅ → FAIL; `T_MEM=0` locked |
+| P9 | RT MED | REPORT schema / menu freeze | **CLOSED** — §4.5 fields; D11 menu freeze before measure |
+| P10 | RT MED | Deep LF-per-checkpoint aperture | **NOTE only** — §4.6 deferred; not redesigned here |
+
+---
+
+## 12. Handoff
 
 | Lane | Ask |
 |------|-----|
-| `ember-metrology-redteam` | Attack S1 vacuous PASS (empty `CHK_CLOSE`), S2 peak-pick smuggling, off-ridge vanishing, guard shopping, ATRL under-detection vs **S2-ALT\***; re-check POROUS must-fixes (ATRL max scalar pin; `T_MEM=0`; no “A3” alt id) |
-| Independent CC / guardian | **Re-CC** this revision; counter-check firewall + REJECT rows; no SOUND / no measure without fresh CC |
+| Independent CC / guardian | **Re-CC** full POROUS closure table (§11); no SOUND / no measure without fresh CC |
+| `ember-metrology-redteam` | Attack remaining false-PASS surface on conjunction + companions; do not wait on parallel lanes |
 | `ember-phase-builder` | Idle on code until GO post-CC |
-| `ember-parity-lab` | No measure until authorized |
+| `ember-parity-lab` | No measure until authorized + menu freeze |
 
-**§A (one-line):** POROUS must-fixes closed in this doc only — still not self-SOUND; ready for re-CC/redteam; **no measure**.
+**§A (one-line):** Full POROUS closure (CC+RT) in this doc only — still not self-SOUND; ready for re-CC; **MEASURE_AUTHORIZED NO**.
 
 **END PROPOSAL — not self-SOUND.**
