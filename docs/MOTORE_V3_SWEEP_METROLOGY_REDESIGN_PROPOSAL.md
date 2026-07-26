@@ -5,7 +5,7 @@
 
 | Field | Value |
 |-------|--------|
-| **Status** | **PROPOSAL DRAFT** — document-only; **not** self-SOUND; ready for metrology-redteam + independent CC |
+| **Status** | **PROPOSAL DRAFT** — document-only; **not** self-SOUND; POROUS must-fixes applied; ready for **re-CC / redteam**; **MEASURE_AUTHORIZED NO** |
 | **≠** | G1 PASS · ACCEPT · measure · REV7 consolidate · G1b tip · CONTRACT/lock/T6 edit · A3 reopen · A4 ACTIVE |
 | **Date** | 2026-07-26 |
 | **Authority** | Marco **"ok"** on mandate open + this untainted proposal write |
@@ -107,7 +107,7 @@ Group delay is already folded into `source_time`. Cross-SR alignment remains on
 | ID | Decision | Status in this doc |
 |----|----------|--------------------|
 | D1 | S1 = **guard regions** on checkpoint closing domain, from aperture geometry only | **PROPOSED** |
-| D2 | S2 candidate = **analytic-trajectory ridge level (ATRL)** | **PROPOSED** (direction family = ridge/trajectory; alternatives CC-open) |
+| D2 | S2 candidate = **analytic-trajectory ridge level (ATRL)** | **PROPOSED** (direction family = ridge/trajectory; alts **S2-ALT1/2/3** CC-open) |
 | D3 | Off-ridge = **mandatory preregistered report** (default) with **artifact-veto** as CC-open alternate | **PROPOSED** |
 | D4 | Immutable: max aggregator; 0.25 dB; stationary `R`; report-only ∉`R`; no post-hoc mask; no threshold shopping | **LOCKED by mandate** |
 | D5 | No CONTRACT / lock / T6 / SHA256SUMS / `Source/` edit in this phase | **LOCKED** |
@@ -160,10 +160,13 @@ window start \(\ge t_0\).
 \(t_\times + T_{\mathrm{HOP}}\); right-aligned newest sample must stay
 \(\le t_1\) so the aperture does not admit post-active silence at the tip.
 
-**Resampler memory:** group delay is already inside `source_time`. An
-**additive** extra `T_MEM` from FIR tap span (beyond group-delay folding) is
-**CC-open** — only if redteam shows folding is insufficient. Forbidden: fitting
-`T_MEM` to a measured Δ.
+**Resampler memory (normative pin):** group delay is already inside
+`source_time`. Normative S1 sets **`T_MEM = 0`** — no additive FIR-span
+widening of `T_LEAD` / `T_TRAIL` beyond the GD folding already in
+`source_time`. A later non-zero `T_MEM` is **not** a silent CC widening of
+this proposal: it requires a **fresh untainted amend** (new writer +
+firewall) before any guard formula change. Forbidden: fitting `T_MEM` to a
+measured Δ; forbidden: shopping additive `T_MEM` under a CC-open surface.
 
 ### 4.3 Worked geometry (from definitions, not from FAIL)
 
@@ -246,16 +249,27 @@ For each gate SR path \(\in\{44100,48000,96000\}\) and each
      **lower-index band** (fail-closed deterministic tie-break).  
    - If \(f^\star\) outside \([20,20000]\): FAIL (should not occur inside
      close-eligible set).
-6. Observable: \(L = \texttt{mid_psd_db}[b^\star]\) after frozen fusion/floor/clamp.
-7. Pairwise \(|L_{\mathrm{ref}}-L_{\mathrm{sr}}|\) enters the closing max
-   (ref = 48 kHz path).
+6. Observable: \(L = \texttt{mid_psd_db}[b^\star]\) after frozen fusion/floor/clamp
+   — **one scalar per path** at that checkpoint (not a multi-band / multi-channel
+   Cartesian product).
+7. For each SR-vs-ref pair (ref = 48 kHz path), the closing contribution is the
+   single scalar \(|L_{\mathrm{ref}}-L_{\mathrm{sr}}|\) at that
+   `(CHK_CLOSE checkpoint × SR-vs-ref pair)`.
 
 **Closing rule (sweep branch only):**
 
 ```text
-max |Δ| over {CHK_CLOSE checkpoints} × {valid mid channels}  ≤  0.25 dB
+max |L_ref − L_sr| over {CHK_CLOSE checkpoints} × {SR-vs-ref pairs}
+  where L = mid_psd_db[b★]   (one scalar per path per checkpoint)
+  ≤  0.25 dB
 aggregator = max   (mean / p95 / RMSE forbidden)
 ```
+
+**Pin (closes POROUS leftover):** the closing max domain is **not**
+`{valid mid channels}` and **not** a Cartesian product over mid bands /
+channels. Exactly one \(L\) per path per close-eligible checkpoint
+(\(b^\star\) only); exactly one \(|L_{\mathrm{ref}}-L_{\mathrm{sr}}|\) per
+`(CHK_CLOSE × SR-vs-ref)` cell.
 
 Stationary assets (multitone / pseudo_noise) keep geometric `R` + existing
 stationary predicates; ATRL does **not** rewrite them.
@@ -271,11 +285,14 @@ stationary predicates; ATRL does **not** rewrite them.
 
 ### 5.5 Alternatives (CC-open; same physics budget)
 
+Identifiers **S2-ALT1 / S2-ALT2 / S2-ALT3** only — **do not** use bare **A3**
+(collides with retired ACTIVE A3 solution lane).
+
 | Alt | Idea | When it might beat ATRL |
 |-----|------|-------------------------|
-| **A1 — Dechirp then stationary PSD** | Demodulate by analytic phase law inside the Hann aperture; compare residual spectrum on a preregistered band set | If redteam shows single-band ATRL under-detects SR path differences distributed along the trajectory through the window |
-| **A2 — Trajectory path integral** | Integrate fused power along \(f(t)\) for \(t\) in the selected aperture, Hann-weighted in time | If a single timestamp \(t^\star\) is judged too thin vs the joint window motion |
-| **A3 — Main-lobe ridge neighbourhood** | ATRL band plus neighbours whose centres lie inside the frozen Hann main-lobe half-width of \(f^\star\) (width from §6 geometry, not from a run) | If single-band triangular support is thinner than the instrument’s spectral resolution at that \(f^\star\) |
+| **S2-ALT1 — Dechirp then stationary PSD** | Demodulate by analytic phase law inside the Hann aperture; compare residual spectrum on a preregistered band set | If redteam shows single-band ATRL under-detects SR path differences distributed along the trajectory through the window |
+| **S2-ALT2 — Trajectory path integral** | Integrate fused power along \(f(t)\) for \(t\) in the selected aperture, Hann-weighted in time | If a single timestamp \(t^\star\) is judged too thin vs the joint window motion |
+| **S2-ALT3 — Main-lobe ridge neighbourhood** | ATRL band plus neighbours whose centres lie inside the frozen Hann main-lobe half-width of \(f^\star\) (width from §6 geometry, not from a run) | If single-band triangular support is thinner than the instrument’s spectral resolution at that \(f^\star\) |
 
 Any alt must still obey: max aggregator; 0.25 dB; no post-hoc mask; off-ridge
 policy (§6); no CONTRACT edit in this phase.
@@ -369,9 +386,10 @@ Partial consolidate (LF-only, stationary-only, S1-only, S2-only) remains
 | This proposal = product ACCEPT / gate PASS | **NO** |
 | This proposal = CONTRACT-SOUND by self-declaration | **NO** — redteam/CC required |
 | S1 guard direction | **PROPOSED** (D1) |
-| S2 ATRL candidate | **PROPOSED** (D2); alts A1–A3 CC-open |
+| S2 ATRL candidate | **PROPOSED** (D2); alts **S2-ALT1/2/3** CC-open (not “A3”) |
 | Off-ridge vanishing | **NO** |
-| Next lab action | metrology-redteam (false-PASS surface) → independent CC → only then measure authorization |
+| Self-SOUND / MEASURE | **NO** — not self-SOUND; **MEASURE_AUTHORIZED NO** until re-CC |
+| Next lab action | re-CC / redteam on this must-fix revision → only then measure authorization |
 
 ---
 
@@ -379,9 +397,11 @@ Partial consolidate (LF-only, stationary-only, S1-only, S2-only) remains
 
 | Lane | Ask |
 |------|-----|
-| `ember-metrology-redteam` | Attack S1 vacuous PASS (empty `CHK_CLOSE`), S2 peak-pick smuggling, off-ridge vanishing, guard shopping, ATRL under-detection vs alts |
-| Independent CC / guardian | Counter-check firewall + REJECT rows; no SOUND without redteam |
+| `ember-metrology-redteam` | Attack S1 vacuous PASS (empty `CHK_CLOSE`), S2 peak-pick smuggling, off-ridge vanishing, guard shopping, ATRL under-detection vs **S2-ALT\***; re-check POROUS must-fixes (ATRL max scalar pin; `T_MEM=0`; no “A3” alt id) |
+| Independent CC / guardian | **Re-CC** this revision; counter-check firewall + REJECT rows; no SOUND / no measure without fresh CC |
 | `ember-phase-builder` | Idle on code until GO post-CC |
 | `ember-parity-lab` | No measure until authorized |
+
+**§A (one-line):** POROUS must-fixes closed in this doc only — still not self-SOUND; ready for re-CC/redteam; **no measure**.
 
 **END PROPOSAL — not self-SOUND.**
