@@ -1,14 +1,14 @@
 # Motore v3 — Proposal: SWEEP METROLOGY REDESIGN (S1 + S2)
 
 **Suggested commit title:**  
-`docs(v3): lock D1 S1 guards on SWEEP redesign proposal`
+`docs(v3): bind MONO_ASSET to fixture_spec channels`
 
 | Field | Value |
 |-------|--------|
-| **Status** | **PROPOSAL DRAFT** — document-only; D1 **LOCKED** on §4.2 S1 geometry; delta RT `765045fb` HIGH pins merged (companions/b★/mono/Req); **not** self-SOUND (needs fresh re-CC+RT); **MEASURE_AUTHORIZED NO** |
+| **Status** | **PROPOSAL DRAFT** — document-only; D1 **LOCKED**; delta RT `9ce35909` HIGH pins (`RIDGE_MATCH`/`MONO_ASSET`/`SIDE_PAIR_OK`/`B_OFF`); **not** self-SOUND (needs fresh re-CC+RT); **MEASURE_AUTHORIZED NO** |
 | **≠** | G1 PASS · ACCEPT · measure · REV7 consolidate · G1b tip · CONTRACT/lock/T6 edit · A3 reopen · A4 ACTIVE · silent §13.2.4 / gate-4 equivalence · self-SOUND |
 | **Date** | 2026-07-26 |
-| **Authority** | Marco authorize docs-only D1 lock + interrupt merge delta RT `765045fb` HIGH |
+| **Authority** | Marco authorize docs-only `MONO_ASSET` bind + interrupt merge delta RT `9ce35909` HIGH |
 | **Mandate** | `docs/MOTORE_V3_SWEEP_METROLOGY_REDESIGN_MANDATE.md` (incl. stationary≠trajectory pin) |
 | **A3 status (status only)** | **RETIRED AS SOLUTION** — `docs/MOTORE_V3_LOG_SWEEP_A3_ARCHIVE_STAMP.md` |
 | **Freeze structure (read-only)** | `docs/MOTORE_V3_G1_CONTRACT.md` REV6 @ `6d254d0a`; lock / `fixture_spec` **structure** as frozen quantities |
@@ -297,13 +297,13 @@ For each gate SR path \(\in\{44100,48000,96000\}\) and each
      **lower-index band** (fail-closed deterministic tie-break).  
    - If \(f^\star\) outside \([20,20000]\): FAIL (should not occur inside
      close-eligible set).
-6. **Common ridge band (fail-closed, per cell \(c\in D\)):** require
-   \(b^\star_{\mathrm{ref}}=b^\star_{\mathrm{sr}}\). If
-   \(b^\star_{\mathrm{ref}}\neq b^\star_{\mathrm{sr}}\) → **FAIL**.
-   The common index is written \(b^\star\) and is the **sole** ridge band for
-   that cell’s ATRL \(L\), companions, side-gate neighbours, and
-   \(B_{\mathrm{OFF}}(f^\star)\) / veto operands. Independent per-path
-   \(b^\star\) shopping is **REJECT**.
+6. **Common ridge band (fail-closed, per cell \(c\in D\)):** evaluate
+   `RIDGE_MATCH(c) ⇔ b★_ref(c)=b★_sr(c)` (also a conjunct of `ATRL_OK` and
+   `SWEEP_TRANSPORT_CLOSE` — not procedure-only). If \(\neg\texttt{RIDGE\_MATCH}(c)\)
+   → **FAIL**. The common index is written \(b^\star\) and is the **sole**
+   ridge band for that cell’s ATRL \(L\), companions, side-gate neighbours,
+   and \(B_{\mathrm{OFF}}:=\mathrm{complement}(\{b^\star\})\) / veto operands.
+   Independent per-path \(b^\star\) shopping is **REJECT**.
 7. Observable: \(L = \texttt{mid_psd_db}[b^\star]\) after frozen fusion/floor/clamp
    — **one scalar per path** at that checkpoint (not a multi-band / multi-channel
    Cartesian product).
@@ -329,13 +329,17 @@ companions in the frozen closing menu, any **required** activity domain that
 evaluates empty → **FAIL**. Empty union is never PASS-by-absence.
 
 ```text
-# Per close cell c ∈ D (common b★; interior CHK_CLOSE under D1 ⇒ b★ ∈ {1,…,118}):
-# b★ := common ridge index after b★_ref = b★_sr (else FAIL; procedure step 6)
-REQUIRED_ACTIVE(c)  ⇔  ACTIVE(b★) ∧ ACTIVE(b−) ∧ ACTIVE(b+)
+# Per close cell c ∈ D (interior CHK_CLOSE under D1 ⇒ candidate bands ∈ {1,…,118}):
+RIDGE_MATCH(c)  ⇔  b★_ref(c) = b★_sr(c)
+# Normative algebra (not procedure-only). ¬RIDGE_MATCH(c) → FAIL.
+# When RIDGE_MATCH(c): b★(c) := that common index (sole ridge for L/companions/neighbours/B_OFF).
+
+REQUIRED_ACTIVE(c)  ⇔  RIDGE_MATCH(c) ∧ ACTIVE(b★) ∧ ACTIVE(b−) ∧ ACTIVE(b+)
 # ¬REQUIRED_ACTIVE(c) → FAIL (no silent neighbour / ridge skip)
 
-# Off-ridge activity-admitted set (per cell; feeds §6.2; B_OFF from common b★):
-B_OFF_ACTIVE(c)  :=  { b ∈ B_OFF(f★) : ACTIVE(b) }   # B_OFF excludes common b★
+# Off-ridge = complement of the common ridge index (see §6.2):
+B_OFF(c)         :=  complement({b★(c)})   # ≡ {0,…,119} \ {b★}; requires RIDGE_MATCH
+B_OFF_ACTIVE(c)  :=  { b ∈ B_OFF(c) : ACTIVE(b) }
 # B_OFF_ACTIVE(c) = ∅ → FAIL   (vacuous off-ridge veto / empty-union soft forbidden)
 ```
 
@@ -359,22 +363,35 @@ D      :=  {CHK_CLOSE} × PAIRS
 **Cell predicates** (one evaluation per \(c\in D\); operands on **common** \(b^\star\)):
 
 ```text
-# Mono pin (executable):
-MONO_ASSET  ⇔  channels == 1
-# SIDE_PAIR both-false trivial ONLY when MONO_ASSET; else FAIL
+# Mono pin (executable) — normative frozen path (M2 fixture-spec @ e9916319 /
+# digest 513c3baf…; structure cite only; this proposal does not edit it):
+MONO_ASSET  ⇔  fixture_spec.categories.log_sweep.channels == 1
+# Cross-check FAIL (not alternate norms): under test, asset_manifest.channels
+# must equal that same integer; CONTRACT §4.1 mono rule
+# (mid = input; side not valid) must hold for MONO_ASSET assets.
+# Mismatch among fixture_spec / asset_manifest / §4.1 mono semantics → FAIL.
+# SIDE_PAIR both-false trivial ONLY when MONO_ASSET under this pin; else FAIL.
 
 # Per-cell companions; threshold = 0.25 dB
 SHAPE_OK(c)       ⇔  |mid_shape_db_ref[b★] − mid_shape_db_sr[b★]| ≤ 0.25
 PROMINENCE_OK(c)  ⇔  |mid_prominence_db_ref[b★] − mid_prominence_db_sr[b★]| ≤ 0.25
 
-# Side pair (CONTRACT side_* at common b★) — polarity total:
-#   both side_valid=false → SIDE_PAIR_OK(c) = true  ⇔  MONO_ASSET
-#     (¬MONO_ASSET ∧ both-false → FAIL; not trivial)
-#     (mid SHAPE/PROMINENCE still AND; trivial ≠ skip of mid companions)
-#   exactly one path side_valid → FAIL
-#   both side_valid → same 0.25 dB max on side_shape_db[b★] and
-#                     side_prominence_db[b★]
-SIDE_PAIR_OK(c)   ⇔  (side polarity rule above)
+# Side pair (CONTRACT side_* at common b★) — executable polarity:
+sv_ref(c)  :=  side_valid_ref[b★]
+sv_sr(c)   :=  side_valid_sr[b★]
+SIDE_BOTH_FALSE(c)  ⇔  ¬sv_ref(c) ∧ ¬sv_sr(c)
+SIDE_BOTH_TRUE(c)   ⇔   sv_ref(c) ∧  sv_sr(c)
+SIDE_XOR(c)         ⇔  sv_ref(c) XOR sv_sr(c)
+
+SIDE_DELTA_OK(c)  ⇔
+    |side_shape_db_ref[b★] − side_shape_db_sr[b★]| ≤ 0.25
+    ∧  |side_prominence_db_ref[b★] − side_prominence_db_sr[b★]| ≤ 0.25
+
+SIDE_PAIR_OK(c)  ⇔
+    ( SIDE_BOTH_FALSE(c) ∧ MONO_ASSET )
+    ∨  ( SIDE_BOTH_TRUE(c) ∧ SIDE_DELTA_OK(c) )
+# ⇒ SIDE_XOR(c) → false; (¬MONO_ASSET ∧ SIDE_BOTH_FALSE) → false
+# mid SHAPE/PROMINENCE still AND; trivial both-false ≠ skip of mid companions
 
 COMPANIONS_OK(c)  ⇔  SHAPE_OK(c) ∧ PROMINENCE_OK(c) ∧ SIDE_PAIR_OK(c)
 ```
@@ -384,8 +401,8 @@ COMPANIONS_OK(c)  ⇔  SHAPE_OK(c) ∧ PROMINENCE_OK(c) ∧ SIDE_PAIR_OK(c)
 ```text
 # Req(c) = required |Δ| component set at cell c:
 #   always {|Δ_shape|, |Δ_prominence|};
-#   + {|Δ_side_shape|, |Δ_side_prominence|} iff both side_valid
-#     (MONO_ASSET both-false: side |Δ| ∉ Req(c) under trivial pin)
+#   + {|Δ_side_shape|, |Δ_side_prominence|} iff SIDE_BOTH_TRUE(c)
+#     (MONO_ASSET ∧ SIDE_BOTH_FALSE: side |Δ| ∉ Req(c) under trivial pin)
 # Any required component null / missing / NaN / Inf → FAIL (not soft skip).
 
 δ_companions(c)  :=  max  Req(c)
@@ -410,7 +427,7 @@ off-ridge; forbidden: dropping prominence when an off-ridge set is empty.
 ```text
 # Triangular adjacency under frozen 120-band partition (§6.1)
 # Same domain D := {CHK_CLOSE} × PAIRS as ATRL_OK / COMPANIONS_OK / VETO_OK
-# b★ = common ridge index (b★_ref = b★_sr); else cell already FAIL
+# Requires RIDGE_MATCH(c); b★ = common ridge index; else cell FAIL
 b− = b★ − 1
 b+ = b★ + 1
 # Close-eligible f★ maps to interior b★ under D1 geometry; if b★∈{0,119}
@@ -448,23 +465,28 @@ Side gate **adds** hardness (`∧ SIDE_GATE_OK`). It does **not** replace
 `COMPANIONS_OK` does **not** include `VETO_OK` (veto remains a separate conjunct
 in §6.3).
 
-**ATRL level rule (component):**
+**ATRL level rule (component — includes RIDGE_MATCH in algebra):**
 
 ```text
-ATRL_OK  ⇔  ∀ c ∈ D : |L_ref − L_sr|(c) ≤ 0.25 dB
-         ⇔  max_{c ∈ D} |L_ref − L_sr|(c) ≤ 0.25 dB
-              where L = mid_psd_db[b★]   (common b★; one scalar per path per checkpoint)
-# ∀ and max are definitionally equivalent. mean / p95 / RMSE forbidden.
+ATRL_OK(c)  ⇔  RIDGE_MATCH(c) ∧ |L_ref − L_sr|(c) ≤ 0.25 dB
+              where L = mid_psd_db[b★]   (defined only under RIDGE_MATCH; one scalar/path)
+
+ATRL_OK  ⇔  ∀ c ∈ D : ATRL_OK(c)
+         ⇔  (∀ c ∈ D : RIDGE_MATCH(c))
+            ∧  max_{c ∈ D} |L_ref − L_sr|(c) ≤ 0.25 dB
+# ∀ and max are definitionally equivalent on the level conjunct once RIDGE_MATCH
+# holds on all cells. mean / p95 / RMSE forbidden.
+# Forbidden: treating RIDGE_MATCH as procedure-only outside ATRL_OK / TRANSPORT.
 ```
 
-**Pin (CC POROUS):** the ATRL / companions / side-gate / veto domain is **the
+**Pin (domain D):** the ATRL / companions / side-gate / veto domain is **the
 same** \(D=\{\mathrm{CHK\_CLOSE}\}\times\mathrm{PAIRS}\);
 **not** `{valid mid channels}`, **not** a Cartesian product over mid bands /
 channels, and **not** a single soft cell. Exactly one **common** \(b^\star\)
-and one \(L\) per path per close-eligible checkpoint; exactly one
-\(|L_{\mathrm{ref}}-L_{\mathrm{sr}}|\) and one companions/side-gate/veto cell
-evaluation per cell in \(D\). \(b^\star_{\mathrm{ref}}\neq b^\star_{\mathrm{sr}}\)
-→ **FAIL**. Omit either pair → **FAIL**.
+(via `RIDGE_MATCH`) and one \(L\) per path per close-eligible checkpoint;
+exactly one \(|L_{\mathrm{ref}}-L_{\mathrm{sr}}|\) and one companions/side-gate/veto
+cell evaluation per cell in \(D\). \(\neg\texttt{RIDGE\_MATCH}(c)\) → **FAIL**.
+Omit either pair → **FAIL**.
 
 **Domain-shrink honesty (delta RT HIGH — prefer REJECT over mid-flight meter expand):**
 this package closes on ridge cell + neighbours + artifact veto over
@@ -527,8 +549,8 @@ mask; off-ridge policy (§6); no CONTRACT edit in this phase.
 | S2-R15 | Treat empty `B_OFF_ACTIVE` / missing `ACTIVE(b★∧b±)` as soft PASS | **REJECT** — FAIL; see §5.3 |
 | S2-R16 | Soft max fold / mean/p95 of companion \|Δ\|; “when binding” optional max | **REJECT** — δ:=max of required \|Δ\|; max≡∀ |
 | S2-R17 | Omit either pair in PAIRS / shrink D below `{CHK_CLOSE}×PAIRS` | **REJECT** — omit pair → FAIL |
-| S2-R18 | Treat both `side_valid=false` as trivial on stereo / non-mono | **REJECT** — trivial iff `MONO_ASSET ⇔ channels==1` |
-| S2-R19 | Independent \(b^\star_{\mathrm{ref}}\neq b^\star_{\mathrm{sr}}\) / per-path ridge shopping | **REJECT** — common \(b^\star\) or FAIL |
+| S2-R18 | Treat both `side_valid=false` as trivial on stereo / non-mono | **REJECT** — trivial iff `MONO_ASSET ⇔ fixture_spec.categories.log_sweep.channels==1` |
+| S2-R19 | Independent \(b^\star_{\mathrm{ref}}\neq b^\star_{\mathrm{sr}}\) / per-path ridge shopping | **REJECT** — `¬RIDGE_MATCH` → FAIL (in ATRL_OK / TRANSPORT) |
 | S2-R20 | Claim δ-alone ≡ `COMPANIONS_OK` (drop `SIDE_PAIR_OK`) | **REJECT** — `COMPANIONS_OK ⇔ ∀c SIDE_PAIR_OK ∧ δ≤0.25` |
 | S2-R21 | Soft-skip null/missing component in `Req(c)` when folding δ | **REJECT** — null→FAIL |
 
@@ -561,8 +583,9 @@ ENBW / main-lobe geometry constants — **not** measured FAIL dB / band lists.
 **A priori geometry sets (definitions only):**
 
 ```text
-# Frozen triangular partition (§6.1): common b★ (cell) excludes ridge
-B_OFF(f★)  :=  { b ∈ {0,…,119} : b ≠ b★ }   # b★ = common ridge; else cell FAIL
+# Frozen triangular partition (§6.1): off-ridge = complement of common ridge
+B_OFF(c)   :=  complement({b★(c)})           # ≡ {0,…,119} \ {b★}; needs RIDGE_MATCH
+B_OFF(f★)  :=  B_OFF(c)                      # alias (f★ labels the cell’s ridge)
 
 # Classical periodic Hann (structure only; not run-fitted):
 ENBW_HANN_BINS          = 1.5
@@ -621,15 +644,17 @@ VETO_OK  ⇔  ∀ c ∈ D : ¬ ARTIFACT_VETO_FIRE(c)
 ```text
 SWEEP_TRANSPORT_CLOSE  ⇔
     N_close ≥ 7
-    ∧  ATRL_OK                         # §5.3 ∀c∈D / max≡∀ over D
+    ∧  ∀c∈D : RIDGE_MATCH(c)           # algebra (also inside ATRL_OK / REQUIRED_ACTIVE)
+    ∧  ATRL_OK                         # §5.3 ∀c∈D : RIDGE_MATCH ∧ |ΔL|≤0.25; max≡∀
     ∧  COMPANIONS_OK                   # §5.3 ∀c∈D : SIDE_PAIR_OK ∧ δ≤0.25 (δ≠alone)
     ∧  VETO_OK                         # §6.2 ∀c∈D ¬FIRE(c) ⇔ ¬FIRE_GLOBAL
     ∧  SIDE_GATE_OK                    # §5.3 ∀c∈D; FIRE_GLOBAL=false
     ∧  CHK_REPORT_PUBLISH_COMPLETE     # §4.5
-    ∧  ∀c∈D : REQUIRED_ACTIVE(c)       # ACTIVE(b★)∧ACTIVE(b±); §5.3
-    ∧  ∀c∈D : B_OFF_ACTIVE(c) ≠ ∅      # empty off-ridge activity → FAIL
+    ∧  ∀c∈D : REQUIRED_ACTIVE(c)       # RIDGE_MATCH∧ACTIVE(b★∧b±); §5.3
+    ∧  ∀c∈D : B_OFF_ACTIVE(c) ≠ ∅      # B_OFF:=complement({b★}); empty → FAIL
     ∧  no mid_valid=false / unmatched / empty-union-on-required FAIL (§5.3)
 # D := {CHK_CLOSE} × PAIRS; omit either pair → FAIL
+# RIDGE_MATCH appears explicitly here so mismatch cannot be procedure-only.
 ```
 
 **Report alone does not close.** ATRL≤0.25 alone does not close. Companions
@@ -651,8 +676,10 @@ field → **FAIL**. This close is **not** §13.2.4 / gate-4 equivalent
 | Threshold shopping | **forbidden** |
 | `T_MEM` | **0** locked (GD already in `source_time`) |
 | S1 guards | **D1 LOCKED** — §4.2 `T_LEAD`/`T_TRAIL` geometry; no silent widen |
-| Common \(b^\star\) | \(b^\star_{\mathrm{ref}}=b^\star_{\mathrm{sr}}\) else **FAIL** |
-| `MONO_ASSET` | **⇔** `channels==1`; SIDE_PAIR trivial only then |
+| Common \(b^\star\) | `RIDGE_MATCH(c) ⇔ b★_ref=b★_sr` in ATRL_OK **and** TRANSPORT; else **FAIL** |
+| `MONO_ASSET` | **⇔** `fixture_spec.categories.log_sweep.channels==1`; SIDE_PAIR trivial only then; manifest/§4.1 mismatch → FAIL |
+| `SIDE_PAIR_OK` | **⇔** `(BOTH_FALSE∧MONO_ASSET) ∨ (BOTH_TRUE∧SIDE_DELTA_OK)`; XOR / non-mono both-false → false |
+| `B_OFF` | **:=** `complement({b★})` |
 | \|CHK_CLOSE\| | **≥7**; empty → FAIL |
 | Off-ridge close | ATRL_OK **∧** COMPANIONS_OK **∧** VETO_OK **∧** SIDE_GATE_OK; report≠close |
 | COMPANIONS_OK | **⇔** ∀c `SIDE_PAIR_OK` ∧ δ≤0.25; δ-alone **≠** COMPANIONS_OK |
@@ -725,15 +752,18 @@ Partial consolidate (LF-only, stationary-only, S1-only, S2-only) remains
 | P13 | re-CC residual / delta CRITICAL | COMPANIONS_OK / SIDE_GATE_OK soft/single-cell aggregator | **CLOSED** — COMPANIONS_OK ⇔ ∀c∈D SIDE_PAIR_OK∧δ≤0.25 on same `D={CHK_CLOSE}×PAIRS`; SIDE_GATE_OK ∀c / FIRE_GLOBAL≡∃; ATRL max≡∀ |
 | P14 | re-CC residual | §5.2 “another form may win at CC” open-menu echo vs D11 | **CLOSED** — §5.2 closed on ATRL+package; swap only via fresh untainted amend + CC |
 | P15 | delta RT `8aa8027c` HIGH | Silent §13.2.4 / gate-4 equivalence via domain shrink | **CLOSED** — S2-R14 REJECT; **not gate-4 equivalent until REV7** (no mid-flight meter expand) |
-| P16 | delta RT MED / `bd10f03c` + `765045fb` | Mono `SIDE_PAIR` both `side_valid=false` ambiguous | **CLOSED** — `MONO_ASSET ⇔ channels==1`; trivial both-false **only then**; else FAIL; mid companions still AND |
+| P16 | delta RT MED / `bd10f03c` + `765045fb` | Mono `SIDE_PAIR` both `side_valid=false` ambiguous | **CLOSED** — `MONO_ASSET ⇔ fixture_spec.categories.log_sweep.channels==1`; trivial both-false **only then**; else FAIL; mid companions still AND |
 | P17 | delta RT MED / re-CC `98e2caa1` residual | D1 PROPOSED blocked SOUND/measure; readable as ready | **CLOSED** — D1 **LOCKED** on §4.2; S1 locked ≠ package self-SOUND; MEASURE still NO until dual non-POROUS (§3, §10) |
 | P18 | re-CC `258d5f66` WARNING | §6.2 VETO_OK prose-only “OR over cells” | **CLOSED** — `ARTIFACT_VETO_FIRE_GLOBAL ⇔ ∃c∈D FIRE(c)`; `VETO_OK ⇔ ∀c∈D ¬FIRE(c)` |
 | P19 | re-CC `258d5f66` WARNING / RT `bd10f03c` HIGH + `765045fb` | Soft max “folds” / false δ-alone ≡ COMPANIONS_OK | **CLOSED** — `δ:=max Req(c)`; `COMPANIONS_OK ⇔ ∀c SIDE_PAIR_OK ∧ δ≤0.25` (δ-alone **not** ≡); ATRL/SIDE max≡∀ unchanged |
 | P20 | delta RT `bd10f03c` HIGH | Unpinned SR-vs-ref pair set / silent omit pair | **CLOSED** — `PAIRS:={(44100,48000),(96000,48000)}`; `D:=CHK_CLOSE×PAIRS`; omit pair → FAIL |
 | P21 | delta RT `765045fb` HIGH | False δ-alone ≡ COMPANIONS_OK | **CLOSED** — drop that ⇔; normative `∀c SIDE_PAIR_OK ∧ δ≤0.25` (§5.3) |
-| P22 | delta RT `765045fb` HIGH | Independent \(b^\star_{\mathrm{ref}}\neq b^\star_{\mathrm{sr}}\) / per-path ridge | **CLOSED** — mismatch → FAIL; common \(b^\star\) for \(L\)/companions/neighbours/`B_OFF` |
-| P23 | delta RT `765045fb` HIGH | Mono trivial pin without executable `channels` | **CLOSED** — `MONO_ASSET ⇔ channels==1`; SIDE_PAIR trivial only then |
+| P22 | delta RT `765045fb` HIGH | Independent \(b^\star_{\mathrm{ref}}\neq b^\star_{\mathrm{sr}}\) / per-path ridge | **CLOSED** — `RIDGE_MATCH` in ATRL_OK + TRANSPORT; common \(b^\star\) for \(L\)/companions/neighbours/`B_OFF` |
+| P23 | delta RT `765045fb` HIGH / re-CC WARNING | Mono trivial pin without frozen `channels` field | **CLOSED** — `MONO_ASSET ⇔ fixture_spec.categories.log_sweep.channels==1`; manifest/§4.1 cross-check FAIL if mismatch; SIDE_PAIR trivial only then |
 | P24 | delta RT `765045fb` HIGH | Null/missing `Req(c)` component soft in δ fold | **CLOSED** — any null in `Req(c)` → FAIL |
+| P25 | delta RT `9ce35909` HIGH | `b★_ref=b★_sr` procedure-only (outside ATRL/TRANSPORT algebra) | **CLOSED** — `RIDGE_MATCH(c)` conjunct in `ATRL_OK` and `SWEEP_TRANSPORT_CLOSE` |
+| P26 | delta RT `9ce35909` HIGH | `SIDE_PAIR_OK` prose-only polarity | **CLOSED** — executable `(BOTH_FALSE∧MONO_ASSET) ∨ (BOTH_TRUE∧SIDE_DELTA_OK)` |
+| P27 | delta RT `9ce35909` / cheap | `B_OFF` not stated as complement | **CLOSED** — `B_OFF:=complement({b★})` |
 
 ---
 
@@ -741,11 +771,11 @@ Partial consolidate (LF-only, stationary-only, S1-only, S2-only) remains
 
 | Lane | Ask |
 |------|-----|
-| Independent CC / guardian | **Fresh re-CC** on D1 LOCKED + companions (`SIDE_PAIR_OK∧δ`), common \(b^\star\), `MONO_ASSET`, `Req(c)`; no SOUND / no measure without dual non-POROUS stamps |
-| `ember-metrology-redteam` | Delta-attack companions ⇔ / \(b^\star\) mismatch / mono channels / Req null; leftover NOTES only unless new CRITICAL |
+| Independent CC / guardian | **Fresh re-CC** on D1 LOCKED + `RIDGE_MATCH` in ATRL/TRANSPORT + executable `SIDE_PAIR_OK` + `MONO_ASSET`⇔`fixture_spec…channels==1` + `Req(c)`; no SOUND / no measure without dual non-POROUS stamps |
+| `ember-metrology-redteam` | Delta-attack companions ⇔ / `RIDGE_MATCH` / mono channels / Req null / `B_OFF` complement; leftover NOTES only unless new CRITICAL |
 | `ember-phase-builder` | Idle on code until GO post-CC |
 | `ember-parity-lab` | No measure until authorized |
 
-**§A (one-line):** D1 LOCKED §4.2; COMPANIONS_OK⇔∀c SIDE_PAIR_OK∧δ≤0.25 (δ≠alone); common \(b^\star\) else FAIL; MONO_ASSET⇔channels==1; Req(c) null→FAIL; ¬self-SOUND; fresh re-CC+RT; **MEASURE_AUTHORIZED NO**.
+**§A (one-line):** D1 LOCKED §4.2; RIDGE_MATCH in ATRL∧TRANSPORT; COMPANIONS_OK⇔∀c SIDE_PAIR_OK∧δ≤0.25 (δ≠alone); MONO_ASSET⇔fixture_spec.categories.log_sweep.channels==1; B_OFF:=complement({b★}); Req(c) null→FAIL; ¬self-SOUND; fresh re-CC+RT; **MEASURE_AUTHORIZED NO**.
 
 **END PROPOSAL — not self-SOUND.**
