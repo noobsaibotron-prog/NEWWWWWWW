@@ -10,12 +10,12 @@ See `docs/MOTORE_V3_G1_GATE4_SCOPE_CLAUSE.md`. Tip at park ~`9b8f8305`.
 | Field | Value |
 |-------|--------|
 | **Status** | **PARKED — out of G1 closing set (option C)** — document-only; not under evaluation / CC / RT; D1 **LOCKED**; Prior-4 (`49c9f7eb`) **claimed closed — not reopened**; residual POROUS pins frozen at park (re-CC `1577733c` CRITICAL + delta RT `68a39a49` HIGH); P28/P33–P36 + P37–P43 **OPEN/PINNED at park** (no self-CLOSED); **not** self-SOUND; **MEASURE_AUTHORIZED NO** |
-| **≠** | G1 PASS · ACCEPT · measure · REV7 consolidate · G1b tip · CONTRACT/lock/T6 edit · A3 reopen · A4 ACTIVE · silent §13.2.4 / gate-4 equivalence · self-SOUND · Dual-SOUND |
+| **≠** | G1 PASS · ACCEPT · measure · G1b tip · reopen as gate-4 closing · A3 reopen · A4 ACTIVE · silent §13.2.4 / gate-4 equivalence · self-SOUND · Dual-SOUND |
 | **Date** | 2026-07-26 |
 | **Authority** | Marco authorize docs-only residual POROUS (re-CC `1577733c` CRITICAL + delta RT `68a39a49` HIGH) on tip ~`81f10dea`; MEASURE NO; no CONTRACT/lock/Source |
 | **Mandate** | `docs/MOTORE_V3_SWEEP_METROLOGY_REDESIGN_MANDATE.md` (incl. stationary≠trajectory pin) |
 | **A3 status (status only)** | **RETIRED AS SOLUTION** — `docs/MOTORE_V3_LOG_SWEEP_A3_ARCHIVE_STAMP.md` |
-| **Freeze structure (read-only)** | `docs/MOTORE_V3_G1_CONTRACT.md` REV6 @ `6d254d0a`; lock / `fixture_spec` **structure** as frozen quantities |
+| **Freeze structure (read-only)** | Living: `docs/MOTORE_V3_G1_CONTRACT.md` **REV7 CONSOLIDATED** (gate-4 closing = stationary on `R`; this proposal stays PARKED G1c/G1e debt). Ancestor REV6 tip `6d254d0a`. |
 | **Prior tip** | `81f10dea` (pin REPORT TSTAR nearest + match_ok in COMPLETE; residual POROUS — `source_time_selected:=` vacuous TSTAR; false RIDGE claim; P32 stale EQ_PUBLISH; filter-first useful nearest; unbound tie; PCM “not pinned”) |
 
 ---

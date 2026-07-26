@@ -1,42 +1,55 @@
 # Motore v3 - Contratto G1 frontend e benchmark
 
-Stato: PROPOSTA IMMUTABILE PER COUNTER-CHECK, REVISIONE 6 CONSOLIDATA
-+ micro-amend (`source_snapshot_sha256`, grammatica `group_id`, scope
-append-only) — 2026-07-24. Document-only; non autorizza ancora
-l'implementazione ne G1a. G1 parte soltanto dopo il GO del reviewer sul
-commit document-only che chiude questo emendamento; nessun criterio e
-stato rilassato.
+Stato: PROPOSTA IMMUTABILE PER COUNTER-CHECK, REVISIONE 7 CONSOLIDATA
+(LF report-only ∉R + gate-4 scope option C) — 2026-07-26. Congela i due
+emendamenti di chiusura REV7; **non** e claim di G1 PASS di prodotto, **non**
+e tip ufficiale G1b, **non** riapre lo sweep come closing set, **non** autorizza
+threshold shopping. G1a CLOSE resta GO sul tip codice; tip G1b ufficiale
+richiede autorizzazione separata dopo questo consolidate + rehash lock/SHA.
 
 REVISIONE 5 incorpora il counter-check fattuale del 2026-07-23 (allineamento
-qui sotto). Nessun criterio, gate o contenuto tecnico e stato modificato
+storico). Nessun criterio, gate o contenuto tecnico e stato modificato
 rispetto alla REVISIONE 4: la revisione registra soltanto lo stato verificato.
 
-REVISIONE 6 (metrology, working tree precedente) chiudeva le falle di misura
-CRITICAL (porzioni stazionarie/warm-up/coda; dominio max |Δ| 0.25 dB;
-schedule streaming). REVISIONE 6 CONSOLIDATA aggiunge: (a) residuali
-metrology H1–H3 (warm-up additivo, activity mask unione cross-SR,
-bit-identita obbligatoria sulla piattaforma di gate); (b) §8-minimo
-byte-level pinnato (roster exact-key, `admission_batch_id` hex-64 in HMAC
-di ruolo e pilot, soglie intere, identita pack, NUL vietato). Nessun gate
-e stato allentato; nessuna soglia numerica e stata alzata.
+REVISIONE 6 (metrology) chiudeva le falle di misura CRITICAL (porzioni
+stazionarie/warm-up/coda; dominio max |Δ| 0.25 dB; schedule streaming).
+REVISIONE 6 CONSOLIDATA aggiungeva: (a) residuali metrology H1–H3 (warm-up
+additivo, activity mask unione cross-SR, bit-identita obbligatoria sulla
+piattaforma di gate); (b) §8-minimo byte-level pinnato. Nessun gate e stato
+allentato; nessuna soglia numerica e stata alzata.
 
-**Fuori scope di questo emendamento (§8-pieno, rimandato):** ledger
-append-only a cinque checkpoint, `immutable_artifact_ref`, ownership-ledger,
-i quattordici schemi estesi oltre il minimo G1a. Non vanno aggiunti qui.
+**REVISIONE 7 CONSOLIDATA** aggiunge **esattamente due** emendamenti di
+chiusura (package candidato `docs/MOTORE_V3_G1_CONTRACT_REV7_CANDIDATE.md`
+@ `5e0d32fc`; LF clause `71159469`; gate-4 scope `31216df4`; misura
+stazionaria `8cf38625`; Guardian second GO + autorizzazione Marco):
 
-Questo emendamento document-only **non** autorizza G1a ne alcun codice
-finche il reviewer non emette GO sul commit che lo contiene (al piu
-accompagnato dalla sola riga G1 di parity in `docs/MOTORE_V3_PLAN.md` per
-coerenza letterale max |Δ|). I path `ml_v3/contracts/` e ogni altro file G1
-di codice restano fuori da quel commit.
+- **(A) LF report-only ∉R** — dominio geometrico `R` = ENBW `N_MIN = 2`
+  (= `ceil(ENBW_Hann)`) **e** Rayleigh `SEPARATION_MIN_BINS = 2` (main-lobe
+  null-to-null / 2), fail-closed sulla crossfade di fusione; `i ∈ R` chiude
+  o fallisce il gate 4; `i ∉ R` e **report-only** (misurato e pubblicato
+  obbligatoriamente; omit table → report FAIL). Motivo: la griglia 120 bande
+  e piu fine della separazione neighbour sotto Hann periodico ai centri
+  bassi; la parity per-banda sotto quel limite geometrico non e una claim di
+  chiusura ben posta. Non e una tolleranza dB LF alternativa.
+- **(B) Gate-4 scope (option C)** — closing set G1 = solo asset stazionari
+  (`multitone`, `pseudo_noise`) valutati su `R`; `log_sweep` resta generato
+  e hashed in SHA256SUMS ma **non chiude** il gate 4 (deviazioni
+  report-only); parity SR non-stazionaria = requisito nominato di G1c/G1e
+  (proposta sweep **PARKED**, non cancellata).
 
-Allineamento all'audit 2026-07-23: **nulla di questo contratto e implementato**.
-Non esistono frontend V3, modello V3, runtime V3, UI V3 o build Ableton V3;
-nessun training V3 e autorizzato; `AIEQ_ENABLE_MOTORE_V3` non esiste ancora nel
-codice e verra introdotto OFF di default in una futura fase di integrazione.
-G0 e PASS soltanto come freeze riproducibile della baseline NEGATIVA (il CONTROL
-Motore v2/A4b resta NO-GO). **Tutti i gate elencati qui sotto sono criteri
-FUTURI da soddisfare: nessuno e PASS, e nessuno va rilassato.**
+**Immutabili (riaffermati; invariati da REV7):** aggregatore **max**
+(`max_i |x_i(sr) - x_i(48k)|`; una cella attiva fuori soglia → FAIL
+dell'intero gate; vietati mean / p95 / RMSE); soglia **0.25 dB**; definizione
+di **R** come sopra; pubblicazione obbligatoria fuori `R`; **A3 RETIRED** /
+famiglia ACTIVE **chiusa** (nessun reopen).
+
+**Fuori scope di questo emendamento:** ledger §8-pieno; tip ufficiale G1b;
+riapertura A3/ACTIVE; redesign sweep come terzo emendamento REV7; rilassamento
+di 0.25 / max / R.
+
+**Non-claim espliciti di questa REVISIONE 7:** ≠ G1 PASS di prodotto;
+≠ ACCEPT Ableton; ≠ reopen sweep come closing; ≠ threshold shopping;
+≠ promozione spike `ml_v3/frontend/` a tip G1b.
 
 ## 1. Scopo e risultato atteso
 
@@ -1049,21 +1062,29 @@ il gate 4 di parity, una collezione di finestre che soddisfano tutte:
 
 La scelta fra (a) segmento utile intero e (b) collezione di finestre e
 fissata in G1a prima della generazione e hashed; non si cambia modalita dopo
-aver visto un FAIL. Per chiudere il gate 4 su multitone/rumore vale solo (a).
-Tutte le finestre della collezione preregistrata in (b) entrano nel max |Δ|
-diagnostico; omettere una finestra fallita e FAIL. Se nessuna finestra
-soddisfa il predicato, il report diagnostico e FAIL (non si allarga `T_min`
-ne si alza la soglia di varianza dopo aver visto i numeri).
+aver visto un FAIL. **REV7 (B):** il closing set del gate 4 in G1 e solo
+multitone / pseudo-rumore (stazionari) su dominio `R` (§13.2); per chiudere
+su questi asset vale solo (a). Tutte le finestre della collezione
+preregistrata in (b) entrano nel max |Δ| diagnostico; omettere una finestra
+fallita e FAIL. Se nessuna finestra soddisfa il predicato, il report
+diagnostico e FAIL (non si allarga `T_min` ne si alza la soglia di varianza
+dopo aver visto i numeri).
 
-**Sweep log**: il gate di parity non usa "porzioni stazionarie" libere. Usa
-esclusivamente la griglia di checkpoint preregistrata in G1a (hashed), con
-almeno i centri critici di §13 (45, 60, 80, 250, 1000, 3500, 8000, 16000,
-20000 Hz) piu gli estremi 20 e 20000 Hz del path; per ciascun checkpoint si
-confronta il frame il cui `source_time` e piu vicino all'istante in cui lo
-sweep attraversa quella frequenza, entro al piu un hop. Se nessun frame cade
-nel raggio di un hop (`min |source_time - t_cross| > H / fs_c`) → FAIL
-(checkpoint missing). Nessun sottoinsieme libero dei checkpoint e ammesso:
-manca un checkpoint o uno fallisce → FAIL.
+**Sweep log (`log_sweep`) — REV7 (B):** la fixture resta generata e hashed
+in SHA256SUMS. **Non chiude** il gate 4 di sample-rate parity in G1. Le
+deviazioni restano misurate e pubblicate come **report-only** (preserve
+information; zero costo sulla chiusura). La griglia di checkpoint
+preregistrata in G1a (hashed), con almeno i centri critici di §13 (45, 60,
+80, 250, 1000, 3500, 8000, 16000, 20000 Hz) piu gli estremi 20 e 20000 Hz
+del path, resta il protocollo di misura report-only: per ciascun checkpoint
+si confronta il frame il cui `source_time` e piu vicino all'istante in cui
+lo sweep attraversa quella frequenza, entro al piu un hop. Omettere la
+pubblicazione report-only dello sweep, o ammettere silenziosamente lo sweep
+nel max di chiusura del gate 4, e FAIL di report / FAIL di perimetro.
+Parity SR non-stazionaria e requisito nominato di **G1c/G1e** (proposta
+`docs/MOTORE_V3_SWEEP_METROLOGY_REDESIGN_PROPOSAL.md` **PARKED**, non
+cancellata). **A3 resta RETIRED**; famiglia ACTIVE chiusa — nessun reopen
+via sweep.
 
 Transient burst e risonanza smorzata restano fuori dal confronto dB di
 parity spettrale: hanno il gate separato su onset, picco e decadimento gia
@@ -1120,8 +1141,36 @@ Gate obbligatori:
    `*_valid == false` restano ignorati come in §7. Questo predicato e del
    solo gate SR; i criteri −100 dBFS/Hz di §10 evaluator restano invariati
    (gate diversi).
-   **Una sola cella attiva fuori soglia → FAIL dell'intero gate.** Non si
-   sostituisce il max con media, p95, RMSE o sottoinsieme di bande scelto
+   **REV7 (A) — dominio geometrico `R` e report-only ∉R.** Sia `R` l'insieme
+   a priori degli indici di banda che soddisfano **entrambi** su ogni path di
+   fusione contribuente (fail-closed in crossfade: LF e MAIN devono
+   soddisfare): (1) occupancy ENBW del supporto triangolare
+   `N_eff(i, p) ≥ N_MIN` con `N_MIN = 2 = ceil(ENBW_Hann)`; (2) separazione
+   neighbour-centre `sep_bins(i, p) ≥ SEPARATION_MIN_BINS` con
+   `SEPARATION_MIN_BINS = 2` (= main-lobe null-to-null / 2). Il max |Δ| che
+   **chiude** il gate 4 scorrono solo celle attive con `i ∈ R` (e gli
+   scalari level ammessi come gia nello scope). Le bande `i ∉ R` sono
+   **report-only**: non entrano nel max di chiusura; devono comunque essere
+   misurate e pubblicate (tabella o equivalente machine-readable con almeno
+   asset/portion, SR sotto test, ogni indice `i ∉ R`, field id, `|Δ|` quando
+   ammissibile, e max|Δ| report-only su ∉R). Omettere questa pubblicazione, o
+   dichiarare PASS di SR-parity "su tutta la griglia 20 Hz–20 kHz" mentre `R`
+   esclude la regione bassa, e FAIL di report. Tag ammessi sulle bande
+   escluse: `EXCLUDED_GEOMETRY` (o finer: under-resolved vs main-lobe) —
+   mai silent PASS. Motivo obbligatorio in linguaggio di chiusura: la griglia
+   120 bande e piu fine della separazione neighbour sotto Hann periodico;
+   sotto quel limite la parity per-banda non e una claim di chiusura ben
+   posta. Vietato: tolleranza dB LF alternativa; shopping di `N_MIN` /
+   `SEPARATION_MIN_BINS` contro celle misurate.
+   **REV7 (B) — closing set.** In G1 chiudono il gate 4 solo gli asset
+   stazionari `multitone` e `pseudo_noise` (porzione §13.1 modalita (a))
+   valutati su `R`. `log_sweep` **non chiude** (report-only; §13.1).
+   Parity SR non-stazionaria → debito nominato G1c/G1e. A3 RETIRED / ACTIVE
+   chiusa. Debito G4 (invariato): stabilita cross-SR delle detection sulle
+   classi low-end (mud/boom/boxy) — **non** soddisfatta dal solo PASS del
+   gate 4 su `R`.
+   **Una sola cella attiva in-R fuori soglia → FAIL dell'intero gate.** Non
+   si sostituisce il max con media, p95, RMSE o sottoinsieme di bande scelto
    dopo aver visto gli errori. `mid_delta_db` / `side_delta_db` **non**
    entrano in questo gate 0.25 dB (il delta e un derivato temporale gia
    coperto da gain invariance `<= 0.05 dB` e dall'identita streaming≡offline);
@@ -1153,9 +1202,11 @@ Gate obbligatori:
 10. **Ambiente**: sync del lock con hash, test completi e deep hash di tutte le
    fixture PASS.
 
-La soglia 0.25 dB e hard sul **max** assoluto del dominio dichiarato al
-punto 4. Non si sostituisce con una media o un p95 per nascondere una banda
-fuori contratto.
+La soglia 0.25 dB e hard sul **max** assoluto del dominio di **chiusura**
+dichiarato al punto 4 (celle attive con `i ∈ R` sul closing set stazionario).
+Non si sostituisce con una media o un p95 per nascondere una banda fuori
+contratto. Il max report-only su `i ∉ R` (e su `log_sweep`) non chiude il
+gate e non autorizza rilassamenti.
 
 Gli artefatti numerici canonici sono array little-endian `.npy` senza oggetti
 e JSON UTF-8 **senza BOM**, con chiavi ordinate per code point Unicode,
@@ -1241,5 +1292,12 @@ una sola lista consolidata. Il GO richiede:
 - nessun path `ml_v3/contracts/`, frontend, fixture, test harness o altro
   codice G1 nello stesso commit document-only.
 
-Fino a quel GO: nessun file G1 di codice, fixture o ambiente viene creato.
-Questa REVISIONE 6 CONSOLIDATA + micro-amend non costituisce GO a G1a.
+Fino al GO storico su REVISIONE 6: nessun file G1 di codice, fixture o
+ambiente veniva creato. Quella REVISIONE 6 CONSOLIDATA + micro-amend non
+costituiva da sola GO a G1a (GO G1a successivo, separato).
+
+**REVISIONE 7 CONSOLIDATA:** non costituisce G1 PASS di prodotto; non
+promuove tip ufficiale G1b; non riapre A3/ACTIVE; non ammette lo sweep nel
+closing set; non rilassa 0.25 dB / max / `R`. Il rehash coordinato di
+metrology lock + SHA256SUMS e obbligatorio nello stesso pacchetto di
+consolidamento (mai silent).

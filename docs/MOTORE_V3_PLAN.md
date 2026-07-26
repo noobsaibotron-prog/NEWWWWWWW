@@ -6,26 +6,29 @@ Questo e il piano canonico del laboratorio Motore v3. Congela obiettivo,
 interfacce di prodotto, governance e criteri di successo; l'architettura ML
 viene scelta soltanto dopo benchmark, baseline DSP e corpus controfirmati.
 
-### Stato fattuale (aggiornato 2026-07-25) - leggere PRIMA del resto
+### Stato fattuale (aggiornato 2026-07-26) - leggere PRIMA del resto
 
 Il piano descrive un progetto a contratti. Ad oggi, su questo branch:
 
 - **G0: PASS**, freeze RIPRODUCIBILE della baseline NEGATIVA. Non promuove
   alcun modello.
-- **G1 contratto**: freeze document-only `6d254d0a` (REV6 consolidata +
-  micro-amend). Header/§16 di quel commit restano storicamente "non e GO";
-  lo **stato di fase vivente** e nelle righe Governance sotto.
+- **G1 contratto**: living freeze = **REVISIONE 7 CONSOLIDATA** in
+  `docs/MOTORE_V3_G1_CONTRACT.md` (esattamente due emendamenti: A LF
+  report-only ∉R; B gate-4 scope option C). Ancestor REV6 tip `6d254d0a`.
+  **REV7 consolidate: YES** (Marco "si" + Guardian CONSOLIDATE_AUTHORIZED
+  on package `5e0d32fc`). ≠ G1 PASS. ≠ tip ufficiale G1b (auth separata
+  dopo rehash lock/SHA). Candidate file SUPERSEDED pointer.
 - **Tip accuracy**: codice G1a remediation tip = `a2186ac1` (F2/F3/F4
   closed in code). Trust chain T6 tip = `501a4e00`; remediation tip is
   forward of T6. PLAN pre-stamp (gate-8 debt) = `805fb34d`; history:
   false CLOSE `1746a058` withdrawn; REOPEN `284228d6`. Non confondere tip
-  codice remediation, tip T6, e tip PLAN. **Stato corrente: G1a CLOSE: GO**
-  (questo stamp) — REOPENED **non** e piu lo stato vivente.
+  codice remediation, tip T6, tip CONTRACT REV7, e tip PLAN.
+  **Stato corrente: G1a CLOSE: GO** — REOPENED **non** e piu lo stato
+  vivente.
 - **GO G1a**: aperto (2026-07-25) dal reviewer (Marco) sul freeze `6d254d0a`.
-  Apertura fase ≠ CLOSE; CLOSE ora = GO sotto. **REV7 consolidate: NO.**
-  Candidate draft open: `docs/MOTORE_V3_G1_CONTRACT_REV7_CANDIDATE.md`
-  (activity/admission gate 4 only; 0.25 dB immutable; ≠ freeze amend until
-  second Guardian GO + lock re-hash).
+  Apertura fase ≠ CLOSE; CLOSE = GO. REV7 consolidate landed after package
+  `5e0d32fc` + hygiene `0965f975`. Lock/SHA rehash coordinated in follow-up
+  chore commit (never silent).
 - **G1a codice in git** (remediation tip `a2186ac1`): T1 `94dc9991`
   (primitives/split/coverage) + T2 `1908fc45` / T2.1 `918b3dde` (JSON
   schemas, validators, golden canonical) + T3 `9aa19295` (adapter v2↔v3
@@ -52,15 +55,14 @@ Il piano descrive un progetto a contratti. Ad oggi, su questo branch:
   fixture-spec remains `e9916319` with digest `513c3baf…` (unchanged).
   Path-order hygiene `fe8b97d3` remains relevant on the SHA256SUMS chain.
 - **G1a CLOSE: GO** (Guardian re-CLOSE 2026-07-25) on remediation tip
-  `a2186ac1` + PLAN pre-stamp `805fb34d`; contract freeze `6d254d0a`
-  invariato; lock
-  `d2c35ccc12643f2520c8a50d2e27fd3631216bb9a8ce63a34193412e74d1c10e`;
-  SHA256SUMS 48 verify OK; F2/F3/F4 closed; gate-8 + F1 WAV remain durable
-  debt (no rewrite). **No G1 PASS.** **REV7 consolidate: NO** (candidate
-  draft only — see `docs/MOTORE_V3_G1_CONTRACT_REV7_CANDIDATE.md` after
-  spike WS4 RED). History: false CLOSE `1746a058` withdrawn; REOPEN
-  `284228d6`. **Product G1b may unfreeze after this stamp** (spike
-  `ml_v3/frontend/` ≠ tip).
+  `a2186ac1` + PLAN pre-stamp `805fb34d`; ancestor freeze `6d254d0a`;
+  living CONTRACT = REV7 CONSOLIDATED; pre-REV7 lock
+  `d2c35ccc12643f2520c8a50d2e27fd3631216bb9a8ce63a34193412e74d1c10e`
+  (rehashed after REV7 in chore commit); F2/F3/F4 closed; gate-8 + F1 WAV
+  remain durable debt (no rewrite). **No G1 PASS.** **REV7 consolidate:
+  YES** (A+B only). History: false CLOSE `1746a058` withdrawn; REOPEN
+  `284228d6`. **Official G1b tip: NO** until separate auth after
+  consolidate+rehash (spike `ml_v3/frontend/` ≠ tip).
   - **F2 (code-closed @ `a2186ac1`)**: commitment↔reveal match on
     non-null reveal via `verify_commitment`; golden dd/ee REJECT when
     mismatch. **Residual debt** (not F2 reopen): §8.2.4 gate 8 premature
@@ -98,8 +100,8 @@ Il piano descrive un progetto a contratti. Ad oggi, su questo branch:
 - **Authority hierarchy (Motore-v3)**:
   - GLOBAL / RELEASE AUTHORITY → `ALIGNMENT_MANIFEST.md`
   - MOTORE V3 LAB STATE AUTHORITY → `docs/MOTORE_V3_PLAN.md`
-  - FROZEN G1 TECHNICAL AUTHORITY → `docs/MOTORE_V3_G1_CONTRACT.md` @
-    `6d254d0a`
+  - FROZEN G1 TECHNICAL AUTHORITY → `docs/MOTORE_V3_G1_CONTRACT.md`
+    REVISIONE 7 CONSOLIDATA (ancestor REV6 @ `6d254d0a`)
   Per task Motore-v3, ordine di lettura: PLAN → frozen phase contract →
   ALIGNMENT_MANIFEST per vincoli globali / ship.
 - **Stop-rule (unica, semantica)**: **BLOCKER** (indipendentemente da
@@ -111,7 +113,8 @@ Il piano descrive un progetto a contratti. Ad oggi, su questo branch:
   procedere.
 - **Debt list (durable)** — non-BLOCKER; do not reopen T5 hash:
   1. `contract_doc_sha256` tripwire (also in T5 SHA256SUMS; T5/T6 chain).
-     Precomputed (contract @ `6d254d0a`):
+     Updated on REV7 consolidate rehash (living CONTRACT tip); ancestor
+     REV6 value was
      `6a6f6d35bbf3fc65d7a01e54620bf4f9649ea77d60c2b3d9e7ea0b72f7f49a86`.
      Tripwire against silent contract edits — not a G1a/G1b close criterion.
   2. **From M1 T5 CC** (hygiene, non-CRITICAL):
@@ -187,41 +190,24 @@ line, plugin installato, APVTS, preset, `Resources/Models/ml_weights.bin`,
   `284228d6`; PLAN pre-stamp `805fb34d`. Stop-rule: vedi bullet semantico
   sopra (no automatic HIGH/MED→debt). **M1 T5 catch-up CC: CLEAN** on
   `75cb6902`. **G1a CLOSE: GO** (Guardian re-CLOSE 2026-07-25) on
-  `a2186ac1` + `805fb34d`; contract freeze `6d254d0a` invariato; lock
-  `d2c35ccc…`; SHA256SUMS 48 verify OK; F2/F3/F4 closed; gate-8 + F1 WAV
-  durable debt (no rewrite); **REV7 consolidate: NO**. **No G1 PASS.**
-  **Product G1b may unfreeze after this stamp** (spike ≠ tip).
-- **G1b spike WS4 (2026-07-25):** tip `c7f05871` @
-  `spike/motore-v3-g1b-frontend` → gate-4 **RED** (max|Δ|=9.537 dB) under
-  REV6 activity `max(psd)>−120`; streaming/proof (b) PASS; P1–P7
-  unchanged. Guardian: impossibilita del **predicato di admission**, non
-  della soglia 0.25. Candidate + ACTIVE proposal + redteam
-  BROKEN→POROUS; independent re-measure on ENBW+floor / §7-on-`R` →
-  still **RED** (`docs/MOTORE_V3_REV7_REMEASURE_R_REPORT.md`: noise
-  9.54→1.24; multitone ~4.77; **dense probe (iii) ~1.19 FAIL** — sparse
-  excitation insufficient; residual = inter-band inseparability under
-  Hann main lobe). **Product decision: report-only LF** (gate on `R` only;
-  ∉`R` mandatory publish; no LF dB shopping). Clause:
-  `docs/MOTORE_V3_REV7_REPORT_ONLY_LF_CLAUSE.md`. **REV7 consolidate: NO.**
-  Final re-measure recorded: `docs/MOTORE_V3_REV7_REMEASURE_R_FINAL.md` —
-  stationary on `R` **PASS** (~0.19 / ~0.05 dB); overall gate still **FAIL**
-  on `log_sweep` HF floor-union skirt (b106, ~6.44 dB). Report-only ∉`R`
-  published. **REV7 consolidate: NO** until sweep admission amend a priori.
-  G4 debt: cross-SR low-end detections. **≠ G1 PASS.**
-- **Living next-path (post-`b3d7f71b`, counsel — no REV7 consolidate now):**
-  stazionario su `R` PASS; FAIL = `log_sweep` HF skirt (floor-union), non
-  geometria LF. Ordine: (1) chiudere `log_sweep` HF a priori (admission /
-  one-sided-floor fixture; docs + redteam + CC → solo allora candidato amend
-  REV7 o debt esplicito no-amend); (2) tip G1b ufficiale solo dopo quella
-  decisione (amend GO → tip + lock re-hash; no amend → tip REV6 + debt
-  scritto; hard 0.25 dB intatto); (3) spike `ml_v3/frontend/` = lab only ≠
-  tip; (4) debt parallelo F1 WAV / gate-8 non riapre G1a CLOSE. Mai:
-  0.25→media/p95; ship/Source; training; “G1 PASS”.   Short path:
-  `docs/EMBER_CORE_PARALLEL_HANDOFF.md` §A Sequenza restante.
-  **Proposal STAMPED (document-only, post-`2c69606f`, Marco 2026-07-26):**
-  `docs/MOTORE_V3_LOG_SWEEP_HF_ADMISSION_PROPOSAL.md` — **A / A3 / fuori REV7 LF**;
-  next = redteam + independent CC (leave uncommitted); ≠ REV7 consolidate;
-  ≠ G1b tip.
+  `a2186ac1` + `805fb34d`; ancestor freeze `6d254d0a`; living CONTRACT =
+  **REV7 CONSOLIDATED**; lock/SHA rehashed after consolidate; F2/F3/F4
+  closed; gate-8 + F1 WAV durable debt (no rewrite); **REV7 consolidate:
+  YES** (A+B only). **No G1 PASS.** Official G1b tip = auth separata
+  (spike ≠ tip).
+- **G1b spike WS4 → REV7 path (storico → chiuso in consolidate):** tip
+  `c7f05871` gate-4 RED under REV6 → report-only LF + geometric `R` →
+  option C (stationary close; `log_sweep` report-only) → package
+  `5e0d32fc` → Guardian 2nd GO → Marco consolidate. Misura stazionaria
+  `8cf38625` MEASURE-PASS max|Δ|=0.1915. A3 RETIRED. Sweep redesign
+  **PARKED** (G1c/G1e). G4 debt: cross-SR low-end detections. **≠ G1 PASS.**
+- **Living next-path (post-REV7 consolidate):** (1) chore rehash lock +
+  SHA256SUMS if not yet on tip; (2) **official G1b tip** solo con auth
+  Marco separata; (3) non-stat / sweep resta PARKED fino a G1c/G1e;
+  (4) spike `ml_v3/frontend/` = lab only ≠ tip; (5) debt F1 WAV / gate-8
+  non riapre G1a CLOSE. Mai: 0.25→media/p95; ship/Source; training;
+  “G1 PASS”; terzo amend REV7; reopen A3. Short path:
+  `docs/EMBER_CORE_PARALLEL_HANDOFF.md` §A.
 
 - GO G1b — mandato storico in PLAN `37f6ac60` (2026-07-25) con REV7:
   amend solo se l'implementazione dimostra **impossibilita falsificabile**

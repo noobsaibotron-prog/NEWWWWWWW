@@ -1,190 +1,59 @@
 # Motore v3 — CONTRACT REV7 CANDIDATE (document-only)
 
-**Status:** CANDIDATE PACKAGE — **NOT CONSOLIDATED** — ≠ G1 PASS  
+**Status:** **SUPERSEDED BY CONSOLIDATE** — living authority is
+`docs/MOTORE_V3_G1_CONTRACT.md` REVISIONE 7 CONSOLIDATA (this package’s A+B
+landed). ≠ G1 PASS · ≠ official G1b tip  
 **Date:** 2026-07-26  
-**Nature:** Single authoritative packaging of **exactly two** closing amendments
-for a future **one** REV7 consolidate (option C path). Not two REV7s.
-**≠** amend of freeze `docs/MOTORE_V3_G1_CONTRACT.md` @ `6d254d0a`  
-**≠** edit of `metrology_lock.json` / SHA256SUMS in this commit  
-**≠** self-GO / Guardian second GO
+**Nature:** Historical packaging of **exactly two** closing amendments
+(option C path). Kept as evidence pointer; do not treat as living freeze.
 
-**Authority chain (evidence, not consolidate GO):**
+**Authority chain (evidence → consolidate):**
 | link | commit / path |
 |------|----------------|
 | Gate-4 scope clause GO | `31216df4` — `docs/MOTORE_V3_G1_GATE4_SCOPE_CLAUSE.md` |
 | LF report-only clause | `71159469` — `docs/MOTORE_V3_REV7_REPORT_ONLY_LF_CLAUSE.md` |
 | Stationary `R` closing MEASURE-PASS | `8cf38625` — `docs/MOTORE_V3_G1_STATIONARY_R_CLOSING_MEASURE.md` |
-| Parked sweep redesign (G1c/G1e debt) | tip ~`9b8f8305` — `docs/MOTORE_V3_SWEEP_METROLOGY_REDESIGN_PROPOSAL.md` |
+| Candidate package (2nd GO tip) | `5e0d32fc` — this file’s packaging tip |
+| Hygiene before consolidate | `0965f975` |
+| Guardian CONSOLIDATE_AUTHORIZED | YES (agent `2cc4e2c2` on `5e0d32fc`) |
+| Marco authorize consolidate | "si" |
 
 ---
 
-## This document does NOT
+## Consolidated amendments (exactly A+B — no third)
 
-- consolidate REV7 into `docs/MOTORE_V3_G1_CONTRACT.md`;
-- edit `metrology_lock.json` or SHA256SUMS;
-- claim G1 PASS, ACCEPT, Ableton readiness, or official G1b tip;
-- relax **0.25 dB**, replace **max** with mean/p95/RMSE, or redefine **R**;
-- reopen A3 / ACTIVE / POROUS litigation on the sweep proposal;
-- invent new constants or shop thresholds against measured cells;
-- self-issue Guardian second GO.
+### A — LF report-only ∉R
+Geometric `R` = ENBW `N_MIN = 2` ∧ Rayleigh `SEPARATION_MIN_BINS = 2`
+(fail-closed on fusion crossfade). `i ∈ R` closes gate 4; `i ∉ R`
+report-only with mandatory publish (omit → report FAIL).
 
-## This document DOES
+### B — Gate-4 scope (option C)
+Closing set = stationary `multitone` + `pseudo_noise` on `R`. `log_sweep`
+hashed, does **not** close (report-only). Non-stat SR-parity → G1c/G1e named
+debt. A3 RETIRED / ACTIVE closed.
 
-- package **exactly two** closing amendments for a future single REV7
-  consolidate (sections 1–2 below);
-- restate immutables and evidence pointers;
-- state the remaining sequence: Guardian second GO → consolidate → rehash →
-  official G1b tip;
-- leave non-stationary / `log_sweep` redesign as **parked G1c/G1e input debt**.
+### Immutables (unchanged)
+max aggregator · 0.25 dB · R definition · mandatory publish outside R ·
+A3/ACTIVE retired.
 
 ---
 
-## 1. Closing amendment A — LF report-only ∉R
-
-**Cite (normative prose already written):**  
-`docs/MOTORE_V3_REV7_REPORT_ONLY_LF_CLAUSE.md` @ `71159469`
-
-**R geometry (immutable; not redefined here):**  
-`R` = bands satisfying both ENBW `N_MIN = 2 = ceil(ENBW_Hann)` **and**
-Rayleigh `SEPARATION_MIN_BINS = 2` (main-lobe null-to-null / 2), fail-closed on
-fusion crossfade — see LF clause §2 and
-`docs/MOTORE_V3_REV7_SCOPE_REWRITE_PROPOSAL.md`.
-
-| domain | role in future consolidate |
-|--------|----------------------------|
-| `i ∈ R` | Gate-closing SR-parity domain; `max\|Δ\| ≤ 0.25` dB closes or fails gate 4 |
-| `i ∉ R` | **Report-only** — measured and **must** be published; does **not** enter the gate-closing max; omit table → report FAIL |
-
-**Why (must appear in consolidated CONTRACT):** the frozen 120-band grid is
-finer than periodic-Hann neighbour separation at low centres; per-band
-SR-parity below that geometric limit is not a well-posed closing claim for
-gate 4. Not an alternate LF dB tolerance. Not option-1 blindness.
-
-**G4 debt (unchanged):** cross-SR low-end detection stability — LF clause §5.
-
----
-
-## 2. Closing amendment B — Gate-4 scope (option C)
-
-**Cite (scope GO):**  
-`docs/MOTORE_V3_G1_GATE4_SCOPE_CLAUSE.md` @ `31216df4`
-
-Normative intent for future consolidate (verbatim spirit of the six points):
-
-1. **Gate-4 closing set in G1** = stationary assets only (`multitone`,
-   `pseudo_noise`), evaluated on geometric domain **R**.
-2. **`log_sweep`:** fixture remains generated and hashed in SHA256SUMS; **does
-   not close** gate 4 in G1. Deviations still measured and published as
-   **report-only**.
-3. **Non-stationary SR-parity** is a **named requirement of G1c/G1e**, with
-   parked mandate + proposal as input (not deleted).
-4. Immutables restated in §3 below.
-5. **A3 remains RETIRED**; ACTIVE family closed. No reopen.
-6. **Phase scope decision, not a relaxation** — no threshold changed; no cell
-   newly admitted that was not before.
-
----
-
-## 3. Immutables (restatement — unchanged by this package)
-
-- Aggregator: **max** (`max_i |x_i(sr) - x_i(48k)|`; one active cell out of
-  threshold → FAIL entire gate; no mean / p95 / RMSE).
-- Threshold: **0.25 dB**.
-- Domain **R**: ENBW `N_MIN = 2` ∧ Rayleigh `SEPARATION_MIN_BINS = 2`
-  (fail-closed on fusion crossfade) — LF clause §2 / scope clause §4.
-- Mandatory publish **outside R** (report-only table; omit → report FAIL).
-- A3 / ACTIVE: **RETIRED / closed** — no reopen via this package.
-
----
-
-## 4. Evidence pointers (lab — ≠ G1 PASS)
-
-| evidence | commit / path | lab role |
-|----------|---------------|----------|
-| Scope GO (option C) | `31216df4` / `docs/MOTORE_V3_G1_GATE4_SCOPE_CLAUSE.md` | decides closing set |
-| LF report-only | `71159469` / `docs/MOTORE_V3_REV7_REPORT_ONLY_LF_CLAUSE.md` | ∉R publication + why |
-| Stationary `R` MEASURE-PASS | `8cf38625` / `docs/MOTORE_V3_G1_STATIONARY_R_CLOSING_MEASURE.md` | closing set max\|Δ\| = **0.1915** dB ≤ 0.25 (stat only on `R`) |
-| Prior formal R remeasure | `b3d7f71b` / `docs/MOTORE_V3_REV7_REMEASURE_R_FINAL.md` | byte-aligned stationary rows |
-
-**Interpretation:** MEASURE-PASS under option C supported packaging for Guardian
-second GO (landed on package tip `5e0d32fc`). Headroom is ~23% (0.1915 vs
-0.25) — not multi-×. It does **not** authorize G1 PASS, ACCEPT, consolidate,
-or official G1b tip by itself.
-
----
-
-## 5. Parked sweep proposal — G1c/G1e input debt
-
-`docs/MOTORE_V3_SWEEP_METROLOGY_REDESIGN_PROPOSAL.md` tip ~`9b8f8305`
-(+ mandate `docs/MOTORE_V3_SWEEP_METROLOGY_REDESIGN_MANDATE.md`) remains
-**PARKED**: out of G1 gate-4 closing set; not under CC/RT now; not deleted.
-Resume at G1c/G1e when an observable exists. **Do not** reopen A3 or POROUS
-litigation to force a G1 close.
-
-Debt mirror: **Parity cross-SR non-stazionaria: non verificata a G1.**
-
-### 5.1 Stationary closing — binding peak `level` (watch; ≠ FAIL)
-
-Authoritative closing measure `docs/MOTORE_V3_G1_STATIONARY_R_CLOSING_MEASURE.md`
-@ `8cf38625`: aggregate max|Δ| = **0.1915** ≤ 0.25 (**MEASURE-PASS**);
-headroom ~**23%** (not multi-×). Peak field on all four closing cells =
-broadband **`level`** (MAIN-window RMS / `mid_level_dbfs`), not per-band
-shape/psd. Plausible cause: resampler passband edge near ~20 kHz. Closest
-approach to 0.25 in the closing set — **watch item** for future; not a FAIL
-today. **Distinct** from parked non-stat / sweep debt above. Incomplete lab
-scripts that omitted `mid_level_dbfs` are not authoritative.
-
----
-
-## 6. Explicit non-claims (this commit / this file)
+## Explicit non-claims
 
 ```text
-≠ G1 PASS
-≠ REV7 consolidated into CONTRACT freeze
-≠ metrology_lock / SHA256SUMS updated
-≠ official G1b tip
-Guardian second GO: LANDED on package tip 5e0d32fc (≠ self-GO; ≠ reopen)
+≠ G1 PASS product claim
+≠ reopen sweep as closing
+≠ threshold shopping
+≠ official G1b tip (separate auth after consolidate + rehash)
 ```
 
-Frozen technical authority remains CONTRACT @ `6d254d0a` (REV6) until a later
-Marco-authorized consolidate lands a coordinated CONTRACT + lock + SHA256SUMS
-update.
+## Sequence
 
----
+1. Guardian second GO on package — **done** @ `5e0d32fc`
+2. Hygiene — **done** @ `0965f975`
+3. Marco-authorized consolidate A+B into CONTRACT — **this consolidate**
+4. Rehash metrology lock + SHA256SUMS — coordinated follow-up commit
+5. Official G1b tip — **STOP** until separate Marco auth
 
-## 7. Sequence remaining
-
-1. **Guardian second GO** on this candidate package — **done** @ `5e0d32fc`.
-2. Hygiene (honest margin + binding-`level` debt) — docs-only; ≠ reopen GO.
-3. Marco-authorized **consolidate** the two amendments into
-   `docs/MOTORE_V3_G1_CONTRACT.md` (single REV7 — not REV7a/b).
-4. **Rehash** metrology lock + SHA256SUMS (coordinated; never silent).
-5. **Official G1b tip** only after 3–4 (spike ≠ tip until then).
-
-Until steps 3–4 complete: **REV7 consolidate = NO.** Product gate-4 claims
-must not assert G1 PASS under this candidate alone.
-
----
-
-## 8. Historical note (superseded packaging narrative)
-
-Earlier drafts of this file tracked ACTIVE-formula redesign / redteam
-POROUS closure / full-grid remeasure RED. That narrative is **historical
-context** for why report-only LF + geometric `R` exist. Under option C, the
-**authoritative closing package for the next REV7** is **only** amendments
-A and B above. Sweep / non-stat work is deferred (§5), not packaged as a
-third REV7 amend here.
-
----
-
-## 9. Handoff
-
-| agent | next |
-|-------|------|
-| ember-contract-guardian | **second GO** on this package (or NO-GO/BLOCK with evidence) |
-| ember-parity-lab | n/a for this docs package; measure already at `8cf38625` |
-| ember-phase-builder | wait — consolidate only after Guardian second GO |
-| ember-metrology-redteam | no reopen of parked sweep proposal now |
-
-≠ G1 PASS. ≠ REV7 consolidated. 0.25 dB / max / R not touched.
-Ready for Guardian second GO — **not** self-GO.
+Living next-path: G1b tip promotion (separate authorization). Parked sweep
+proposal remains G1c/G1e input debt.

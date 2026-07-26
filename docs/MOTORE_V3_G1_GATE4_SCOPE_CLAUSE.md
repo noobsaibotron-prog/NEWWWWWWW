@@ -1,22 +1,21 @@
 # Motore v3 — G1 Gate-4 Scope Clause (option C)
 
-**Status:** PHASE SCOPE DECISION — document-only  
+**Status:** PHASE SCOPE DECISION — **CONSOLIDATED into CONTRACT REV7**  
 **Date:** 2026-07-26  
 **Authority:** Marco — option (C)  
 **Nature:** Scope decision for what closes gate 4 in G1. **Not a relaxation.**  
-**≠** G1 PASS · ≠ CONTRACT freeze amend · ≠ metrology lock / SHA256SUMS edit ·  
-≠ measure · ≠ A3/A4/ACTIVE reopen · ≠ self-SOUND on sweep proposal · ≠ REV7 consolidate
+**Living authority:** `docs/MOTORE_V3_G1_CONTRACT.md` REVISIONE 7 CONSOLIDATA  
+**≠** G1 PASS · ≠ official G1b tip · ≠ A3/A4/ACTIVE reopen · ≠ threshold shopping
 
-**Freeze (read-only):** `docs/MOTORE_V3_G1_CONTRACT.md` @ `6d254d0a`  
-**LF report-only (already written; not consolidated here):**  
+**LF report-only (paired amend A):**  
 `docs/MOTORE_V3_REV7_REPORT_ONLY_LF_CLAUSE.md` @ `71159469`  
 **Parked non-stat input:** mandate  
 `docs/MOTORE_V3_SWEEP_METROLOGY_REDESIGN_MANDATE.md` + proposal  
 `docs/MOTORE_V3_SWEEP_METROLOGY_REDESIGN_PROPOSAL.md` tip ~`9b8f8305`  
 (30 closed findings parked, not deleted; ~15 open at park).
 
-Future packaging: **one** REV7 consolidates report-only LF clause **with** this
-scope clause — not two REV7s. **Do not consolidate REV7 in this commit.**
+This clause’s six points are now normative inside CONTRACT REV7 (amend B).
+Historical REV6 freeze tip `6d254d0a` remains ancestor; living freeze is REV7.
 
 ---
 

@@ -1,15 +1,15 @@
 # REV7 — Report-only LF SR-parity (normative candidate prose)
 
-**Status:** DOCUMENT-ONLY CLAUSE — ≠ CONTRACT consolidated — ≠ G1 PASS  
-**Date:** 2026-07-25  
+**Status:** DOCUMENT-ONLY CLAUSE — **CONSOLIDATED into CONTRACT REV7** (amend A)  
+**Date:** 2026-07-25 (consolidate 2026-07-26)  
 **Authority:** Marco product decision (report-only under geometric limit) via  
 `docs/MOTORE_V3_REV7_REPORT_ONLY_LF_MANDATE.md`  
 **Geometry package:** `docs/MOTORE_V3_REV7_SCOPE_REWRITE_PROPOSAL.md`  
-(ENBW `N_MIN = 2` ∧ Rayleigh `SEPARATION_MIN_BINS = 2` → domain `R`)
+(ENBW `N_MIN = 2` ∧ Rayleigh `SEPARATION_MIN_BINS = 2` → domain `R`)  
+**Living authority:** `docs/MOTORE_V3_G1_CONTRACT.md` REVISIONE 7 CONSOLIDATA  
 
 **Does not:** change 0.25 dB; invent an LF alternate dB tolerance; raise
-`N_MIN`; retune `SEPARATION_MIN_BINS`; edit freeze CONTRACT / lock /
-SHA256SUMS.
+`N_MIN`; retune `SEPARATION_MIN_BINS`; claim G1 PASS / official G1b tip.
 
 ---
 
@@ -115,10 +115,10 @@ trigger (“low-end classes × host SR”) are in scope and mandatory.
 
 ## 6. Consolidation binding
 
-On Guardian consolidate GO, this clause merges into
-`docs/MOTORE_V3_G1_CONTRACT.md` §13.2 gate 4 beside the `R` predicates, and
-the metrology lock gains the hashed admission mask procedure for `R` plus a
-flag that report-only publication is required. Until then: candidate only.
+**Done:** this clause is merged into `docs/MOTORE_V3_G1_CONTRACT.md` §13.2
+gate 4 beside the `R` predicates (REV7 amend A). Coordinated metrology lock
++ SHA256SUMS rehash follows in the lock commit (hashed `R` procedure +
+report-only publication required). ≠ G1 PASS.
 
 ---
 
