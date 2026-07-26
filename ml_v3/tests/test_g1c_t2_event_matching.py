@@ -6,8 +6,8 @@ where organising by "field that varies" hid the (prediction, policy) pair):
   (gt.type, pred.type)          must be equal or unmatchable
   (gt.time, pred.time)          IoU >= 0.3 or unmatchable
   (gt.centre, pred.centre)      Resonance: within a third of an octave
-  (gt.band, pred.band)          band classes: overlap >= 0.5
-  (gt.direction, pred.direction) Thinness/DullSound: equal
+  (gt.band, pred.band)          Harshness/Sibilance: overlap >= 0.5
+  (scope, dynamic events)       semantic region classes are rejected here
   (matching, one-to-one)        no gt or pred used twice
   (matching, optimum)           must BE the lexicographic optimum, not merely
                                 a legal matching — the greedy refutation below
@@ -32,6 +32,7 @@ from ml_v3.benchmark.event_matching import (
     match_events,
     temporal_iou,
 )
+from ml_v3.contracts.constants import ANOMALY_CLASSES
 from ml_v3.contracts.metrology_lock import gate_platform_python_label
 
 
@@ -96,13 +97,41 @@ class MatchabilityPairTests(unittest.TestCase):
         self.assertTrue(is_matchable(gt, same))
         self.assertFalse(is_matchable(gt, offset))
 
-    def test_direction_class_requires_same_direction(self):
-        gt = ev("g", "Thinness", direction="cut", centre=200.0, width=1.0)
-        same = ev("p", "Thinness", direction="cut", centre=200.0, width=1.0)
-        other = ev("p", "Thinness", direction="boost", centre=200.0, width=1.0)
-        self.assertNotEqual(same["direction"], other["direction"])
-        self.assertTrue(is_matchable(gt, same))
-        self.assertFalse(is_matchable(gt, other))
+    def test_event_matcher_scope_is_dense_anomaly_classes_only(self):
+        self.assertEqual(set(ANOMALY_CLASSES), {"Resonance", "Harshness", "Sibilance"})
+        for semantic_type in (
+            "Muddiness", "Boominess", "BoxyMidrange", "Thinness", "DullSound"):
+            with self.subTest(semantic_type=semantic_type):
+                with self.assertRaisesRegex(EventMatchingError, "not a §10.2 dynamic event"):
+                    is_matchable(ev("g", semantic_type), ev("p", semantic_type))
+
+    def test_schema_shaped_semantic_region_is_rejected_not_matched(self):
+        gt = {
+            "event_id": "g",
+            "problem_type": "Muddiness",
+            "problem_type_id": 2,
+            "start_s": 0.0,
+            "end_s": 1.0,
+            "band_lo_hz": 200.0,
+            "band_hi_hz": 500.0,
+            "direction": None,
+            "severity": 0.8,
+            "confidence": 0.9,
+            "actionable": True,
+        }
+        pred = {
+            "event_id": "p",
+            "problem_type": "Muddiness",
+            "problem_type_id": 2,
+            "start_s": 0.0,
+            "end_s": 1.0,
+            "band_lo_hz": 200.0,
+            "band_hi_hz": 500.0,
+            "confidence": 0.9,
+            "actionable": True,
+        }
+        with self.assertRaisesRegex(EventMatchingError, "not a §10.2 dynamic event"):
+            match_events([gt], [pred])
 
     def test_unknown_type_is_fail_closed(self):
         with self.assertRaises(EventMatchingError):

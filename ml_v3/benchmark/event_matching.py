@@ -1,6 +1,6 @@
 """G1c T2 — deterministic one-to-one event matching (§10.2).
 
-Authority: docs/MOTORE_V3_G1_CONTRACT.md §10.1 / §10.2.
+Authority: docs/MOTORE_V3_G1_CONTRACT.md §10.2.
 
     "Il matching e bipartito one-to-one con obiettivo lessicografico
      deterministico: massimo numero di match validi, poi massima somma IoU,
@@ -22,15 +22,15 @@ that is cheap. Above `MAX_SEARCH_NODES` it raises instead of degrading to a
 greedy pass: a silent fallback would reintroduce exactly the order dependence
 the contract forbids, and would do it precisely on the hardest inputs.
 
-Matchability (§10.1 / §10.2)
-----------------------------
-Same problem type and temporal IoU >= 0.3 are necessary for every class. On
+Matchability (§10.2)
+--------------------
+This matcher is only for dense dynamic events: Resonance, Harshness and
+Sibilance. Semantic regions use a different schema (`band_lo_hz`/`band_hi_hz`)
+and must be matched by a separate evaluator path. Same problem type and
+temporal IoU >= 0.3 are necessary for every event class. On
 top of that, per class:
   Resonance                              centre within one third of an octave
   Harshness, Sibilance                   band overlap >= 0.5
-  Muddiness, Boominess, BoxyMidrange     band overlap >= 0.5   (§10.1 regions)
-  Thinness, DullSound                    same region and same spectral
-                                         direction               (§10.1 regions)
 
 UNPINNED (flagged, not silently chosen)
 ---------------------------------------
@@ -46,6 +46,8 @@ from __future__ import annotations
 import math
 from typing import Any, Iterable, Mapping, Sequence
 
+from ml_v3.contracts.constants import ANOMALY_CLASSES
+
 __all__ = [
     "EventMatchingError",
     "TEMPORAL_IOU_MIN",
@@ -60,16 +62,15 @@ __all__ = [
     "match_events",
 ]
 
-TEMPORAL_IOU_MIN = 0.3                     # §10.1 / §10.2
-BAND_OVERLAP_MIN = 0.5                     # §10.1 / §10.2
+TEMPORAL_IOU_MIN = 0.3                     # §10.2
+BAND_OVERLAP_MIN = 0.5                     # §10.2
 RESONANCE_CENTRE_TOLERANCE_OCTAVES = 1.0 / 3.0   # "un terzo di ottava"
 BAND_OVERLAP_MEASURE = "iou_log2"          # see UNPINNED note in the docstring
 MAX_SEARCH_NODES = 200_000
 
+_EVENT_CLASSES = frozenset(ANOMALY_CLASSES)
 _CENTRE_CLASSES = frozenset({"Resonance"})
-_BAND_CLASSES = frozenset({
-    "Harshness", "Sibilance", "Muddiness", "Boominess", "BoxyMidrange"})
-_DIRECTION_CLASSES = frozenset({"Thinness", "DullSound"})
+_BAND_CLASSES = frozenset({"Harshness", "Sibilance"})
 
 
 class EventMatchingError(ValueError):
@@ -83,6 +84,18 @@ def _finite(value: object, what: str) -> float:
     if not math.isfinite(number):
         raise EventMatchingError(f"{what} must be finite, got {number!r}")
     return number
+
+
+def _problem_type(event: Mapping[str, Any], label: str) -> str:
+    value = event.get("problem_type")
+    if not isinstance(value, str) or not value:
+        raise EventMatchingError(f"{label}.problem_type must be a non-empty string")
+    if value not in _EVENT_CLASSES:
+        allowed = ", ".join(sorted(_EVENT_CLASSES))
+        raise EventMatchingError(
+            f"{label}.problem_type {value!r} is not a §10.2 dynamic event "
+            f"class; allowed: {allowed}")
+    return value
 
 
 def temporal_iou(a: Mapping[str, Any], b: Mapping[str, Any]) -> float:
@@ -132,21 +145,18 @@ def centre_error_octaves(a: Mapping[str, Any], b: Mapping[str, Any]) -> float:
 
 
 def is_matchable(gt: Mapping[str, Any], pred: Mapping[str, Any]) -> bool:
-    """§10.1 / §10.2 matchability: same type, temporal IoU, per-class criterion."""
-    if gt["problem_type"] != pred["problem_type"]:
+    """§10.2 matchability: same event type, temporal IoU, per-class criterion."""
+    gt_type = _problem_type(gt, "ground-truth")
+    pred_type = _problem_type(pred, "prediction")
+    if gt_type != pred_type:
         return False
     if temporal_iou(gt, pred) < TEMPORAL_IOU_MIN:
         return False
-    problem_type = gt["problem_type"]
-    if problem_type in _CENTRE_CLASSES:
+    if gt_type in _CENTRE_CLASSES:
         return centre_error_octaves(gt, pred) <= RESONANCE_CENTRE_TOLERANCE_OCTAVES
-    if problem_type in _BAND_CLASSES:
+    if gt_type in _BAND_CLASSES:
         return band_overlap(gt, pred) >= BAND_OVERLAP_MIN
-    if problem_type in _DIRECTION_CLASSES:
-        if gt.get("direction") != pred.get("direction"):
-            return False
-        return band_overlap(gt, pred) >= BAND_OVERLAP_MIN
-    raise EventMatchingError(f"unknown problem_type {problem_type!r}")
+    raise EventMatchingError(f"unknown event problem_type {gt_type!r}")
 
 
 def _freq_error(gt: Mapping[str, Any], pred: Mapping[str, Any]) -> float:
@@ -173,7 +183,7 @@ def _canonical_order(events: Sequence[Mapping[str, Any]], label: str
     if len(set(ids)) != len(ids):
         raise EventMatchingError(f"duplicate event_id among {label} events")
     decorated.sort(key=lambda entry: (
-        entry[2]["problem_type"],
+        _problem_type(entry[2], label),
         float(entry[2]["start_s"]),
         float(entry[2]["end_s"]),
         entry[0],
