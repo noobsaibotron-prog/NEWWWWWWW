@@ -16,8 +16,9 @@ Il piano descrive un progetto a contratti. Ad oggi, su questo branch:
   `docs/MOTORE_V3_G1_CONTRACT.md` (esattamente due emendamenti: A LF
   report-only ∉R; B gate-4 scope option C). Ancestor REV6 tip `6d254d0a`.
   **REV7 consolidate: YES** (Marco "si" + Guardian CONSOLIDATE_AUTHORIZED
-  on package `5e0d32fc`). ≠ G1 PASS. ≠ tip ufficiale G1b (auth separata
-  dopo rehash lock/SHA). Candidate file SUPERSEDED pointer.
+  on package `5e0d32fc`). ≠ G1 PASS. **Official G1b tip: YES** @
+  `c81d2f22` (Marco "ok"; cherry-pick spike `c7f05871`; CONTRACT digests
+  unchanged). Candidate file SUPERSEDED pointer.
 - **Tip accuracy**: codice G1a remediation tip = `a2186ac1` (F2/F3/F4
   closed in code). Trust chain T6 tip = `501a4e00`; remediation tip is
   forward of T6. PLAN pre-stamp (gate-8 debt) = `805fb34d`; history:
@@ -62,8 +63,8 @@ Il piano descrive un progetto a contratti. Ad oggi, su questo branch:
   `a68e2a29beba12d2a2524f4988bd6545f3f2b4557a7beae72ba5f98d3a18456d`; F2/F3/F4 closed; gate-8 + F1 WAV
   remain durable debt (no rewrite). **No G1 PASS.** **REV7 consolidate:
   YES** (A+B only). History: false CLOSE `1746a058` withdrawn; REOPEN
-  `284228d6`. **Official G1b tip: NO** until separate auth after
-  consolidate+rehash (spike `ml_v3/frontend/` ≠ tip).
+  `284228d6`. **Official G1b tip: YES** @ `c81d2f22` (product remap of
+  spike `c7f05871`; ≠ G1 PASS; ≠ G1b evaluator CLOSE).
   - **F2 (code-closed @ `a2186ac1`)**: commitment↔reveal match on
     non-null reveal via `verify_commitment`; golden dd/ee REJECT when
     mismatch. **Residual debt** (not F2 reopen): §8.2.4 gate 8 premature
@@ -94,10 +95,10 @@ Il piano descrive un progetto a contratti. Ad oggi, su questo branch:
   (2026-07-25) dal reviewer (Marco) con mandato: **REV7 only if
   implementation demonstrates falsifiable impossibility** (not
   inconvenience); one redteam + one independent CC per tranche; stop-rule
-  semantica sotto (non etichetta di severity). **Product G1b may unfreeze
-  after this G1a CLOSE stamp**; uncommitted `ml_v3/frontend/` = **spike /
-  feasibility probe** (not gate proof; non tip ufficiale G1b; spike ≠ tip)
-  fino a tip G1b ufficiale / M3+M4.
+  semantica sotto (non etichetta di severity). **Official G1b tip landed**
+  (Marco "ok" post-REV7 rehash): product code tip `c81d2f22` = tree of
+  spike `c7f05871` (`ml_v3/frontend/`, `ml_v3/benchmark/`, G1b tests,
+  WS4 evidence). Spike WT retired-as-lab. ≠ G1 PASS; ≠ training; ≠ ship.
 - **Authority hierarchy (Motore-v3)**:
   - GLOBAL / RELEASE AUTHORITY → `ALIGNMENT_MANIFEST.md`
   - MOTORE V3 LAB STATE AUTHORITY → `docs/MOTORE_V3_PLAN.md`
@@ -129,25 +130,23 @@ Il piano descrive un progetto a contratti. Ad oggi, su questo branch:
      match on non-null reveal; do not reopen F2 for this residual.
   4. **F1 WAV placement**: no rewrite; forward remediation tranche
      (in-repo WAV inventory remains until then). Durable debt post-CLOSE.
-- **Ancora assente / in corso**: product G1b (**may unfreeze** after this
-  G1a CLOSE stamp; spike `ml_v3/frontend/` ≠ tip); F1 WAV forward tranche
-  (durable debt); modello V3, runtime V3, UI V3, build Ableton V3,
-  training V3. Ship-line (`Source/`, CMake, `Resources/`, `AIEQ-mac`)
-  **0-diff** vs freeze G0 `2c88edad`. Product G1b puo toccare
-  `ml_v3/frontend/` (e solo minimum `Source/` se contract-authorized
-  later) — **still no silent ship of V3 to Ableton** without later gates
-  (G6+). **No G1 PASS.**
+- **Ancora assente / in corso**: G1c evaluator + G1d/G1e; F1 WAV forward
+  tranche (durable debt); modello V3, runtime V3, UI V3, build Ableton V3,
+  training V3. **Official G1b tip present** @ `c81d2f22` (lab frontend only).
+  Ship-line (`Source/`, CMake, `Resources/`, `AIEQ-mac`) **0-diff** vs
+  freeze G0 `2c88edad`. **Still no silent ship of V3 to Ableton** without
+  later gates (G6+). **No G1 PASS.**
 - **Nessun training V3 e autorizzato** oltre i limiti di fase.
 - Il CONTROL Motore v2/A4b resta **NO-GO**; nessun modello e promosso.
 - Il laboratorio prominence v2 vive su **branch separati** e NON e integrato in
   questo branch (vedi sezione "Stato prominence v2").
 
-Le sezioni G1b–G8 seguenti restano criteri FUTURI finche la sottofase
-riceve GO di chiusura tip. **G1a CLOSE: GO** (questo stamp; Guardian
-re-CLOSE 2026-07-25). History: false CLOSE `1746a058` withdrawn; REOPEN
-`284228d6` — REOPENED **non** e lo stato corrente. Non confondere
-"mandato G1b" / "G1b may unfreeze" con "G1b tip ufficiale", "G1 PASS" o
-"release-safe". Spike frontend ≠ tip.
+Le sezioni G1c–G8 seguenti restano criteri FUTURI finche la sottofase
+riceve GO di chiusura tip. **G1a CLOSE: GO**; **official G1b tip: YES**
+@ `c81d2f22` (≠ G1 PASS; ≠ G1b gate CLOSE). History: false CLOSE
+`1746a058` withdrawn; REOPEN `284228d6` — REOPENED **non** e lo stato
+corrente. Non confondere "tip frontend G1b" con "G1 PASS" o
+"release-safe".
 
 Obiettivo finale: non inferiorita misurata rispetto a smart:EQ 4 sul
 bilanciamento tonale e rispetto a soothe, Equator e Gullfoss sulle anomalie
@@ -194,29 +193,27 @@ line, plugin installato, APVTS, preset, `Resources/Models/ml_weights.bin`,
   `a2186ac1` + `805fb34d`; ancestor freeze `6d254d0a`; living CONTRACT =
   **REV7 CONSOLIDATED**; lock/SHA rehashed after consolidate; F2/F3/F4
   closed; gate-8 + F1 WAV durable debt (no rewrite); **REV7 consolidate:
-  YES** (A+B only). **No G1 PASS.** Official G1b tip = auth separata
-  (spike ≠ tip).
+  YES** (A+B only). **No G1 PASS.** **Official G1b tip: YES** @
+  `c81d2f22`.
 - **G1b spike WS4 → REV7 path (storico → chiuso in consolidate):** tip
   `c7f05871` gate-4 RED under REV6 → report-only LF + geometric `R` →
   option C (stationary close; `log_sweep` report-only) → package
   `5e0d32fc` → Guardian 2nd GO → Marco consolidate. Misura stazionaria
   `8cf38625` MEASURE-PASS max|Δ|=0.1915. A3 RETIRED. Sweep redesign
   **PARKED** (G1c/G1e). G4 debt: cross-SR low-end detections. **≠ G1 PASS.**
-- **Living next-path (post-REV7 consolidate):** (1) chore rehash lock +
-  SHA256SUMS if not yet on tip; (2) **official G1b tip** solo con auth
-  Marco separata; (3) non-stat / sweep resta PARKED fino a G1c/G1e;
-  (4) spike `ml_v3/frontend/` = lab only ≠ tip; (5) debt F1 WAV / gate-8
-  non riapre G1a CLOSE. Mai: 0.25→media/p95; ship/Source; training;
-  “G1 PASS”; terzo amend REV7; reopen A3. Short path:
-  `docs/EMBER_CORE_PARALLEL_HANDOFF.md` §A.
+- **Official G1b tip (2026-07-26):** Marco "ok" → cherry-pick spike series
+  `a91ab7cf`…`c7f05871` onto product → code tip **`c81d2f22`** (tree =
+  spike). Paths: `ml_v3/frontend/`, `ml_v3/benchmark/`, G1b tests, WS*
+  reports. CONTRACT / lock / SHA256SUMS **unchanged** (no rehash). Source
+  **0-diff** vs `2c88edad`. Spike WT retired-as-lab. **≠ G1 PASS.**
+- **Living next-path (post official G1b tip):** (1) Guardian/CC optional
+  on tip; (2) **G1c** when Marco asks; (3) non-stat / sweep resta PARKED
+  fino a G1c/G1e; (4) debt F1 WAV / gate-8 non riapre G1a CLOSE. Mai:
+  0.25→media/p95; ship/Source; training; “G1 PASS”; terzo amend REV7;
+  reopen A3. Short path: `docs/EMBER_CORE_PARALLEL_HANDOFF.md` §A.
 
-- GO G1b — mandato storico in PLAN `37f6ac60` (2026-07-25) con REV7:
-  amend solo se l'implementazione dimostra **impossibilita falsificabile**
-  (non inconvenienza); un redteam + un CC indipendente per tranche;
-  stop-rule semantica (stesso bullet sopra). **Product G1b may unfreeze
-  after this G1a CLOSE stamp**; uncommitted / spike `ml_v3/frontend/` =
-  feasibility probe (not gate proof; spike ≠ tip) until official G1b tip /
-  M3+M4. Nessun ship Ableton.
+- GO G1b — mandato storico in PLAN `37f6ac60`; tip ufficiale landed
+  `c81d2f22` (Marco "ok"). Nessun ship Ableton.
 - Dati, cache e modelli restano in `~/aieq_data/motore_v3/`; nel repository
   entrano soltanto codice, manifest, lock, hash, contratti e report.
 - Massimo tre round completi di training. Non si compensano fallimenti offline

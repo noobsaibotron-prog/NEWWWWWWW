@@ -1,12 +1,13 @@
 # Ember Core / Motore v3 — Handoff AUTOSUFFICIENTE per agenti esterni
 
-**Ultimo aggiornamento:** 2026-07-26 21:20 (UTC+2) — REV7 CONSOLIDATED  
+**Ultimo aggiornamento:** 2026-07-26 21:30 (UTC+2) — official G1b tip  
 **Destinatario:** agente esterno **senza terminale / senza git**.  
 **Questo file** = quadro + testo completo snapshot.
 
 > Se ricevi solo questo markdown, hai tutto il necessario. **Non eseguire comandi.**  
 > WAV binari non dumpati: digests in SHA256SUMS + inventory.  
-> JSON evidence pesante della spike (`G1B_*` runner output) vive sul branch `spike/motore-v3-g1b-frontend` — qui i report docs-only.
+> Evidence G1b WS4 (`G1B_SPIKE_WS4_*`) e ora sul tip prodotto (cherry-pick da
+> spike `c7f05871`); worktree spike = lab retired / sync note only.
 
 ---
 
@@ -14,9 +15,11 @@
 
 ### Cos’è
 - Prodotto: **AI Equalizer Pro**. **Ember Core** = Motore / misura / AI.
-- Lane: lab **Motore v3 offline** (`feature/motore-v3-offline`). Spike G1b su branch/worktree separato.
+- Lane: lab **Motore v3 offline** (`feature/motore-v3-offline`).
+- Spike G1b (`spike/motore-v3-g1b-frontend` @ `c7f05871`) **promossa** a tip
+  ufficiale su product (Marco "ok"); spike WT = retired-as-lab.
 
-### Fotografia congelata (REV7 CONSOLIDATED)
+### Fotografia congelata (REV7 + official G1b tip)
 ```text
 G1a CLOSE                         GO
 REV7 CONSOLIDATED                 living CONTRACT authority (A+B only)
@@ -28,23 +31,29 @@ SWEEP_METROLOGY_REDESIGN proposal PARKED — G1c/G1e input debt (~9b8f8305)
 REV7 candidate                    SUPERSEDED by consolidate (package was 5e0d32fc)
 Guardian second GO                LANDED on tip 5e0d32fc
 REV7 consolidate                  YES (Marco "si" + Guardian CONSOLIDATE_AUTHORIZED)
-G1b official tip                  NON esiste — next = separate auth after rehash
+G1b official tip                  YES — product code tip c81d2f22 (= spike c7f05871 tree)
 0.25 dB / max / R                 intoccati (immutables restated)
 stationary R measure              8cf38625 MEASURE-PASS max|Δ|=0.1915 (~23% headroom)
 binding peak (closing cells)      level (broadband RMS / mid_level_dbfs) — watch
+Source/ ship-line vs 2c88edad     0-diff (no plugin DSP rewrite in tip)
 ```
 
-**Decisione Marco — option (C) + consolidate:** Gate-4 closing set in G1 =
-stationary on geometric `R`. Non-stat → G1c/G1e. **Exactly two** REV7 amends
-in CONTRACT: (A) LF report-only ∉R; (B) gate-4 scope C. Package tip
-`5e0d32fc` + hygiene `0965f975` → Guardian CONSOLIDATE_AUTHORIZED → Marco
-"si". ≠ G1 PASS. ≠ reopen sweep as closing. ≠ threshold shopping.
-≠ official G1b tip in this consolidate (STOP after consolidate + rehash).
+**Decisione Marco — option (C) + consolidate + G1b tip auth:** Gate-4 closing
+set in G1 = stationary on geometric `R`. Non-stat → G1c/G1e. **Exactly two**
+REV7 amends in CONTRACT: (A) LF report-only ∉R; (B) gate-4 scope C. Package
+tip `5e0d32fc` + hygiene `0965f975` → Guardian CONSOLIDATE_AUTHORIZED → Marco
+"si". Rehash `4efc7598`. Poi Marco **"ok"** → promote spike frontend a tip
+ufficiale G1b su product. ≠ G1 PASS. ≠ G1b CLOSE product gate. ≠ reopen
+sweep as closing. ≠ threshold shopping. ≠ training / Ableton ship.
 
 ### Tip
 | Tip | Commit | Nota |
 |-----|--------|------|
-| HEAD / REV7 CONSOLIDATED | **`6fbf5b59`** | CONTRACT REV7 A+B |
+| Official G1b code tip | **`c81d2f22`** | WS4 harness + evidence (product remap of spike) |
+| Docs stamp (HANDOFF/PLAN) | **this commit** | status pointers only; CONTRACT digests unchanged |
+| G1b promote series | `46ee74b9`…`c81d2f22` | cherry-pick a91ab7cf…c7f05871 onto product |
+| Spike source tip (retired-as-lab) | `c7f05871` | tree-identical G1b paths vs product tip |
+| CONTRACT REV7 CONSOLIDATED | **`6fbf5b59`** | CONTRACT A+B (body unchanged by tip) |
 | Lock/SHA rehash | **`4efc7598`** | metrology lock + SHA256SUMS + fixture_spec |
 | REV7 candidate package | `5e0d32fc` | historical 2nd GO package; superseded |
 | Stationary R closing measure | `8cf38625` | max\|Δ\|=0.1915 dB PASS on R |
@@ -57,7 +66,8 @@ in CONTRACT: (A) LF report-only ∉R; (B) gate-4 scope C. Package tip
 
 **Freeze digest (CONTRACT file SHA-256):**
 `9fd2dd875d25c12c8b2206b5f637bef998b905f77402309014299df0ee6d519f`
-(CONTRACT tip commit `6fbf5b59`). Lock digest after rehash:
+(CONTRACT tip commit `6fbf5b59` — **not** rewritten by G1b tip). Lock digest
+after rehash:
 `a68e2a29beba12d2a2524f4988bd6545f3f2b4557a7beae72ba5f98d3a18456d`.
 adapter_mapping_sha256:
 `606fae2908b3a41d34581b84f1e6060272839e85005039bfb2cde60e934ac616`.
@@ -70,26 +80,28 @@ fixture_spec_sha256:
 3. Option (C) scope; stationary MEASURE-PASS `8cf38625`.  
 4. Candidate packaged `5e0d32fc`; Guardian 2nd GO landed.  
 5. Hygiene `0965f975`.  
-6. **REV7 CONSOLIDATED** (A+B only) — this tip.  
-7. Next: lock/SHA rehash → then **separate auth** for official G1b tip.  
-8. **≠** G1 PASS · **≠** reopen A3 · 0.25 / max / R intact.
+6. **REV7 CONSOLIDATED** (A+B only) @ `6fbf5b59`.  
+7. Lock/SHA rehash @ `4efc7598`.  
+8. **Official G1b tip** @ `c81d2f22` (Marco "ok"; spike `c7f05871` promoted).  
+9. **≠** G1 PASS · **≠** reopen A3 · 0.25 / max / R intact · Source 0-diff.
 
 ### Stato fase
 - **G1a CLOSE: GO**; code tip `a2186ac1`.  
-- **CONTRACT living:** REVISIONE 7 CONSOLIDATA (A+B).  
+- **CONTRACT living:** REVISIONE 7 CONSOLIDATA (A+B); digests unchanged.  
 - **A3: ARCHIVED**; ACTIVE closed. **No reopen.**  
 - **SWEEP proposal: PARKED** — G1c/G1e input debt.  
 - **REV7 consolidate: YES.**  
-- Spike ≠ official G1b tip.  
+- **Official G1b tip: YES** (`c81d2f22`; lab frontend on product).  
+  ≠ G1 PASS; ≠ G1b evaluator CLOSE (G1c+). Spike WT retired-as-lab.  
 - Debt: F1 WAV, gate-8, G4 cross-SR LF detections, **non-stat SR-parity**,
   **stationary binding peak `level`**.
 
 ### Debt — parity cross-SR non-stazionaria
 Parity cross-SR non-stazionaria: non verificata a G1. Input parcheggiati:
 mandato SWEEP_METROLOGY_REDESIGN + proposta S1/S2 (tip ~`9b8f8305`).
-Da riprendere a G1c/G1e. Independent CC WS4 (spike `c7f05871`): accordo
-~0.03 dB sulle bin con segnale 48k vs 44.1→48 — **evidence cite only**,
-non criterio.
+Da riprendere a G1c/G1e. Independent CC WS4 (spike `c7f05871` / product
+`c81d2f22`): accordo ~0.03 dB sulle bin con segnale 48k vs 44.1→48 —
+**evidence cite only**, non criterio.
 
 ### Debt — stationary closing binding peak `level` (watch)
 Su `8cf38625`, peak in tutte e quattro le celle di chiusura = broadband
@@ -99,12 +111,13 @@ non-stat / sweep debt.
 
 ### Catena tip (recente)
 ```text
-(this)    docs(v3): consolidate REV7 — LF report-only + gate-4 scope (C)
-(+chore)  chore(v3): rehash metrology lock + SHA256SUMS after REV7
+(this)    feat(v3): G1b WS4 … (official tip c81d2f22; +5 prior G1b commits)
+7acde5c1  docs(v3): stamp REV7 rehash tip in handoff §A
+4efc7598  chore(v3): rehash metrology lock + SHA256SUMS after REV7
+6fbf5b59  docs(v3): consolidate REV7 — LF report-only + gate-4 scope (C)
 0965f975  docs(v3): debt level-peak watch; honest margin; fix 0.03 cite
 5e0d32fc  docs(v3): package REV7 candidate — LF report-only + gate-4 scope (C)
 8cf38625  docs(v3): stationary R closing measure under gate-4 scope (C)
-31216df4  docs(v3): G1 gate-4 scope — stationary close; park non-stat (C)
 …
 6d254d0a  freeze REV6 (ancestor)
 ```
@@ -119,20 +132,21 @@ non-stat / sweep debt.
 | REV7 consolidate | **YES** (exactly A+B) |
 | Sweep proposal | **PARKED** (G1c/G1e debt) |
 | A3 | **ARCHIVED** SOUND+FALSIFIED+RETIRED |
-| G1 PASS / G1b tip | **NO** (next = separate auth after rehash) |
+| Official G1b tip | **YES** @ `c81d2f22` (≠ G1 PASS) |
+| G1 PASS | **NO** |
 
 ### Sequenza restante
-1. Consolidate A+B — **this tip**.  
-2. Rehash lock/SHA256SUMS — follow-up chore commit.  
-3. Official G1b tip — **only after separate Marco auth** (STOP here otherwise).  
-4. Non-stat / sweep remains **PARKED** until G1c/G1e.  
+1. Consolidate A+B — done (`6fbf5b59`).  
+2. Rehash lock/SHA256SUMS — done (`4efc7598`).  
+3. Official G1b tip — **done** (`c81d2f22`; Marco "ok").  
+4. Next: Guardian/CC optional; **G1c** when Marco asks; non-stat/sweep PARKED.  
 5. Mai: 0.25→media/p95; ship/Source; training; claim G1 PASS; riaprire A3;
    third REV7 amend; reopen POROUS on sweep to force G1 close.
 
 ### Vietato
-G1 PASS; tip G1b ufficiale senza auth separata; riaprire ACTIVE A3/A4;
-riprendere POROUS / redteam sulla sweep proposal ora; toccare 0.25 / max / R;
-ship Ableton; threshold shopping.
+G1 PASS; riaprire ACTIVE A3/A4; riprendere POROUS / redteam sulla sweep
+proposal ora; toccare 0.25 / max / R; ship Ableton; threshold shopping;
+confondere tip frontend G1b con chiusura gate prodotto.
 
 ---
 
