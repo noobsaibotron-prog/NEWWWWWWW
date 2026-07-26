@@ -9,6 +9,15 @@ evaluator, no model and no training: see docs/MOTORE_V3_G1_CONTRACT.md
 Authority: MOTORE_V3_G1_CONTRACT REVISIONE 7 CONSOLIDATA @ 6fbf5b59
 (ancestor REV6 @ 6d254d0a).
 """
+from .gate9_registry import (
+    GATE9_FIXTURES,
+    Gate9RegistryError,
+    frozen_gate9_registry,
+    gate9_fixture_ids,
+    gate9_outcome,
+    gate9_registry_sha256,
+    validate_gate9_registry_claim,
+)
 from .adapter import (
     ADAPTER_ARTIFACT_ID,
     HOMOLOGOUS_CLASSES,

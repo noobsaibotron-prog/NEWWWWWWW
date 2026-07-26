@@ -25,6 +25,7 @@ __all__ = [
     "G1A_SHA256SUMS_RELPATH",
     "G1A_SHA256SUMS_COVERED",
     "G1A_SHA256SUMS_AUDIO_REQUIRED",
+    "G1C_SHA256SUMS_REQUIRED",
     "CONTRACT_DOC_SHA256_TRIPWIRE",
     "Sha256SumsError",
     "repo_root_from_here",
@@ -68,6 +69,14 @@ G1A_SHA256SUMS_COVERED: tuple[str, ...] = (
 )
 
 
+# G1c artifacts that the inventory must bind once they exist. Same pattern as
+# the T6 audio requirement: presence in the tree is not enough, the inventory
+# must list them or verify fails (a stripped artifact must not read as PASS).
+G1C_SHA256SUMS_REQUIRED: tuple[str, ...] = (
+    "ml_v3/fixtures/g1/gate9_registry_v1.json",
+)
+
+
 class Sha256SumsError(ValueError):
     """Raised when SHA256SUMS inventory or tree verification fails."""
 
@@ -95,6 +104,12 @@ def g1a_sha256sums_audio_required() -> tuple[str, ...]:
 
 # Public name requested by MED harden; always call the function (fresh tuple).
 G1A_SHA256SUMS_AUDIO_REQUIRED = g1a_sha256sums_audio_required
+
+
+def _g1c_required_present(root: Path) -> tuple[str, ...]:
+    """G1c required relpaths that exist in the tree (bind once present)."""
+    return tuple(
+        rel for rel in G1C_SHA256SUMS_REQUIRED if (Path(root) / rel).is_file())
 
 
 def build_sha256sums_entries(
@@ -133,9 +148,11 @@ def render_g1a_sha256sums(root: Path | None = None) -> str:
     if sums_path.is_file():
         listed = tuple(parse_sha256sums(sums_path.read_text(encoding="utf-8")))
         # Ensure minimum coverage is always present even if a path was dropped.
-        paths = tuple(dict.fromkeys((*G1A_SHA256SUMS_COVERED, *listed)))
+        paths = tuple(dict.fromkeys(
+            (*G1A_SHA256SUMS_COVERED, *_g1c_required_present(root), *listed)))
     else:
-        paths = G1A_SHA256SUMS_COVERED
+        paths = tuple(dict.fromkeys(
+            (*G1A_SHA256SUMS_COVERED, *_g1c_required_present(root))))
     entries = build_sha256sums_entries(root, paths)
     contract_digest = entries["docs/MOTORE_V3_G1_CONTRACT.md"]
     if contract_digest != CONTRACT_DOC_SHA256_TRIPWIRE:
@@ -208,6 +225,11 @@ def verify_g1a_sha256sums(root: Path | None = None) -> dict[str, str]:
         raise Sha256SumsError(
             "SHA256SUMS missing required audio inventory: "
             f"{missing_audio}")
+    missing_g1c = [
+        path for path in _g1c_required_present(root) if path not in entries]
+    if missing_g1c:
+        raise Sha256SumsError(
+            f"SHA256SUMS missing required G1c inventory: {missing_g1c}")
     if G1A_SHA256SUMS_RELPATH in entries:
         raise Sha256SumsError(
             "SHA256SUMS must not hash itself; anchor is the immutable commit "

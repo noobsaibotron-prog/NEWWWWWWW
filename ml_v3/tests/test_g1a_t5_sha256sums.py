@@ -160,12 +160,12 @@ class G1aSha256sumsFixtureTests(unittest.TestCase):
 
     def test_committed_sha256sums_verifies_against_tree(self):
         entries = verify_g1a_sha256sums()
-        # COVERED + T6 audio required; full happy path is 11 + 37 = 48.
+        # COVERED + T6 audio + G1c required; happy path is 11 + 37 + 1 = 49.
         self.assertTrue(set(G1A_SHA256SUMS_COVERED).issubset(entries))
         audio = g1a_sha256sums_audio_required()
         self.assertEqual(len(audio), 37)
         self.assertTrue(set(audio).issubset(entries))
-        self.assertEqual(len(entries), 48)
+        self.assertEqual(len(entries), 49)
         root = repo_root_from_here()
         contract = root / "docs" / "MOTORE_V3_G1_CONTRACT.md"
         self.assertEqual(sha256_of_file(contract), CONTRACT_DOC_SHA256_TRIPWIRE)
