@@ -50,7 +50,7 @@ sweep as closing. ≠ threshold shopping. ≠ training / Ableton ship.
 | Tip | Commit | Nota |
 |-----|--------|------|
 | Official G1b code tip | **`c81d2f22`** | WS4 harness + evidence (product remap of spike) |
-| Docs stamp (HANDOFF/PLAN) | **this commit** | status pointers only; CONTRACT digests unchanged |
+| Docs stamp (HANDOFF/PLAN) | **`b2a61584`** | status pointers only; CONTRACT digests unchanged |
 | G1b promote series | `46ee74b9`…`c81d2f22` | cherry-pick a91ab7cf…c7f05871 onto product |
 | Spike source tip (retired-as-lab) | `c7f05871` | tree-identical G1b paths vs product tip |
 | CONTRACT REV7 CONSOLIDATED | **`6fbf5b59`** | CONTRACT A+B (body unchanged by tip) |
