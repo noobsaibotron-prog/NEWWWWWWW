@@ -170,6 +170,21 @@ def _require_run_coherence(predictions: list[dict[str, Any]]) -> dict[str, str]:
     return run
 
 
+def _require_policy_compatibility(run: Mapping[str, str], policy: Mapping[str, Any]) -> None:
+    """The single prediction run must be the run described by the loaded policy."""
+    expected = {
+        "calibration_policy_id": policy["policy_id"],
+        "model_sha256": policy["model_sha256"],
+        "frontend_contract_sha256": policy["frontend_sha256"],
+    }
+    for field, value in expected.items():
+        if run[field] != value:
+            raise EvaluatorParseError(
+                f"predictions cite {field}={run[field]!r} but the supplied "
+                f"calibration policy declares {value!r}; run and policy are not "
+                "compatible")
+
+
 def parse_evaluator_inputs(
     *,
     manifest_records: Iterable[object],
@@ -215,6 +230,7 @@ def parse_evaluator_inputs(
         raise EvaluatorParseError(
             "no prediction records; an empty prediction set is not a PASS")
     run = _require_run_coherence(predictions)
+    _require_policy_compatibility(run, policy)
 
     # Duplicate detection on the canonical key, after binding.
     for label, rows, key_fn in (

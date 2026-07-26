@@ -169,6 +169,25 @@ class HashRejectTests(unittest.TestCase):
         with self.assertRaises(EvaluatorParseError):
             _parse(m, a, p, mutated)
 
+    def test_coherent_predictions_with_wrong_policy_id_rejected(self):
+        """A run coherent with itself must still match the supplied policy."""
+        m, a, p, pol = _world()
+        p = [{**row, "calibration_policy_id": "wrong-policy-id"} for row in p]
+        with self.assertRaises(EvaluatorParseError):
+            _parse(m, a, p, pol)
+
+    def test_coherent_predictions_with_wrong_model_hash_rejected(self):
+        m, a, p, pol = _world()
+        p = [{**row, "model_sha256": "12" * 32} for row in p]
+        with self.assertRaises(EvaluatorParseError):
+            _parse(m, a, p, pol)
+
+    def test_coherent_predictions_with_wrong_frontend_hash_rejected(self):
+        m, a, p, pol = _world()
+        p = [{**row, "frontend_contract_sha256": "34" * 32} for row in p]
+        with self.assertRaises(EvaluatorParseError):
+            _parse(m, a, p, pol)
+
 
 class RunCoherenceRejectTests(unittest.TestCase):
     def test_a7_mixed_model_sha(self):
