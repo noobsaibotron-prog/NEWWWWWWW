@@ -45,7 +45,7 @@ in CONTRACT: (A) LF report-only ∉R; (B) gate-4 scope C. Package tip
 | Tip | Commit | Nota |
 |-----|--------|------|
 | HEAD / REV7 CONSOLIDATED | **`6fbf5b59`** | CONTRACT REV7 A+B |
-| Lock/SHA rehash | *(this chore tip)* | metrology lock + SHA256SUMS + fixture_spec |
+| Lock/SHA rehash | **`4efc7598`** | metrology lock + SHA256SUMS + fixture_spec |
 | REV7 candidate package | `5e0d32fc` | historical 2nd GO package; superseded |
 | Stationary R closing measure | `8cf38625` | max\|Δ\|=0.1915 dB PASS on R |
 | Gate-4 scope clause | `31216df4` | amend B source |
