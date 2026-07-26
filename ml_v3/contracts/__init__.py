@@ -43,6 +43,13 @@ from .metrology_lock import (
     validate_metrology_lock_claim,
 )
 from .schemas import SCHEMA_REGISTRY, schema_for, schema_ids_t2
+from .schema_field_guard import (
+    SCHEMA_FIELD_KEYSETS,
+    SchemaFieldClaim,
+    SchemaFieldClaimError,
+    fields_for_schema_record,
+    validate_schema_field_claims,
+)
 from .validate import SchemaError, validate, validate_schema_id
 
 __all__ = [
@@ -54,13 +61,17 @@ __all__ = [
     "MASKED_NA_CLASSES",
     "METROLOGY_ARTIFACT_ID",
     "SCHEMA_IDS",
+    "SCHEMA_FIELD_KEYSETS",
     "SCHEMA_REGISTRY",
     "AdapterError",
     "FixtureSpecError",
     "Gate9RegistryError",
     "MetrologyLockError",
     "SchemaError",
+    "SchemaFieldClaim",
+    "SchemaFieldClaimError",
     "adapter_mapping_sha256",
+    "fields_for_schema_record",
     "fixture_spec_sha256",
     "frozen_adapter_mapping",
     "frozen_fixture_spec",
@@ -74,6 +85,7 @@ __all__ = [
     "schema_ids_t2",
     "validate",
     "validate_adapter_mapping_claim",
+    "validate_schema_field_claims",
     "validate_fixture_spec_claim",
     "validate_gate9_registry_claim",
     "validate_metrology_lock_claim",

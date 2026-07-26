@@ -47,9 +47,11 @@ import math
 from typing import Any, Iterable, Mapping, Sequence
 
 from ml_v3.contracts.constants import ANOMALY_CLASSES
+from ml_v3.contracts.schema_field_guard import SchemaFieldClaim
 
 __all__ = [
     "EventMatchingError",
+    "EVENT_MATCHING_SCHEMA_FIELD_CLAIMS",
     "TEMPORAL_IOU_MIN",
     "BAND_OVERLAP_MIN",
     "BAND_OVERLAP_MEASURE",
@@ -71,6 +73,28 @@ MAX_SEARCH_NODES = 200_000
 _EVENT_CLASSES = frozenset(ANOMALY_CLASSES)
 _CENTRE_CLASSES = frozenset({"Resonance"})
 _BAND_CLASSES = frozenset({"Harshness", "Sibilance"})
+_EVENT_FIELDS_READ = frozenset({
+    "problem_type",
+    "start_s",
+    "end_s",
+    "center_hz",
+    "width_octaves",
+})
+
+EVENT_MATCHING_SCHEMA_FIELD_CLAIMS = (
+    SchemaFieldClaim(
+        owner="ml_v3.benchmark.event_matching",
+        schema_record="dynamic_event",
+        fields=_EVENT_FIELDS_READ,
+        purpose="ground-truth §10.2 dynamic event matching",
+    ),
+    SchemaFieldClaim(
+        owner="ml_v3.benchmark.event_matching",
+        schema_record="prediction_event",
+        fields=_EVENT_FIELDS_READ,
+        purpose="prediction §10.2 dynamic event matching",
+    ),
+)
 
 
 class EventMatchingError(ValueError):

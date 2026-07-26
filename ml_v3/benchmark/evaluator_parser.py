@@ -44,6 +44,7 @@ from typing import Any, Iterable, Mapping
 
 from ml_v3.contracts.canonical import canonical_bytes, sha256_of_obj
 from ml_v3.contracts.constants import SCHEMA_IDS
+from ml_v3.contracts.schema_field_guard import SchemaFieldClaim
 from ml_v3.contracts.validate import (
     SchemaError,
     validate_annotation,
@@ -54,6 +55,7 @@ from ml_v3.contracts.validate import (
 
 __all__ = [
     "EvaluatorParseError",
+    "EVALUATOR_PARSER_SCHEMA_FIELD_CLAIMS",
     "PARSED_ARTIFACT_ID",
     "parse_evaluator_inputs",
     "parsed_inputs_bytes",
@@ -66,6 +68,66 @@ _MANIFEST = SCHEMA_IDS["asset_manifest"]
 _ANNOTATION = SCHEMA_IDS["annotation"]
 _PREDICTION = SCHEMA_IDS["prediction"]
 _POLICY = SCHEMA_IDS["calibration_policy"]
+
+EVALUATOR_PARSER_SCHEMA_FIELD_CLAIMS = (
+    SchemaFieldClaim(
+        owner="ml_v3.benchmark.evaluator_parser",
+        schema_record="asset_manifest",
+        fields=frozenset({
+            "schema",
+            "asset_id",
+            "group_id",
+            "group_primary_profile",
+            "group_primary_domain",
+            "split_role",
+            "source_profile",
+        }),
+        purpose="manifest identity index, group binding and canonical ordering",
+    ),
+    SchemaFieldClaim(
+        owner="ml_v3.benchmark.evaluator_parser",
+        schema_record="annotation",
+        fields=frozenset({
+            "schema",
+            "asset_id",
+            "profile",
+            "evaluation_unit_id",
+            "segment_start_s",
+            "segment_end_s",
+            "annotator_id",
+            "pass_id",
+        }),
+        purpose="annotation admission, binding, duplicate checks and ordering",
+    ),
+    SchemaFieldClaim(
+        owner="ml_v3.benchmark.evaluator_parser",
+        schema_record="prediction",
+        fields=frozenset({
+            "schema",
+            "asset_id",
+            "profile",
+            "segment_start_s",
+            "segment_end_s",
+            "calibration_policy_sha256",
+            "calibration_policy_id",
+            "model_id",
+            "model_sha256",
+            "frontend_contract_sha256",
+        }),
+        purpose="prediction admission, run coherence, policy binding and ordering",
+    ),
+    SchemaFieldClaim(
+        owner="ml_v3.benchmark.evaluator_parser",
+        schema_record="calibration_policy",
+        fields=frozenset({
+            "schema",
+            "policy_id",
+            "model_sha256",
+            "frontend_sha256",
+        }),
+        purpose="loaded policy compatibility with the prediction run",
+    ),
+)
 
 
 class EvaluatorParseError(ValueError):
