@@ -1,6 +1,6 @@
 # Ember Core / Motore v3 — Handoff AUTOSUFFICIENTE per agenti esterni
 
-**Ultimo aggiornamento:** 2026-07-26 19:52 (UTC+2)  
+**Ultimo aggiornamento:** 2026-07-26 20:56 (UTC+2)  
 **Destinatario:** agente esterno **senza terminale / senza git**.  
 **Questo file** = quadro + testo completo snapshot.
 
@@ -16,38 +16,41 @@
 - Prodotto: **AI Equalizer Pro**. **Ember Core** = Motore / misura / AI.
 - Lane: lab **Motore v3 offline** (`feature/motore-v3-offline`). Spike G1b su branch/worktree separato.
 
-### Fotografia congelata (A3 archived; redesign mandate open)
+### Fotografia congelata (option C decided; sweep proposal PARKED)
 ```text
 G1a CLOSE                         GO
 REV6                              authority corrente
-stationary parity su R            evidence positiva
-streaming spike                   feasibility positiva
-sweep full-vector                 FAIL
+gate-4 G1 closing set             stationary only (multitone, pseudo_noise) on R
+log_sweep                         hashed; report-only; does NOT close gate 4 in G1
+non-stat SR-parity                named G1c/G1e requirement (parked input)
 A3                                ARCHIVED: SOUND + FALSIFIED + RETIRED AS SOLUTION
-REV7                              NON consolidated
+SWEEP_METROLOGY_REDESIGN proposal PARKED — out of G1 closing set (option C)
+REV7                              NON consolidated (one future package)
 G1b official tip                  NON esiste
-0.25 dB                           intoccato
+0.25 dB / max / R                 intoccati (scope decision ≠ relaxation)
 ```
 
-**Decisione:** smettere di far passare il test sweep full-vector corrente;
-stabilire se chiede una proprietà fisicamente ben definita. Stationary ≈ sì;
-evidenza chirp dice no — concentrare lì. **Pin:** stationary gate ≠
-trajectory gate (spettro di segnale fermo vs spettro finestrato di segnale
-in moto = proprietà congiunta segnale+strumento) — per questo esiste S2;
-chirp ≠ “stazionario con asterisco.” **Next work** =
-`docs/MOTORE_V3_SWEEP_METROLOGY_REDESIGN_MANDATE.md`. A3 stamp:
-`docs/MOTORE_V3_LOG_SWEEP_A3_ARCHIVE_STAMP.md`.
+**Decisione Marco — option (C):** stop POROUS litigation on
+`docs/MOTORE_V3_SWEEP_METROLOGY_REDESIGN_PROPOSAL.md`. Proposal **PARKED**
+(not under evaluation / not under CC/RT; not deleted). Gate-4 closing set in
+G1 = stationary assets on geometric `R`. Non-stat parity deferred to G1c/G1e.
+Normative clause: `docs/MOTORE_V3_G1_GATE4_SCOPE_CLAUSE.md`. A3 stamp:
+`docs/MOTORE_V3_LOG_SWEEP_A3_ARCHIVE_STAMP.md`. LF report-only already written:
+`docs/MOTORE_V3_REV7_REPORT_ONLY_LF_CLAUSE.md` @ `71159469` — consolidates
+**with** this scope clause in **one** future REV7 (not two).
 
 ### Tip
 | Tip | Commit | Nota |
 |-----|--------|------|
-| HEAD (docs living) | *(this archive stamp)* | A3 SOUND+FALSIFIED+RETIRED; redesign mandate = next |
+| HEAD (docs living) | *(this scope clause stamp)* | option (C); sweep proposal PARKED |
+| Gate-4 scope clause | `docs/MOTORE_V3_G1_GATE4_SCOPE_CLAUSE.md` | stationary close; park non-stat |
+| Parked proposal tip | **`9b8f8305`** | SWEEP_METROLOGY_REDESIGN — PARKED, not under CC/RT |
+| LF report-only clause | **`71159469`** | joins scope clause in one future REV7 |
 | A3 archive stamp | sibling doc | dual redteam+CC; ACTIVE family closed |
 | A3 falsification | **`78da84dd`** | FAIL honest — hypothesis falsified |
 | A3 formula tip | `04e47b39` | archival prose; packaging = SOUND+RETIRED |
-| Living next-path | redesign mandate | S1 reachability + S2 non-stat observable (proposal later) |
-| Mandate open | **`b582ea1a`** | `docs/MOTORE_V3_SWEEP_METROLOGY_REDESIGN_MANDATE.md` |
-| Final R remeasure | `b3d7f71b` | stationary PASS; sweep FAIL |
+| Mandate (parked input) | **`b582ea1a`** | redesign mandate — parked with proposal |
+| Final R remeasure | `b3d7f71b` | stationary PASS; sweep FAIL (report-only path) |
 | Code G1a | **`a2186ac1`** | F2/F3/F4; G1a CLOSE GO still holds |
 | T6 / M2 | `501a4e00` / `e9916319` | digests unchanged (`513c3baf…`, 48 SUMS) |
 | Freeze CONTRACT | `6d254d0a` | **REV7 consolidate: NO** |
@@ -58,25 +61,38 @@ chirp ≠ “stazionario con asterisco.” **Next work** =
 3. Final re-measure `R`: stationary **PASS**; overall **FAIL** on `log_sweep` HF.  
 4. A/A3 stamped → formula `04e47b39` → falsification @ `78da84dd` **FAIL honest**.  
 5. Dual redteam+CC: **CONTRACT-SOUND** + **RETIRE_AS_SOLUTION**; archive stamped.  
-6. **Next** = SWEEP_METROLOGY_REDESIGN mandate (S1+S2); **no A4+**.  
-7. **≠** G1 PASS · **≠** REV7 consolidate · **≠** G1b tip · 0.25 intact.
+6. SWEEP_METROLOGY_REDESIGN mandate + proposal drafted; POROUS litigation **stopped**.  
+7. **Option (C) decided** — scope clause; proposal **PARKED**.  
+8. **≠** G1 PASS · **≠** REV7 consolidate · **≠** G1b tip · 0.25 / max / R intact.
 
 ### Stato fase
 - **G1a CLOSE: GO**; code tip `a2186ac1`.  
-- **A3: ARCHIVED** (SOUND + FALSIFIED + RETIRED); ACTIVE family closed.  
-- **REV7 consolidate: NO** — wait S1+S2, then **one** REV7 package.  
+- **A3: ARCHIVED** (SOUND + FALSIFIED + RETIRED); ACTIVE family closed. **No reopen.**  
+- **SWEEP proposal: PARKED** — out of G1 closing set; not under evaluation.  
+- **REV7 consolidate: NO** — next packaging = **one** REV7 = LF report-only + this scope clause (not two).  
 - Spike ≠ official G1b tip.  
-- Debt: F1 WAV, gate-8, G4 cross-SR LF detections (report-only).
+- Debt: F1 WAV, gate-8, G4 cross-SR LF detections (report-only), **non-stat SR-parity** (below).
+
+### Debt — parity cross-SR non-stazionaria
+Parity cross-SR non-stazionaria: non verificata a G1. Input parcheggiati:
+mandato SWEEP_METROLOGY_REDESIGN + proposta S1/S2 (30 finding chiusi, ~15
+aperti al park). Da riprendere a G1c/G1e quando esiste un osservabile. Non è
+un difetto noto del frontend: gli spettri grezzi dei due percorsi coincidono a
+report lab ~0.03 dB on signal-bearing bins (cite REV7 candidate /
+handoff B.3: 44.1→48 resampled audio agree to ~0.03 dB).
 
 ### Catena tip (recente)
 ```text
-(this)    docs: archive A3 as SOUND+FALSIFIED+RETIRED   ← HEAD
+(this)    docs(v3): G1 gate-4 scope — stationary close; park non-stat (C)  ← HEAD
+9b8f8305  docs(v3): kill source_time_selected := mirror; fix RIDGE claim; P32
+…
 b582ea1a  docs: open SWEEP_METROLOGY_REDESIGN mandate
 78da84dd  docs: A3 falsification measure (FAIL honest)
 04e47b39  docs: close A3 formula POROUS holes
 81e86dc5  docs: freeze log_sweep HF A3 admission formula
 2c69606f  docs: living next-path (log_sweep HF before G1b tip)
 b3d7f71b  docs: final REV7 R remeasure (stat PASS, sweep FAIL)
+71159469  docs(v3): REV7 report-only LF packaging
 …
 6d254d0a  freeze REV6
 ```
@@ -84,7 +100,7 @@ b3d7f71b  docs: final REV7 R remeasure (stat PASS, sweep FAIL)
 ### Working tree (this branch)
 | Path | Stato |
 |------|--------|
-| Motore docs | living @ A3 archived + redesign mandate open |
+| Motore docs | living @ option (C) scope clause; sweep proposal PARKED |
 | `ml_v3/frontend/` + spike test | untracked lab spike ≠ tip |
 | agents / .cursor | untracked |
 
@@ -92,19 +108,26 @@ b3d7f71b  docs: final REV7 R remeasure (stat PASS, sweep FAIL)
 | Voce | Stato |
 |------|--------|
 | G1a CLOSE | **GO** |
-| Stationary parity su `R` | evidence **positiva** |
-| Sweep full-vector | **FAIL** |
+| Option (C) / gate-4 scope | **DECIDED** — `MOTORE_V3_G1_GATE4_SCOPE_CLAUSE.md` |
+| Stationary closing set on `R` | next: docs verify → one stationary closing measure |
+| Sweep proposal | **PARKED** (not under evaluation; no more redteam now) |
 | A3 | **ARCHIVED** SOUND+FALSIFIED+RETIRED (ACTIVE family closed) |
-| SWEEP_METROLOGY_REDESIGN | **mandate OPEN** — **next work** (no formula/measure yet) |
 | REV7 consolidate / G1 PASS / G1b tip | **NO** |
 
 ### Sequenza restante
-1. Untainted **proposal** under redesign mandate (S1+S2 + off-ridge) — docs only.  
-2. After S1+S2: redteam → CC → **one** fresh measure → Guardian GO → **one** REV7 package → rehash → official G1b tip.  
-3. Spike ≠ tip. Mai: 0.25→media/p95; ship/Source; training; claim G1 PASS; riaprire A3/A4.
+1. **Docs verify** of scope clause (`docs/MOTORE_V3_G1_GATE4_SCOPE_CLAUSE.md`).  
+2. **One** stationary closing measure (`multitone`, `pseudo_noise` on `R`).  
+3. **One** REV7 packaging = LF report-only (`71159469`) **+** this scope clause  
+   (not two REV7s) → **second GO** → spike→G1b tip.  
+4. Non-stat / sweep proposal remains **PARKED** until G1c/G1e observable.  
+5. **No more redteam on sweep proposal now.** Spike ≠ tip. Mai: 0.25→media/p95;
+   ship/Source; training; claim G1 PASS; riaprire A3/A4; amend CONTRACT freeze.
 
 ### Vietato
-G1 PASS; REV7 consolidate prima di S1+S2 + secondo Guardian GO; tip G1b ufficiale; riaprire ACTIVE A3/A4; trattare FAIL A3 come PASS; formula/measure/lock fuori mandato redesign; ship Ableton; riaprire digests G1a.
+G1 PASS; REV7 consolidate prima di docs-verify + stationary measure + secondo
+Guardian GO; tip G1b ufficiale; riaprire ACTIVE A3/A4; riprendere POROUS
+litigation / redteam sulla sweep proposal ora; measure non-stat sotto option C;
+toccare 0.25 / max / R / lock / SHA256SUMS; ship Ableton; riaprire digests G1a.
 
 ---
 

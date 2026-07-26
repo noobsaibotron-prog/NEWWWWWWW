@@ -1,11 +1,15 @@
 # Motore v3 — Proposal: SWEEP METROLOGY REDESIGN (S1 + S2)
 
+**PARKED — out of G1 closing set (option C)**  
+Not deleted. Not under CC/RT. No measure. Body unchanged; litigation stopped.
+See `docs/MOTORE_V3_G1_GATE4_SCOPE_CLAUSE.md`. Tip at park ~`9b8f8305`.
+
 **Suggested commit title:**  
 `docs(v3): kill source_time_selected := mirror; fix RIDGE claim; P32`
 
 | Field | Value |
 |-------|--------|
-| **Status** | **PROPOSAL DRAFT** — document-only; D1 **LOCKED**; Prior-4 (`49c9f7eb`) **claimed closed — not reopened**; residual POROUS re-CC `1577733c` CRITICAL + delta RT `68a39a49` HIGH pins (`source_time_selected` **check** `== t★_nearest` never `:=`; RIDGE check-only vs independent publish / FORBIDDEN assign-then-check; `EQ_PUBLISH` CLOSE used≡publish / REPORT publish-vs-law; CONTRACT §13.1 **absolute** nearest then useful ⊆; tie→FAIL∨`min(frame_index)`; sole PCM layouts — delete “not pinned”); P28/P33–P36 + P37–P43 **OPEN/PINNED** (no self-CLOSED); **not** self-SOUND; **MEASURE_AUTHORIZED NO** |
+| **Status** | **PARKED — out of G1 closing set (option C)** — document-only; not under evaluation / CC / RT; D1 **LOCKED**; Prior-4 (`49c9f7eb`) **claimed closed — not reopened**; residual POROUS pins frozen at park (re-CC `1577733c` CRITICAL + delta RT `68a39a49` HIGH); P28/P33–P36 + P37–P43 **OPEN/PINNED at park** (no self-CLOSED); **not** self-SOUND; **MEASURE_AUTHORIZED NO** |
 | **≠** | G1 PASS · ACCEPT · measure · REV7 consolidate · G1b tip · CONTRACT/lock/T6 edit · A3 reopen · A4 ACTIVE · silent §13.2.4 / gate-4 equivalence · self-SOUND · Dual-SOUND |
 | **Date** | 2026-07-26 |
 | **Authority** | Marco authorize docs-only residual POROUS (re-CC `1577733c` CRITICAL + delta RT `68a39a49` HIGH) on tip ~`81f10dea`; MEASURE NO; no CONTRACT/lock/Source |
