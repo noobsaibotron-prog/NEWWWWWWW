@@ -1,18 +1,18 @@
 # Motore v3 — Proposal: SWEEP METROLOGY REDESIGN (S1 + S2)
 
 **Suggested commit title:**  
-`docs(v3): kill RIDGE_LAW tautology; RIFF-only wav_channels; COMPLETE law`
+`docs(v3): pin REPORT TSTAR nearest + match_ok in COMPLETE`
 
 | Field | Value |
 |-------|--------|
-| **Status** | **PROPOSAL DRAFT** — document-only; D1 **LOCKED**; residual POROUS re-CC `1e6f969e` NO-GO CRITICAL + delta RT `f0a5fe98` HIGH pins (`RIDGE_LAW_OK`/`TSTAR_LAW_OK` on **used/published** triples; `wav_channels`:=RIFF-only + decoded≡RIFF else FAIL; `CHK_REPORT_PUBLISH_COMPLETE`⇒ridge law + \|REPORT_SET\|·\|GATE_SR\|; D2/D11=components only / sole close `D3⇔TRANSPORT`); P28/P33–P36 **OPEN/PINNED** (no self-CLOSED); **not** self-SOUND (needs fresh re-CC+RT); **MEASURE_AUTHORIZED NO** |
+| **Status** | **PROPOSAL DRAFT** — document-only; D1 **LOCKED**; Prior-4 (`49c9f7eb`) RIDGE tautology / RIFF wav / D2 short / COMPLETE presence **claimed closed — not reopened**; residual POROUS delta RT `bd16cc8f` HIGH + re-CC `98755492` CRITICAL/HIGH pins (`COMPLETE`⇒`source_time_selected=t★_nearest` ∧ named `TSTAR_LAW_OK`/`RIDGE_LAW_OK` on REPORT×path; `COMPLETE`⇒`match_ok∧mid_valid`; \|REPORT_SET\|≥3 floor `{20,45,20000}`; key bijection; §6.1 anti-tautology HARD; `EQ_PUBLISH` REPORT without ATRL-used ambiguity; `decoded_pcm_arity` layout); P28/P33–P36 + P37–P40 **OPEN/PINNED** (no self-CLOSED); **not** self-SOUND (needs fresh re-CC+RT); **MEASURE_AUTHORIZED NO** |
 | **≠** | G1 PASS · ACCEPT · measure · REV7 consolidate · G1b tip · CONTRACT/lock/T6 edit · A3 reopen · A4 ACTIVE · silent §13.2.4 / gate-4 equivalence · self-SOUND · Dual-SOUND |
 | **Date** | 2026-07-26 |
-| **Authority** | Marco authorize docs-only residual false-PASS (re-CC NO-GO CRITICAL) on tip ~`73d5750a`; merge delta RT `f0a5fe98` HIGH; MEASURE NO; no CONTRACT/lock/Source |
+| **Authority** | Marco authorize docs-only residual POROUS (delta RT `bd16cc8f` HIGH) on tip ~`49c9f7eb`; merge re-CC `98755492` CRITICAL/HIGH; MEASURE NO; no CONTRACT/lock/Source |
 | **Mandate** | `docs/MOTORE_V3_SWEEP_METROLOGY_REDESIGN_MANDATE.md` (incl. stationary≠trajectory pin) |
 | **A3 status (status only)** | **RETIRED AS SOLUTION** — `docs/MOTORE_V3_LOG_SWEEP_A3_ARCHIVE_STAMP.md` |
 | **Freeze structure (read-only)** | `docs/MOTORE_V3_G1_CONTRACT.md` REV6 @ `6d254d0a`; lock / `fixture_spec` **structure** as frozen quantities |
-| **Prior tip** | `73d5750a` (bound `wav_channels`+`COMPLETE`; residual POROUS — RIDGE_LAW tautology-by-:=; dual-def decoded PCM; COMPLETE presence-only; D2/D11 short-package alias) |
+| **Prior tip** | `49c9f7eb` (kill RIDGE tautology; RIFF-only wav_channels; COMPLETE law; residual POROUS — REPORT TSTAR/match_ok soft; §6.1 :=-mirror; COMPLETE key bijection; stale ATRL+package; decoded layout unbound) |
 
 ---
 
@@ -111,7 +111,7 @@ Group delay is already folded into `source_time`. Cross-SR alignment remains on
 
 | ID | Decision | Status in this doc |
 |----|----------|--------------------|
-| D1 | S1 = **guard regions** on checkpoint closing domain, from aperture geometry only | **LOCKED** — §4.2 geometry (`T_LEAD`/`T_TRAIL`, `T_MEM=0`, REPORT/CLOSE); S1 locked ≠ package self-SOUND; **MEASURE** still **NO** until dual non-POROUS stamps |
+| D1 | S1 = **guard regions** on checkpoint closing domain, from aperture geometry only | **LOCKED** — §4.2 geometry (`T_LEAD`/`T_TRAIL`, `T_MEM=0`, REPORT/CLOSE); S1 locked ≠ components self-SOUND; **MEASURE** still **NO** until dual non-POROUS stamps |
 | D2 | S2 **menu components** = ATRL + CONTRACT companions + artifact veto (+ side-gate hardness) — **not** a close predicate | **LOCKED (menu freeze)** — alts **S2-ALT\*** archival only; not “A3”; sole close = **D3** |
 | D3 | **⇔** `SWEEP_TRANSPORT_CLOSE` (§6.3 full conjunct — **sole** close predicate; short ATRL∧COMPANIONS∧VETO∧SIDE AND **REJECT**); report alone **does not** close | **LOCKED (fail-closed)** |
 | D4 | Immutable: max aggregator; 0.25 dB; stationary `R`; report-only ∉`R`; no post-hoc mask; no threshold shopping | **LOCKED by mandate** |
@@ -120,7 +120,7 @@ Group delay is already folded into `source_time`. Cross-SR alignment remains on
 | D7 | REV7 = **one** future package after S1+S2 CC — not consolidated here | **LOCKED** |
 | D8 | \|CHK_CLOSE\| floor ≥7; empty set → FAIL; `T_MEM=0` locked | **LOCKED (fail-closed)** |
 | D9 | `mid_valid=false` / unmatched / empty activity-union on required domains → FAIL | **LOCKED (fail-closed)** |
-| D10 | `CHK_REPORT_PUBLISH_COMPLETE ⇔` §4.5 (cardinality + ridge law on REPORT + non-null); TRANSPORT≠PASS if incomplete | **LOCKED (fail-closed)** |
+| D10 | `CHK_REPORT_PUBLISH_COMPLETE ⇔` §4.5 (\|REPORT_SET\|≥3 floor `{20,45,20000}` + bijection keys + `match_ok∧mid_valid` + named `TSTAR_LAW_OK`/`RIDGE_LAW_OK` on REPORT); TRANSPORT≠PASS if incomplete | **LOCKED (fail-closed)** |
 | D11 | **Menu freeze (components only):** ATRL + §5.3 companions + §6.2 veto (+ §5.3 side-gate). Open menu → no SOUND / no measure. **≠** close — sole close = **D3⇔TRANSPORT** | **LOCKED** |
 
 ---
@@ -214,7 +214,7 @@ law + frozen checkpoint list. It is not a post-hoc mask of a measured band.
 | S1-R5 | Widen/narrow guards after seeing a Δ table | **REJECT** — threshold/domain shopping |
 | S1-R6 | Treat lead/trail REPORT checkpoints as if they never existed | **REJECT** — must remain observable in report |
 | S1-R7 | Treat missing CHK_REPORT fields as soft / ignore for TRANSPORT PASS | **REJECT** — see §4.5 |
-| S1-R9 | COMPLETE = non-null only / omit ridge law on REPORT / vacuous emission set | **REJECT** — §4.5 law + \|REPORT_SET\|·\|GATE_SR\| |
+| S1-R9 | COMPLETE = non-null only / omit ridge law / soft `¬match_ok` / vacuous or under-floor REPORT set | **REJECT** — §4.5: \|REPORT_SET\|≥3 `{20,45,20000}` + bijection + `match_ok∧mid_valid` + named TSTAR/RIDGE on REPORT |
 | S1-R8 | Silent `T_MEM>0` widening under CC without fresh untainted amend | **REJECT** — `T_MEM=0` locked |
 
 ### 4.5 CHK_REPORT publish schema (fail-closed)
@@ -227,62 +227,102 @@ least:
 | `checkpoint_hz` | frozen grid value |
 | `role` | `REPORT` |
 | `t_cross` | analytic crossing time |
-| `source_time_selected` | nearest useful-segment match, or explicit missing |
-| `match_distance_s` | \|selected − t_cross\|; or missing marker |
-| `match_ok` | boolean; `false` if outside hop radius |
-| `b_star`, `f_star`, `t_star` | **used/published** per-path ridge operands (independent of assignment-by-law): must satisfy §5.3 `TSTAR_LAW_OK` ∧ `RIDGE_LAW_OK` on REPORT — **not** presence-only; **not** `f_star:=f_chk` |
-| `L` = `mid_psd_db[b_star]` | when `match_ok` and mid valid; else missing marker |
-| `mid_valid` | boolean from frozen instrument |
+| `source_time_selected` | **:=** `t★_nearest(f, path)` (nearest useful-segment frame within hop); unmatched → **FAIL** (no soft missing for COMPLETE) |
+| `match_distance_s` | \|source_time_selected − t_cross\| |
+| `match_ok` | **must be `true`** for COMPLETE; ⇔ \|t★ − t_cross\| ≤ H/fs_c; `false` → ¬COMPLETE → ¬TRANSPORT |
+| `b_star`, `f_star`, `t_star` | **used/published** per-path ridge operands (**independent** of assignment-by-law): must satisfy §5.3 `TSTAR_LAW_OK` ∧ `RIDGE_LAW_OK` on REPORT×path — **not** presence-only; **not** `f_star:=f_chk`; **FORBIDDEN** `f_star:=f(t_star)` identity-then-check |
+| `L` = `mid_psd_db[b_star]` | **required** under COMPLETE (`match_ok ∧ mid_valid`); else ¬COMPLETE |
+| `mid_valid` | **must be `true`** for COMPLETE; `false` → ¬COMPLETE → ¬TRANSPORT |
 
 **Fail-closed:** any missing / null required field on any CHK_REPORT cell →
 **FAIL**. TRANSPORT (sweep branch) **≠ PASS** if any CHK_REPORT publication is
 absent, incomplete, or law-violating — report presence **and** ridge-law
 compliance are **hard preconditions**, not soft diagnostics. CHK_REPORT still
 does **not** enter the ATRL max; it blocks PASS when absent or unlawful.
+`¬match_ok` / `¬mid_valid` / unmatched → ¬`CHK_REPORT_PUBLISH_COMPLETE` →
+¬`SWEEP_TRANSPORT_CLOSE`.
 
 **Normative publish-complete predicate (TRANSPORT conjunct):**
 
 ```text
 REPORT_SET  :=  { f ∈ SWEEP_CHECKPOINT_HZ : CHK_REPORT(f) }   # §4.2 predicate
+# Under §4.3 geometry: REPORT_SET ⊇ {20, 45, 20000}  (lead/trail guards)
 GATE_SR     :=  {44100, 48000, 96000}
 
 CHK_REPORT_REQUIRED_FIELDS  :=
     { checkpoint_hz, role, t_cross, source_time_selected, match_distance_s,
       match_ok, b_star, f_star, t_star, L, mid_valid }
 
-# Used/published REPORT operands (not := by law — checked against law):
-#   t_star, f_star, b_star, L  are published values; source_time_selected is
-#   the selected nearest useful frame (or unmatched marker).
+# Used/published REPORT operands (ANTI-TAUTOLOGY — not := by law):
+#   t_star, f_star, b_star, L  are independent published values.
+#   FORBIDDEN: define f_star:=f(t_star) then check f_star=f(t_star).
+#   Law checks published values against analytic f(·) / Band(·) / nearest.
+
+# Key set (bijection — duplicate or missing key → FAIL):
+REPORT_KEYS  :=  published (f, path) keys of CHK_REPORT cells
+# REQUIRE: REPORT_KEYS  bijects  REPORT_SET × GATE_SR
+#   |REPORT_KEYS| = |REPORT_SET| · |GATE_SR|
+#   no duplicate (f, path); no extra key outside REPORT_SET × GATE_SR
+
+t★_nearest(f, path)  :=
+    source_time of nearest useful-segment frame to t_cross(f) on that path
+    within hop H/fs_c; else unmatched → FAIL
+
+# Named §5.3 laws on REPORT×path (same operands as close path):
+TSTAR_LAW_OK(f, path)  ⇔
+    t_star(f, path) = source_time_selected(f, path)
+    ∧  source_time_selected(f, path) = t★_nearest(f, path)
+# unmatched / outside hop → ¬TSTAR_LAW_OK → FAIL
+
+RIDGE_LAW_OK(f, path)  ⇔
+    TSTAR_LAW_OK(f, path)
+    ∧  f_star(f, path) = f(t_star(f, path))     # check published vs analytic
+    ∧  b_star(f, path) = Band(f_star(f, path))
+# f_star:=f_chk or f_star:=f(t_star) definitional tautology → ¬RIDGE_LAW_OK
 
 CHK_REPORT_PUBLISH_COMPLETE  ⇔
-    (|published CHK_REPORT cells| = |REPORT_SET| · |GATE_SR|)
+    (|REPORT_SET| ≥ 3)                            # floor; ⊇ {20,45,20000} under §4.3
+    ∧  ({20, 45, 20000} ⊆ REPORT_SET)             # explicit guard checkpoints
+    ∧  (REPORT_KEYS  bijects  REPORT_SET × GATE_SR)
+    ∧  (|REPORT_KEYS| = |REPORT_SET| · |GATE_SR|)
     ∧  ∀ f ∈ REPORT_SET, ∀ path ∈ GATE_SR :
         ∀ field ∈ CHK_REPORT_REQUIRED_FIELDS :
             field is published ∧ field ≠ null
-            # schema "missing marker" (e.g. unmatched source_time / L when
-            # ¬match_ok) is a non-null published token — key absence / JSON
-            # null → FAIL
+            # key absence / JSON null → FAIL (no soft missing marker under COMPLETE)
         ∧  role = REPORT
-        ∧  t_star = source_time_selected          # TSTAR on REPORT
-        ∧  f_star = f(t_star)                     # analytic; ≠ f_chk binding
-        ∧  b_star = Band(f_star)
-        ∧  ( match_ok  ⇒  L = mid_psd_db[b_star] )
-# empty / partial emission → ¬CHK_REPORT_PUBLISH_COMPLETE → FAIL
+        ∧  match_ok = true
+        ∧  mid_valid = true
+        ∧  match_distance_s = |source_time_selected − t_cross|
+        ∧  |t_star − t_cross| ≤ H/fs_c            # hop radius (⇔ match_ok)
+        ∧  TSTAR_LAW_OK(f, path)                  # named; same §5.3 operands
+        ∧  RIDGE_LAW_OK(f, path)                  # named; ⇒ TSTAR; check-only
+        ∧  L = mid_psd_db[b_star]
+# ¬match_ok → ¬CHK_REPORT_PUBLISH_COMPLETE → ¬TRANSPORT
+# empty / partial / duplicate-key emission → ¬COMPLETE → FAIL
 # binding f_star:=f_chk on REPORT → FAIL whenever f(t_star)≠f_chk
-# ¬CHK_REPORT_PUBLISH_COMPLETE → FAIL
 # SWEEP_TRANSPORT_CLOSE ⇒ CHK_REPORT_PUBLISH_COMPLETE  (§6.3)
 ```
 
-**Close operands ≡ publish (fail-closed):**
+**Publish equality (fail-closed — no ATRL-used ambiguity on REPORT):**
 
 ```text
+# CLOSE cells: used ATRL/TRANSPORT operands ≡ published fields.
+# REPORT cells: REPORT is not ATRL-closing; equality is publish-vs-publish /
+# publish-vs-law only — do NOT require "ATRL-used" operands on REPORT.
+
 CLOSE_OPERANDS_EQ_PUBLISH  ⇔
-    ∀ cell/path ∈ ({CHK_CLOSE} ∪ REPORT_SET) × GATE_SR :
+    ∀ cell/path ∈ {CHK_CLOSE} × GATE_SR :
         used close/ATRL/TRANSPORT operands
         (t★_used, f★_used, b★_used, L, …)
         == published fields (t_star, f_star, b_star, L, …)
         under the same names/law as this schema
-# REPORT×path included (not close-eligible only); mismatch → FAIL
+    ∧  ∀ f ∈ REPORT_SET, ∀ path ∈ GATE_SR :
+        published (t_star, f_star, b_star, L) satisfy
+        TSTAR_LAW_OK(f, path) ∧ RIDGE_LAW_OK(f, path)
+        ∧ L = mid_psd_db[b_star]
+        # no "ATRL-used" operand required on REPORT (REPORT ∉ ATRL max)
+# mismatch on CLOSE used≠publish → FAIL
+# REPORT law/publish violation → FAIL via COMPLETE / this conjunct
 ```
 
 ### 4.6 NOTE — LF-per-checkpoint aperture (deferred)
@@ -308,7 +348,7 @@ property derived from:
 **without** asking equality of the full 120-band windowed spectrum of a moving
 tone (ill-posed joint property; mandate pin).
 
-### 5.2 Direction family (mandate) — closed on D11 package
+### 5.2 Direction family (mandate) — closed on D11 components
 
 Ridge / trajectory formulations are the **allowed direction family**. Under
 **D11**, that family is **closed** on the locked **menu components**
@@ -467,6 +507,10 @@ wav_channels(sr)  :=
     NumChannels  uint16 at `fmt ` payload offset +2 of log_sweep_{sr}.wav
     # PCM IEEE-float tag 3 as rendered; no alternate definition.
 decoded_pcm_arity(sr)  :=  channel count of decoded PCM array for that WAV
+# Layout pin (interleaved PCM IEEE-float as rendered):
+#   shape (N,)        ⇔  ch = 1
+#   shape (N, C)      ⇔  ch = C   (frame-major interleaved; C = channels)
+#   shape (C, N) / planar non-interleaved  → FAIL (layout not pinned here)
 # Cross-check (not a second definition of wav_channels):
 #   decoded_pcm_arity(sr) == wav_channels(sr)   else FAIL
 # FORBIDDEN: wav_channels := decoded PCM arity / ndim / shape[1]  ("equivalently")
@@ -681,7 +725,7 @@ mask; off-ridge policy (§6); no CONTRACT edit in this phase.
 | S2-R9 | Encode artifact-veto / companions from measured FAIL dB tables | **REJECT** — contamination |
 | S2-R10 | Companions **or** side gate (OR-shopping); “when prominence required” escape | **REJECT** — AND only; CONTRACT prominence always |
 | S2-R11 | Custom median off-ridge prominence instead of `mid_prominence_db[b★]` | **REJECT** |
-| S2-R12 | Leave S2-ALT\* menu open / close on an alt without fresh amend | **REJECT** — D11 freeze ATRL+package |
+| S2-R12 | Leave S2-ALT\* menu open / close on an alt without fresh amend | **REJECT** — D11 freeze **components only**; sole close `D3⇔TRANSPORT` |
 | S2-R13 | Label activity-admitted off-ridge \|Δ\|>0.25 as diagnostic-only (veto escape) | **REJECT** — see §6.2 |
 | S2-R14 | Silent §13.2.4 / gate-4 equivalence of this ATRL package | **REJECT** — not gate-4 equivalent until REV7 |
 | S2-R15 | Treat empty `B_OFF_ACTIVE` / missing `ACTIVE(b★∧b±)` as soft PASS | **REJECT** — FAIL; see §5.3 |
@@ -698,8 +742,10 @@ mask; off-ridge policy (§6); no CONTRACT edit in this phase.
 | S2-R26 | Define `f★:=f(t★)` then check `f★=f(t★)` (definitional tautology) | **REJECT** — law quantifies used/published operands vs `f(t★_used)` / `Band(f★_used)` |
 | S2-R27 | Bind `t★_used:=t_cross(f_chk)` (ignore nearest useful `source_time`) | **REJECT** — `¬TSTAR_LAW_OK` |
 | S2-R28 | `wav_channels`:=decoded PCM arity / “equivalently decode” second authority | **REJECT** — RIFF/`fmt ` NumChannels sole; decode≠RIFF → FAIL |
-| S2-R29 | `CHK_REPORT_PUBLISH_COMPLETE` = non-null only / vacuous emitted-row set | **REJECT** — ridge law on REPORT + \|published\|=|REPORT_SET|·|GATE_SR| |
+| S2-R29 | `CHK_REPORT_PUBLISH_COMPLETE` = non-null only / soft `¬match_ok` / vacuous or under-floor REPORT / duplicate keys | **REJECT** — §4.5: \|REPORT_SET\|≥3 `{20,45,20000}` + bijection + `match_ok∧mid_valid` + named TSTAR/RIDGE |
 | S2-R30 | Claim D2/D11 short 4-AND “package PASS” as close | **REJECT** — D2/D11=components only; sole close `D3⇔TRANSPORT` |
+| S2-R31 | §6.1 / REPORT define `f★:=f(t★)` then check identity (definitional tautology) | **REJECT** — publish independent; check-only `RIDGE_LAW_OK` |
+| S2-R32 | Require ATRL-used operands on REPORT for `EQ_PUBLISH` | **REJECT** — REPORT∉ATRL max; publish-vs-law only (§4.5) |
 
 ---
 
@@ -711,13 +757,21 @@ Off-ridge energy / artifacts **cannot vanish**.
 
 For each close-eligible checkpoint frame, publish at least:
 
-- **per path** \(t^\star_{\mathrm{path}}\), \(f^\star_{\mathrm{path}}=f(t^\star_{\mathrm{path}})\),
-  \(b^\star_{\mathrm{path}}=\mathrm{Band}(f^\star_{\mathrm{path}})\)
-  (same law as §5.3; \(f^\star:=f_{\mathrm{chk}}\) **FORBIDDEN**);
+- **per path** independent used/published operands
+  \((t^\star_{\mathrm{path}},\, f^\star_{\mathrm{path}},\, b^\star_{\mathrm{path}})\)
+  — **ANTI-TAUTOLOGY HARD:** publish as independent fields; then
+  **check-only** §5.3 `TSTAR_LAW_OK` ∧ `RIDGE_LAW_OK`
+  (\(t^\star=t^\star_{\mathrm{nearest}}\),
+  \(f^\star=f(t^\star)\),
+  \(b^\star=\mathrm{Band}(f^\star)\)).
+  **FORBIDDEN:** define \(f^\star:=f(t^\star)\) then check the identity;
+  **FORBIDDEN:** \(f^\star:=f_{\mathrm{chk}}\) / \(t^\star:=t_{\mathrm{cross}}\);
 - common \(b^\star\) when `RIDGE_MATCH` (else FAIL already);
 - `mid_psd_db[b^\star]` per SR path + `mid_valid`;
 - ATRL companions / side-gate fields (§5.3);
-- publish fields **must equal** close operands (§4.5 pin; mismatch→FAIL);
+- CLOSE publish fields **must equal** used close/ATRL operands (§4.5
+  `CLOSE_OPERANDS_EQ_PUBLISH`; mismatch→FAIL). REPORT cells use publish-vs-law
+  only — **no** ATRL-used operand required on REPORT;
 - **off-ridge report:** max `|Δ|` (and argmax band) over activity-admitted
   \(b\in B_{\mathrm{OFF}}\) — publish obligatory; **does not** escape
   `OFF_RIDGE_DELTA_FIRE` when `|Δ| > 0.25` on any admitted cell (§6.2).
@@ -804,14 +858,15 @@ SWEEP_TRANSPORT_CLOSE  ⇔
     ∧  VETO_OK                         # §6.2 ∀c∈D ¬FIRE(c) ⇔ ¬FIRE_GLOBAL
     ∧  SIDE_GATE_OK                    # §5.3 ∀c∈D; FIRE_GLOBAL=false
     ∧  MONO_CROSSCHECK                 # ⇒ SIDE_PAIR_OK already; RIFF+decode≡; explicit here
-    ∧  CHK_REPORT_PUBLISH_COMPLETE     # ⇔ §4.5 cardinality + ridge law on REPORT
-    ∧  CLOSE_OPERANDS_EQ_PUBLISH       # used t★/f★/b★/L ≡ published (CLOSE∪REPORT)×GATE_SR
+    ∧  CHK_REPORT_PUBLISH_COMPLETE     # ⇔ §4.5: |REPORT_SET|≥3 + bijection + match_ok + named TSTAR/RIDGE
+    ∧  CLOSE_OPERANDS_EQ_PUBLISH       # CLOSE: used≡publish; REPORT: publish-vs-law (no ATRL-used)
     ∧  ∀c∈D : REQUIRED_ACTIVE(c)       # RIDGE_LAW_OK∧RIDGE_MATCH∧ACTIVE(b★∧b±)
     ∧  ∀c∈D : B_OFF_ACTIVE(c) ≠ ∅      # B_OFF:=UNIVERSE_B\{b★}; empty → FAIL
     ∧  no mid_valid=false / unmatched / empty-union-on-required FAIL (§5.3)
 # D := {CHK_CLOSE} × PAIRS; omit either pair → FAIL
 # D3 ⇔ SWEEP_TRANSPORT_CLOSE (this full conjunct — SOLE close predicate).
 # D2/D11 name menu components only — short ATRL∧COMP∧VETO∧SIDE “package PASS” REJECT.
+# COMPLETE ⇒ match_ok∧mid_valid∧TSTAR_LAW_OK∧RIDGE_LAW_OK on every REPORT×path.
 # RIDGE_LAW_OK / TSTAR_LAW_OK + RIDGE_MATCH + MONO_CROSSCHECK + COMPLETE
 # are algebra on used/published operands, not procedure-only / :=-tautology.
 # SWEEP_TRANSPORT_CLOSE ⇒ RIDGE_LAW_OK; ⇒ TSTAR_LAW_OK; ⇒ MONO_CROSSCHECK;
@@ -847,16 +902,16 @@ D2/D11 “package PASS” under that short AND, is **REJECT**.
 | `MONO_CROSSCHECK` | manifest==fixture_spec…channels ∧ (∀sr `wav_channels==manifest`) ∧ (∀sr decode≡RIFF) ∧ (`MONO_ASSET`⇒∀c SIDE_BOTH_FALSE ∧ `§4.1_MONO_FIELDS`); in `SIDE_PAIR_OK` **and** TRANSPORT |
 | `§4.1_MONO_FIELDS` | `MONO_ASSET`⇒∀path∀b `side_valid=false` ∧ closing mid operands ∈ `{mid_psd_db, mid_shape_db, mid_prominence_db}` only (`side_*` excluded) |
 | `SIDE_PAIR_OK` | **⇔** `MONO_CROSSCHECK ∧ ((BOTH_FALSE∧MONO_ASSET) ∨ (BOTH_TRUE∧SIDE_DELTA_OK))`; XOR / non-mono both-false → false |
-| `CHK_REPORT_PUBLISH_COMPLETE` | **⇔** \|published\|=|REPORT_SET|·|GATE_SR| ∧ ∀REPORT×path: non-null ∧ `t_star=source_time_selected` ∧ `f_star=f(t_star)` ∧ `b_star=Band(f_star)` ∧ (`match_ok`⇒`L=mid_psd_db[b_star]`); TRANSPORT conjunct |
+| `CHK_REPORT_PUBLISH_COMPLETE` | **⇔** \|REPORT_SET\|≥3 ∧ `{20,45,20000}⊆REPORT_SET` ∧ keys biject REPORT_SET×GATE_SR ∧ ∀REPORT×path: `match_ok∧mid_valid` ∧ named `TSTAR_LAW_OK`∧`RIDGE_LAW_OK` ∧ `L=mid_psd_db[b_star]`; ¬match_ok→¬COMPLETE→¬TRANSPORT |
 | `UNIVERSE_B` / `B_OFF` | `UNIVERSE_B:={0..119}`; `B_OFF:=UNIVERSE_B\{b★}`; `B_GEOM` ≮ `B_OFF` |
 | \|CHK_CLOSE\| | **≥7**; empty → FAIL |
 | D2 / D11 | menu **components only**; **≠** close |
 | D3 / Off-ridge close | **sole close: D3 ⇔** `SWEEP_TRANSPORT_CLOSE` (§6.3 full); short 4-AND / D2-D11 “package PASS” **REJECT**; report≠close |
 | ATRL_OK / COMPANIONS_OK | sole normative **⇔** ∀c form; max/δ corollary only; `ATRL_OK`⇒`RIDGE_LAW_OK`⇒`TSTAR_LAW_OK` |
-| Close publish | used operands **≡** published `t_star`/`f_star`/`b_star`/`L` on (CLOSE∪REPORT)×GATE_SR; mismatch→FAIL |
+| Close publish | CLOSE: used operands **≡** published; REPORT: publish-vs-law only (no ATRL-used ambiguity); mismatch→FAIL |
 | COMPANIONS_OK | **⇔** ∀c `COMPANIONS_OK(c)` (⇒ `SIDE_PAIR_OK` ∧ δ≤0.25); δ-alone **≠** COMPANIONS_OK |
 | A3 / A4 ACTIVE | **closed** — A3 retired-as-solution; no A4 |
-| Menu freeze | components **ATRL + companions + veto (+ side-gate)**; S2-ALT\* archival; close = D3 only |
+| Menu freeze | components **ATRL + companions + veto (+ side-gate)** only; S2-ALT\* archival; close = D3⇔TRANSPORT only (no “package PASS”) |
 
 ---
 
@@ -901,7 +956,7 @@ Partial consolidate (LF-only, stationary-only, S1-only, S2-only) remains
 | Off-ridge vanishing | **NO** — **sole close D3 ⇔** `SWEEP_TRANSPORT_CLOSE` (§6.3 full); short ATRL∧COMPANIONS∧VETO∧SIDE / D2-D11 “package PASS” **REJECT** |
 | §13.2.4 / gate-4 equivalence | **NO** — not gate-4 equivalent until REV7 (S2-R14) |
 | Self-SOUND / MEASURE | **NO** — not self-SOUND (fresh re-CC+RT required); **MEASURE_AUTHORIZED NO**; Dual-SOUND **NO** |
-| Next lab action | fresh re-CC+RT on D1 + used/published `RIDGE_LAW_OK`/`TSTAR_LAW_OK` + RIFF-only `wav_channels` + COMPLETE law+cardinality + sole `D3⇔TRANSPORT` + `§4.1_MONO_FIELDS` enum → only then measure auth (still NO until dual non-POROUS) |
+| Next lab action | fresh re-CC+RT on D1 + §6.1 HARD + COMPLETE TSTAR/match_ok/floor/bijection + EQ_PUBLISH REPORT pin + RIFF `wav_channels` + sole `D3⇔TRANSPORT` → only then measure auth (still NO until dual non-POROUS) |
 
 ---
 
@@ -917,12 +972,12 @@ Partial consolidate (LF-only, stationary-only, S1-only, S2-only) remains
 | P6 | RT HIGH | CHK_REPORT soft / TRANSPORT PASS without REPORT | **CLOSED** — §4.5 publish schema; missing→FAIL; TRANSPORT≠PASS if REPORT absent |
 | P7 | RT HIGH | mid_valid=false / unmatched / empty activity skipped | **CLOSED** — FAIL; required empty-union→FAIL; polarity total |
 | P8 | RT HIGH | \|CHK_CLOSE\| vacuous / under-populated; T_MEM drift | **CLOSED** — \|CHK_CLOSE\|<7 or ∅ → FAIL; `T_MEM=0` locked |
-| P9 | RT / re-CC CRITICAL | Open S2/alt menu | **CLOSED** — D11 freeze ATRL+package; S2-ALT\* archival |
+| P9 | RT / re-CC CRITICAL | Open S2/alt menu | **CLOSED** — D11 freeze **components only**; sole close `D3⇔TRANSPORT`; S2-ALT\* archival |
 | P10 | RT MED | Deep LF-per-checkpoint aperture | **NOTE only** — §4.6 deferred; not redesigned here |
 | P11 | re-CC + delta RT | Never-fire / unevaluated veto | **CLOSED** — missing operands → FIRE/FAIL; formula pinned §6.2 |
 | P12 | delta RT `8aa8027c` HIGH | Empty-union soft; missing neighbour activity; empty B_OFF_ACTIVE | **CLOSED** — `REQUIRED_ACTIVE ⇔ ACTIVE(b★)∧ACTIVE(b±)`; `B_OFF_ACTIVE=∅ → FAIL`; both enter §6.3 close |
 | P13 | re-CC residual / delta CRITICAL | COMPANIONS_OK / SIDE_GATE_OK soft/single-cell aggregator | **CLOSED** — COMPANIONS_OK ⇔ ∀c∈D SIDE_PAIR_OK∧δ≤0.25 on same `D={CHK_CLOSE}×PAIRS`; SIDE_GATE_OK ∀c / FIRE_GLOBAL≡∃; ATRL max≡∀ |
-| P14 | re-CC residual | §5.2 “another form may win at CC” open-menu echo vs D11 | **CLOSED** — §5.2 closed on ATRL+package; swap only via fresh untainted amend + CC |
+| P14 | re-CC residual | §5.2 “another form may win at CC” open-menu echo vs D11 | **CLOSED** — §5.2 closed on D11 **components only**; sole close `D3⇔TRANSPORT`; swap only via fresh untainted amend + CC |
 | P15 | delta RT `8aa8027c` HIGH | Silent §13.2.4 / gate-4 equivalence via domain shrink | **CLOSED** — S2-R14 REJECT; **not gate-4 equivalent until REV7** (no mid-flight meter expand) |
 | P16 | delta RT MED / `bd10f03c` + `765045fb` | Mono `SIDE_PAIR` both `side_valid=false` ambiguous | **CLOSED** — `MONO_ASSET ⇔ fixture_spec.categories.log_sweep.channels==1`; trivial both-false **only then**; else FAIL; mid companions still AND |
 | P17 | delta RT MED / re-CC `98e2caa1` residual | D1 PROPOSED blocked SOUND/measure; readable as ready | **CLOSED** — D1 **LOCKED** on §4.2; S1 locked ≠ package self-SOUND; MEASURE still NO until dual non-POROUS (§3, §10) |
@@ -942,9 +997,13 @@ Partial consolidate (LF-only, stationary-only, S1-only, S2-only) remains
 | P31 | delta RT `3971c3c7` MED | max/δ dual-norm vs ∀ sole form | **CLOSED** — ATRL_OK / COMPANIONS_OK sole normative = ∀; max/δ corollary only |
 | P32 | delta RT `3971c3c7` MED | close operands ≠ CHK_REPORT publish fields | **CLOSED** — `CLOSE_OPERANDS_EQ_PUBLISH` on (CLOSE∪REPORT)×GATE_SR; mismatch→FAIL |
 | P33 | re-CC `3f421a4a` / `a0960860` / delta RT `f0a5fe98` HIGH | `wav_channels` unbound / dual-def decode / manifest copy | **OPEN/PINNED** — RIFF/`fmt ` NumChannels sole; decode≡RIFF else FAIL; “equivalently decode” REJECT; pending dual stamp |
-| P34 | re-CC `3f421a4a` / `1e6f969e` / `f0a5fe98` HIGH | `CHK_REPORT_PUBLISH_COMPLETE` unbound / presence-only / vacuous emission | **OPEN/PINNED** — COMPLETE ⇔ \|REPORT_SET\|·\|GATE_SR\| + ridge law on REPORT (`f_star=f(t_star)`…); TRANSPORT conjunct; pending dual stamp |
+| P34 | re-CC `3f421a4a` / `1e6f969e` / `f0a5fe98` / `98755492` HIGH | `CHK_REPORT_PUBLISH_COMPLETE` unbound / presence-only / vacuous emission | **OPEN/PINNED** — COMPLETE ⇔ \|REPORT_SET\|≥3 + bijection + `match_ok` + named TSTAR/RIDGE (extends Prior-4 presence pin; not reopened); pending dual stamp |
 | P35 | delta RT `a0960860` / `f0a5fe98` HIGH | D3 short AND / D2-D11 short “package” alias ≠ TRANSPORT | **OPEN/PINNED** — D2/D11=components only; sole close `D3⇔SWEEP_TRANSPORT_CLOSE`; short 4-AND / package PASS REJECT; pending dual stamp |
 | P36 | re-CC `3f421a4a` / `1e6f969e` HIGH | §4.1 mono semantics prose-only / soft L substitute | **OPEN/PINNED** — `§4.1_MONO_FIELDS`: ∀b `side_valid=false` ∧ closing mid ∈ `{mid_psd_db, mid_shape_db, mid_prominence_db}` only; `side_*` excluded; pending dual stamp |
+| P37 | delta RT `bd16cc8f` / re-CC `98755492` HIGH | COMPLETE soft TSTAR / `source_time_selected` ≠ `t★_nearest` on REPORT | **OPEN/PINNED** — COMPLETE⇒`source_time_selected=t★_nearest` ∧ `t_star=source_time_selected` ∧ named `TSTAR_LAW_OK`/`RIDGE_LAW_OK` on REPORT×path; unmatched→FAIL; pending dual stamp |
+| P38 | delta RT `bd16cc8f` / re-CC `98755492` HIGH | COMPLETE allows `¬match_ok` / soft L missing | **OPEN/PINNED** — COMPLETE⇒`match_ok=true`∧`mid_valid=true`∧`L=mid_psd_db[b_star]`∧hop≤H/fs_c; ¬match_ok→¬COMPLETE→¬TRANSPORT; pending dual stamp |
+| P39 | re-CC `98755492` CRITICAL/HIGH | §6.1 :=-mirror / `f★:=f(t★)` identity tautology; EQ_PUBLISH ATRL-used on REPORT | **OPEN/PINNED** — §6.1 HARD: publish independent + check-only RIDGE/TSTAR; EQ_PUBLISH CLOSE used≡publish / REPORT publish-vs-law only; pending dual stamp |
+| P40 | re-CC `98755492` HIGH | COMPLETE vacuous / under-floor REPORT_SET; duplicate keys | **OPEN/PINNED** — `\|REPORT_SET\|≥3` ∧ `{20,45,20000}⊆REPORT_SET` ∧ keys biject REPORT_SET×GATE_SR; duplicate→FAIL; pending dual stamp |
 
 ---
 
@@ -952,11 +1011,11 @@ Partial consolidate (LF-only, stationary-only, S1-only, S2-only) remains
 
 | Lane | Ask |
 |------|-----|
-| Independent CC / guardian | **Fresh re-CC** on D1 LOCKED + used/published `RIDGE_LAW_OK`/`TSTAR_LAW_OK` + RIFF-only `wav_channels` (decode≡RIFF) + COMPLETE law+cardinality + D2/D11=components / sole `D3⇔TRANSPORT` + `§4.1_MONO_FIELDS` enum + publish≡operands on CLOSE∪REPORT; no SOUND / no measure without dual non-POROUS stamps; P28/P33–P36 remain OPEN/PINNED until then |
-| `ember-metrology-redteam` | Delta-attack `f★:=f(t★)` tautology / `t★:=t_cross` / decode-as-`wav_channels` / COMPLETE non-null-only / vacuous REPORT set / D2-D11 short package PASS / `side_*` as mid under MONO; leftover NOTES only unless new CRITICAL |
+| Independent CC / guardian | **Fresh re-CC** on D1 LOCKED + §6.1 HARD anti-tautology + COMPLETE (`\|REPORT_SET\|≥3`/`{20,45,20000}`/bijection/`match_ok`/named TSTAR·RIDGE) + EQ_PUBLISH REPORT without ATRL-used + RIFF-only `wav_channels` + decoded layout + D2/D11=components / sole `D3⇔TRANSPORT`; no SOUND / no measure without dual non-POROUS stamps; P28/P33–P40 remain OPEN/PINNED until then |
+| `ember-metrology-redteam` | Delta-attack §6.1 `f★:=f(t★)` identity / COMPLETE soft `¬match_ok` / under-floor REPORT / duplicate keys / ATRL-used on REPORT EQ_PUBLISH / decode layout; leftover NOTES only unless new CRITICAL |
 | `ember-phase-builder` | Idle on code until GO post-CC |
 | `ember-parity-lab` | No measure until authorized |
 
-**§A (one-line):** D1 LOCKED §4.2; used/published `RIDGE_LAW_OK`⇒`TSTAR_LAW_OK` in ATRL∧REQUIRED_ACTIVE∧TRANSPORT∧COMPLETE; `wav_channels`:=RIFF-only (decode≡else FAIL); COMPLETE⇔|REPORT_SET|·|GATE_SR|+ridge law; D2/D11=components; sole close `D3⇔TRANSPORT`; `§4.1_MONO_FIELDS` mid enum; P28/P33–P36 OPEN/PINNED; ¬self-SOUND; fresh re-CC+RT; **MEASURE_AUTHORIZED NO**.
+**§A (one-line):** D1 LOCKED §4.2; §6.1 HARD anti-tautology (publish independent; check-only RIDGE/TSTAR); COMPLETE⇔\|REPORT_SET\|≥3∧{20,45,20000}⊆∧bijection∧match_ok∧named TSTAR·RIDGE; EQ_PUBLISH CLOSE used≡publish / REPORT publish-vs-law; D2/D11=components; sole close `D3⇔TRANSPORT`; P28/P33–P40 OPEN/PINNED; ¬self-SOUND; fresh re-CC+RT; **MEASURE_AUTHORIZED NO**.
 
 **END PROPOSAL — not self-SOUND.**
