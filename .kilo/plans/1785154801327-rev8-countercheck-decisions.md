@@ -62,11 +62,11 @@ Branch: `feature/motore-v3-g1c-reseal` (non accessibile da questo ambiente)
 ## Piano operativo con checkpoint di verifica
 
 ### Fase 0 — Verifica pre-autorizzazione (solo lettura)
-1. [ ] Verificare `ml_v3/benchmark/event_matching.py` — confermare `EventMatchingError` o `FAIL` sopra `MAX_SEARCH_NODES=200000`
-2. [ ] Verificare `ml_v3/contracts/schemas.py` righe 308, 396 — confermare `exclusiveMinimum: 0` su `width_octaves`
-3. [ ] Verificare `ml_v3/contracts/validate.py` righe 350-354 — confermare assenza di controllo duplicati GT
-4. [ ] Verificare `ml_v3/contracts/profiles.py` righe 65, 81 — confermare `problem_type_id` vs indice superficie densa
-5. [ ] Verificare `ml_v3/tests/test_g1c_rev8_primitives_v2.py` — confermare 431 righe, copertura N64/dedup/ID/dispatcher isolation
+1. ✅ `ml_v3/benchmark/event_matching.py` — `MAX_SEARCH_NODES = 200_000` (riga 71), `EventMatchingError` alzata a riga 260-262 quando `nodes > MAX_SEARCH_NODES`. C2 Opzione B è già implementata nel codice.
+2. ✅ `ml_v3/contracts/schemas.py` — `width_octaves` usa `"exclusiveMinimum": 0` in entrambi gli schema (dynamic event e annotation event). C1-bis (`minimum: 0`) è un bug fix necessario: `exclusiveMinimum: 0` rifiuta `width_octaves = 0`, ma C1 definisce l'evento a banda singola come valido con `width_octaves = 0`.
+3. ✅ `ml_v3/contracts/validate.py` — Il validator controlla direzione, banda, severity, confidence — nessun controllo duplicati su `(problem_type, start_s, end_s, band_lo_hz, band_hi_hz)` per regioni GT né su `semantic_payload` per eventi GT. C4 richiede codice nuovo.
+4. ✅ `ml_v3/contracts/profiles.py` — `problem_type_id()` mappa 8 tipi (Resonance=0, Harshness=1, Muddiness=2, Sibilance=3, Boominess=4, Thinness=5, BoxyMidrange=6, DullSound=7). `anomaly_class_index()` mappa 3 classi anomalie dense. Gli indici sono diversi: Resonance=0 in entrambi, ma Harshness=1 in `problem_type_id` e 3ª classe anomalia (indice 2), Sibilance=3 in `problem_type_id` e 2ª classe anomalia (indice 1). C5 confermato.
+5. ✅ `ml_v3/tests/test_g1c_rev8_primitives_v2.py` — 431 righe, confermato.
 
 ### Fase 1 — Modifiche documento (dopo autorizzazione C1 e C2)
 1. Applicare C1 (Opzione A) a `docs/MOTORE_V3_G1_CONTRACT_REV8_CANDIDATE.md` §9.2 righe 544-546
