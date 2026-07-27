@@ -11,6 +11,9 @@ import unittest
 
 from ml_v3.benchmark.evaluator_parser import EVALUATOR_PARSER_SCHEMA_FIELD_CLAIMS
 from ml_v3.benchmark.event_matching import EVENT_MATCHING_SCHEMA_FIELD_CLAIMS
+from ml_v3.benchmark.semantic_region_matching import (
+    SEMANTIC_REGION_MATCHING_SCHEMA_FIELD_CLAIMS,
+)
 from ml_v3.contracts.metrology_lock import gate_platform_python_label
 from ml_v3.contracts.schema_field_guard import (
     SchemaFieldClaim,
@@ -27,6 +30,17 @@ class SchemaFieldGuardTests(unittest.TestCase):
     def test_current_evaluator_modules_declare_schema_valid_field_reads(self):
         validate_schema_field_claims(EVALUATOR_PARSER_SCHEMA_FIELD_CLAIMS)
         validate_schema_field_claims(EVENT_MATCHING_SCHEMA_FIELD_CLAIMS)
+        validate_schema_field_claims(SEMANTIC_REGION_MATCHING_SCHEMA_FIELD_CLAIMS)
+
+    def test_the_two_matchers_read_disjoint_geometry(self):
+        """§10.1 and §10.2 are different schemas; neither may read the other's."""
+        event_fields = frozenset().union(
+            *(claim.fields for claim in EVENT_MATCHING_SCHEMA_FIELD_CLAIMS))
+        region_fields = frozenset().union(
+            *(claim.fields for claim in SEMANTIC_REGION_MATCHING_SCHEMA_FIELD_CLAIMS))
+        self.assertEqual(event_fields & {"band_lo_hz", "band_hi_hz", "direction"},
+                         frozenset())
+        self.assertEqual(region_fields & {"center_hz", "width_octaves"}, frozenset())
 
     def test_event_matcher_is_bound_to_event_schemas_not_semantic_region_shape(self):
         records = {claim.schema_record for claim in EVENT_MATCHING_SCHEMA_FIELD_CLAIMS}
