@@ -258,10 +258,17 @@
 
 ## Firma, counter-check e governance
 
-- Stato counter-check: primo giro 3/3 `BLOCK`; secondo giro 3/3 `BLOCK` con residui circoscritti; dopo integrazione e conferma finale ultra-mirata, 3/3 `CLEAN` sul testo corrente.
+- **REPORTED — non verificato indipendentemente dal solo repository:** primo giro 3/3 `BLOCK`; secondo giro 3/3 `BLOCK` con residui circoscritti; dopo integrazione e conferma finale ultra-mirata, 3/3 `CLEAN` sul testo scientifico del commit `759fa19c`. Scope, finding e limiti epistemici sono registrati in `docs/REV8_BALLOT_V2_COUNTERCHECK_REPORT.md`.
 - Ogni scelta resta una raccomandazione finché la relativa firma non è presente.
 - Una modifica riapre la decisione e tutti i dipendenti downstream transitivi dichiarati; non riapre automaticamente le dipendenze upstream già soddisfatte.
 - Modifiche cross-cutting a schema, identità, temporal authority, eligibility, objective vector o K6 richiedono un nuovo counter-check consolidato anche se la dipendenza non era stata elencata correttamente.
 - Ogni riga firmata deve registrare esplicitamente `APPROVO` oppure `RESPINGO`; in caso di rifiuto è obbligatorio il wording sostitutivo.
 - Il ballot firmato non costituisce REV8 SPEC GO e non autorizza implementazione, training o attivazione.
 - `ml_v3/benchmark/event_matching.py` e `ml_v3/contracts/exact_arith_v2.py` correnti non costituiscono prova A2/REV8: usano ancora semantiche float/ID o conversioni che perdono interi oltre 2^53. Restano candidate isolate e non possono sostenere PASS.
+
+### Conseguenze implementative obbligatorie dopo la firma
+
+- **O-01 / aritmetica tick:** prima del trasferimento normativo, `exact_arith_v2.exact()` deve accettare gli interi Python nel proprio dominio senza conversione a `float`, oppure i tick devono usare un percorso esatto separato e dichiarato. Fixture minime: `2^53+1` e `2^60+1` devono restare identici come interi/razionali; nessuna perdita silenziosa è ammessa.
+- **O-01 / identità temporale:** la firma non promuove l’attuale `identity_v2.py`. `evaluation_unit_key` e ogni chiave temporale v2 devono migrare da `N64(segment_start_s/end_s)` ai tick interi autoritativi, mantenendo gli eventuali secondi soltanto come diagnostica derivata.
+- **O-15 / identità Resonance:** structural key, duplicate/contradiction logic e identity helpers devono usare la geometria canonica firmata, incluso `center_band_index` per Resonance, e non il centro N64 grezzo come discriminante strutturale.
+- Questi sono requisiti di trasferimento/implementazione e test, non modifiche retroattive al codice isolato `549b9a6c` e non autorizzano alcun edit prima della firma.
