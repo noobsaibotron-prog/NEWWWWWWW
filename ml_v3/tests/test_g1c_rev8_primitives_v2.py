@@ -52,6 +52,13 @@ from ml_v3.contracts.normalize_v2 import (
     n64,
     normalized_canonical_bytes,
 )
+from ml_v3.contracts.numeric_authority_v2 import (
+    NumericAuthorityError,
+    exact_n64,
+    mean64,
+    rn64,
+    sum_pairwise64,
+)
 
 
 def region(problem_type="Muddiness", start=0.0, end=1.0, lo=200.0, hi=500.0,
@@ -401,6 +408,11 @@ class ExactArithmeticTests(unittest.TestCase):
         self.assertEqual(exact(0.1), Fraction(*(0.1).as_integer_ratio()))
         self.assertNotEqual(exact(0.1), Fraction(1, 10))
 
+    def test_contract_integers_never_pass_through_float(self):
+        for value in (2 ** 53 + 1, 2 ** 60 + 1, 10 ** 400):
+            with self.subTest(value=value):
+                self.assertEqual(exact(value), Fraction(value))
+
     def test_empty_sum_is_zero(self):
         self.assertEqual(exact_sum([]), Fraction(0))
 
@@ -422,9 +434,61 @@ class ExactArithmeticTests(unittest.TestCase):
         with self.assertRaisesRegex(ExactArithError, "only numbers"):
             exact("1.0")
 
-    def test_overflowing_integer_rejected(self):
-        with self.assertRaisesRegex(ExactArithError, "overflow"):
-            exact(10 ** 400)
+    def test_non_integer_numeric_types_are_rejected(self):
+        with self.assertRaisesRegex(ExactArithError, "only numbers"):
+            exact(Fraction(1, 3))
+
+
+class NumericAuthorityTests(unittest.TestCase):
+    def test_n64_to_exact_rational_goldens(self):
+        self.assertEqual(
+            exact_n64("f64:3fc999999999999a"),
+            Fraction(3602879701896397, 2 ** 54),
+        )
+        self.assertEqual(
+            exact_n64("f64:3fc9999999999998"),
+            Fraction(3602879701896396, 2 ** 54),
+        )
+        self.assertEqual(
+            exact_n64("f64:3fc999999999999a")
+            - exact_n64("f64:3fc9999999999998"),
+            Fraction(1, 2 ** 54),
+        )
+
+    def test_rn64_normalises_zero_and_rejects_overflow(self):
+        self.assertEqual(rn64(Fraction(0)), "f64:0000000000000000")
+        with self.assertRaisesRegex(NumericAuthorityError, "overflow"):
+            rn64(Fraction(10 ** 400))
+
+    def test_pairwise_and_mean_goldens(self):
+        values = [n64(0.2), n64(0.3), n64(1.0)]
+        self.assertEqual(
+            sum_pairwise64(values),
+            "f64:3ff8000000000000",
+        )
+        entries = [(["g2"], values[1]), (["g1"], values[0]),
+                   (["g3"], values[2])]
+        self.assertEqual(mean64(entries), "f64:3fe0000000000000")
+
+    def test_empty_reductions_are_fail_closed(self):
+        with self.assertRaisesRegex(NumericAuthorityError, "N/A or FAIL"):
+            sum_pairwise64([])
+        self.assertIsNone(mean64([]))
+
+    def test_mean_rejects_an_un_normalised_float_in_its_key(self):
+        with self.assertRaisesRegex(NormalizationError, "un-normalised"):
+            mean64([(["raw", 1.0], n64(1.0))])
+
+    def test_noncanonical_or_nonfinite_n64_is_rejected(self):
+        for token in (
+            "f64:8000000000000000",  # negative zero
+            "f64:7ff0000000000000",  # +inf
+            "f64:7ff8000000000000",  # NaN
+            "f64:3FC999999999999A",  # uppercase
+        ):
+            with self.subTest(token=token):
+                with self.assertRaises(NumericAuthorityError):
+                    exact_n64(token)
 
 
 if __name__ == "__main__":

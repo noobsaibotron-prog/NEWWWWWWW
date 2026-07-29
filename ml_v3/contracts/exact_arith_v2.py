@@ -50,27 +50,32 @@ __all__ = [
 
 
 class ExactArithError(ValueError):
-    """Raised on a value that has no exact binary64 rational form."""
+    """Raised on a value that is outside the exact numeric authority."""
 
 
 def exact(value: Any) -> Fraction:
-    """The exact rational value of one binary64 number."""
+    """Return the exact value of a JSON integer or binary64 number.
+
+    Python ``int`` values are already exact contract integers (ticks and
+    ordinals included) and must never pass through ``float``.  Python
+    ``float`` values are interpreted as their exact IEEE-754 binary64
+    rational.  Keeping these two paths separate is the O-18 fix for silent
+    loss above ``2**53``.
+    """
     if isinstance(value, bool):
         raise ExactArithError("exact() rejects booleans")
-    if not isinstance(value, (int, float)):
+    if isinstance(value, int):
+        return Fraction(value)
+    if not isinstance(value, float):
         raise ExactArithError(
             f"exact() accepts only numbers, got {type(value).__name__}")
-    try:
-        number = float(value)
-    except OverflowError as exc:
-        raise ExactArithError(f"overflow converting {value!r} to binary64") from exc
-    if not math.isfinite(number):
-        raise ExactArithError(f"exact() requires a finite value, got {number!r}")
-    return Fraction(*number.as_integer_ratio())
+    if not math.isfinite(value):
+        raise ExactArithError(f"exact() requires a finite value, got {value!r}")
+    return Fraction(*value.as_integer_ratio())
 
 
 def exact_sum(values: Iterable[Any]) -> Fraction:
-    """Sum of binary64 values as an exact rational — independent of term order.
+    """Sum exact integers/binary64 values independently of term order.
 
     An empty sum is zero: unlike `sum_pairwise64`, whose N == 0 case §10.0 hands
     back to the caller as `N/A` or FAIL, an objective term over no matched pairs
