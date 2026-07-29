@@ -280,12 +280,157 @@ separate and is lossless above 2^53 — verified by execution
 was stale: it was fixed in `33a0957b`, the commit that materialized the O-18
 authority.
 
-## 7. What this report does not claim
+## 7. Closure pass — historical parity, exit codes, and `ac0dd38b` equivalence
 
-- Not a three-lens counter-check. This tranche has had two reviewers and a
-  semantic conformance pass, not three mutually independent lenses applied to
-  the same material the way the per-subgraph evidence and every prior
-  O-02/O-03/O-18 tranche were examined.
+A prose self-audit of this tranche (by Claude) was itself reviewed by Codex,
+who identified four concrete gaps rather than accepting the audit's "GO" at
+face value: the suite's exit code had been read through a pipe into `tail`
+and never captured directly; "0 mismatch" in the earlier self-audit referred
+only to determinism *within* a freshly generated run, not to parity against
+the already-published historical evidence; the requested S1-S8 and
+three-lens tables had not been delivered in the requested format; and
+`ac0dd38b`'s claim that bytecode caching does not affect WAV output had been
+argued from unchanged source rather than executed. This section closes all
+four with direct execution, not renewed argument. Codex's own contribution
+here was a methodology review of the self-audit's completeness — it did not
+itself re-execute the benchmark; that gap is why an independent Kilo pass
+(§9) remains open.
+
+**Suite exit code, captured directly.** `python -B -m unittest discover -s
+ml_v3/tests -t .`, redirected to files with `set -o pipefail` in effect (no
+pipe into `tail` masking the real status): `SUITE_EXIT=0`, 538/538.
+
+**Historical↔fresh parity, cell by cell — not just internal determinism.**
+The full-profile run in §3 was generated at `692cda55`. A second, independent
+full-profile run was executed fresh at `5451a295` through the same isolated
+bootstrap. Before treating the fresh run as a reproduction of the historical
+one, the code between the two commits was diffed, not assumed identical:
+
+```text
+git diff --exit-code 692cda55 5451a295 -- \
+  ml_v3/benchmark/rev8_o09_candidate.py \
+  ml_v3/benchmark/rev8_o09_group_candidate.py \
+  ml_v3/benchmark/rev8_o09_group_isolated_bootstrap.py \
+  ml_v3/benchmark/run_rev8_o09_group_candidate.py \
+  ml_v3/contracts/numeric_authority_v2.py \
+  ml_v3/contracts/normalize_v2.py \
+  ml_v3/contracts/exact_arith_v2.py \
+  ml_v3/contracts/canonical.py \
+  ml_v3/contracts/constants.py \
+  ml_v3/contracts/grid.py
+DIFF_EXIT=0
+```
+
+The full diff between the two commits touches exactly two files — this
+report and the `ac0dd38b` test fix — confirming no O-09 scientific path
+changed. With that established, the fresh run's 26 workload/size cells were
+compared against the historical raw's `scientific_result_sha256` per cell:
+**0 mismatches across 26/26 cells.** This is a reproduction of the already-
+published evidence from an independent execution, not merely a
+self-consistent new one.
+
+**`ac0dd38b` WAV pre/post equivalence — executed, not argued from unchanged
+source.** `render_signals.py` is untouched by `ac0dd38b` (`git diff --exit-code
+ac0dd38b^ ac0dd38b -- ml_v3/fixtures/g1/render_signals.py` is empty), which
+proves the renderer's *logic* is identical — but the test's interpreter
+invocation changed (`-B` was added), and unchanged source alone does not
+prove unchanged *behavior* under a different flag without executing it. Both
+invocations were run directly: the pre-fix child command
+(`sys.executable -c <child>`) and the post-fix command
+(`sys.executable -B -c <child>`), each rendering the full 37-asset tree to a
+fresh temp directory. Result: identical file list, 0 byte-level mismatches
+across all 37 files, and identical aggregate tree hash on both sides
+(`cfe15633e8609c6379bc44a713acb71cf0d4f09d24b11c92b78949b902cb5edf`). The
+`SHA256SUMS` manifest coverage claim in the `ac0dd38b` commit message was
+also re-checked directly against the manifest (`grep -c
+test_g1a_t6_generators ml_v3/fixtures/g1/SHA256SUMS` → `0`), not taken from
+the commit message on trust.
+
+**S1–S8, formal table, with epistemic tier separated from verdict.** None of
+S1–S7 have been independently reproduced by a second party; S8 and the
+parity/exit-code/WAV checks above are direct executions. Both are recorded,
+not blended.
+
+| # | Claim | Evidence | Tier | Verdict |
+|---|---|---|---|---|
+| S1 | AP: atomic ties, per-threshold recompute, no trapezoid/envelope/endpoint, both boundary cases | draft §13:878-916 vs `evaluate_group_ap` :556-687 | SELF_VERIFIED | CONFERMATO |
+| S2 | Coverage per-partition decomposition is exact, not a bound | ballot §2 vs `evaluate_group_coverage` :818-977; separability derivation | SELF_VERIFIED | CONFERMATO |
+| S3 | Coverage envelope ranges over full `M*`, not the max-cardinality superset | `_edge_cost`/`_extreme_weight` :778-816 | SELF_VERIFIED | CONFERMATO |
+| S4 | `rho_equal` implements R23_02 verbatim | draft §11.5:790-804 vs `rho_equal` :369-380 | SELF_VERIFIED | CONFERMATO |
+| S5 | Fixed-marginal certificate is sufficient, not merely indicative | draft §11.4 vs :1042-1310; monotonicity-of-rho-in-Σxy derivation | SELF_VERIFIED | CONFERMATO |
+| S6 | Fourth reason code not enumerated in §11.4 | draft §11.4:782-785 (3 codes) vs `GroupReason`:131 | EXECUTION+STATIC_VERIFIED | **CONFERMATO — NORMATIVE AMEND REQUIRED** |
+| S7 | No `numpy.sum`/`math.fsum`/Kahan/fast-math on published quantities | grep, re-run fresh, 0 hits | SELF_VERIFIED | CONFERMATO |
+| S8 | `exact()` lossless above 2^53 | `exact_arith_v2.py`:56-74, re-executed | EXECUTION_VERIFIED | CONFERMATO |
+
+**Three lenses, formal table. Lens B is AMEND, not CLEAN** — a lens verdict
+must reflect its worst finding, and S6 is a real, unclosed normative gap, not
+a footnote alongside an otherwise-clean row.
+
+*Lens A — Optimizer/Numeric: CLEAN.* `sum_pairwise64` pinned recursive form
+(`numeric_authority_v2.py`:104-127); `mean64` sums pairwise then divides once,
+rejects unequal values at equal order-keys (:146-182); `exact()` keeps
+int/float paths separate, lossless above 2^53, execution-verified; no
+unpinned float reduction on published quantities in kernel or runner; declared
+complexity matches the code.
+
+*Lens B — Metrics/Statistics: AMEND.* S1–S5 and S7 confirmed. S6 stands as an
+open, named deviation: `SPEARMAN_CERTIFICATE_UNAVAILABLE` is real, fail-closed,
+and does not produce a false PASS — but it is not authorized by §11.4 as
+written, and that is a normative gap, not a scientific defect.
+
+*Lens C — Semantics/Security/Governance: CLEAN.* `authority_status`/
+`ballot_ready` read-only, never reassigned by the runner (:70, :818); atomic
+publish with pre-`os.replace` provenance re-check (:822-840); gate-platform
+enforcement is fail-closed on interpreter drift (`metrology_lock.py`:958-970,
+runner:489-490); isolation hardening intact (bootstrap:47-80); `ac0dd38b`'s
+pollution source is the sole one in `ml_v3/` (exhaustive grep), and its fix is
+now execution-verified equivalent, not merely argued; historical↔fresh parity
+holds 26/26.
+
+**Corrected verdict.** Not a single unqualified "GO". Two separate questions,
+two separate answers:
+
+```text
+O-09 group-level evidence reliability  = GO-CON-FIX
+  (fix is normative/documentary — enumerate SPEARMAN_CERTIFICATE_UNAVAILABLE
+   in §11.4, or close the general case — not a code or benchmark defect)
+O-09 activation / REV8 SPEC GO          = NO-GO
+  (unchanged: no ballot, no cap, REV7 and the REV8 candidate untouched)
+Independent runtime reviewer            = Hermes (round 2, execution-verified
+                                           on hashes)
+Self-audit execution (this closure)     = Claude, execution-verified,
+                                           not independent
+Kilo (full independent three-lens pass) = not yet run
+```
+
+**Candidate S6 remediation text (proposed by Codex during this review cycle,
+NOT signed, NOT part of the contract until Marco approves it through the
+normal ballot process — recorded here only so the proposal is not lost):**
+
+```text
+Nel caso Spearman in cui la procedura esatta richiesta non disponga di un
+certificato sufficiente a dimostrare l'unicità del valore su M*, il risultato
+è N/A con reason code SPEARMAN_CERTIFICATE_UNAVAILABLE.
+
+Questo esito:
+- non è PASS;
+- non è zero;
+- non è una failure runtime;
+- non può essere convertito in PAIRING_AMBIGUOUS senza prova di non-singleton;
+- impedisce il PASS di qualunque gate che richieda una Spearman definita.
+```
+
+## 8. What this report does not claim
+
+- Not a three-lens counter-check. This tranche has had two reviewers, a
+  semantic conformance pass, and a methodology review, not three mutually
+  independent lenses applied to the same material the way the per-subgraph
+  evidence and every prior O-02/O-03/O-18 tranche were examined. §7's
+  three-lens table exists in the requested *format* but was produced by the
+  same party (Claude) that wrote the code and the rest of the report — it is
+  a structured self-audit, not independent lens diversity. Codex's role in
+  producing it was to find gaps in the self-audit's rigor, not to re-derive
+  the findings independently.
 - Not a claim that the surfaces §6 declares conformant have been proved
   correct by test. §6 is a reading of the implementation against its contract;
   the golden and mutation artifacts the ledger requires
@@ -300,7 +445,7 @@ authority.
 - Not an O-09 activation, a ballot, or a REV8 SPEC GO. All of those remain
   `NO`/unauthorized, as declared throughout.
 
-## 8. Suggested next gate
+## 9. Suggested next gate
 
 Before any O-09 ballot, three items, in order of how much they constrain the
 ballot's scope:
