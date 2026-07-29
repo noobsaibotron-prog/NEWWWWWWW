@@ -66,10 +66,16 @@ PROVENANCE_PATHS = (
 )
 
 
-def _fraction(value: Fraction | None) -> list[int] | None:
+def _fraction(value: Fraction | None) -> list[str] | None:
+    """Serialize an exact rational without decimal bigint conversion.
+
+    The 65,536-bit O-09 boundary exceeds Python's defensive decimal-digit
+    conversion limit.  Signed lowercase hexadecimal strings are exact,
+    language-neutral, compact, and avoid changing that process-wide guard.
+    """
     if value is None:
         return None
-    return [value.numerator, value.denominator]
+    return [hex(value.numerator), hex(value.denominator)]
 
 
 def _result_payload(result: CandidateResult) -> dict[str, Any]:
@@ -415,10 +421,14 @@ def _run_child(kind: str, size: int) -> dict[str, Any]:
             str(size),
         ),
         cwd=ROOT,
-        check=True,
+        check=False,
         text=True,
         capture_output=True,
     )
+    if completed.returncode != 0:
+        raise RuntimeError(
+            f"O-09 worker failed for {kind}/{size} "
+            f"(exit {completed.returncode}):\n{completed.stderr}")
     return json.loads(completed.stdout)
 
 
@@ -545,7 +555,7 @@ def main() -> None:
         if (ROOT / path).is_file()
     }
     evidence = {
-        "schema": "aieq-v3-rev8-o09-candidate-benchmark-1",
+        "schema": "aieq-v3-rev8-o09-candidate-benchmark-2",
         "authority_status": "EVIDENCE_ONLY_CAPS_NOT_ACTIVE",
         "commit": commit,
         "platform": platform_evidence,
@@ -564,6 +574,7 @@ def main() -> None:
                 str(args.repeat_large),
             ],
             "python_dont_write_bytecode": sys.dont_write_bytecode,
+            "exact_integer_encoding": "signed_lowercase_hex_strings",
             "max_size": args.max_size,
             "repeat_small": args.repeat_small,
             "repeat_large": args.repeat_large,

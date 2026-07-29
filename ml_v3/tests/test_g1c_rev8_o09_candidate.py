@@ -16,6 +16,7 @@ from ml_v3.benchmark.rev8_o09_candidate import (
     rational_bit_length,
 )
 from ml_v3.benchmark.run_rev8_o09_candidate import (
+    _fraction,
     _graph,
     _measure_ap_prefix,
     _measure_bit_boundaries,
@@ -295,6 +296,16 @@ class PreflightTests(unittest.TestCase):
 
 
 class BenchmarkRunnerTests(unittest.TestCase):
+    def test_exact_evidence_uses_hex_strings_beyond_decimal_guard(self):
+        huge = Fraction(-(2**65_535 + 1), 2**65_536 + 1)
+        encoded = _fraction(huge)
+        self.assertEqual(encoded, [
+            hex(huge.numerator),
+            hex(huge.denominator),
+        ])
+        self.assertTrue(encoded[0].startswith("-0x"))
+        self.assertTrue(encoded[1].startswith("0x"))
+
     def test_small_solver_workloads_are_deterministic(self):
         for kind in (
             "unique_additive", "degenerate_additive", "unique_product"):
