@@ -43,10 +43,13 @@ from ml_v3.contracts.numeric_artifact_v2 import (
     load_numeric_artifact,
 )
 from ml_v3.contracts.numeric_authority_v2 import (
+    NumericAuthorityError,
     exact_n64,
     float_from_n64,
     mean64,
     n64_from_bits,
+    rn64,
+    sum_pairwise64,
 )
 
 _REPORT_PATH = (
@@ -119,6 +122,19 @@ class ArtifactIntegrityTests(unittest.TestCase):
         self.assertEqual(artifact["boundary_hash"], sha256_of_obj(boundaries))
         self.assertEqual(centers[0], "0x4034000000000000")  # 20
         self.assertEqual(centers[-1], "0x40d3880000000000")  # 20000
+        self.assertEqual(
+            centers,
+            [
+                "0x" + struct.pack(">d", value).hex()
+                for value in band_centers_hz()
+            ],
+            "O-02 must read the frozen canonical center bits, not replace them",
+        )
+        self.assertEqual(
+            artifact["generator_provenance"][
+                "canonical_center_grid_sha256"],
+            sha256_of_obj(band_centers_hz()),
+        )
 
     def test_each_boundary_rounds_the_exact_geometric_mean(self):
         """Independent rational proof around the candidate rounding bin."""
@@ -170,6 +186,31 @@ class ArtifactIntegrityTests(unittest.TestCase):
             diagnostic["maximum_positive_bit_order_distance"],
             max(distances),
         )
+        self.assertEqual(diagnostic["mismatched_center_count"], 0)
+        self.assertEqual(
+            len(report["certificates"]["o02"]["center_entries"]), 120)
+        self.assertEqual(
+            len(report["certificates"]["o02"]["boundary_entries"]), 119)
+        for index, entry in enumerate(
+                report["certificates"]["o02"]["boundary_entries"]):
+            with self.subTest(certificate=index):
+                self.assertEqual(entry["index"], index)
+                self.assertEqual(
+                    entry["left_center_binary64_bits"],
+                    current[index],
+                )
+                self.assertEqual(
+                    entry["right_center_binary64_bits"],
+                    current[index + 1],
+                )
+                self.assertEqual(
+                    entry["output_boundary_binary64_bits"],
+                    load_boundary_artifact()[
+                        "boundary_binary64_bits"][index],
+                )
+                self.assertEqual(
+                    entry["rounding"], "round-to-nearest-ties-to-even")
+                self.assertGreater(entry["precision_dps"], 0)
 
 
 class ProjectionTests(unittest.TestCase):
@@ -257,6 +298,26 @@ class NumericArtifactTests(unittest.TestCase):
             compound["correct_single_round"],
             compound["double_round_mutation"],
         )
+        rounding = artifact["rounding_goldens"]
+        for name in (
+            "half_ulp_tie_even_down",
+            "half_ulp_tie_even_up",
+            "half_minimum_subnormal_tie_to_zero",
+        ):
+            case = rounding[name]
+            with self.subTest(case=name):
+                self.assertEqual(
+                    rn64(Fraction(
+                        case["numerator"], case["denominator"])),
+                    case["expected"],
+                )
+        for name in ("minimum_positive_subnormal", "maximum_finite"):
+            case = rounding[name]
+            with self.subTest(case=name):
+                self.assertEqual(
+                    rn64(exact_n64(case["input"])),
+                    case["expected"],
+                )
 
     def test_large_integer_goldens_are_exact(self):
         for value in load_numeric_artifact()["exact_integer_goldens"]:
@@ -271,6 +332,65 @@ class NumericArtifactTests(unittest.TestCase):
         ]
         self.assertEqual(mean64(values), mean64(reversed(values)))
         self.assertEqual(mean64(values), "f64:3fe0000000000000")
+
+    def test_mean64_rejects_a_non_total_normative_key(self):
+        entries = [
+            (["duplicate"], n64(1e16)),
+            (["duplicate"], n64(-1e16)),
+            (["duplicate"], n64(1.0)),
+        ]
+        with self.assertRaisesRegex(
+                NumericAuthorityError, "normative key is not total"):
+            mean64(entries)
+        with self.assertRaisesRegex(
+                NumericAuthorityError, "normative key is not total"):
+            mean64(reversed(entries))
+
+    def test_equal_key_equal_value_is_order_independent(self):
+        entries = [
+            (["same"], n64(0.2)),
+            (["same"], n64(0.2)),
+            (["other"], n64(0.3)),
+        ]
+        self.assertEqual(mean64(entries), mean64(reversed(entries)))
+
+    def test_macro_group_mean_uses_raw_utf8_bytes(self):
+        entries = [
+            ("\n", n64(1.0)),
+            ("!", n64(1e16)),
+            ("a", n64(-1e16)),
+        ]
+        expected = rn64(Fraction(1, 3))
+        self.assertEqual(
+            mean64(entries, key_domain="utf8"),
+            expected,
+        )
+        # JSON string escaping would put "!" before "\\n" and round to zero.
+        self.assertNotEqual(
+            mean64(entries, key_domain="canonical"),
+            expected,
+        )
+        self.assertEqual(
+            load_numeric_artifact()["validation_goldens"][
+                "macro_group_order"],
+            "RAW_UTF8_BYTES",
+        )
+
+    def test_small_support_reduction_goldens(self):
+        artifact = load_numeric_artifact()["reduction_edge_goldens"]
+        with self.assertRaisesRegex(NumericAuthorityError, "N/A or FAIL"):
+            sum_pairwise64([])
+        self.assertIsNone(mean64([]))
+        singleton = artifact["sum_singleton"]
+        self.assertEqual(
+            sum_pairwise64([singleton["input"]]),
+            singleton["expected"],
+        )
+        singleton_mean = artifact["mean_singleton"]
+        self.assertEqual(
+            mean64([(singleton_mean["key"], singleton_mean["input"])]),
+            singleton_mean["expected"],
+        )
 
 
 class ArtifactFalsificationTests(unittest.TestCase):

@@ -42,9 +42,12 @@ _KEYS = frozenset({
     "mean64_goldens",
     "n64_goldens",
     "numeric_version",
+    "reduction_edge_goldens",
+    "rounding_goldens",
     "schema",
     "sum_pairwise64_goldens",
     "two_ulp_fixture",
+    "validation_goldens",
 })
 
 
@@ -71,6 +74,19 @@ def build_numeric_artifact() -> tuple[dict[str, Any], dict[str, Any]]:
     if mean is None:
         raise NumericArtifactError("non-empty mean unexpectedly produced N/A")
 
+    utf8_entries = [
+        {"key": "\n", "value": n64(1.0)},
+        {"key": "!", "value": n64(1e16)},
+        {"key": "a", "value": n64(-1e16)},
+    ]
+    utf8_mean = mean64(
+        ((entry["key"], entry["value"]) for entry in utf8_entries),
+        key_domain="utf8",
+    )
+    if utf8_mean is None:
+        raise NumericArtifactError(
+            "non-empty UTF-8 mean unexpectedly produced N/A")
+
     compound = round_log2_fraction(
         Fraction(9, 8),
         scale=Fraction(1, 3),
@@ -85,6 +101,17 @@ def build_numeric_artifact() -> tuple[dict[str, Any], dict[str, Any]]:
     left = "f64:3fc999999999999a"
     right = "f64:3fc9999999999998"
     difference = exact_n64(left) - exact_n64(right)
+    one = "f64:3ff0000000000000"
+    one_next = "f64:3ff0000000000001"
+    one_next_even = "f64:3ff0000000000002"
+    midpoint_even_down = (
+        exact_n64(one) + exact_n64(one_next)
+    ) / 2
+    midpoint_even_up = (
+        exact_n64(one_next) + exact_n64(one_next_even)
+    ) / 2
+    minimum_subnormal = "f64:0000000000000001"
+    maximum_finite = "f64:7fefffffffffffff"
 
     artifact = _seal({
         "schema": _SCHEMA,
@@ -112,8 +139,56 @@ def build_numeric_artifact() -> tuple[dict[str, Any], dict[str, Any]]:
         }],
         "mean64_goldens": [{
             "entries": entries,
+            "key_domain": "canonical",
             "expected": mean,
+        }, {
+            "entries": utf8_entries,
+            "key_domain": "utf8",
+            "expected": utf8_mean,
         }],
+        "reduction_edge_goldens": {
+            "sum_empty": "CALLER_NA_OR_FAIL",
+            "mean_empty": None,
+            "sum_singleton": {
+                "input": one_next,
+                "expected": one_next,
+            },
+            "mean_singleton": {
+                "key": ["singleton"],
+                "input": one_next,
+                "expected": one_next,
+            },
+        },
+        "rounding_goldens": {
+            "half_ulp_tie_even_down": {
+                "numerator": midpoint_even_down.numerator,
+                "denominator": midpoint_even_down.denominator,
+                "expected": one,
+            },
+            "half_ulp_tie_even_up": {
+                "numerator": midpoint_even_up.numerator,
+                "denominator": midpoint_even_up.denominator,
+                "expected": one_next_even,
+            },
+            "half_minimum_subnormal_tie_to_zero": {
+                "numerator": 1,
+                "denominator": 2 ** 1075,
+                "expected": "f64:0000000000000000",
+            },
+            "minimum_positive_subnormal": {
+                "input": minimum_subnormal,
+                "expected": minimum_subnormal,
+            },
+            "maximum_finite": {
+                "input": maximum_finite,
+                "expected": maximum_finite,
+            },
+        },
+        "validation_goldens": {
+            "equal_key_equal_value": "ALLOWED",
+            "equal_key_different_value": "FAIL_NON_TOTAL_KEY",
+            "macro_group_order": "RAW_UTF8_BYTES",
+        },
         "compound_rounding": {
             "ratio_numerator": 9,
             "ratio_denominator": 8,

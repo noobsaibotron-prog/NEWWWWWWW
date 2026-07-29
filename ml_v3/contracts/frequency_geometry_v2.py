@@ -24,6 +24,7 @@ from .interval_refinement_v2 import (
     round_power_fraction,
     round_sqrt_fraction,
 )
+from .grid import band_centers_hz
 from .normalize_v2 import n64
 from .numeric_authority_v2 import (
     NumericAuthorityError,
@@ -107,27 +108,17 @@ def _seal(payload: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _generate_centers() -> tuple[list[str], list[int]]:
-    centers: list[str] = []
-    precisions: list[int] = []
-    for index in range(120):
-        if index == 0:
-            result = n64(20.0)
-            precision = 0
-        elif index == 119:
-            result = n64(20000.0)
-            precision = 0
-        else:
-            refined = round_power_fraction(
-                Fraction(1000),
-                Fraction(index, 119),
-                scale=Fraction(20),
-                label=f"center[{index}]",
-            )
-            result = refined.n64
-            precision = refined.precision_dps
-        centers.append(result)
-        precisions.append(precision)
-    return centers, precisions
+    """Read, rather than redefine, the frozen canonical center grid.
+
+    O-02 depends on the existing G1a/G1b canonical center authority.  Its
+    correctly-rounded operation begins at the geometric-mean boundary, not
+    by silently replacing the 120 already hash-locked center bit patterns.
+    """
+    centers = [n64(value) for value in band_centers_hz()]
+    if len(centers) != 120:
+        raise FrequencyGeometryError(
+            "canonical center grid must contain exactly 120 values")
+    return centers, [0] * len(centers)
 
 
 def _generate_boundaries(
@@ -152,6 +143,12 @@ def build_boundary_artifact() -> tuple[dict[str, Any], dict[str, Any]]:
     boundaries, boundary_precisions = _generate_boundaries(centers)
     center_bits = [_bits(token) for token in centers]
     boundary_bits = [_bits(token) for token in boundaries]
+    provenance = _static_provenance()
+    provenance.update({
+        "center_source": "ml_v3.contracts.grid.band_centers_hz",
+        "canonical_center_grid_sha256": sha256_of_obj(band_centers_hz()),
+        "center_rounding": "pre-frozen-binary64-no-reinterpretation",
+    })
     artifact = _seal({
         "schema": _BOUNDARY_SCHEMA,
         "grid_version": _GRID_VERSION,
@@ -159,13 +156,40 @@ def build_boundary_artifact() -> tuple[dict[str, Any], dict[str, Any]]:
         "boundary_binary64_bits": boundary_bits,
         "center_hash": sha256_of_obj(center_bits),
         "boundary_hash": sha256_of_obj(boundary_bits),
-        "generator_provenance": _static_provenance(),
+        "generator_provenance": provenance,
     })
     report = {
         "center_precision_dps": center_precisions,
         "boundary_precision_dps": boundary_precisions,
         "maximum_center_precision_dps": max(center_precisions),
         "maximum_boundary_precision_dps": max(boundary_precisions),
+        "center_entries": [
+            {
+                "index": index,
+                "input_source": (
+                    "ml_v3.contracts.grid.band_centers_hz"),
+                "output_binary64_bits": bits,
+                "precision_dps": precision,
+                "rounding": "pre-frozen-binary64-no-reinterpretation",
+            }
+            for index, (bits, precision) in enumerate(
+                zip(center_bits, center_precisions))
+        ],
+        "boundary_entries": [
+            {
+                "index": index,
+                "left_center_binary64_bits": center_bits[index],
+                "right_center_binary64_bits": center_bits[index + 1],
+                "output_boundary_binary64_bits": bits,
+                "precision_dps": precision,
+                "rounding": "round-to-nearest-ties-to-even",
+                "refinement": (
+                    "mpmath-iv-until-entire-interval-rounds-to-one-binary64"
+                ),
+            }
+            for index, (bits, precision) in enumerate(
+                zip(boundary_bits, boundary_precisions))
+        ],
     }
     return artifact, report
 

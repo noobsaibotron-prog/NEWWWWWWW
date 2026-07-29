@@ -19,7 +19,7 @@ import math
 import re
 import struct
 from fractions import Fraction
-from typing import Any, Iterable
+from typing import Any, Iterable, Literal
 
 from .exact_arith_v2 import exact
 from .normalize_v2 import n64, normalized_canonical_bytes
@@ -35,6 +35,7 @@ __all__ = [
 ]
 
 _N64_RE = re.compile(r"f64:([0-9a-f]{16})\Z")
+_MEAN_KEY_DOMAINS = frozenset({"canonical", "utf8"})
 
 
 class NumericAuthorityError(ValueError):
@@ -126,19 +127,56 @@ def sum_pairwise64(values: Iterable[str]) -> str:
     return reduce_span(0, len(items))
 
 
-def mean64(entries: Iterable[tuple[Any, str]]) -> str | None:
+def _mean_order_bytes(
+    key: Any,
+    *,
+    key_domain: Literal["canonical", "utf8"],
+) -> bytes:
+    if key_domain == "canonical":
+        return normalized_canonical_bytes(key)
+    if key_domain == "utf8":
+        if not isinstance(key, str):
+            raise NumericAuthorityError(
+                "mean64 utf8 keys must be strings")
+        return key.encode("utf-8")
+    raise NumericAuthorityError(
+        f"unknown mean64 key domain: {key_domain!r}")
+
+
+def mean64(
+    entries: Iterable[tuple[Any, str]],
+    *,
+    key_domain: Literal["canonical", "utf8"] = "canonical",
+) -> str | None:
     """Hierarchical mean primitive over already-publishable binary64 values.
 
-    Entries are sorted by canonical bytes of their normative key.  The
-    pairwise sum is rounded at every tree addition; the final exact division
-    is rounded once.  Empty input represents N/A and returns ``None``.
+    ``canonical`` orders structured normative keys by normalized canonical
+    bytes.  ``utf8`` is the separately signed macro-group rule and orders raw
+    ``group_id`` bytes, never JSON-escaped string bytes.
+
+    Equal order keys with different values are not total and therefore FAIL
+    materialization.  Equal keys with equal values remain order-independent.
+    The pairwise sum is rounded at every tree addition; the final exact
+    division is rounded once.  Empty input represents N/A and returns
+    ``None``.
     """
+    if key_domain not in _MEAN_KEY_DOMAINS:
+        raise NumericAuthorityError(
+            f"unknown mean64 key domain: {key_domain!r}")
     materialized: list[tuple[bytes, str]] = []
     for key, value in entries:
         float_from_n64(value)
-        materialized.append((normalized_canonical_bytes(key), value))
+        materialized.append((
+            _mean_order_bytes(key, key_domain=key_domain),
+            value,
+        ))
     if not materialized:
         return None
     materialized.sort(key=lambda item: item[0])
+    for left, right in zip(materialized, materialized[1:]):
+        if left[0] == right[0] and left[1] != right[1]:
+            raise NumericAuthorityError(
+                "mean64 normative key is not total: equal key has "
+                "different values")
     total64 = sum_pairwise64(value for _, value in materialized)
     return rn64(exact_n64(total64) / len(materialized))
