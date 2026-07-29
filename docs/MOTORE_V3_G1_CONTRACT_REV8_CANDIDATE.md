@@ -1,12 +1,43 @@
 # Motore v3 - Contratto G1 frontend e benchmark
 
-Stato normativo: REVISIONE 8 G1C SCHEMA V2 — 2026-07-27.
+Stato normativo: REVISIONE 8 G1C SCHEMA V2 — candidate R23C patched,
+2026-07-29.
 
 Stringa di revisione normativa:
 
 ```text
 MOTORE_V3_G1_CONTRACT REVISIONE 8 G1C SCHEMA V2
 ```
+
+Questa patch documentale trasferisce nel candidate le decisioni Round 2.3
+firmate e controverificate. La sua autorità è vincolata atomicamente a:
+
+```text
+freeze commit:
+5b919c44541ae1248392921ac3d3db48f602f75a
+
+matching formalization:
+docs/REV8_MATCHING_FORMALIZATION_ROUND2_3_NORMATIVE_RC_AMENDED_DRAFT.md
+SHA-256:
+684d8fd7ebfff4a9924b1105771acb9eb92d2bb9f97fd8295a60df77bfb9f0cb
+
+ballot R23C firmato:
+docs/REV8_ROUND2_3_R23C_CONFIRMATION_BALLOT.md
+SHA-256:
+4c21b552883b67e4e61b3b03d94a8e041ec00aebec858f968c572b302d9f0b99
+
+recheck post-firma R23C:
+docs/REV8_ROUND2_3_R23C_POST_SIGNATURE_RECHECK_REPORT.md
+SHA-256:
+e2223fa357d76b162508ba724ac36a529a9c5a1dc57dd894d5c39689ab070157
+Verdetto:
+3/3 CLEAN
+```
+
+La composizione dei tre artefatti è la norma di matching firmata. I marker
+R23C `PENDING_EXTERNAL_BALLOT` presenti nei byte immutabili della
+formalizzazione sono risolti dal ballot esterno sopra indicato; non sono
+decisioni ancora aperte.
 
 Il testo non auto-dichiara il proprio stato operativo. REV8 e attiva soltanto
 quando il dispatcher pubblico, il PLAN e il manifest di attivazione sigillato
@@ -16,6 +47,16 @@ I moduli REV8 possono essere costruiti e testati soltanto attraverso entrypoint
 versionati non esportati dal dispatcher REV7. L'attivazione richiede lo switch
 atomico della sezione 14; non esiste uno stato ammesso con norma REV8 e consumer
 REV7, o viceversa.
+
+Questa patch non attiva REV8:
+
+```text
+REV8 SPEC GO = NO
+```
+
+Il counter-check del candidate patched, la materializzazione degli artefatti
+O-02/O-03/O-18, il benchmark e ballot dei cap O-09 e il gate SPEC GO restano
+passaggi separati.
 
 REV8 mantiene invariati i gate metrologici REV7: dominio geometrico `R`,
 LF fuori `R` report-only, closing set stazionario `multitone` e
@@ -88,6 +129,12 @@ repository entrano solo fixture piccole, manifest, contratti, hash e report.
 
 - Base scientifica: `88e70dd03679adfeb388976c702ad8f0a73b2bd3`.
 - Freeze G0: `2c88edad489c02b01d97b0d46cb7c206e33937bb`.
+- Base documentale REV8 candidate:
+  `e2bee113c02356c1dff34201f5d4ef002598a23b`.
+- Freeze Round 2.3 R23C:
+  `5b919c44541ae1248392921ac3d3db48f602f75a`.
+- La formalizzazione matching R23C, il ballot firmato e il recheck `3/3 CLEAN`
+  elencati nell'header sono authority normative del candidate patched.
 - Il test v2 a 44.1 kHz e un testimone utile del metodo di parity, non una
   specifica v3.
 - `PerceptualFrontEnd` corrente e diagnostics-only. Il suo LF usa l'ultimo
@@ -474,6 +521,54 @@ retroattiva, un gruppo senza ruolo o un asset il cui hash non corrisponde.
 
 ## 9. Manifest e annotazioni
 
+### 9.0 Overlay normativo Round 2.3
+
+Per i domini seguenti la formalizzazione R23C firmata è l'unica authority:
+
+| Dominio | Authority R23C |
+|---|---|
+| N64, exact arithmetic e boundary di pubblicazione | §§2, 12 |
+| tempo autoritativo a 48000 tick/s | §3 |
+| boundary table, projection e `project_center_width_v1` | §4 |
+| validità strutturale GT | §5 |
+| partizionamento, eligibility e `record_family` | §6 |
+| obiettivo scientifico K1–K4 e `K5_RESERVED` | §7 |
+| oracle A1, runtime A2 e insieme `M*` | §8 |
+| `S_can`, K6 scientifico e `M_replay` diagnostico | §9 |
+| cap e failure policy | §10 |
+| metriche matching-based ed envelope | §§11–12 |
+| Average Precision | §13 |
+| oracle, metamorphic e mutation tests | §14 |
+
+Le clausole storiche delle sezioni 9–10 di questo candidate che usano secondi
+N64 come autorità temporale, nearest-center projection, somme binary64
+nell'optimizer, `decision_key` candidate-controlled, K5 attivo, un matching
+concreto scelto da K6 o cut-point PR posizionali sono sostituite dalle norme
+R23C. Non esiste fallback alla formulazione precedente.
+
+Restano invece in vigore le parti non ridefinite: exact-key degli schema,
+surface admission, trusted index, estrazione dei candidati, calibrazione
+dense, coverage, baseline, bootstrap e gate metrologici. In caso di conflitto,
+prevale l'authority R23C hash-pinned.
+
+L'activation manifest REV8 deve includere almeno:
+
+```text
+active_evaluator_revision
+contract_document_sha256
+matching_formalization_sha256
+matching_ballot_sha256
+matching_recheck_sha256
+schema_bundle_sha256
+boundary_artifact_sha256
+numeric_artifact_sha256
+dispatcher_sha256
+platform_lock_id
+```
+
+Manifest assente, digest incoerente o composizione mista REV7/REV8 produce
+FAIL.
+
 ### 9.1 Asset manifest
 
 Campi obbligatori:
@@ -515,8 +610,10 @@ licenza sconosciuta o hash errato bloccano il preflight.
 
 ### 9.2 Annotation record
 
-Ogni record usa `schema = "aieq-v3-annotation-2"` e contiene i 19 campi
-top-level della versione 1, con la sola sostituzione dello schema.
+Ogni record usa `schema = "aieq-v3-annotation-2"` e contiene 19 campi
+top-level exact-key. Rispetto alla versione 1 cambia lo schema e ogni confine
+temporale normativo migra da secondi binary64 a tick interi; non e ammesso
+riutilizzare l'exact-key v1.
 
 Gli otto tipi e ID canonici restano, nell'ordine `0..7`: `Resonance`,
 `Harshness`, `Muddiness`, `Sibilance`, `Boominess`, `Thinness`,
@@ -525,47 +622,85 @@ Gli otto tipi e ID canonici restano, nell'ordine `0..7`: `Resonance`,
 Ogni semantic region ha esattamente 12 chiavi:
 
 ```text
-region_id, problem_type, problem_type_id, start_s, end_s,
+region_id, problem_type, problem_type_id, start_tick, end_tick,
 band_lo_hz, band_hi_hz, center_hz, direction, severity, confidence, actionable
 ```
 
-La banda e numerica, finita e contenuta in 20-20000 Hz, con
+`start_tick` ed `end_tick` sono interi sulla griglia autoritativa 48000 tick/s
+e descrivono l'intervallo semiaperto `[start_tick,end_tick)`. Devono essere
+contenuti nell'intervallo autoritativo dell'evaluation unit; secondi
+eventualmente pubblicati sono soltanto diagnostici.
+
+La banda raw e numerica, finita e contenuta in 20-20000 Hz, con
 `band_lo_hz < band_hi_hz`. Per Resonance `center_hz` e numerico, finito e
 interno alla banda; per gli altri tipi e `null`. Per Thinness e DullSound
 `direction` vale `boost` o `cut`; per gli altri tipi e `null`.
 
+`band_lo_hz` e `band_hi_hz` vengono proiettati separatamente tramite la
+boundary table golden della sezione 9.0 per ottenere la banda inclusiva
+`[i_lo,i_hi]`; `center_band_index` Resonance e la proiezione dello stesso
+`center_hz`. La geometria raw resta provenance, mentre eligibility, structural
+key e costi band-based usano esclusivamente gli indici canonici.
+
 Ogni dynamic event ha esattamente 10 chiavi:
 
 ```text
-event_id, problem_type, problem_type_id, start_s, end_s,
+event_id, problem_type, problem_type_id, start_tick, end_tick,
 center_hz, width_octaves, severity, confidence, actionable
 ```
 
-La banda di un evento dinamico non e un campo ma una derivazione normativa.
-Si calcolano in binary64 gli estremi grezzi
-`raw_lo = center_hz * 2^(-width_octaves/2)` e
-`raw_hi = center_hz * 2^(+width_octaves/2)`. La banda dell'evento e la coppia
-di indici di banda canonica `(i_lo, i_hi)` ottenuta associando `raw_lo` e
-`raw_hi` al centro di banda della sezione 6.1 piu vicino sull'asse `log2(Hz)`,
-con tie-break all'indice minore. Vale sempre `i_lo <= i_hi`.
+`dynamic_event` ammette soltanto Resonance, Harshness e Sibilance. Gli altri
+cinque problem type sono ammessi come `semantic_region` ma non come evento
+dinamico.
 
-Poiche i centri canonici cadono per costruzione in 20-20000 Hz, la banda
-derivata vi cade sempre: nessun controllo di intervallo si applica alla banda
-derivata e nulla viene clippato. Il vincolo di intervallo resta sui campi
-memorizzati, dove e verificabile esattamente: `center_hz` in 20-20000 Hz e
-`width_octaves` maggiore o uguale a zero. Un evento su una sola banda ha
-`width_octaves = 0` e `i_lo == i_hi`; e rappresentabile e non degenere.
+La banda di un evento dinamico non e un campo candidate-controlled ma una
+derivazione normativa. `center_hz` e N64 finito e strettamente positivo;
+`width_octaves` e N64 finito in `[0,W_MAX]`. L'operatore
+`project_center_width_v1` legge i bit N64 come razionali esatti, calcola:
 
-La derivazione e idempotente e produce lo stesso risultato a tempo di
-estrazione e a tempo di matching. Ogni confronto di banda fra eventi, in
-qualunque sezione, usa questa definizione e nessun'altra.
-Nella stessa evaluation unit, due semantic region dello stesso tipo con
-identici `(start_s, end_s, band_lo_hz, band_hi_hz)` o due dynamic event con
-semantic payload identico sono duplicati ground-truth invalidi.
+```text
+raw_lo = center_hz * 2^(-width_octaves/2)
+raw_hi = center_hz * 2^(+width_octaves/2)
+```
+
+mediante interval refinement di `exp2`, arrotonda univocamente gli endpoint a
+binary64 e li proietta usando la boundary table golden O-02:
+
+```text
+x <= boundary[0]                         -> band 0
+boundary[k-1] < x <= boundary[k]         -> band k, 1 <= k <= 118
+x > boundary[118]                        -> band 119
+```
+
+Il tie sul boundary appartiene alla banda inferiore. Un endpoint finito fuori
+griglia satura a 0 o 119; non-finite e `raw_lo > raw_hi` producono FAIL.
+L'output e la banda inclusiva `[i_lo,i_hi]`. Un evento su una sola banda con
+`width_octaves = 0` resta rappresentabile e non degenere.
+
+La derivazione e idempotente e produce lo stesso risultato in estrazione,
+admission e matching. Fino al freeze dell'artefatto 120/119, del golden
+`W_MAX`, dell'operatore e dei digest O-02/O-03, questa parte non e attivabile.
+
+La validita strutturale GT segue esclusivamente la structural key R23C:
+
+```text
+annotation_top_level_key
+kind
+problem_type
+start_tick
+end_tick
+i_lo
+i_hi
+```
+
+Resonance aggiunge `center_band_index`; Thinness e DullSound aggiungono
+`direction`. Stessa structural key e stesso payload supervisionale canonico
+produce `DUPLICATE_GT`; payload differente produce `CONTRADICTORY_GT`. Entrambi
+sono FAIL. Non esiste fuzzy deduplication.
 
 Curve e prediction pubbliche sono finite e limitate a `[-9, +9]` dB;
-confidence e severity sono in `[0, 1]`; tempi e frequenze devono cadere nel
-segmento e in 20-20000 Hz. `clean_for_action = true` impone curva zero,
+confidence e severity sono in `[0, 1]`; tick e frequenze devono cadere nel
+segmento e nel dominio ammesso. `clean_for_action = true` impone curva zero,
 `tonal_actionable_mask` tutto falso, `global_actionable = false` e nessun
 evento actionable; impone inoltre tutti gli otto tipi canonici dentro
 `complete_types` ed `explicit_negative_types`. Fuori da questo caso, un tipo
@@ -586,23 +721,26 @@ Ogni prediction usa `schema = "aieq-v3-prediction-2"` e ha esattamente:
 schema, asset_id, evaluation_unit_id, model_id, model_sha256,
 frontend_contract_sha256, calibration_policy_id, calibration_policy_sha256,
 profile, tonal_curve_db, tonal_score, tonal_confidence,
-segment_start_s, segment_end_s, semantic_bundles, events,
+segment_start_tick, segment_end_tick, semantic_bundles, events,
 anomaly_score_ref, anomaly_severity_ref, anomaly_valid_ref
 ```
 
 Ogni semantic bundle ha esattamente 13 chiavi:
 
 ```text
-bundle_id, occurrence_ordinal, problem_type, problem_type_id, start_s, end_s,
+bundle_id, occurrence_ordinal, problem_type, problem_type_id, start_tick, end_tick,
 band_lo_hz, band_hi_hz, center_hz, direction, severity, confidence, actionable
 ```
 
 Ogni prediction event ha esattamente 11 chiavi:
 
 ```text
-event_id, occurrence_ordinal, problem_type, problem_type_id, start_s, end_s,
+event_id, occurrence_ordinal, problem_type, problem_type_id, start_tick, end_tick,
 center_hz, width_octaves, severity, confidence, actionable
 ```
+
+`prediction_event` ammette soltanto Resonance, Harshness e Sibilance;
+`semantic_bundle` ammette tutti gli otto problem type.
 
 Banda, centro e direzione seguono le regole omologhe della sezione 9.2.
 `occurrence_ordinal` e un intero non negativo assegnato secondo la sezione 9.6.
@@ -636,16 +774,21 @@ In ordine decrescente di confidence, ogni massimo genera la componente
 8-neighbour che lo contiene nella mask `confidence >= 0.5 * peak`; massimi
 successivi la cui componente contiene gia un massimo conservato vengono
 soppressi. Ogni componente produce onset/offset dai frame estremi, banda dagli
-estremi di banda, `center_hz = sqrt(band_lo_hz * band_hi_hz)` e
-`width_octaves = log2(band_hi_hz / band_lo_hz)`, in binary64. Confidence e
-uguale al peak e severity e la media pesata della superficie.
+estremi di banda e tick tramite la geometria causale della sezione R23C §3.
+La materializzazione di `center_hz` e `width_octaves` usa operatori
+correctly-rounded hash-pinned e deve riproiettare esattamente sugli stessi
+`[i_lo,i_hi]` tramite `project_center_width_v1`; `sqrt`/`log2` binary64 ad hoc
+non sono autorita. Confidence e uguale al peak e severity e la media pesata
+della superficie.
 
 Gli eventi pubblicati alla soglia operativa sono esattamente i candidati con
-confidence calibrata almeno pari alla soglia. La PR-AUC ordina la lista
-pre-threshold per `(confidence desc, frame, band)` e ripete il matching ai suoi
-cut-point. Nessun top-k, floor di confidence o veto puo nascondere un
-candidato. L'evaluator ricalcola confidence, bundle, eventi e actionability e
-rifiuta ogni differenza.
+confidence calibrata almeno pari alla soglia. Average Precision usa i valori
+binary64 distinti di confidence e, per ogni valore `t`, include atomicamente
+`P_t = { prediction : confidence >= t }`; non usa cut-point posizionali.
+L'alias legacy `PR-AUC` deve dichiarare `convention=average_precision`.
+Nessun top-k, floor di confidence o veto puo nascondere un candidato.
+L'evaluator ricalcola confidence, bundle, eventi e actionability e rifiuta ogni
+differenza.
 
 La `direction` di un bundle Thinness/DullSound non e candidate-controlled.
 La policy dichiara
@@ -675,6 +818,11 @@ rispettivamente `aieq-v3-asset-manifest-1` e
 round-to-nearest, ties-to-even. Overflow, NaN e infinito sono FAIL. Se il
 risultato e zero, il bit di segno viene posto a zero.
 
+I campi JSON Schema `integer`, inclusi tick e `occurrence_ordinal`, restano
+interi esatti e non passano mai attraverso `float`. In particolare `2^53+1`
+e `2^60+1` devono essere preservati senza perdita. La conversione bit-to-
+rational di un N64 restituisce esattamente il razionale rappresentato dai bit.
+
 La forma serializzata e `f64:` seguita dai sedici caratteri esadecimali
 minuscoli del bit pattern binary64 big-endian. `100` e `100.0` producono
 `f64:4059000000000000`; `-0.0` e `+0.0` producono
@@ -682,13 +830,18 @@ minuscoli del bit pattern binary64 big-endian. `100` e `100.0` producono
 restano interi JSON.
 
 I byte canonici normalizzati sono `canonical_bytes()` dopo l'applicazione
-ricorsiva di `N64` ai soli campi `number` secondo lo schema v2.
+ricorsiva di `N64` ai soli campi `number` secondo lo schema v2. Eligibility,
+optimizer, confronto degli optimum ed envelope usano aritmetica matematica
+esatta; `sum_pairwise64` appartiene soltanto alle riduzioni pubblicate
+binary64 e non all'optimizer.
 
 ### 9.6 Evaluation unit, duplicati e identificatori
 
 L'identita di un'evaluation unit e la tupla normalizzata
-`(evaluation_unit_id, asset_id, profile, segment_start_s, segment_end_s)`.
-I tempi usano `N64`; l'ID da solo non identifica un'unita.
+`(evaluation_unit_id, asset_id, profile, segment_start_tick,
+segment_end_tick)`. I tick sono interi esatti sulla griglia 48000 tick/s;
+l'ID da solo non identifica un'unita e i secondi diagnostici non partecipano
+alla chiave.
 
 La chiave top-level prediction e la evaluation-unit key. La chiave top-level
 annotation e `(evaluation_unit_key, annotator_id, pass_id)`. Dopo validazione,
@@ -700,32 +853,77 @@ normalizzazione, ricalcolo ID/ordinali e ordinamento delle collezioni:
 3. bundle/eventi prediction duplicati internamente: mai deduplicati; ogni
    eccedente non matched resta una distinta FP.
 
-Il `semantic_payload` e esattamente:
+I kind literal ammessi sono esclusivamente:
 
 ```text
-semantic region:
-[kind, unit_key, type, problem_type_id, start, end, band_lo, band_hi, center, direction,
- severity, confidence, actionable]
-
-dynamic event:
-[kind, unit_key, type, problem_type_id, start, end, center, width, severity, confidence,
- actionable]
-
-semantic bundle:
-[kind, unit_key, type, problem_type_id, start, end, band_lo, band_hi, center, direction,
- severity, confidence, actionable]
-
-prediction event:
-[kind, unit_key, type, problem_type_id, start, end, center, width, severity, confidence,
- actionable]
+semantic_region
+dynamic_event
+semantic_bundle
+prediction_event
 ```
 
-Tutti i campi `number` usano `N64`.
+`problem_type_id` resta nel payload e nella provenance per verificare la
+corrispondenza con `problem_type`, ma non entra nelle chiavi scientifiche
+perche il grafo e gia partizionato per tipo. Discordanza fra stringa e ID
+produce FAIL.
+
+`record_family` e derivato dai kind validati, mai letto dal candidato:
+
+```text
+semantic_region <-> semantic_bundle   -> semantic_region
+dynamic_event   <-> prediction_event -> dynamic_event
+```
+
+Un campo `record_family` fornito dal record e una chiave extra e produce FAIL.
+
+La structural key GT e definita in sezione 9.2. Il payload supervisionale e
+esattamente `[N64(severity),N64(confidence),actionable]`; raw geometry,
+secondi diagnostici, ID, schema e provenance non entrano nella structural key.
 
 Bundle ed eventi prediction con payload identico ricevono ordinali consecutivi
-`0..N-1`, indipendenti dall'ordine d'ingresso. La `instance_key` prediction e
-`[semantic_payload, occurrence_ordinal]`; per il ground truth e il solo
-`semantic_payload`, poiche i duplicati strutturali GT sono invalidi.
+`0..N-1`, indipendenti dall'ordine d'ingresso. Il multiset degli ordinali per
+un gruppo di `N` payload diagnostici identici deve essere esattamente
+`{0,...,N-1}`.
+
+Le chiavi scientifiche escludono severity, confidence, actionable, ID, hash,
+annotator/pass, secondi e geometria raw non normativa:
+
+```text
+scientific_gt_key =
+  ["gt",evaluation_unit_key,record_family,problem_type,
+   start_tick,end_tick,class_geometry]
+
+scientific_prediction_key =
+  ["prediction",evaluation_unit_key,record_family,problem_type,
+   start_tick,end_tick,class_geometry]
+
+scientific_edge_key =
+  [scientific_gt_key,scientific_prediction_key]
+```
+
+La `class_geometry` e:
+
+```text
+Resonance:
+  [null,null,resonance_center_N64,null]
+
+Thinness, DullSound:
+  [i_lo,i_hi,null,direction]
+
+altre classi:
+  [i_lo,i_hi,null,null]
+```
+
+Le chiavi diagnostiche aggiungono annotation top-level key, payload canonico e
+occurrence ordinal come definito da R23C §9. Possono stabilizzare soltanto
+`M_replay`; non partecipano a eligibility, `V*`, `M*`, `S_can`, metriche
+normative o gate.
+
+Per l'identita di storage, `canonical_item_payload` e l'exact-key item dello
+schema v2 dopo N64 e dopo la sola rimozione di schema, ID derivato e occurrence
+ordinal. La `instance_key` prediction e
+`[canonical_item_payload,occurrence_ordinal]`; per il GT e il solo
+`canonical_item_payload`, poiche i duplicati strutturali sono gia FAIL.
 
 L'ID e SHA-256 dei byte canonici di
 `["motore-v3-instance-id-v1", instance_key]`. L'evaluator ricalcola ID e
@@ -733,15 +931,9 @@ ordinali e rifiuta ogni differenza. Stesso ID con `instance_key` diversa e
 FAIL. ID, digest e ordine degli hash non partecipano a eleggibilita, costi o
 tie-break.
 
-I due test non coincidono e non devono essere confusi. La sezione 9.2 impone
-una regola di coerenza sul ground truth: due semantic region dello stesso tipo
-con identici `(start_s, end_s, band_lo_hz, band_hi_hz)` sono invalide anche
-quando differiscono per centro, direzione, severity, confidence o
-actionability, perche descrivono due volte la stessa porzione di tempo e
-frequenza. Il `semantic_payload` e invece il meccanismo di identita, piu largo.
-La regola della sezione 9.2 e strettamente piu forte e viene applicata per
-prima: un ground truth che la supera non puo produrre collisioni di
-`instance_id`, ed e per questo che l'`instance_key` GT non porta ordinale.
+La structural key, le chiavi scientifiche e l'instance ID hanno scopi
+distinti. Nessuna collisione o deduplicazione in uno scope puo essere usata
+come fallback per un altro.
 
 ### 9.7 Autorita delle evaluation unit
 
@@ -810,9 +1002,12 @@ padding o trailing bytes, lungo `N*C*4`, con
 Ogni record `units` contiene esattamente:
 
 ```text
-evaluation_unit_id, asset_id, profile, segment_start_s, segment_end_s,
+evaluation_unit_id, asset_id, profile, segment_start_tick, segment_end_tick,
 expected_T, anomaly_valid_ref
 ```
+
+Non e ammesso un batch misto con campi `*_s`. Eventuali secondi sono
+diagnostici derivati e non fanno parte dell'exact-key dell'indice.
 
 `expected_T` e intero `>= 1`. Ogni unita usa il solo input full-asset del
 proprio record `assets`. Le unita sono uniche e ordinate per la key
@@ -844,10 +1039,24 @@ sull'intero `frontend_input_ref`. Sono vietati crop preliminari,
 concatenazioni, padding, flush finali e riuso dello stato fra asset. I frame
 restano in ordine crescente di `frame_index`.
 
-Per l'unita si selezionano i frame con
-`segment_start_s <= source_time < segment_end_s`. Il confronto usa timestamp
-razionali G1 e bound binary64 via `as_integer_ratio()`, senza rounding
-intermedio. Zero frame e FAIL.
+Per l'unita si selezionano i frame sulla geometria tick R23C. Per il frame `j`:
+
+```text
+tau_j = RNE(frame_end_sample_j - 48000*delay_num/delay_den)
+H = 1024 tick
+cell(j) = [tau_j-H,tau_j)
+```
+
+Hop, delay e clipping sono calcolati razionalmente prima dell'unico rounding.
+Una componente da `j_lo` a `j_hi` produce:
+
+```text
+start_tick = max(segment_start_tick,tau_j_lo-H)
+end_tick   = min(segment_end_tick,tau_j_hi)
+```
+
+Zero frame, intervallo vuoto o frame fuori segmento producono FAIL. I secondi
+diagnostici non vengono mai riconvertiti in tick.
 
 Il frontend G1 espone validita scalare per frame. La mask e
 `mask[t,b] = frame[t].valid` per tutte le 120 bande. Una mask per-banda
@@ -904,42 +1113,70 @@ successivo che produce report confrontabili byte-per-byte.
 
 3. **Percentile e quantile.** Tutti i CI percentile e i quantili bootstrap usano
    Hyndman-Fan type 7, equivalente a NumPy `method="linear"`: ordinare valori
-   finiti crescenti, porre `h = (N - 1) * q`, `lo = floor(h)`, `hi = ceil(h)` e
-   restituire `x[lo] + (h - lo) * (x[hi] - x[lo])` in binary64. Il CI 95% usa
-   esattamente `q = 0.025` e `q = 0.975`; il limite unilaterale usa esattamente
-   `q = 1 - alpha_plan`. Valori `NaN` o infiniti fanno fallire il report.
+   finiti crescenti e interpretarli come i razionali esatti rappresentati dai
+   rispettivi binary64; porre `h = (N - 1) * q`, `lo = floor(h)`,
+   `hi = ceil(h)` ed eseguire
+   `x[lo] + (h-lo)*(x[hi]-x[lo])` razionalmente, con un solo rounding binary64
+   sul risultato completo. Il CI 95% usa esattamente `q = 0.025` e `q = 0.975`;
+   il limite unilaterale usa esattamente `q = 1-alpha_plan`. Valori NaN o
+   infiniti fanno fallire il report.
 
-4. **Ordine delle riduzioni annidate.** Tutti gli input numerici entrano nelle
-   riduzioni come IEEE-754 binary64 finiti. La media per
-   `evaluation_unit_key`, la media dentro `group_id`, la macro-media globale, la
-   macro per profilo/dominio e le varianze del piano di potenza usano sempre:
-   (a) record ordinati per chiave canonica
-   `(metric_id, profile, domain, group_id, evaluation_unit_key,
-   frame_or_band_id, decision_key, occurrence_ordinal)` dove i campi mancanti
-   valgono
-   stringa vuota; (b) prodotti `float64(weight) * float64(value)` calcolati in
-   quell'ordine; (c) l'operatore normativo `sum_pairwise64(values)`, non una
-   somma "pairwise" generica.
+4. **Riduzioni matching-based pubblicate.** Gli input sono ordinati per chiave
+   normativa prima della riduzione. `sum_pairwise64` e soltanto la fase di
+   somma binary64:
 
-   `sum_pairwise64` e definito cosi: se `N == 0` il chiamante deve produrre
-   `N/A` o report FAIL secondo la metrica; se `N == 1` restituisce
-   `float64(values[0])`; altrimenti `mid = floor(N/2)` e restituisce
-   `float64(sum_pairwise64(values[0:mid]) + sum_pairwise64(values[mid:N]))`.
-   Ogni addizione arrotonda a IEEE-754 binary64. Numeratore pesato e denominatore
-   dei pesi usano entrambi `sum_pairwise64` sul vettore gia ordinato.
+   ```text
+   sum_pairwise64([])  -> il chiamante produce N/A oppure FAIL
+   sum_pairwise64([x]) -> binary64(x)
+   sum_pairwise64(values):
+     mid = floor(len(values)/2)
+     return binary64(
+       sum_pairwise64(values[0:mid])
+       + sum_pairwise64(values[mid:len(values)])
+     )
+   ```
 
-   Le varianze sono a due passate: prima la media con questa regola, poi la
-   somma `sum_pairwise64` degli scarti quadratici nello stesso ordine.
-   `numpy.sum`, `math.fsum`, Kahan, BLAS parallelo, reduction native su ordine
-   container, blocchi interni di libreria e `fast-math` sono vietati per gli
-   artefatti di gate anche quando producono differenze numeriche piccole.
+   Ogni media non pesata matching-based usa:
 
-5. **Aritmetica del matching.** I valori binary64 delle operazioni scalari che
-   precedono le somme, inclusi `log2`, IoU temporale e `band_iou_log2`, sono
-   prodotti dalla reference implementation e verificati bit-per-bit da fixture
-   normative. Le somme nell'obiettivo del matching sono poi confrontate come
-   razionali esatti dei rispettivi bit pattern binary64. Questa aritmetica e
-   distinta da `sum_pairwise64`, che resta l'operatore delle metriche finali.
+   ```text
+   mean64(entries):
+     N=0 -> N/A
+     N>0 ->
+       ordered = sort(entries, by=normative_entry_key)
+       s = sum_pairwise64(value64(e) for e in ordered)
+       return RN64(exact_rational(s)/N)
+   ```
+
+   La divisione avviene una sola volta dopo la somma. La gerarchia e
+   osservazioni definite nell'unita, unita definite nel gruppo, gruppi definiti
+   nella macro con peso 1. `sum_pairwise64` da sola non e una media. Le
+   metriche tonali e di calibrazione esplicitamente pesate restano governate
+   dalle rispettive formule e non possono essere usate come sostituto di questa
+   gerarchia matching-based.
+
+   Per tali sole riduzioni pesate, i prodotti
+   `binary64(weight)*binary64(value)` sono calcolati nell'ordine canonico,
+   numeratore e denominatore sono ridotti separatamente con
+   `sum_pairwise64`, e la divisione finale e correttamente arrotondata una sola
+   volta. Questo operatore non e ammesso per le medie matching-based.
+
+   Average Precision di gruppo e prima calcolata come razionale esatto e
+   arrotondata una volta ad `AP_group64`; la macro-AP e
+   `mean64(AP_group64)` in ordine UTF-8 di `group_id`.
+
+   `numpy.sum`, `math.fsum`, Kahan, BLAS parallelo, riduzioni dipendenti
+   dall'ordine del container e `fast-math` sono vietati per gli artefatti di
+   gate.
+
+5. **Aritmetica del matching.** Eligibility, `V*`, confronto fra optimum,
+   `M*` ed envelope usano valori matematici esatti. Temporal IoU e band IoU
+   sono rapporti esatti di interi; K3 e intero; K4 band-based e somma razionale;
+   K4 Resonance e prodotto esatto dei rapporti dei centri. Nessun `log2`, IoU
+   binary64 o accumulatore floating-point entra nell'optimizer.
+
+   Un razionale pubblicato viene correttamente arrotondato una sola volta.
+   Espressioni trascendentali ammesse, come `log2(R)/K1`, usano interval
+   refinement sull'intera espressione senza binary64 intermedi.
 
 ### 10.1 Metriche tonali
 
@@ -972,87 +1209,190 @@ Un record senza celle attive ha metriche di curva `N/A`, non zero; viene usato
 per clean safety. Ogni macro-media pubblica anche il supporto ed esclude gli
 `N/A` senza convertirli in PASS.
 
-Una semantic region e matchabile solo con stesso tipo e IoU temporale almeno
-0.3. Il matching per classe non usa una frequenza puntuale universale:
-
-- Resonance: centro entro un terzo di ottava;
-- Muddiness, Boominess, BoxyMidrange: overlap di banda almeno 0.5;
-- Thinness, DullSound: stessa regione e stessa direzione spettrale;
-- Harshness e Sibilance: overlap di banda almeno 0.5.
-
-Il matching regioni e bipartito one-to-one e si risolve per
-`(evaluation_unit_key, problem_type)` con obiettivo lessicografico:
-
-1. massimo numero di match validi;
-2. massima somma dell'IoU temporale;
-3. minima somma dell'errore dei bordi temporali;
-4. minima somma del costo geometrico primario;
-5. minima somma del costo geometrico secondario;
-6. minima sequenza ordinata delle coppie di `decision_key`.
-
-Per Resonance il costo primario e l'errore del centro in ottave e il
-secondario e `1 - band_iou_log2`. Per gli altri tipi il primario e
-`1 - band_iou_log2` e il secondario e la distanza in ottave fra i centri
-geometrici delle bande.
-
-La `decision_key` normalizzata contiene kind, evaluation-unit key, tipo,
-tempi, tutta la geometria letta da eleggibilita/costi, direction, severity,
-confidence e actionable. Non contiene ID o hash. Le coppie si ordinano per
-`(GT decision_key, prediction decision_key, prediction occurrence_ordinal)`.
-L'ordinale interviene soltanto fra prediction integralmente equivalenti per
-tutte le metriche.
-
-Le chiavi 1-5 dell'obiettivo sono somme di quantita per-arco e si realizzano
-con un algoritmo di matching bipartito a costo minimo di complessita
-polinomiale. La chiave 6 seleziona, fra le soluzioni ottime per le chiavi 1-5,
-quella lessicograficamente minima secondo le coppie di `decision_key`: e una
-proprieta dell'insieme della soluzione e non un peso per arco, e la procedura
-deterministica che la realizza va progettata e citata prima che questa sezione
-possa chiudere.
-
-Non e ammesso in nessun caso un percorso greedy, un fallback posizionale o una
-risoluzione approssimata: un'implementazione che non possa garantire l'ottimo
-esatto entro le proprie risorse produce FAIL. Un FAIL e deterministico e
-indipendente dall'ordine dei record; un risultato approssimato non lo sarebbe.
+Le semantic region e i semantic bundle usano lo stesso kernel esatto della
+sezione 10.2, nel sottografo `record_family="semantic_region"`. Harshness e
+Sibilance sono ammesse come regioni; soltanto la famiglia `dynamic_event` e
+limitata a Resonance/Harshness/Sibilance. Nessuna metrica tonale puo
+reintrodurre il vecchio obiettivo a sei chiavi, `decision_key`
+candidate-controlled o costi `band_iou_log2`.
 
 ### 10.2 Metriche degli eventi
 
-Un evento e matchabile solo se tipo uguale e IoU temporale almeno 0.3. Inoltre:
+Il kernel di matching e unico per regioni ed eventi. Ogni sottografo e
+partizionato per:
 
-- Resonance: centro entro un terzo di ottava;
-- Harshness/Sibilance: overlap di banda almeno 0.5.
+```text
+(evaluation_unit_key,record_family,problem_type)
+```
 
-Il matching eventi usa lo stesso obiettivo lessicografico a sei chiavi della
-sezione 10.1, applicato a dynamic event e prediction event. La banda e quella
-derivata da centro e larghezza secondo la sezione 9.2. ID e hash non
-partecipano a matchabilita, costo, tie-break o ordinamento decisionale.
+Le sole coppie ammesse sono:
+
+```text
+semantic_region <-> semantic_bundle
+dynamic_event   <-> prediction_event
+```
+
+Un arco esiste soltanto fra record validi della stessa partizione, con:
+
+```text
+IoU_t >= 3/10
+```
+
+confrontata come `10*I_t >= 3*U_t`, e:
+
+```text
+Resonance:
+  max(center_GT,center_P)^3 <= 2*min(center_GT,center_P)^3
+
+Muddiness, Boominess, BoxyMidrange, Harshness, Sibilance:
+  band IoU >= 1/2
+
+Thinness, DullSound:
+  band IoU >= 1/2
+  direction_GT == direction_P
+```
+
+La band IoU e esatta sulle bande inclusive `[i_lo,i_hi]` e usa
+`2*I_b >= U_b`. Non esistono archi cross-family o cross-type.
+
+Per un matching one-to-one:
+
+```text
+V(M) = (K1,K2,K3,K4)
+direzioni = (max,max,min,min)
+
+K1 = |M|
+K2 = sum IoU_t
+K3 = sum (abs(delta start_tick)+abs(delta end_tick))
+```
+
+Per classi non-Resonance:
+
+```text
+K4 = sum (1-IoU_b)
+```
+
+come somma razionale esatta. Per Resonance:
+
+```text
+r_e = max(center_GT,center_P)/min(center_GT,center_P)
+K4 = product r_e
+```
+
+come prodotto razionale esatto. `K5_RESERVED` e inutilizzato e non partecipa a
+eligibility, optimization, matching equivalence o canonicalization. K6 segue
+K4.
+
+Siano:
+
+```text
+V* = optimum lessicografico esatto
+M* = { M : V(M)=V* }
+```
+
+L'oracle A1 enumera tutti i matching sui grafi piccoli congelati. Il runtime A2
+puo usare qualunque algoritmo esatto, ma deve concordare con A1 su `V*`,
+`S_can`, `M_replay` ed envelope. Greedy, first-fit, accumulazione float e
+fallback approssimati sono vietati.
+
+K6 scientifico e:
+
+```text
+S(M)   = sort(scientific_edge_key(e) for e in M)
+S_can  = min_{M in M*} S(M)
+```
+
+Il replay diagnostico e:
+
+```text
+D(M)       = sort(diagnostic_edge_key(e) for e in M)
+M_replay   = unique argmin_{M in M*} (S(M),D(M))
+```
+
+Severity, confidence, actionable, ID e hash non possono influenzare
+eligibility, `V*`, `M*`, `S` o `S_can`. Severity e confidence possono
+influenzare metriche o gate soltanto tramite le formule esplicitamente
+firmate: severity nella MAE conservativa e confidence nella formazione di
+`P_t` per Average Precision. `D` e `M_replay` sono replay-only e non possono
+alimentare pairing scientifici, metriche normative o gate.
+
+Nel kernel matching-based Round 2.3 actionable, ID e hash non sono consumati
+da alcuna formula metrica. Le metriche tonali preesistenti `clean actionable
+rate` e coverage della sezione 10.1 consumano actionable esplicitamente fuori
+dal kernel di matching e non possono retroagire su eligibility, optimum o K6.
+ID e hash non alimentano alcuna metrica o gate.
 
 Metriche obbligatorie:
 
-- precision, recall, F1 e area precision-recall per classe, macro a peso uguale
-  sui gruppi con annotazione completa; un gruppo senza GT positivo ha PR-AUC
-  `N/A` e contribuisce invece alla clean safety;
-- errore centro in ottave per Resonance;
-- errore onset e offset in millisecondi;
-- MAE della severity `[0,1]` sugli eventi matched e Spearman rho con supporto
-  almeno 10;
+- TP, FP, FN, precision, recall e F1 da `K1`, invarianti in `M*`;
+- severity MAE tramite upper envelope esatto su `M*`;
+- onset e offset tramite upper envelope distinti, convertiti tick->ms soltanto
+  dopo il calcolo esatto;
+- Spearman per `(group_id,record_family,problem_type)`, pubblicabile soltanto
+  con supporto `>=10`, varianze non nulle e rho singleton su tutti i matching
+  composti;
+- errore centro Resonance da `log2(product r_e)/K1`, correctly-rounded
+  sull'intera espressione; `K1=0` produce N/A;
+- Average Precision secondo la sezione 10.3;
 - falsi eventi al minuto su gruppi clean;
-- durata e occupancy soltanto come diagnostica, mai come gate primario.
+- durata e occupancy soltanto diagnostiche.
 
-Le metriche evento vengono prima calcolate per gruppo usando le superfici dense
-pre-threshold della sezione 9.3 e poi macro-mediate con peso uguale. Segmenti,
-eventi o durate aggiuntive dello stesso gruppo non aumentano il peso del gruppo.
-Si riportano anche le micro-metriche come diagnostica, ma non possono promuovere
-una classe.
+L'uguaglianza esatta di Spearman rappresenta ogni rho non nullo mediante segno
+e tripla razionale `(cov^2,var_x,var_y)`. A parita di segno:
 
-Nessun singolo file, singolo hit o threshold scelto sullo stesso split puo far
-passare una classe.
+```text
+rho_1 == rho_2
+iff
+cov_1^2 * var_x_2 * var_y_2
+  == cov_2^2 * var_x_1 * var_y_1
+```
+
+La pubblicazione del rho singleton usa interval refinement della radice fino a
+un unico binary64.
+
+Envelope indisponibile, pairing ambiguo per una metrica singleton, supporto
+insufficiente o failure fatale producono N/A/reason code e impediscono PASS
+quando la metrica e obbligatoria. `SOLVER_STRUCTURAL_LIMIT_EXCEEDED`,
+`SOLVER_RUNTIME_FAILURE` e `SOLVER_CONSTRAINT_MODEL_INVALID` sono fatali.
+L'infeasibility normale di un sottoproblema A1/A2 non e un failure di report.
+
+Le metriche vengono definite per evaluation unit, aggregate con `mean64`
+dentro il gruppo e poi macro-mediate con `mean64` fra gruppi, peso gruppo=1.
+Supporto ed esclusioni N/A sono sempre pubblicati. Micro-metriche e p95 sono
+diagnostici salvo gate separato preregistrato.
+
+Nessun singolo file, hit, replay diagnostico o threshold scelto sullo stesso
+split puo far passare una classe.
 
 ### 10.3 Calibrazione delle confidence
 
 Tonal e anomaly hanno calibratori, report e parametri separati. I calibratori
-si fittano solo su `calibration`; ECE, Brier e PR-AUC vengono pubblicati su
-`development-metric` e poi, una sola volta, su `final-test`.
+si fittano solo su `calibration`; ECE, Brier e `average_precision` vengono
+pubblicati su `development-metric` e poi, una sola volta, su `final-test`.
+L'alias legacy `PR-AUC` e ammesso soltanto con
+`convention=average_precision`.
+
+Average Precision e calcolata per
+`(group_id,record_family="dynamic_event",problem_type)` sulle unita complete.
+Siano `t_1>...>t_K` i valori binary64 distinti di confidence:
+
+```text
+P_t = { prediction : confidence >= t }
+P_k = TP_k/(TP_k+FP_k)
+R_k = TP_k/N_GT
+R_0 = 0
+AP  = sum_k (R_k-R_{k-1})*P_k
+```
+
+Tutte le prediction con confidence uguale entrano atomicamente e il matching
+viene ricalcolato. Non si usano trapezi, precision envelope, endpoint
+artificiali o cut-point posizionali. `N_GT>0,K=0` produce AP=0; `N_GT=0`
+produce N/A e il gruppo contribuisce alla clean safety.
+
+AP di gruppo e un razionale esatto arrotondato una sola volta ad
+`AP_group64`. La macro-AP usa `mean64` sugli `AP_group64` ordinati per UTF-8
+bytes di `group_id`; usare la sola somma grezza e una mutation obbligatoriamente
+uccisa.
 
 Per la confidence tonale, ogni cella udibile e un esempio binario actionable/
 non-actionable. Per anomaly, ogni cella valida delle superfici dense e un
@@ -1179,7 +1519,7 @@ manifest, ma il supporto statistico e sempre contato per `group_id`.
 |---|---|---|---|
 | `tonal-controlled` | dry group-disjoint con 1-3 trasformazioni note, includendo boost, cut, shelf, bell e interazioni | RMSE/p95 della curva, miglioramento residuo, errore di segno | almeno 5 parent group per profilo; ogni regione tonale e direzione compare in almeno 10 gruppi |
 | `tonal-natural` | materiale reale clean e materiale reale con curva actionable annotata e adjudicata | RMSE/p95, coverage, clean actionable rate, severity | almeno 5 clean e 5 actionable group per profilo |
-| `anomaly-natural` | Resonance, Harshness e Sibilance reali con intervallo, banda e severity annotati | PR-AUC, F1, errore frequenziale/temporale, severity, falsi/min | almeno 30 positive group per classe; i negativi usano il pool clean-safety completo |
+| `anomaly-natural` | Resonance, Harshness e Sibilance reali con intervallo, banda e severity annotati | `average_precision` (alias PR-AUC), F1, errore frequenziale/temporale, severity, falsi/min | almeno 30 positive group per classe; i negativi usano il pool clean-safety completo |
 | `clean-safety` | materiale reale intenzionalmente corretto, incluso materiale colorato ma non problematico | clean actionable rate e falsi eventi/min | almeno 149 group totali e 10 per profilo, ciascuno con almeno un minuto clean eleggibile per i tre tipi anomaly; nessun negativo implicito |
 | `electronic-stratified` | vista trasversale delle quattro famiglie per techno, house, breakbeat e altri sottogeneri dichiarati | stesse metriche della famiglia madre, riportate per sottogenere | almeno il 40% del final-test complessivo; nessuna claim di sottogenere senza supporto determinato dalla power analysis |
 
@@ -1231,7 +1571,8 @@ L'effetto minimo di interesse e preregistrato per metrica:
 
 - errore di curva comparabile: riduzione relativa almeno 10% rispetto alla
   baseline pertinente, senza regressione clean;
-- macro-F1 o PR-AUC comparabile: aumento relativo almeno 10%, oppure +0.10
+- macro-F1 o `average_precision` comparabile: aumento relativo almeno 10%,
+  oppure +0.10
   assoluto quando la baseline e inferiore a 0.10;
 - clean actionable rate: ipotesi nulla `p >= 0.02`, alternativa di progetto
   `p = 0.01`, limite superiore esatto unilaterale sotto 0.02;
@@ -1243,7 +1584,8 @@ L'effetto minimo di interesse e preregistrato per metrica:
 - G8: numerosita ascoltatori e sorgenti resta determinata dal pilot G5 e dal
   modello clusterizzato definito nel piano principale.
 
-Per metriche continue e macro-F1/PR-AUC, il tool usa 10000 simulazioni PCG64. A
+Per metriche continue, macro-F1 e `average_precision`, il tool usa 10000
+simulazioni PCG64. A
 ogni numerosita candidata ricampiona con replacement i record completi di
 gruppo paired, ricalcola lo statistico, centra la distribuzione bootstrap e la
 trasla esattamente dell'effetto minimo dichiarato; non usa la media favorevole
@@ -1303,8 +1645,9 @@ Pin specifici della simulazione false-events:
    interlacciare Gamma e Poisson per gruppo. I 2000 resample interni usano il
    seed interno sopra, generano una matrice `np.int64` di indici
    `integers(0, n, endpoint=False)` con shape `(2000, n)`, consumata row-major;
-   ogni media di riga usa `sum_pairwise64` come definito nella sezione 10.0 e
-   il quantile usa il pin type-7 della sezione 10.0.
+   ogni media di riga usa `mean64` come definito nella sezione 10.0
+   (`sum_pairwise64` e soltanto la fase di somma interna) e il quantile usa il
+   pin type-7 della sezione 10.0.
 
 Si sceglie il primo `n` per cui almeno il 90% delle simulazioni soddisfa
 entrambi i limiti `<= 0.5`. Il gate finale usa il limite esatto e 10000
@@ -1566,8 +1909,9 @@ Gate obbligatori:
 
    **G1c T0 — registry obbligatoria prima del codice evaluator:** G1c non puo
    implementare parser/matcher/metriche finche non ha committato una registry
-   canonica con esattamente queste 14 fixture gate-9 e il loro expected outcome.
-   La registry e un artifact G1c, non un file implicito nel test.
+   canonica con le 14 fixture gate-9 legacy sotto elencate, la suite R23C
+   obbligatoria successiva e i rispettivi expected outcome. La registry e un
+   artifact G1c, non un file implicito nel test.
 
    | ID | Expected outcome |
    |---|---|
@@ -1586,10 +1930,11 @@ Gate obbligatori:
    | `evaluator_policy_mutated_outputs` | FAIL: threshold mutato o actionable non riproducibile |
    | `evaluator_power_joint_false_events` | FAIL se il gate congiunto passa usando solo Poisson o saltando il limite cluster-bootstrap |
 
-   Le 14 fixture sono file schema-v2 eseguibili, non sola prosa nella registry.
-   Il runner e il report golden sono obbligatori. Registry, JSON, superfici raw
-   e golden entrano tutti in `G1C_SHA256SUMS_REQUIRED`. Un test reject
-   aggiuntivo prova stesso ID dichiarato con `instance_key` diversa.
+   Le 14 fixture legacy e la suite R23C sono file schema-v2 eseguibili, non
+   sola prosa nella registry. Il runner e il report golden sono obbligatori.
+   Registry, JSON, superfici raw e golden entrano tutti in
+   `G1C_SHA256SUMS_REQUIRED`. Un test reject aggiuntivo prova stesso ID
+   dichiarato con `instance_key` diversa.
 
    La fixture authority minima usa gli asset 48 kHz sigillati:
    `multitone [0,0.5)` produce `T=16` e mask di 1920 byte tutta uno;
@@ -1598,6 +1943,41 @@ Gate obbligatori:
    fixture coprono traversal, symlink, truncation/trailing bytes, hash errato,
    NaN/Inf/out-of-range, mask `2`, `-0.0` e valore nonzero sotto mask zero per
    ciascuna classe.
+
+   **Suite R23C obbligatoria.** Deve coprire almeno:
+
+   - N64, signed zero, non-finite, overflow, bit-to-rational cross-language e
+     interi `2^53+1`/`2^60+1` senza passaggio float;
+   - distanza 2 ULP `0.2` vs bit di `1.2-1.0`, controesempio temporale valido
+     `d=0.25`, source-index->tick e intervalli half-open;
+   - compound rounding `R=9/8,K1=3` con output
+     `f64:3fad0022f7fa735f` e mutation double-round
+     `f64:3fad0022f7fa7360`; `mean64([0.2,0.3,1.0])` e macro-AP
+     `[0.2,0.3,1.0]` con output `f64:3fe0000000000000`, incluse le mutation
+     divide-first `f64:3fdfffffffffffff` e sum-only
+     `f64:3ff8000000000000`;
+   - boundary projection non-finite, saturazione 0/119, tie alla banda
+     inferiore, `raw_lo>raw_hi`, intervallo di una banda e hash stability;
+   - eligibility appena dentro/sul bordo/appena fuori per classe, con fixture
+     Resonance sui due N64 adiacenti al bordo irrazionale;
+   - cross-family, cross-type, direction mismatch, validity invalid e
+     `record_family` candidate-supplied;
+   - A1 exhaustive per `|GT|<=3,|P|<=3`, equivalenza A2 su `V*`, `S_can`,
+     `M_replay` ed envelope, permutazione, rinomina ID/hash e adversarial
+     float-vs-exact;
+   - duplicate/contradictory/distinct per classe, center band Resonance,
+     ordinali esatti `0..N-1` e isolamento dei campi diagnostici;
+   - fixture positive severity e confidence, isolamento K6 e determinismo
+     gerarchico S prima di D;
+   - bit-length/preflight e tutti i reason code fatali/non fatali.
+
+   Le mutation obbligatorie devono uccidere almeno: K5 attivo, K3 invertito,
+   somme float, campi diagnostici in `S/S_can`, `D/M_replay` usati per
+   metriche o gate, confidence come costo dentro `P_t`, soppressione degli usi
+   metrici firmati di severity/confidence, occurrence ordinal dipendente
+   dall'input, K6 invertito, greedy/first-fit, raw geometry nel costo
+   band-based, IoU arrotondata presto, AP tagliata dentro tie, macro-AP
+   sum-only e `record_family` letto dai record.
 10. **Ambiente**: sync del lock con hash, test completi e deep hash di tutte le
    fixture PASS.
 
@@ -1649,19 +2029,26 @@ esportati dal package attivo e irraggiungibili dal dispatcher REV7.
 
 Ordine obbligatorio:
 
-1. candidato REV8 e digest, senza modificare contratto vivo;
-2. primitive `N64`, identity/decision key, aritmetica razionale e test;
-3. frontend lock, schema/generatore/validator dell'indice e fixture;
-4. surface loader fail-closed e test adversarial;
-5. T2 eventi e T3 regioni candidati con oracle;
-6. materializzazione ed esecuzione delle 14 fixture Gate 9 v2;
-7. commit atomico che cambia insieme contratto vivo, schema/registry v2,
+1. candidate REV8 patched e digest, senza modificare contratto vivo;
+2. counter-check indipendente sul commit candidate immutabile;
+3. materializzazione e freeze degli artefatti O-02/O-03/O-18;
+4. benchmark A2 e preflight O-09 sul platform lock;
+5. ballot addendum che attiva atomicamente cap, scope e reason code O-09;
+6. gate separato ed esplicito `REV8 SPEC GO`;
+7. soltanto dopo SPEC GO: primitive N64, tick identity, scientific/diagnostic
+   keys, aritmetica esatta e test in moduli v2 isolati;
+8. frontend lock, schema/generatore/validator dell'indice, boundary artifact,
+   numeric artifact, surface loader e fixture adversarial;
+9. T2 eventi e T3 regioni candidati con oracle A1/A2 e materializzazione
+   dell'intera registry Gate 9 v2, incluse le 14 fixture legacy e la suite
+   R23C;
+10. commit atomico che cambia insieme contratto vivo, schema/registry v2,
    dispatcher, parser, trusted-index admission, surface loader, T2, T3,
    goldens, tripwire, PLAN e SHA256SUMS.
 
 Il commit di switch produce soltanto `REV8_ACTIVE`. `G1C_REV8_CLOSE` richiede
-successivamente entrypoint pubblico v2 verde, EVAL-MVP e tutte le 14 fixture
-Gate 9 verdi. Nessuno dei due stati promuove il prodotto.
+successivamente entrypoint pubblico v2 verde, EVAL-MVP, tutte le 14 fixture
+legacy e l'intera suite R23C verdi. Nessuno dei due stati promuove il prodotto.
 
 Il test post-switch sull'entrypoint pubblico deve accettare esclusivamente
 annotation/prediction/policy v2, rifiutare v1 e batch misti e dimostrare
@@ -1683,6 +2070,19 @@ saranno definiti da G1a e poi riportati senza abbreviazioni nel report.
 
 G1 e NO-GO se si verifica uno solo dei seguenti casi:
 
+- target matching, ballot R23C o report post-firma non corrispondono ai digest
+  hash-pinned dell'header;
+- activation manifest non seleziona atomicamente evaluator, contratto, schema,
+  boundary artifact, numeric artifact, dispatcher e platform lock;
+- un consumer usa secondi N64 invece dei tick autoritativi per identity,
+  admission, matching o metriche;
+- boundary O-02, `W_MAX`/projection O-03, numeric artifact O-18 o cap O-09 non
+  sono materializzati, verificati e attivati tramite i gate prescritti;
+- optimizer o metriche usano somme float, K5 attivo, `decision_key` storico,
+  raw geometry band-based, greedy/first-fit o fallback approssimati;
+- severity/confidence/actionable/ID/hash alterano il matching scientifico, o
+  `D/M_replay` alimentano metriche normative o gate;
+- macro-AP usa la somma grezza invece di `mean64(AP_group64)`;
 - sample-rate parity o streaming parity non raggiunti senza rilassare il gate;
 - LF e MAIN non condividono lo stesso timestamp;
 - uno split permette fallback, overlap o riassegnazione retroattiva;
@@ -1725,6 +2125,15 @@ una sola lista consolidata. Il GO richiede:
 - specifiche implementabili senza decisioni aperte nascoste;
 - nessun percorso di leakage o contaminazione del final-test;
 - metriche separate per bilanciamento tonale e anomalie dinamiche;
+- trasferimento completo e non contraddittorio della formalizzazione R23C,
+  del ballot firmato e del recheck `3/3 CLEAN`;
+- tick, projection, structural validity, eligibility, K1–K4, K6, envelope,
+  `mean64` e Average Precision coerenti con l'authority hash-pinned;
+- nessun residuo normativo di secondi come autorita, nearest-center
+  projection, `decision_key` candidate-controlled, K5 attivo, sum-only
+  macro-AP o replay diagnostico usato per gate;
+- O-02/O-03/O-18 e cap O-09 esplicitamente bloccanti finche non
+  materializzati e controfirmati;
 - supporti calibration clean/positivi e benchmark group-level falsificabili;
 - baseline non omologhe trattate come `N/A`, mai come vittorie artificiali;
 - gate abbastanza severi da rendere falsificabili le claim successive;
@@ -1745,3 +2154,7 @@ promuove tip ufficiale G1b; non riapre A3/ACTIVE; non ammette lo sweep nel
 closing set; non rilassa 0.25 dB / max / `R`. Il rehash coordinato di
 metrology lock + SHA256SUMS e obbligatorio nello stesso pacchetto di
 consolidamento (mai silent).
+
+**REVISIONE 8 candidate R23C patched:** non costituisce `REV8 SPEC GO`,
+`REV8_ACTIVE`, `G1C_REV8_CLOSE` o G1 PASS. Il suo unico passo successivo
+ammesso e il counter-check documentale sul commit candidate immutabile.
