@@ -4,7 +4,9 @@ from __future__ import annotations
 from fractions import Fraction
 from importlib.machinery import EXTENSION_SUFFIXES
 import itertools
+import os
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
 from unittest import mock
@@ -22,6 +24,7 @@ from ml_v3.benchmark.rev8_o09_candidate import (
     rational_bit_length,
 )
 from ml_v3.benchmark.run_rev8_o09_candidate import (
+    EVIDENCE_SCHEMA,
     _fraction,
     _external_output_path,
     _graph,
@@ -308,6 +311,12 @@ class PreflightTests(unittest.TestCase):
 
 
 class BenchmarkRunnerTests(unittest.TestCase):
+    def test_evidence_schema_tracks_isolated_startup_payload(self):
+        self.assertEqual(
+            EVIDENCE_SCHEMA,
+            "aieq-v3-rev8-o09-candidate-benchmark-4",
+        )
+
     def test_exact_evidence_uses_hex_strings_beyond_decimal_guard(self):
         huge = Fraction(-(2**65_535 + 1), 2**65_536 + 1)
         encoded = _fraction(huge)
@@ -351,6 +360,16 @@ class BenchmarkRunnerTests(unittest.TestCase):
     def test_child_reports_loaded_and_hashed_source_provenance(self):
         run = _run_child("unique_additive", 2)
         worker = run["worker_provenance"]
+        startup = worker["platform"]["startup"]
+        self.assertEqual(
+            Path(startup["orig_argv"][4]).resolve(),
+            runner_module.BOOTSTRAP_PATH.resolve(),
+        )
+        self.assertTrue(startup["isolated"])
+        self.assertTrue(startup["no_site"])
+        self.assertTrue(startup["ignore_environment"])
+        self.assertTrue(startup["safe_path"])
+        self.assertTrue(startup["dont_write_bytecode"])
         self.assertEqual(worker["source_sha256"], _source_hashes())
         parent = _loaded_module_provenance()
         for label in (
@@ -360,6 +379,149 @@ class BenchmarkRunnerTests(unittest.TestCase):
             "ml_v3.contracts.metrology_lock",
         ):
             self.assertEqual(worker["loaded_modules"][label], parent[label])
+
+    def test_bootstrap_rejects_non_isolated_startup(self):
+        completed = subprocess.run(
+            (
+                runner_module.sys.executable,
+                "-B",
+                str(runner_module.BOOTSTRAP_PATH),
+                "--worker",
+                "unique_additive",
+                "--size",
+                "2",
+            ),
+            cwd=runner_module.ROOT,
+            env={
+                key: value
+                for key, value in os.environ.items()
+                if key not in {
+                    "PYTHONHOME", "PYTHONPATH", "PYTHONPYCACHEPREFIX"
+                }
+            },
+            check=False,
+            text=True,
+            capture_output=True,
+        )
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn(
+            "requires Python flags -I -S -B",
+            completed.stderr + completed.stdout,
+        )
+
+    def test_isolated_bootstrap_never_executes_hostile_sitecustomize(self):
+        with tempfile.TemporaryDirectory() as directory:
+            attack_root = Path(directory)
+            marker = attack_root / "sitecustomize-executed"
+            (attack_root / "sitecustomize.py").write_text(
+                "from pathlib import Path\n"
+                f"Path({str(marker)!r}).write_text('executed')\n"
+                "raise RuntimeError('hostile sitecustomize executed')\n",
+                encoding="utf-8",
+            )
+            environment = os.environ.copy()
+            environment["PYTHONPATH"] = str(attack_root)
+            environment.pop("PYTHONHOME", None)
+            environment.pop("PYTHONPYCACHEPREFIX", None)
+            environment["PYTHONDONTWRITEBYTECODE"] = "1"
+            completed = subprocess.run(
+                (
+                    runner_module.sys.executable,
+                    "-I",
+                    "-S",
+                    "-B",
+                    str(runner_module.BOOTSTRAP_PATH),
+                    "--worker",
+                    "unique_additive",
+                    "--size",
+                    "2",
+                ),
+                cwd=runner_module.ROOT,
+                env=environment,
+                check=False,
+                text=True,
+                capture_output=True,
+            )
+            self.assertNotEqual(completed.returncode, 0)
+            self.assertFalse(marker.exists())
+            self.assertIn(
+                "benchmark forbids import-affecting environment PYTHONPATH",
+                completed.stderr + completed.stdout,
+            )
+
+    def test_isolated_non_bootstrap_entrypoint_is_rejected(self):
+        script = (
+            "import runpy,sys;"
+            f"sys.path[:0]=[{str(runner_module.ROOT)!r},"
+            f"{str(Path(runner_module.np.__file__).resolve().parents[1])!r}];"
+            "sys.argv=['ml_v3.benchmark.run_rev8_o09_candidate',"
+            "'--worker','unique_additive','--size','2'];"
+            "runpy.run_module('ml_v3.benchmark.run_rev8_o09_candidate',"
+            "run_name='__main__',alter_sys=True)"
+        )
+        completed = subprocess.run(
+            (
+                runner_module.sys.executable,
+                "-I",
+                "-S",
+                "-B",
+                "-c",
+                script,
+            ),
+            cwd=runner_module.ROOT,
+            env={
+                key: value
+                for key, value in os.environ.items()
+                if key not in {
+                    "PYTHONHOME", "PYTHONPATH", "PYTHONPYCACHEPREFIX"
+                }
+            },
+            check=False,
+            text=True,
+            capture_output=True,
+        )
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn(
+            "requires the exact isolated bootstrap invocation",
+            completed.stderr + completed.stdout,
+        )
+
+    def test_bootstrap_rejects_bytecode_before_project_import(self):
+        probe = runner_module.ROOT / "ml_v3" / ".rev8_o09_attack.pyc"
+        self.assertFalse(probe.exists())
+        try:
+            probe.write_bytes(b"hostile-bytecode-placeholder")
+            completed = subprocess.run(
+                (
+                    runner_module.sys.executable,
+                    "-I",
+                    "-S",
+                    "-B",
+                    str(runner_module.BOOTSTRAP_PATH),
+                    "--worker",
+                    "unique_additive",
+                    "--size",
+                    "2",
+                ),
+                cwd=runner_module.ROOT,
+                env={
+                    key: value
+                    for key, value in os.environ.items()
+                    if key not in {
+                        "PYTHONHOME", "PYTHONPATH", "PYTHONPYCACHEPREFIX"
+                    }
+                },
+                check=False,
+                text=True,
+                capture_output=True,
+            )
+        finally:
+            probe.unlink(missing_ok=True)
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn(
+            "archive-like Python source tree before import",
+            completed.stderr + completed.stdout,
+        )
 
     def test_native_extension_shadow_is_rejected_even_when_git_ignored(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -49,6 +49,7 @@ from ml_v3.contracts.metrology_lock import (
 )
 
 ROOT = Path(__file__).resolve().parents[2]
+EVIDENCE_SCHEMA = "aieq-v3-rev8-o09-candidate-benchmark-4"
 PROTECTED_PATHS = (
     "docs/MOTORE_V3_G1_CONTRACT_REV8_CANDIDATE.md",
     "docs/MOTORE_V3_G1_CONTRACT.md",
@@ -64,10 +65,12 @@ PROVENANCE_PATHS = (
     "ml_v3/fixtures/g1/metrology_lock.json",
     "ml_v3/environment/requirements.lock",
     "ml_v3/benchmark/rev8_o09_candidate.py",
+    "ml_v3/benchmark/rev8_o09_isolated_bootstrap.py",
     "ml_v3/benchmark/run_rev8_o09_candidate.py",
     "ml_v3/tests/test_g1c_rev8_o09_candidate.py",
 )
 HASHED_PATHS = (*PROTECTED_PATHS, *FROZEN_O_PATHS, *PROVENANCE_PATHS)
+BOOTSTRAP_PATH = ROOT / "ml_v3/benchmark/rev8_o09_isolated_bootstrap.py"
 
 
 def _pairwise_coprime_256bit_denominators() -> tuple[int, ...]:
@@ -400,6 +403,26 @@ def _measure_bit_boundaries() -> dict[str, Any]:
 
 
 def _platform() -> dict[str, Any]:
+    flags = sys.flags
+    if not (
+        flags.isolated
+        and flags.no_site
+        and flags.ignore_environment
+        and flags.safe_path
+    ):
+        raise RuntimeError(
+            "O-09 evidence requires isolated startup through "
+            "rev8_o09_isolated_bootstrap.py with Python -I -S -B")
+    original_argv = tuple(sys.orig_argv)
+    if (
+        len(original_argv) < 5
+        or Path(original_argv[0]).resolve() != Path(sys.executable).resolve()
+        or original_argv[1:4] != ("-I", "-S", "-B")
+        or Path(original_argv[4]).resolve() != BOOTSTRAP_PATH.resolve()
+    ):
+        raise RuntimeError(
+            "O-09 evidence requires the exact isolated bootstrap invocation; "
+            f"sys.orig_argv={original_argv!r}")
     if not sys.dont_write_bytecode:
         raise RuntimeError(
             "O-09 evidence requires PYTHONDONTWRITEBYTECODE=1")
@@ -422,7 +445,19 @@ def _platform() -> dict[str, Any]:
         raise RuntimeError(f"gate marketing OS mismatch: {actual} vs {lock}")
     if actual["numpy"] != lock["numpy"]:
         raise RuntimeError(f"gate NumPy mismatch: {actual} vs {lock}")
-    return {"actual": actual, "lock": lock}
+    return {
+        "actual": actual,
+        "lock": lock,
+        "startup": {
+            "orig_argv": list(original_argv),
+            "bootstrap_path": str(BOOTSTRAP_PATH),
+            "isolated": bool(flags.isolated),
+            "no_site": bool(flags.no_site),
+            "ignore_environment": bool(flags.ignore_environment),
+            "safe_path": bool(flags.safe_path),
+            "dont_write_bytecode": bool(sys.dont_write_bytecode),
+        },
+    }
 
 
 def _source_hashes() -> dict[str, str]:
@@ -543,7 +578,7 @@ def _worker() -> None:
     parser.add_argument("--worker", required=True)
     parser.add_argument("--size", type=int, required=True)
     args = parser.parse_args()
-    _platform()
+    platform_evidence = _platform()
     _tree_hygiene(require_clean_git=False)
     source_before = _source_hashes()
     loaded_modules_before = _loaded_module_provenance()
@@ -560,6 +595,7 @@ def _worker() -> None:
         raise RuntimeError(
             "loaded project modules changed while a worker was executing")
     result["worker_provenance"] = {
+        "platform": platform_evidence,
         "source_sha256": source_after,
         "loaded_modules": loaded_modules_after,
     }
@@ -574,8 +610,10 @@ def _run_child(kind: str, size: int) -> dict[str, Any]:
     completed = subprocess.run(
         (
             sys.executable,
-            "-m",
-            "ml_v3.benchmark.run_rev8_o09_candidate",
+            "-I",
+            "-S",
+            "-B",
+            str(BOOTSTRAP_PATH),
             "--worker",
             kind,
             "--size",
@@ -723,15 +761,17 @@ def main() -> None:
                 raise RuntimeError(
                     "worker loaded-module evidence differs from the parent")
     evidence = {
-        "schema": "aieq-v3-rev8-o09-candidate-benchmark-3",
+        "schema": EVIDENCE_SCHEMA,
         "authority_status": "EVIDENCE_ONLY_CAPS_NOT_ACTIVE",
         "commit": commit,
         "platform": platform_evidence,
         "configuration": {
             "invocation": [
                 sys.executable,
-                "-m",
-                "ml_v3.benchmark.run_rev8_o09_candidate",
+                "-I",
+                "-S",
+                "-B",
+                str(BOOTSTRAP_PATH),
                 "--output",
                 str(output_path),
                 "--max-size",
@@ -742,6 +782,10 @@ def main() -> None:
                 str(args.repeat_large),
             ],
             "python_dont_write_bytecode": sys.dont_write_bytecode,
+            "python_isolated": bool(sys.flags.isolated),
+            "python_no_site": bool(sys.flags.no_site),
+            "python_ignore_environment": bool(sys.flags.ignore_environment),
+            "python_safe_path": bool(sys.flags.safe_path),
             "external_output_required": True,
             "atomic_publish_after_final_hygiene": True,
             "exact_scalar_integer_encoding": "signed_lowercase_hex_strings",
