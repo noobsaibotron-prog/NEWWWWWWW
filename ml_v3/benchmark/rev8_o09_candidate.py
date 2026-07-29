@@ -113,6 +113,10 @@ class ExactEdge:
             raise CandidateGraphError("edge.scientific_key must be bytes")
         if not isinstance(self.diagnostic_key, bytes):
             raise CandidateGraphError("edge.diagnostic_key must be bytes")
+        if not self.scientific_key:
+            raise CandidateGraphError("edge.scientific_key must be non-empty")
+        if not self.diagnostic_key:
+            raise CandidateGraphError("edge.diagnostic_key must be non-empty")
         severity = _fraction(self.severity_error, "edge.severity_error")
         if severity < 0:
             raise CandidateGraphError("edge.severity_error must be non-negative")
@@ -144,6 +148,7 @@ class CandidateGraph:
         if not isinstance(self.edges, tuple):
             raise CandidateGraphError("edges must be a tuple")
         seen_pairs: set[tuple[int, int]] = set()
+        seen_diagnostic_keys: set[bytes] = set()
         for edge in self.edges:
             if not isinstance(edge, ExactEdge):
                 raise CandidateGraphError("edges must contain ExactEdge values")
@@ -152,6 +157,15 @@ class CandidateGraph:
             if pair in seen_pairs:
                 raise CandidateGraphError(f"duplicate eligible edge {pair}")
             seen_pairs.add(pair)
+            # R23C diagnostic_edge_key contains the complete endpoint payload
+            # plus the validated occurrence ordinal.  It is therefore unique
+            # per eligible edge.  Without this invariant two different
+            # matchings can have identical S and D, contradicting the signed
+            # "unique argmin" authority for M_replay.
+            if edge.diagnostic_key in seen_diagnostic_keys:
+                raise CandidateGraphError(
+                    "duplicate diagnostic edge key makes M_replay non-unique")
+            seen_diagnostic_keys.add(edge.diagnostic_key)
 
 
 @dataclass(frozen=True)
@@ -814,9 +828,14 @@ def provisional_preflight_probe(graph: CandidateGraph) -> PreflightProbe:
         limit = min(k, len(values))
         bound = max(abs(value).bit_length() for value in values)
         bound += _ceil_log2_positive(limit)
-        if divide_by_k and limit > 1:
-            # A rational mean has the integer sum over K.
-            bound += 1 + _ceil_log2_positive(limit)
+        if divide_by_k:
+            # The published onset/offset scalar is not merely sum/K ticks:
+            # R23_05 converts it exactly to milliseconds as
+            # sum/(K*48).  The reduced value cannot exceed the unreduced
+            # numerator + denominator bit bound.  This also matters at K=1,
+            # where an integer q/1 already has a one-bit denominator and the
+            # ms boundary contributes denominator 48.
+            bound += (limit * 48).bit_length()
         return bound
 
     k2_values = [edge.k2_iou for edge in graph.edges]

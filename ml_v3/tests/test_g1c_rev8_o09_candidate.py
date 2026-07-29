@@ -57,6 +57,13 @@ class ValidationTests(unittest.TestCase):
         with self.assertRaisesRegex(CandidateGraphError, "must be >= 1"):
             graph(1, 1, [edge(0, 0, k4=Fraction(1, 2))], "product")
 
+    def test_duplicate_diagnostic_key_rejected_as_non_unique_replay(self):
+        with self.assertRaisesRegex(CandidateGraphError, "diagnostic edge key"):
+            graph(2, 2, [
+                edge(0, 0, diagnostic=b"same"),
+                edge(1, 1, diagnostic=b"same"),
+            ])
+
     def test_a1_scope_is_small_and_explicit(self):
         with self.assertRaisesRegex(CandidateGraphError, "A1 oracle domain"):
             a1_exhaustive(graph(4, 1, []))
@@ -115,10 +122,10 @@ class A1A2EquivalenceTests(unittest.TestCase):
         # Both perfect matchings tie on V. Their scientific sequences decide
         # first; diagnostic keys deliberately prefer the opposite matching.
         candidate = graph(2, 2, [
-            edge(0, 0, scientific=b"a", diagnostic=b"z"),
-            edge(1, 1, scientific=b"d", diagnostic=b"z"),
-            edge(0, 1, scientific=b"b", diagnostic=b"a"),
-            edge(1, 0, scientific=b"c", diagnostic=b"a"),
+            edge(0, 0, scientific=b"a", diagnostic=b"z0"),
+            edge(1, 1, scientific=b"d", diagnostic=b"z1"),
+            edge(0, 1, scientific=b"b", diagnostic=b"a0"),
+            edge(1, 0, scientific=b"c", diagnostic=b"a1"),
         ])
         self.assert_equivalent(candidate)
         self.assertEqual(a2_exact(candidate).scientific_sequence, (b"a", b"d"))
@@ -135,13 +142,13 @@ class A1A2EquivalenceTests(unittest.TestCase):
 
     def test_three_upper_envelopes_can_choose_different_optima(self):
         candidate = graph(2, 2, [
-            edge(0, 0, scientific=b"x", diagnostic=b"a",
+            edge(0, 0, scientific=b"x", diagnostic=b"a0",
                  severity=Fraction(9, 10), onset=0, offset=1),
-            edge(1, 1, scientific=b"x", diagnostic=b"a",
+            edge(1, 1, scientific=b"x", diagnostic=b"a1",
                  severity=Fraction(9, 10), onset=0, offset=1),
-            edge(0, 1, scientific=b"x", diagnostic=b"b",
+            edge(0, 1, scientific=b"x", diagnostic=b"b0",
                  severity=Fraction(1, 10), onset=10, offset=0),
-            edge(1, 0, scientific=b"x", diagnostic=b"b",
+            edge(1, 0, scientific=b"x", diagnostic=b"b1",
                  severity=Fraction(1, 10), onset=10, offset=0),
         ])
         self.assert_equivalent(candidate)
@@ -189,7 +196,7 @@ class A1A2EquivalenceTests(unittest.TestCase):
                             else Fraction(8 + (rank * 3) % 7, 8)
                         ),
                         scientific=bytes([97 + (rank % 3)]),
-                        diagnostic=bytes([100 + (rank % 5)]),
+                        diagnostic=f"d:{rank}".encode(),
                         severity=Fraction((rank * 11) % 13, 13),
                         onset=(rank * 13) % 17,
                         offset=(rank * 17) % 19,
@@ -263,6 +270,22 @@ class PreflightTests(unittest.TestCase):
                     "EXACT_SCALAR_BIT_LENGTH" in probe.provisional_exceeded,
                     exceeded,
                 )
+
+    def test_onset_ms_publication_is_inside_preflight_bound_at_k1_one(self):
+        # Odd and not divisible by 3, so division by 48 does not reduce.
+        onset = 2**65_536 - 5
+        candidate = graph(1, 1, [edge(0, 0, onset=onset)])
+        probe = provisional_preflight_probe(candidate)
+        result = a2_exact(candidate)
+        self.assertEqual(result.onset_upper_ticks, onset)
+        published_ms = result.onset_upper_ticks / 48
+        self.assertEqual(rational_bit_length(published_ms), 65_542)
+        self.assertGreaterEqual(
+            probe.exact_scalar_bit_bound,
+            rational_bit_length(published_ms),
+        )
+        self.assertIn(
+            "EXACT_SCALAR_BIT_LENGTH", probe.provisional_exceeded)
 
 
 if __name__ == "__main__":
