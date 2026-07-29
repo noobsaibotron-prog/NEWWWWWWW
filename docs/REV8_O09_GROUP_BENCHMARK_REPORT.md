@@ -4,12 +4,26 @@
 
 **REV8 SPEC GO:** `NO`
 
-**Reviewer:** single independent reviewer (Claude), continuing this tranche
-after Codex exhausted its budget mid-run. **This is not the three-lens
-counter-check used elsewhere in G1c/REV8.** The runner and kernel it exercises
-were built and unit-tested by Codex (538 canonical tests, including 56
-targeted to this tranche) before the handoff; this report covers what was
-independently re-verified after the handoff, not a fresh three-party review.
+**Reviewers.** The runner and kernel were built and unit-tested by Codex (538
+canonical tests, 56 targeted to this tranche) before it exhausted its budget
+mid-run. Everything after the handoff passed through:
+
+1. **Claude** — re-read the untested files, executed the smoke and full
+   benchmarks through the real isolated bootstrap, recomputed the hashes
+   independently, wrote §1-§5 of this report;
+2. **Hermes** — external read-only counter-check. Round 1 was static only and
+   carried three misattributed line citations (substance correct, positions
+   wrong) and one health check run against the wrong worktree; those were
+   found by re-verification and corrected. Round 2 re-executed the payload and
+   file hash verification standalone and re-confirmed the disputed citations
+   at their true positions;
+3. **Claude, second pass** — semantic conformance of AP, B-001 coverage and
+   Spearman against the signed contracts, recorded in §6 below.
+
+**This is still not the three-lens counter-check used elsewhere in G1c/REV8**
+— the lenses were not run by three mutually independent parties on the same
+material. It is more than a single reviewer, and less than the established
+process. No equivalence is claimed.
 
 **Benchmark source commit:** `692cda55ae9d5a2b0d89c9dafb7c9d35e4c49752`
 
@@ -43,9 +57,50 @@ verification, tree hygiene, source/module provenance, atomic external
 publish, determinism-across-replicas). No defect was found by reading; the
 following was then confirmed by execution, not by inspection alone:
 
-- 13/13 targeted runner tests, 56/56 combined with the sealed kernel,
-  538/538 full canonical suite — all green, matching the state Codex had
-  already reached.
+- 13/13 targeted runner tests and 56/56 combined with the sealed kernel —
+  green, and re-confirmed since (they pass on a polluted tree too, because
+  they perform no subprocess tree-hygiene check).
+- **Correction to an earlier version of this report.** That version claimed
+  "538/538 full canonical suite — all green". That claim is not reproducible
+  and is withdrawn. Measured on a clean tree with the canonical interpreter:
+  `python -m unittest discover -s ml_v3/tests -t .` gives **535 pass, 3 fail**.
+  The three failures are `test_isolated_bootstrap_never_executes_hostile_sitecustomize`,
+  `test_child_reports_loaded_and_hashed_source_provenance` and
+  `test_loaded_modules_are_the_expected_python_sources`, all in
+  `test_g1c_rev8_o09_candidate.py` — the **per-subgraph** tranche, not this
+  one. See §2.1 for the cause; it predates both commits in this tranche.
+
+### 2.1 Pre-existing order-dependent suite defect (not introduced here)
+
+Established causally, not inferred:
+
+- `test_g1a_t6_generators.py:194` spawns its determinism subprocesses as
+  `[sys.executable, "-c", child, root]` without `-B`. Those children write
+  `__pycache__` under `ml_v3/`, `ml_v3/contracts/`, `ml_v3/fixtures/` and
+  `ml_v3/fixtures/g1/` **even when the parent runs with `-B`**, because the
+  flag is not inherited across an explicit `sys.executable` invocation.
+- The three O-09 per-subgraph tests above spawn the real isolated bootstrap,
+  which refuses to run unless the source tree is archive-like. On the polluted
+  tree it exits with
+  `"requires an archive-like Python source tree before import"` — the runner
+  behaving exactly as designed.
+- Under `unittest discover`, `test_g1a_*` sorts before `test_g1c_*`, so the
+  pollution always precedes the check and the failure is deterministic, not
+  flaky.
+
+Direct confirmation of each link: the three tests pass (`OK`, no cache left)
+when run alone with `-B` on a clean tree; they fail when
+`test_g1a_t6_generators` is run first, even with `-B` on the parent; and
+`git diff 692cda55 HEAD -- ml_v3/tests ml_v3/benchmark ml_v3/contracts` is
+empty, so no code in this tranche changed the outcome. The interaction dates
+from `e8222688`, where the per-subgraph hygiene tests were added alongside a
+`test_g1a_t6_generators.py` last modified on 2026-07-26.
+
+The fix is small (pass `-B` to that subprocess, or run the generator children
+in a temp tree) but belongs to the G1a tranche and to its own counter-checked
+commit, not to this evidence tranche. It is recorded here rather than fixed
+in passing. The file is not covered by the G1a `SHA256SUMS` trust anchor, so
+the fix would not force a rehash.
 - A `smoke`-profile run through the real isolated bootstrap (11 workloads,
   3 replicas): payload hash self-consistent (independently recomputed, not
   trusted from the declared field), `ballot_ready=false` as declared, the
@@ -126,12 +181,98 @@ G_eligible_G_defined_G_NA_and_gate_floors:    NOT_EVALUATED
 ballot_ready:                                 false
 ```
 
-## 6. What this report does not claim
+## 6. Semantic conformance against the signed contracts
 
-- Not a three-lens counter-check. A second independent reviewer has not yet
-  examined this tranche the way the per-subgraph evidence and every prior
-  O-02/O-03/O-18 and O-09 per-subgraph tranche were examined before this
-  session took over.
+The benchmark measures cost; this section records whether the kernel it
+measures computes the metrics the contracts define. Each formula below was
+compared line-by-line against its normative source, not against this report's
+own prose.
+
+**Average Precision — conformant to §13 of the Round 2.3 signed draft.**
+Thresholds are the distinct confidences in descending order; the prefix is
+`{prediction : confidence >= t}`, so equal-confidence predictions enter
+atomically as §13 requires; the matching is *recomputed* per threshold via
+`exact_maximum_cardinality`, not carried incrementally; `P_k = TP/(TP+FP)`,
+`R_k = TP/N_GT`, `R_0 = 0`, `AP = Σ(R_k − R_{k−1})·P_k`. No trapezoid, no
+precision envelope, no artificial endpoint — the three constructions §13:906
+forbids. Both boundary cases hold: `N_GT>0, K=0 → AP=0` and `N_GT=0 → N/A`.
+The implementation additionally rejects a non-monotone K1 prefix, which §13
+does not require but cannot violate.
+
+**B-001 coverage — conformant to `REV8_CANDIDATE_B001_COVERAGE_MICRO_AMEND_BALLOT.md`
+(SIGNED — APPROVED), not to the Round 2.3 draft.** Worth recording explicitly:
+B-001 has no definition and no ledger entry in the Round 2.3 signed draft —
+"copertura" appears there once, as a gate the macro-mean is subordinate to,
+with no formula. Its normative source is the separate signed micro-amend
+ballot. Against that ballot: `covered(g,M)` is edge weight
+`actionable_gt[g] AND actionable_prediction[p]`; `C_u(M) = Σcovered/|G_A(u)|`
+with the denominator pooled over the unit's partitions;
+`coverage_minus = min over M_u*`, `coverage_plus = max` (diagnostic);
+`|G_A(u)|=0 → N/A / NO_ACTIONABLE_GT`; one rounding at the publication
+boundary via `rn64`; reductions through the signed `mean64` hierarchy.
+
+Two properties are worth naming because they are easy to mistake for
+approximations and are not:
+
+- The per-partition decomposition (solve each partition's envelope, then sum)
+  is **exact**, not a bound. `M_u*` is a Cartesian product and the numerator
+  of `C_u(M)` is separable, so the minimum of a sum of independent terms is
+  the sum of the minima. This is what "separable" means in the kernel's
+  docstring.
+- The envelope ranges over the **full** `M*`, not over the larger set of
+  maximum-cardinality matchings. `_edge_cost` builds the lexicographic cost
+  `(−K2, K3, K4, −weight)`, so the coverage weight acts only as a tiebreak
+  *inside* the scientific optimum. The complement trick used for the minimum
+  (`ceiling − weight`) does not leak into the reported value, which is
+  recomputed from the original weights.
+
+**Spearman — conformant to §11.4 and DECISIONE_R23_02.** Midranks are
+`((start+1)+end)/2` over tie runs; rho is carried as sign plus the exact
+rational triple `(cov², var_x, var_y)` and never materialized as a root;
+`rho_equal` implements exactly `cov₁²·var_x₂·var_y₂ == cov₂²·var_x₁·var_y₁`
+with a sign precondition, which is R23_02 verbatim. All three §11.4 reason
+codes are present with the right triggers (`support < 10` →
+`INSUFFICIENT_MATCHED_SUPPORT`; zero variance → `SPEARMAN_UNDEFINED`;
+lower/upper envelope disagree → `PAIRING_AMBIGUOUS`). The fixed-marginal
+certificate is sound: when matched value multiplicities are proved invariant
+across `M*`, both variances and both means are invariant, leaving only `Σxy`,
+which is separable — so equal lower and upper envelopes prove rho is a
+singleton rather than merely suggesting it.
+
+**One deviation, declared not silent.** `SPEARMAN_CERTIFICATE_UNAVAILABLE` is
+a fourth reason code that §11.4 does not enumerate. It is returned when the
+kernel can prove neither singleton nor non-singleton. Forcing that case into
+`PAIRING_AMBIGUOUS` would assert "rho is not a singleton" — a claim the
+kernel has not established — so a distinct code is the more honest outcome,
+and both N/A results block PASS identically, so there is no gate-safety
+difference today. It is nonetheless an **activation prerequisite**: before any
+O-09 ballot, either §11.4 enumerates this code or the implementation closes
+the general variable-value-marginal case. This coincides with the already
+declared `GENERAL_VARIABLE_VALUE_MARGINAL_SPEARMAN_NOT_CERTIFIED` limitation;
+it is named here so it is explicit rather than implied.
+
+**Numeric authority (O-18) verified present, not assumed.** `sum_pairwise64`
+matches the §2.2 pinned form (`mid = floor(N/2)`, recursive split, rounding at
+every addition); `mean64` sums pairwise and divides once; neither `numpy.sum`,
+`math.fsum`, Kahan nor fast-math appears on any published quantity in the
+kernel or runner. `exact_arith_v2.exact()` keeps the `int` and `float` paths
+separate and is lossless above 2^53 — verified by execution
+(`exact(2**60+1)`). An earlier internal note describing that as an open defect
+was stale: it was fixed in `33a0957b`, the commit that materialized the O-18
+authority.
+
+## 7. What this report does not claim
+
+- Not a three-lens counter-check. This tranche has had two reviewers and a
+  semantic conformance pass, not three mutually independent lenses applied to
+  the same material the way the per-subgraph evidence and every prior
+  O-02/O-03/O-18 tranche were examined.
+- Not a claim that the surfaces §6 declares conformant have been proved
+  correct by test. §6 is a reading of the implementation against its contract;
+  the golden and mutation artifacts the ledger requires
+  (`AP golden`, `exact singleton algorithm + full fixture`,
+  `sum_pairwise64`/N64 artifacts) remain the separate materialization
+  conditions listed in §15 of the signed draft.
 - Not a claim that `spearman_variable_unavailable`'s cost is acceptable or
   unacceptable for any future cap — that is a scope/policy question for a
   ballot, not a benchmark finding.
@@ -140,10 +281,24 @@ ballot_ready:                                 false
 - Not an O-09 activation, a ballot, or a REV8 SPEC GO. All of those remain
   `NO`/unauthorized, as declared throughout.
 
-## 7. Suggested next gate
+## 8. Suggested next gate
 
-Before any O-09 ballot: an independent second reviewer (ideally restoring the
-three-lens pattern once available) should examine this tranche and, in
-particular, decide whether `spearman_variable_unavailable`'s cost profile
-needs its own structural cap distinct from the other Spearman paths, since it
-is the one case in this run that did not scale like its neighbors.
+Before any O-09 ballot, three items, in order of how much they constrain the
+ballot's scope:
+
+1. **Reason-code enumeration.** §11.4 must enumerate
+   `SPEARMAN_CERTIFICATE_UNAVAILABLE`, or the implementation must close the
+   general variable-value-marginal case. A ballot cannot activate a cap over a
+   surface that returns an unenumerated code.
+2. **Cost policy for `spearman_variable_unavailable`.** At size 64 it costs
+   ~250× its own size-10 case and more than every size-128 workload measured
+   here. Whether that warrants a structural cap distinct from the other
+   Spearman paths is a scope decision, not a benchmark finding — but it is the
+   one case in this run that did not scale like its neighbors, so it should be
+   decided deliberately rather than inherited.
+3. **The unmeasured surfaces.** `G_eligible`/`G_defined`/`G_NA` and gate
+   floors remain `NOT_EVALUATED`; §12 of the signed draft defines them and
+   this tranche does not touch them.
+
+Restoring the three-lens pattern for this tranche, once a third independent
+party is available, remains the cleanest way to close it.
