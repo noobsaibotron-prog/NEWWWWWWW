@@ -1,6 +1,6 @@
 # Motore v3 - Contratto G1 frontend e benchmark
 
-Stato normativo: REVISIONE 8 G1C SCHEMA V2 — candidate R23C patched,
+Stato normativo: REVISIONE 8 G1C SCHEMA V2 — candidate R23C+B001 patched,
 2026-07-29.
 
 Stringa di revisione normativa:
@@ -10,7 +10,8 @@ MOTORE_V3_G1_CONTRACT REVISIONE 8 G1C SCHEMA V2
 ```
 
 Questa patch documentale trasferisce nel candidate le decisioni Round 2.3
-firmate e controverificate. La sua autorità è vincolata atomicamente a:
+firmate e controverificate e il micro-amend B-001 firmato. La sua autorità è
+vincolata atomicamente a:
 
 ```text
 freeze commit:
@@ -32,12 +33,28 @@ SHA-256:
 e2223fa357d76b162508ba724ac36a529a9c5a1dc57dd894d5c39689ab070157
 Verdetto:
 3/3 CLEAN
+
+candidate R23C counter-check:
+docs/REV8_CANDIDATE_R23C_COUNTERCHECK_REPORT.md
+SHA-256:
+98c799b7a52e4e414675e2f6704536d5030ef32ee88e05ab1bcc51ec9ed9bb83
+Verdetto:
+BLOCK — B-001
+
+coverage micro-amend ballot firmato:
+docs/REV8_CANDIDATE_B001_COVERAGE_MICRO_AMEND_BALLOT.md
+SHA-256:
+783dcd374b9d556ac43427877b4eef374022c85818a95ff7985693b608e0715c
+Authority commit:
+d9ef603f55cdc092c6e4ac3620b771a65daeeabc
 ```
 
-La composizione dei tre artefatti è la norma di matching firmata. I marker
+La composizione dei tre artefatti R23C è la norma di matching firmata. I marker
 R23C `PENDING_EXTERNAL_BALLOT` presenti nei byte immutabili della
 formalizzazione sono risolti dal ballot esterno sopra indicato; non sono
-decisioni ancora aperte.
+decisioni ancora aperte. Il report candidate e il ballot B-001 aggiungono
+esclusivamente la policy conservativa della coverage target-specific senza
+modificare R23C.
 
 Il testo non auto-dichiara il proprio stato operativo. REV8 e attiva soltanto
 quando il dispatcher pubblico, il PLAN e il manifest di attivazione sigillato
@@ -539,6 +556,7 @@ Per i domini seguenti la formalizzazione R23C firmata è l'unica authority:
 | metriche matching-based ed envelope | §§11–12 |
 | Average Precision | §13 |
 | oracle, metamorphic e mutation tests | §14 |
+| coverage target-specific conservativa | ballot B-001 firmato |
 
 Le clausole storiche delle sezioni 9–10 di questo candidate che usano secondi
 N64 come autorità temporale, nearest-center projection, somme binary64
@@ -559,6 +577,8 @@ contract_document_sha256
 matching_formalization_sha256
 matching_ballot_sha256
 matching_recheck_sha256
+candidate_countercheck_sha256
+coverage_micro_amend_ballot_sha256
 schema_bundle_sha256
 boundary_artifact_sha256
 numeric_artifact_sha256
@@ -1200,8 +1220,8 @@ Metriche obbligatorie:
 - errore di segno sulle celle con `abs(t) >= 1 dB`;
 - clean actionable rate: quota di gruppi `clean_for_action` con almeno un
   bundle marcato actionable e oltre 1 dB in qualunque regione udibile;
-- copertura: quota di target actionable per cui il motore emette un bundle
-  azionabile;
+- copertura: lower envelope conservativo `coverage_minus` della quota di target
+  actionable matched a bundle actionable, secondo la sezione 10.2;
 - MAE della severity `[0,1]` sui bundle semantici matched e Spearman rho se il
   supporto e almeno 10; sotto quel supporto rho e `N/A`.
 
@@ -1310,17 +1330,54 @@ M_replay   = unique argmin_{M in M*} (S(M),D(M))
 ```
 
 Severity, confidence, actionable, ID e hash non possono influenzare
-eligibility, `V*`, `M*`, `S` o `S_can`. Severity e confidence possono
-influenzare metriche o gate soltanto tramite le formule esplicitamente
-firmate: severity nella MAE conservativa e confidence nella formazione di
-`P_t` per Average Precision. `D` e `M_replay` sono replay-only e non possono
-alimentare pairing scientifici, metriche normative o gate.
+eligibility, `V*`, `M*`, `S` o `S_can`. Severity, confidence e actionable
+possono influenzare metriche o gate soltanto tramite le formule esplicitamente
+firmate: severity nella MAE conservativa, confidence nella formazione di
+`P_t` per Average Precision e actionable nella `coverage_minus` definita
+subito sotto e nella clean actionable rate prediction-level della sezione
+10.1. `D` e `M_replay` sono replay-only e non possono alimentare pairing
+scientifici, metriche normative o gate.
 
-Nel kernel matching-based Round 2.3 actionable, ID e hash non sono consumati
-da alcuna formula metrica. Le metriche tonali preesistenti `clean actionable
-rate` e coverage della sezione 10.1 consumano actionable esplicitamente fuori
-dal kernel di matching e non possono retroagire su eligibility, optimum o K6.
-ID e hash non alimentano alcuna metrica o gate.
+Nel kernel matching-based Round 2.3 ID e hash non sono consumati da alcuna
+formula metrica. Gli usi metrici firmati di actionable avvengono soltanto dopo
+il matching e non possono retroagire su eligibility, optimum o K6. ID e hash
+non alimentano alcuna metrica o gate.
+
+Per ogni evaluation unit `u`, siano `q` tutte le partizioni
+`(evaluation_unit_key=u,record_family="semantic_region",problem_type)` e:
+
+```text
+M_u* = CartesianProduct(M_q* per tutte le partizioni q di u)
+G_A(u) = semantic region GT strutturalmente valide di u con actionable=true
+```
+
+Per `M in M_u*`:
+
+```text
+covered(g,M) = 1
+  se esiste p tale che (g,p) appartiene a M e actionable(p)=true
+  altrimenti 0
+
+C_u(M) =
+  sum_{g in G_A(u)} covered(g,M) / |G_A(u)|
+
+coverage_minus(u) = min_{M in M_u*} C_u(M)
+coverage_plus(u)  = max_{M in M_u*} C_u(M)
+```
+
+`coverage_minus` è la sola coverage scientifica primaria e di gate.
+`coverage_plus` è diagnostica. `|G_A(u)|=0` produce
+`N/A / NO_ACTIONABLE_GT`. Se il lower envelope non è calcolabile esattamente
+entro i cap attivi, il risultato è
+`N/A / PAIRING_ENVELOPE_UNAVAILABLE` e impedisce PASS quando la coverage è
+obbligatoria. Una coverage calcolata su `M_replay`, sul massimo o tramite un
+esistenziale prediction-level che ignora il matching one-to-one è vietata per
+metriche normative e gate.
+
+`C_u(M)` è razionale esatto. `coverage_minus(u)` viene arrotondata una sola
+volta a binary64 al boundary di pubblicazione e le riduzioni successive seguono
+la gerarchia `mean64` evaluation unit → `group_id` → macro fra gruppi, con peso
+gruppo uno. Supporto ed esclusioni N/A sono sempre pubblicati.
 
 Metriche obbligatorie:
 
@@ -1969,6 +2026,11 @@ Gate obbligatori:
      ordinali esatti `0..N-1` e isolamento dei campi diagnostici;
    - fixture positive severity e confidence, isolamento K6 e determinismo
      gerarchico S prima di D;
+   - fixture B-001 coverage: unique actionable match `coverage_minus=1`, only
+     non-actionable match `coverage_minus=0`, tie `pF/pT` con stesso `V*` e
+     `S_can` ma `coverage_minus=0` / `coverage_plus=1` diagnostica,
+     `NO_ACTIONABLE_GT`, envelope oltre cap, permutazione, rinomina ID/hash e
+     indipendenza da `M_replay`;
    - bit-length/preflight e tutti i reason code fatali/non fatali.
 
    Le mutation obbligatorie devono uccidere almeno: K5 attivo, K3 invertito,
@@ -1977,7 +2039,9 @@ Gate obbligatori:
    metrici firmati di severity/confidence, occurrence ordinal dipendente
    dall'input, K6 invertito, greedy/first-fit, raw geometry nel costo
    band-based, IoU arrotondata presto, AP tagliata dentro tie, macro-AP
-   sum-only e `record_family` letto dai record.
+   sum-only, `record_family` letto dai record, coverage gate tramite massimo,
+   `M_replay` o esistenziale prediction-level senza matching one-to-one e
+   actionable reintrodotto in eligibility/K1–K4.
 10. **Ambiente**: sync del lock con hash, test completi e deep hash di tutte le
    fixture PASS.
 
@@ -2070,10 +2134,11 @@ saranno definiti da G1a e poi riportati senza abbreviazioni nel report.
 
 G1 e NO-GO se si verifica uno solo dei seguenti casi:
 
-- target matching, ballot R23C o report post-firma non corrispondono ai digest
-  hash-pinned dell'header;
-- activation manifest non seleziona atomicamente evaluator, contratto, schema,
-  boundary artifact, numeric artifact, dispatcher e platform lock;
+- target matching, ballot R23C, report post-firma, candidate counter-check o
+  ballot B-001 non corrispondono ai digest hash-pinned dell'header;
+- activation manifest non seleziona atomicamente evaluator, contratto,
+  authority R23C+B001, schema, boundary artifact, numeric artifact, dispatcher
+  e platform lock;
 - un consumer usa secondi N64 invece dei tick autoritativi per identity,
   admission, matching o metriche;
 - boundary O-02, `W_MAX`/projection O-03, numeric artifact O-18 o cap O-09 non
@@ -2082,6 +2147,9 @@ G1 e NO-GO se si verifica uno solo dei seguenti casi:
   raw geometry band-based, greedy/first-fit o fallback approssimati;
 - severity/confidence/actionable/ID/hash alterano il matching scientifico, o
   `D/M_replay` alimentano metriche normative o gate;
+- la coverage scientifica non usa il lower envelope esatto su `M_u*`, usa
+  `coverage_plus`, `M_replay` o un esistenziale che ignora il matching
+  one-to-one, oppure converte i suoi N/A in zero o PASS;
 - macro-AP usa la somma grezza invece di `mean64(AP_group64)`;
 - sample-rate parity o streaming parity non raggiunti senza rilassare il gate;
 - LF e MAIN non condividono lo stesso timestamp;
@@ -2127,8 +2195,11 @@ una sola lista consolidata. Il GO richiede:
 - metriche separate per bilanciamento tonale e anomalie dinamiche;
 - trasferimento completo e non contraddittorio della formalizzazione R23C,
   del ballot firmato e del recheck `3/3 CLEAN`;
+- trasferimento completo del ballot B-001 firmato, senza usare il matching
+  replay o un esistenziale prediction-level per la coverage di gate;
 - tick, projection, structural validity, eligibility, K1–K4, K6, envelope,
-  `mean64` e Average Precision coerenti con l'authority hash-pinned;
+  `mean64`, coverage B-001 e Average Precision coerenti con l'authority
+  hash-pinned;
 - nessun residuo normativo di secondi come autorita, nearest-center
   projection, `decision_key` candidate-controlled, K5 attivo, sum-only
   macro-AP o replay diagnostico usato per gate;
@@ -2155,6 +2226,6 @@ closing set; non rilassa 0.25 dB / max / `R`. Il rehash coordinato di
 metrology lock + SHA256SUMS e obbligatorio nello stesso pacchetto di
 consolidamento (mai silent).
 
-**REVISIONE 8 candidate R23C patched:** non costituisce `REV8 SPEC GO`,
+**REVISIONE 8 candidate R23C+B001 patched:** non costituisce `REV8 SPEC GO`,
 `REV8_ACTIVE`, `G1C_REV8_CLOSE` o G1 PASS. Il suo unico passo successivo
 ammesso e il counter-check documentale sul commit candidate immutabile.
