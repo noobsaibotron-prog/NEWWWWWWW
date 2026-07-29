@@ -61,14 +61,23 @@ following was then confirmed by execution, not by inspection alone:
   green, and re-confirmed since (they pass on a polluted tree too, because
   they perform no subprocess tree-hygiene check).
 - **Correction to an earlier version of this report.** That version claimed
-  "538/538 full canonical suite — all green". That claim is not reproducible
-  and is withdrawn. Measured on a clean tree with the canonical interpreter:
-  `python -m unittest discover -s ml_v3/tests -t .` gives **535 pass, 3 fail**.
-  The three failures are `test_isolated_bootstrap_never_executes_hostile_sitecustomize`,
+  "538/538 full canonical suite — all green", unqualified. That is withdrawn:
+  it was not reproducible as written. Measured on a clean tree with the
+  canonical interpreter, a plain `python -m unittest discover -s ml_v3/tests
+  -t .` gave **535 pass, 3 fail** — `test_isolated_bootstrap_never_executes_hostile_sitecustomize`,
   `test_child_reports_loaded_and_hashed_source_provenance` and
   `test_loaded_modules_are_the_expected_python_sources`, all in
-  `test_g1c_rev8_o09_candidate.py` — the **per-subgraph** tranche, not this
-  one. See §2.1 for the cause; it predates both commits in this tranche.
+  `test_g1c_rev8_o09_candidate.py`, the **per-subgraph** tranche, not this one.
+  The cause is in §2.1 and predates both commits of this tranche.
+- **Current state, after the fix in `ac0dd38b`:** the suite is **538/538
+  green** under `python -B -m unittest discover -s ml_v3/tests -t .` — the
+  canonical invocation. It is **still 535/3 without `-B`**, and that is not a
+  residual bug: the `unittest` parent writes bytecode while importing the test
+  modules, so only `-B` keeps the tree archive-like for the isolated-bootstrap
+  checks. `-B` is a requirement of this suite, consistent with the `-I -S -B`
+  discipline the REV8 runners already enforce, and any future "all green"
+  claim about this suite must name the invocation rather than assert the
+  number alone.
 
 ### 2.1 Pre-existing order-dependent suite defect (not introduced here)
 
@@ -96,11 +105,21 @@ empty, so no code in this tranche changed the outcome. The interaction dates
 from `e8222688`, where the per-subgraph hygiene tests were added alongside a
 `test_g1a_t6_generators.py` last modified on 2026-07-26.
 
-The fix is small (pass `-B` to that subprocess, or run the generator children
-in a temp tree) but belongs to the G1a tranche and to its own counter-checked
-commit, not to this evidence tranche. It is recorded here rather than fixed
-in passing. The file is not covered by the G1a `SHA256SUMS` trust anchor, so
-the fix would not force a rehash.
+Fixed in `ac0dd38b` as its own commit in the G1a tranche, not folded into
+this evidence tranche: the two children now get `-B`, which is what the
+test's own docstring already claimed ("two clean OS subprocesses") and what
+the O-09 tests already do. The test still passes 13/13 and leaves no cache;
+the G1a `SHA256SUMS` trust anchor still verifies at 49 entries, since this
+file was never covered by it. That commit closes the pollution source but
+does not remove the `-B` requirement on the parent, for the reason given
+above.
+
+**This fix has not been counter-checked by a second party.** It is a
+one-line change to a sealed-tranche test, causally proven and verified in
+both directions (test still green, suite now green, anchor intact), but the
+program's standing rule is a counter-check before changes and no second
+reviewer was available. It should be reviewed before G1a's seal is treated
+as re-affirmed.
 - A `smoke`-profile run through the real isolated bootstrap (11 workloads,
   3 replicas): payload hash self-consistent (independently recomputed, not
   trusted from the declared field), `ballot_ready=false` as declared, the
