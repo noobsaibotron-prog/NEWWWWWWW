@@ -14,7 +14,7 @@ from __future__ import annotations
 import argparse
 from fractions import Fraction
 import hashlib
-from importlib.machinery import EXTENSION_SUFFIXES
+from importlib.machinery import EXTENSION_SUFFIXES, SourceFileLoader
 import json
 from math import gcd
 import os
@@ -439,7 +439,10 @@ def _loaded_module_provenance() -> dict[str, dict[str, str]]:
     """Hash every loaded project Python module plus the ``-m`` entrypoint."""
     evidence: dict[str, dict[str, str]] = {}
 
-    def record(label: str, module_file: str | Path) -> None:
+    def record(label: str, module: object) -> None:
+        module_file = getattr(module, "__file__", None)
+        if module_file is None:
+            raise RuntimeError(f"loaded module has no source path: {label}")
         actual = Path(module_file).resolve()
         try:
             relative = str(actual.relative_to(ROOT))
@@ -450,22 +453,49 @@ def _loaded_module_provenance() -> dict[str, dict[str, str]]:
         if actual.suffix != ".py":
             raise RuntimeError(
                 f"non-source project module loaded for {label}: {actual}")
+        loader = getattr(module, "__loader__", None)
+        spec = getattr(module, "__spec__", None)
+        origin = getattr(spec, "origin", None)
+        if not isinstance(loader, SourceFileLoader):
+            raise RuntimeError(
+                f"non-source loader for project module {label}: {loader!r}")
+        if origin is None or Path(origin).resolve() != actual:
+            raise RuntimeError(
+                f"module spec origin mismatch for {label}: {origin!r}")
+        cached = getattr(module, "__cached__", None)
+        cached_path = Path(cached).resolve() if cached is not None else None
+        if cached_path is not None and cached_path.exists():
+            raise RuntimeError(
+                f"project module bytecode cache exists for {label}: "
+                f"{cached_path}")
         evidence[label] = {
             "path": relative,
             "sha256": sha256_of_file(actual),
+            "loader": "SourceFileLoader",
+            "spec_origin": relative,
+            "cached_path": (
+                str(cached_path) if cached_path is not None else "NONE"),
+            "cached_exists": False,
         }
 
-    record("runner_entrypoint", __file__)
+    record("runner_entrypoint", sys.modules[__name__])
     for module_name, module in sorted(sys.modules.items()):
         if module_name != "ml_v3" and not module_name.startswith("ml_v3."):
             continue
         module_file = getattr(module, "__file__", None)
         if module_file is not None:
-            record(module_name, module_file)
+            record(module_name, module)
     return evidence
 
 
 def _tree_hygiene(*, require_clean_git: bool) -> None:
+    if sys.pycache_prefix is not None:
+        raise RuntimeError(
+            "benchmark forbids sys.pycache_prefix, including external caches")
+    for variable in ("PYTHONPYCACHEPREFIX", "PYTHONPATH", "PYTHONHOME"):
+        if os.environ.get(variable):
+            raise RuntimeError(
+                f"benchmark forbids import-affecting environment {variable}")
     caches = sorted(
         str(path.relative_to(ROOT))
         for path in (ROOT / "ml_v3").rglob("__pycache__")
@@ -491,6 +521,16 @@ def _tree_hygiene(*, require_clean_git: bool) -> None:
             raise RuntimeError(
                 "benchmark requires a clean immutable source worktree; "
                 f"status:\n{status}")
+
+
+def _external_output_path(path: Path) -> Path:
+    resolved = path.expanduser().resolve()
+    try:
+        resolved.relative_to(ROOT.resolve())
+    except ValueError:
+        return resolved
+    raise RuntimeError(
+        f"O-09 benchmark output must be outside the repository: {resolved}")
 
 
 def _git(*arguments: str) -> str:
@@ -527,6 +567,10 @@ def _worker() -> None:
 
 
 def _run_child(kind: str, size: int) -> dict[str, Any]:
+    child_environment = os.environ.copy()
+    for variable in ("PYTHONPYCACHEPREFIX", "PYTHONPATH", "PYTHONHOME"):
+        child_environment.pop(variable, None)
+    child_environment["PYTHONDONTWRITEBYTECODE"] = "1"
     completed = subprocess.run(
         (
             sys.executable,
@@ -538,6 +582,7 @@ def _run_child(kind: str, size: int) -> dict[str, Any]:
             str(size),
         ),
         cwd=ROOT,
+        env=child_environment,
         check=False,
         text=True,
         capture_output=True,
@@ -568,6 +613,7 @@ def main() -> None:
     parser.add_argument("--repeat-small", type=int, default=3)
     parser.add_argument("--repeat-large", type=int, default=1)
     args = parser.parse_args()
+    output_path = _external_output_path(args.output)
 
     platform_evidence = _platform()
     _tree_hygiene(require_clean_git=True)
@@ -687,7 +733,7 @@ def main() -> None:
                 "-m",
                 "ml_v3.benchmark.run_rev8_o09_candidate",
                 "--output",
-                str(args.output),
+                str(output_path),
                 "--max-size",
                 str(args.max_size),
                 "--repeat-small",
@@ -696,6 +742,8 @@ def main() -> None:
                 str(args.repeat_large),
             ],
             "python_dont_write_bytecode": sys.dont_write_bytecode,
+            "external_output_required": True,
+            "atomic_publish_after_final_hygiene": True,
             "exact_scalar_integer_encoding": "signed_lowercase_hex_strings",
             "max_size": args.max_size,
             "repeat_small": args.repeat_small,
@@ -721,8 +769,24 @@ def main() -> None:
     }
     evidence["payload_sha256"] = hashlib.sha256(
         canonical_bytes(evidence)).hexdigest()
-    write_canonical(args.output, evidence)
-    print(sha256_of_file(args.output))
+    temporary_output = output_path.with_name(
+        f".{output_path.name}.{os.getpid()}.tmp")
+    if temporary_output.exists():
+        raise RuntimeError(
+            f"refusing to overwrite stale benchmark temp: {temporary_output}")
+    try:
+        write_canonical(temporary_output, evidence)
+        _tree_hygiene(require_clean_git=True)
+        if _source_hashes() != source_hashes_end:
+            raise RuntimeError(
+                "O-09 provenance files changed during evidence publication")
+        if _loaded_module_provenance() != loaded_modules_parent_end:
+            raise RuntimeError(
+                "loaded project modules changed during evidence publication")
+        os.replace(temporary_output, output_path)
+    finally:
+        temporary_output.unlink(missing_ok=True)
+    print(sha256_of_file(output_path))
 
 
 if __name__ == "__main__":

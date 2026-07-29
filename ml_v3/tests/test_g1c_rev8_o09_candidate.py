@@ -23,6 +23,7 @@ from ml_v3.benchmark.rev8_o09_candidate import (
 )
 from ml_v3.benchmark.run_rev8_o09_candidate import (
     _fraction,
+    _external_output_path,
     _graph,
     _loaded_module_provenance,
     _measure_ap_prefix,
@@ -370,6 +371,22 @@ class BenchmarkRunnerTests(unittest.TestCase):
             with mock.patch.object(runner_module, "ROOT", root):
                 with self.assertRaisesRegex(RuntimeError, "native_shadows"):
                     _tree_hygiene(require_clean_git=False)
+
+    def test_external_pycache_prefix_is_rejected(self):
+        with mock.patch.object(
+                runner_module.sys, "pycache_prefix", "/tmp/evil-pyc"):
+            with self.assertRaisesRegex(RuntimeError, "pycache_prefix"):
+                _tree_hygiene(require_clean_git=False)
+
+    def test_output_inside_repository_is_rejected(self):
+        with self.assertRaisesRegex(RuntimeError, "outside the repository"):
+            _external_output_path(
+                runner_module.ROOT / "forbidden-benchmark-output.json")
+
+    def test_output_outside_repository_is_resolved(self):
+        with tempfile.TemporaryDirectory() as directory:
+            expected = Path(directory).resolve() / "evidence.json"
+            self.assertEqual(_external_output_path(expected), expected)
 
     def test_small_solver_workloads_are_deterministic(self):
         for kind in (
