@@ -363,9 +363,14 @@ def main() -> None:
 
     platform_evidence = _platform()
     status = _git("status", "--porcelain")
-    if status:
+    material_status = "\n".join(
+        line for line in status.splitlines()
+        if "__pycache__/" not in line and not line.endswith(".pyc")
+    )
+    if material_status:
         raise RuntimeError(
-            "benchmark requires a clean immutable worktree; status:\n" + status)
+            "benchmark requires a clean immutable source worktree; status:\n"
+            + material_status)
     commit = _git("rev-parse", "HEAD")
     sizes = [size for size in (8, 16, 32, 64, 96, 128)
              if size <= args.max_size]
