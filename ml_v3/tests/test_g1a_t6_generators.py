@@ -191,8 +191,15 @@ class DeterminismTests(unittest.TestCase):
             root_a = Path(tmp_a)
             root_b = Path(tmp_b)
             for root in (root_a, root_b):
+                # -B keeps these children from writing __pycache__ into the
+                # repository: the flag is not inherited across an explicit
+                # sys.executable invocation, so the parent's -B is not enough.
+                # Both children then compile from source, which is what "clean
+                # OS subprocess" above claims, and it leaves the tree
+                # archive-like for the isolated-bootstrap hygiene checks that
+                # run later in the same suite.
                 subprocess.run(
-                    [sys.executable, "-c", child, str(root)],
+                    [sys.executable, "-B", "-c", child, str(root)],
                     check=True,
                     cwd=str(REPO),
                     env=env,
