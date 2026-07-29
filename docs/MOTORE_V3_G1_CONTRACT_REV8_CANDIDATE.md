@@ -540,22 +540,22 @@ retroattiva, un gruppo senza ruolo o un asset il cui hash non corrisponde.
 
 ### 9.0 Overlay normativo Round 2.3
 
-Per i domini seguenti la formalizzazione R23C firmata è l'unica authority:
+Per i domini seguenti le authority firmate R23C e B-001 sono:
 
-| Dominio | Authority R23C |
+| Dominio | Authority |
 |---|---|
-| N64, exact arithmetic e boundary di pubblicazione | §§2, 12 |
-| tempo autoritativo a 48000 tick/s | §3 |
-| boundary table, projection e `project_center_width_v1` | §4 |
-| validità strutturale GT | §5 |
-| partizionamento, eligibility e `record_family` | §6 |
-| obiettivo scientifico K1–K4 e `K5_RESERVED` | §7 |
-| oracle A1, runtime A2 e insieme `M*` | §8 |
-| `S_can`, K6 scientifico e `M_replay` diagnostico | §9 |
-| cap e failure policy | §10 |
-| metriche matching-based ed envelope | §§11–12 |
-| Average Precision | §13 |
-| oracle, metamorphic e mutation tests | §14 |
+| N64, exact arithmetic e boundary di pubblicazione | R23C §§2, 12 |
+| tempo autoritativo a 48000 tick/s | R23C §3 |
+| boundary table, projection e `project_center_width_v1` | R23C §4 |
+| validità strutturale GT | R23C §5 |
+| partizionamento, eligibility e `record_family` | R23C §6 |
+| obiettivo scientifico K1–K4 e `K5_RESERVED` | R23C §7 |
+| oracle A1, runtime A2 e insieme `M*` | R23C §8 |
+| `S_can`, K6 scientifico e `M_replay` diagnostico | R23C §9 |
+| cap e failure policy | R23C §10 |
+| metriche matching-based ed envelope | R23C §§11–12 |
+| Average Precision | R23C §13 |
+| oracle, metamorphic e mutation tests | R23C §14 |
 | coverage target-specific conservativa | ballot B-001 firmato |
 
 Le clausole storiche delle sezioni 9–10 di questo candidate che usano secondi
@@ -566,8 +566,9 @@ R23C. Non esiste fallback alla formulazione precedente.
 
 Restano invece in vigore le parti non ridefinite: exact-key degli schema,
 surface admission, trusted index, estrazione dei candidati, calibrazione
-dense, coverage, baseline, bootstrap e gate metrologici. In caso di conflitto,
-prevale l'authority R23C hash-pinned.
+dense, baseline, bootstrap e gate metrologici. In caso di conflitto, R23C
+prevale nel proprio scope e il ballot B-001 prevale esclusivamente per la
+coverage target-specific conservativa.
 
 L'activation manifest REV8 deve includere almeno:
 
@@ -2030,7 +2031,8 @@ Gate obbligatori:
      non-actionable match `coverage_minus=0`, tie `pF/pT` con stesso `V*` e
      `S_can` ma `coverage_minus=0` / `coverage_plus=1` diagnostica,
      `NO_ACTIONABLE_GT`, envelope oltre cap, permutazione, rinomina ID/hash e
-     indipendenza da `M_replay`;
+     indipendenza da `M_replay`; la replica su almeno 30 `group_id` deve
+     conservare lo stesso lower envelope gate-relevant;
    - bit-length/preflight e tutti i reason code fatali/non fatali.
 
    Le mutation obbligatorie devono uccidere almeno: K5 attivo, K3 invertito,
@@ -2041,7 +2043,8 @@ Gate obbligatori:
    band-based, IoU arrotondata presto, AP tagliata dentro tie, macro-AP
    sum-only, `record_family` letto dai record, coverage gate tramite massimo,
    `M_replay` o esistenziale prediction-level senza matching one-to-one e
-   actionable reintrodotto in eligibility/K1–K4.
+   actionable reintrodotto in eligibility/K1–K4, conversione della coverage
+   N/A in zero o PASS.
 10. **Ambiente**: sync del lock con hash, test completi e deep hash di tutte le
    fixture PASS.
 
