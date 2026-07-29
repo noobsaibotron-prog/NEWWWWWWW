@@ -5,15 +5,18 @@ activate the provisional caps and deliberately reports that group-level
 AP/Spearman/B-001 coverage is still pending.
 
 Each timed workload runs in a fresh child process.  The wall/CPU timer covers
-the exact solve only; peak RSS covers the whole fresh worker process, including
-imports, graph construction, preflight, solve, and result serialization.
+the exact solve only.  Peak RSS is the worker high-water mark through result
+materialization, including imports, graph construction, preflight, and solve;
+later evidence hashing/JSON encoding is outside that sample.
 """
 from __future__ import annotations
 
 import argparse
 from fractions import Fraction
 import hashlib
+from importlib.machinery import EXTENSION_SUFFIXES
 import json
+from math import gcd
 import os
 from pathlib import Path
 import platform
@@ -64,6 +67,21 @@ PROVENANCE_PATHS = (
     "ml_v3/benchmark/run_rev8_o09_candidate.py",
     "ml_v3/tests/test_g1c_rev8_o09_candidate.py",
 )
+HASHED_PATHS = (*PROTECTED_PATHS, *FROZEN_O_PATHS, *PROVENANCE_PATHS)
+
+
+def _pairwise_coprime_256bit_denominators() -> tuple[int, ...]:
+    """Return 128 deterministic pairwise-coprime, 256-bit odd integers."""
+    values: list[int] = []
+    candidate = 2**255 + 1
+    while len(values) < 128:
+        if all(gcd(candidate, prior) == 1 for prior in values):
+            values.append(candidate)
+        candidate += 2
+    return tuple(values)
+
+
+_COPRIME_DENOMINATORS_256 = _pairwise_coprime_256bit_denominators()
 
 
 def _fraction(value: Fraction | None) -> list[str] | None:
@@ -78,12 +96,17 @@ def _fraction(value: Fraction | None) -> list[str] | None:
     return [hex(value.numerator), hex(value.denominator)]
 
 
+def _exact_integer(value: int) -> str:
+    """Serialize an unbounded exact scalar integer as signed lowercase hex."""
+    return hex(value)
+
+
 def _result_payload(result: CandidateResult) -> dict[str, Any]:
     payload = {
         "objective": {
             "k1": result.objective.k1,
             "k2": _fraction(result.objective.k2),
-            "k3": result.objective.k3,
+            "k3": _exact_integer(result.objective.k3),
             "k4": _fraction(result.objective.k4),
             "k4_mode": result.objective.k4_mode,
         },
@@ -155,7 +178,14 @@ def _edge(
         # At n=128 the signed conservative sum bound is exactly 65,536:
         # 128*D + (A + 127*D) + ceil(log2(128))
         # with A=249 numerator bits and D=256 denominator bits.
-        near_limit = Fraction(2**248, 2**255 + 1)
+        # A perfect matching selects one value per GT row.  The 128 row
+        # denominators are pairwise coprime, so the reduced K2 sum really
+        # materializes a near-65k-bit numerator/denominator instead of merely
+        # reaching the conservative preflight formula with repeated q values.
+        near_limit = Fraction(
+            2**248,
+            _COPRIME_DENOMINATORS_256[gt],
+        )
         return ExactEdge(
             gt,
             prediction,
@@ -190,6 +220,7 @@ def _edge(
         # - all 16,384 eligible edges;
         # - K6 over a non-singleton V optimum;
         # - the three exact ambiguity envelopes;
+        # - a K3 sum bound of exactly 65,536 bits;
         # - a severity mean bound of exactly 65,536 bits; and
         # - onset/offset publication through exact /48 at exactly 65,536 bits.
         #
@@ -198,13 +229,16 @@ def _edge(
         #   = 65,536.
         # tick metrics: B=65,516, K=128
         #   B + ceil(log2(K)) + bit_length(K*48) = 65,536.
+        # K3: B=65,529, K=128
+        #   B + ceil(log2(K)) = 65,536.
         severity_near_limit = Fraction(2**241, 2**255 + 1)
         tick_near_limit = 2**65_515
+        k3_near_limit = 2**65_528
         return ExactEdge(
             gt,
             prediction,
             Fraction(1),
-            0,
+            k3_near_limit,
             Fraction(0),
             b"same-scientific-key",
             diagnostic,
@@ -391,6 +425,74 @@ def _platform() -> dict[str, Any]:
     return {"actual": actual, "lock": lock}
 
 
+def _source_hashes() -> dict[str, str]:
+    hashes: dict[str, str] = {}
+    for relative in HASHED_PATHS:
+        path = ROOT / relative
+        if not path.is_file():
+            raise RuntimeError(f"required O-09 provenance file missing: {relative}")
+        hashes[relative] = sha256_of_file(path)
+    return hashes
+
+
+def _loaded_module_provenance() -> dict[str, dict[str, str]]:
+    """Hash every loaded project Python module plus the ``-m`` entrypoint."""
+    evidence: dict[str, dict[str, str]] = {}
+
+    def record(label: str, module_file: str | Path) -> None:
+        actual = Path(module_file).resolve()
+        try:
+            relative = str(actual.relative_to(ROOT))
+        except ValueError as error:
+            raise RuntimeError(
+                f"project module loaded outside repository for {label}: "
+                f"{actual}") from error
+        if actual.suffix != ".py":
+            raise RuntimeError(
+                f"non-source project module loaded for {label}: {actual}")
+        evidence[label] = {
+            "path": relative,
+            "sha256": sha256_of_file(actual),
+        }
+
+    record("runner_entrypoint", __file__)
+    for module_name, module in sorted(sys.modules.items()):
+        if module_name != "ml_v3" and not module_name.startswith("ml_v3."):
+            continue
+        module_file = getattr(module, "__file__", None)
+        if module_file is not None:
+            record(module_name, module_file)
+    return evidence
+
+
+def _tree_hygiene(*, require_clean_git: bool) -> None:
+    caches = sorted(
+        str(path.relative_to(ROOT))
+        for path in (ROOT / "ml_v3").rglob("__pycache__")
+    )
+    pyc_files = sorted(
+        str(path.relative_to(ROOT))
+        for path in (ROOT / "ml_v3").rglob("*.pyc")
+    )
+    native_shadows = sorted(
+        str(path.relative_to(ROOT))
+        for path in (ROOT / "ml_v3").rglob("*")
+        if path.is_file() and any(
+            path.name.endswith(suffix) for suffix in EXTENSION_SUFFIXES)
+    )
+    if caches or pyc_files or native_shadows:
+        raise RuntimeError(
+            "benchmark requires an archive-like Python source tree; "
+            f"caches={caches[:5]}, pyc={pyc_files[:5]}, "
+            f"native_shadows={native_shadows[:5]}")
+    if require_clean_git:
+        status = _git("status", "--porcelain")
+        if status:
+            raise RuntimeError(
+                "benchmark requires a clean immutable source worktree; "
+                f"status:\n{status}")
+
+
 def _git(*arguments: str) -> str:
     return subprocess.check_output(
         ("git", *arguments), cwd=ROOT, text=True).strip()
@@ -402,10 +504,25 @@ def _worker() -> None:
     parser.add_argument("--size", type=int, required=True)
     args = parser.parse_args()
     _platform()
+    _tree_hygiene(require_clean_git=False)
+    source_before = _source_hashes()
+    loaded_modules_before = _loaded_module_provenance()
     if args.worker == "ap_prefix_k1":
         result = _measure_ap_prefix(args.size)
     else:
         result = _measure_solver(args.worker, args.size)
+    source_after = _source_hashes()
+    loaded_modules_after = _loaded_module_provenance()
+    if source_before != source_after:
+        raise RuntimeError(
+            "O-09 provenance files changed while a worker was executing")
+    if loaded_modules_before != loaded_modules_after:
+        raise RuntimeError(
+            "loaded project modules changed while a worker was executing")
+    result["worker_provenance"] = {
+        "source_sha256": source_after,
+        "loaded_modules": loaded_modules_after,
+    }
     print(json.dumps(result, sort_keys=True, separators=(",", ":")))
 
 
@@ -453,19 +570,9 @@ def main() -> None:
     args = parser.parse_args()
 
     platform_evidence = _platform()
-    caches = sorted(
-        str(path.relative_to(ROOT))
-        for path in (ROOT / "ml_v3").rglob("__pycache__")
-    )
-    if caches:
-        raise RuntimeError(
-            "benchmark requires an archive-like source tree without bytecode "
-            f"caches; found: {caches[:5]}")
-    status = _git("status", "--porcelain")
-    if status:
-        raise RuntimeError(
-            "benchmark requires a clean immutable source worktree; status:\n"
-            + status)
+    _tree_hygiene(require_clean_git=True)
+    source_hashes_start = _source_hashes()
+    loaded_modules_parent_start = _loaded_module_provenance()
     commit = _git("rev-parse", "HEAD")
     sizes = [size for size in (8, 16, 32, 64, 96, 128)
              if size <= args.max_size]
@@ -549,13 +656,28 @@ def main() -> None:
             },
         })
 
-    protected = {
-        path: sha256_of_file(ROOT / path)
-        for path in (*PROTECTED_PATHS, *FROZEN_O_PATHS, *PROVENANCE_PATHS)
-        if (ROOT / path).is_file()
-    }
+    _tree_hygiene(require_clean_git=True)
+    source_hashes_end = _source_hashes()
+    loaded_modules_parent_end = _loaded_module_provenance()
+    if source_hashes_start != source_hashes_end:
+        raise RuntimeError(
+            "O-09 provenance files changed during the benchmark run")
+    if loaded_modules_parent_start != loaded_modules_parent_end:
+        raise RuntimeError(
+            "loaded project modules changed during the benchmark run")
+    for row in workloads:
+        for run in row["runs"]:
+            worker = run.get("worker_provenance")
+            if worker is None:
+                raise RuntimeError("worker omitted provenance evidence")
+            if worker["source_sha256"] != source_hashes_start:
+                raise RuntimeError(
+                    "worker source hashes do not match the parent snapshot")
+            if worker["loaded_modules"] != loaded_modules_parent_end:
+                raise RuntimeError(
+                    "worker loaded-module evidence differs from the parent")
     evidence = {
-        "schema": "aieq-v3-rev8-o09-candidate-benchmark-2",
+        "schema": "aieq-v3-rev8-o09-candidate-benchmark-3",
         "authority_status": "EVIDENCE_ONLY_CAPS_NOT_ACTIVE",
         "commit": commit,
         "platform": platform_evidence,
@@ -574,13 +696,14 @@ def main() -> None:
                 str(args.repeat_large),
             ],
             "python_dont_write_bytecode": sys.dont_write_bytecode,
-            "exact_integer_encoding": "signed_lowercase_hex_strings",
+            "exact_scalar_integer_encoding": "signed_lowercase_hex_strings",
             "max_size": args.max_size,
             "repeat_small": args.repeat_small,
             "repeat_large": args.repeat_large,
             "sizes": sizes,
         },
-        "protected_sha256": protected,
+        "protected_sha256": source_hashes_end,
+        "loaded_modules": loaded_modules_parent_end,
         "bit_boundary_probes": _measure_bit_boundaries(),
         "workloads": workloads,
         "coverage": {

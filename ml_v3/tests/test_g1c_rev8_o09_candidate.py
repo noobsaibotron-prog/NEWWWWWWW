@@ -2,8 +2,14 @@
 from __future__ import annotations
 
 from fractions import Fraction
+from importlib.machinery import EXTENSION_SUFFIXES
 import itertools
+from pathlib import Path
+import tempfile
 import unittest
+from unittest import mock
+
+from ml_v3.benchmark import run_rev8_o09_candidate as runner_module
 
 from ml_v3.benchmark.rev8_o09_candidate import (
     CandidateGraph,
@@ -18,9 +24,14 @@ from ml_v3.benchmark.rev8_o09_candidate import (
 from ml_v3.benchmark.run_rev8_o09_candidate import (
     _fraction,
     _graph,
+    _loaded_module_provenance,
     _measure_ap_prefix,
     _measure_bit_boundaries,
     _measure_solver,
+    _run_child,
+    _result_payload,
+    _source_hashes,
+    _tree_hygiene,
 )
 
 
@@ -306,6 +317,60 @@ class BenchmarkRunnerTests(unittest.TestCase):
         self.assertTrue(encoded[0].startswith("-0x"))
         self.assertTrue(encoded[1].startswith("0x"))
 
+    def test_exact_k3_at_boundary_serializes_without_decimal_conversion(self):
+        k3 = 2**65_535
+        candidate = graph(1, 1, [edge(0, 0, k3=k3)])
+        probe = provisional_preflight_probe(candidate)
+        self.assertEqual(probe.exact_scalar_bit_bound, 65_536)
+        self.assertEqual(probe.provisional_exceeded, ())
+        payload = _result_payload(a2_exact(candidate))
+        self.assertEqual(payload["objective"]["k3"], hex(k3))
+
+    def test_loaded_modules_are_the_expected_python_sources(self):
+        evidence = _loaded_module_provenance()
+        self.assertTrue({
+            "runner_entrypoint",
+            "ml_v3.benchmark.rev8_o09_candidate",
+            "ml_v3.contracts.canonical",
+            "ml_v3.contracts.metrology_lock",
+        }.issubset(evidence))
+        for loaded in evidence.values():
+            self.assertTrue(loaded["path"].endswith(".py"))
+            self.assertEqual(len(loaded["sha256"]), 64)
+
+    def test_provenance_snapshot_is_complete_and_hash_pinned(self):
+        hashes = _source_hashes()
+        self.assertIn(
+            "ml_v3/benchmark/rev8_o09_candidate.py", hashes)
+        self.assertIn(
+            "ml_v3/benchmark/run_rev8_o09_candidate.py", hashes)
+        self.assertIn("ml_v3/fixtures/g1/metrology_lock.json", hashes)
+        self.assertTrue(all(len(value) == 64 for value in hashes.values()))
+
+    def test_child_reports_loaded_and_hashed_source_provenance(self):
+        run = _run_child("unique_additive", 2)
+        worker = run["worker_provenance"]
+        self.assertEqual(worker["source_sha256"], _source_hashes())
+        parent = _loaded_module_provenance()
+        for label in (
+            "runner_entrypoint",
+            "ml_v3.benchmark.rev8_o09_candidate",
+            "ml_v3.contracts.canonical",
+            "ml_v3.contracts.metrology_lock",
+        ):
+            self.assertEqual(worker["loaded_modules"][label], parent[label])
+
+    def test_native_extension_shadow_is_rejected_even_when_git_ignored(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            package = root / "ml_v3"
+            package.mkdir()
+            shadow = package / f"rev8_o09_candidate{EXTENSION_SUFFIXES[0]}"
+            shadow.write_bytes(b"not-a-real-extension")
+            with mock.patch.object(runner_module, "ROOT", root):
+                with self.assertRaisesRegex(RuntimeError, "native_shadows"):
+                    _tree_hygiene(require_clean_git=False)
+
     def test_small_solver_workloads_are_deterministic(self):
         for kind in (
             "unique_additive", "degenerate_additive", "unique_product"):
@@ -351,6 +416,14 @@ class BenchmarkRunnerTests(unittest.TestCase):
                 self.assertEqual(len(candidate.edges), 16_384)
                 self.assertEqual(probe.exact_scalar_bit_bound, 65_536)
                 self.assertEqual(probe.provisional_exceeded, ())
+                if kind == "bitstress_additive":
+                    diagonal = (
+                        candidate.edges[gt * 128 + gt].k2_iou
+                        for gt in range(128)
+                    )
+                    materialized = sum(diagonal, Fraction(0))
+                    self.assertGreaterEqual(
+                        rational_bit_length(materialized), 65_000)
 
 
 if __name__ == "__main__":
