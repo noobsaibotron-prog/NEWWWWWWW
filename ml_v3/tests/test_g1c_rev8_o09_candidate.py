@@ -15,6 +15,11 @@ from ml_v3.benchmark.rev8_o09_candidate import (
     provisional_preflight_probe,
     rational_bit_length,
 )
+from ml_v3.benchmark.run_rev8_o09_candidate import (
+    _measure_ap_prefix,
+    _measure_bit_boundaries,
+    _measure_solver,
+)
 
 
 def edge(
@@ -286,6 +291,39 @@ class PreflightTests(unittest.TestCase):
         )
         self.assertIn(
             "EXACT_SCALAR_BIT_LENGTH", probe.provisional_exceeded)
+
+
+class BenchmarkRunnerTests(unittest.TestCase):
+    def test_small_solver_workloads_are_deterministic(self):
+        for kind in (
+            "unique_additive", "degenerate_additive", "unique_product"):
+            with self.subTest(kind=kind):
+                first = _measure_solver(kind, 4)
+                second = _measure_solver(kind, 4)
+                self.assertEqual(
+                    first["scientific_result_sha256"],
+                    second["scientific_result_sha256"],
+                )
+                self.assertEqual(
+                    first["scientific_result"]["objective"]["k1"], 4)
+
+    def test_ap_prefix_probe_is_complete_and_monotone(self):
+        result = _measure_ap_prefix(8)["scientific_result"]
+        self.assertEqual(result["thresholds"], 8)
+        self.assertEqual(result["tp_by_prefix"], list(range(1, 9)))
+        self.assertEqual(result["edge_incidence_volume"], 8 * sum(range(1, 9)))
+
+    def test_bit_boundary_bundle_preserves_under_on_over(self):
+        cases = {
+            row["label"]: row for row in _measure_bit_boundaries()["cases"]
+        }
+        self.assertEqual(cases["under"]["bound"], 65_535)
+        self.assertEqual(cases["on"]["bound"], 65_536)
+        self.assertEqual(cases["over"]["bound"], 65_537)
+        self.assertEqual(
+            cases["onset_ms_over"]["published_rational_bit_length"], 65_542)
+        self.assertEqual(
+            cases["onset_ms_over"]["bound"], 65_542)
 
 
 if __name__ == "__main__":
