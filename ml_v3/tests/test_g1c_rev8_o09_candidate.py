@@ -16,6 +16,7 @@ from ml_v3.benchmark.rev8_o09_candidate import (
     rational_bit_length,
 )
 from ml_v3.benchmark.run_rev8_o09_candidate import (
+    _graph,
     _measure_ap_prefix,
     _measure_bit_boundaries,
     _measure_solver,
@@ -324,6 +325,21 @@ class BenchmarkRunnerTests(unittest.TestCase):
             cases["onset_ms_over"]["published_rational_bit_length"], 65_542)
         self.assertEqual(
             cases["onset_ms_over"]["bound"], 65_542)
+
+    def test_dense_shape_and_exact_bit_limit_are_combined(self):
+        for kind in (
+            "bitstress_additive",
+            "bitstress_product",
+            "bitstress_degenerate",
+        ):
+            with self.subTest(kind=kind):
+                candidate = _graph(kind, 128)
+                probe = provisional_preflight_probe(candidate)
+                self.assertEqual(candidate.gt_count, 128)
+                self.assertEqual(candidate.prediction_count, 128)
+                self.assertEqual(len(candidate.edges), 16_384)
+                self.assertEqual(probe.exact_scalar_bit_bound, 65_536)
+                self.assertEqual(probe.provisional_exceeded, ())
 
 
 if __name__ == "__main__":

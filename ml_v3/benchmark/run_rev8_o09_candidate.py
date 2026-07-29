@@ -4,8 +4,9 @@ The output is evidence, not authority.  In particular, this runner cannot
 activate the provisional caps and deliberately reports that group-level
 AP/Spearman/B-001 coverage is still pending.
 
-Each timed workload runs in a fresh child process so peak RSS and cold-start
-wall/CPU time are not contaminated by earlier workloads.
+Each timed workload runs in a fresh child process.  The wall/CPU timer covers
+the exact solve only; peak RSS covers the whole fresh worker process, including
+imports, graph construction, preflight, solve, and result serialization.
 """
 from __future__ import annotations
 
@@ -22,6 +23,8 @@ import subprocess
 import sys
 from time import perf_counter, process_time
 from typing import Any
+
+import numpy as np
 
 from ml_v3.benchmark.rev8_o09_candidate import (
     CandidateGraph,
@@ -53,6 +56,13 @@ FROZEN_O_PATHS = (
     "ml_v3/fixtures/rev8/o03_width_artifact_v1.json",
     "ml_v3/fixtures/rev8/o18_numeric_artifact_v1.json",
     "ml_v3/fixtures/rev8/o02_o03_o18_generator_report_v1.json",
+)
+PROVENANCE_PATHS = (
+    "ml_v3/fixtures/g1/metrology_lock.json",
+    "ml_v3/environment/requirements.lock",
+    "ml_v3/benchmark/rev8_o09_candidate.py",
+    "ml_v3/benchmark/run_rev8_o09_candidate.py",
+    "ml_v3/tests/test_g1c_rev8_o09_candidate.py",
 )
 
 
@@ -135,11 +145,76 @@ def _edge(
             delta * 5,
             abs((gt + 2) % n - prediction) * 3,
         )
+    if kind == "bitstress_additive":
+        # At n=128 the signed conservative sum bound is exactly 65,536:
+        # 128*D + (A + 127*D) + ceil(log2(128))
+        # with A=249 numerator bits and D=256 denominator bits.
+        near_limit = Fraction(2**248, 2**255 + 1)
+        return ExactEdge(
+            gt,
+            prediction,
+            near_limit,
+            delta,
+            Fraction(0),
+            f"s:{gt:03}:{prediction:03}".encode(),
+            diagnostic,
+            Fraction(0),
+            delta,
+            delta,
+        )
+    if kind == "bitstress_product":
+        # Every ratio has 256 numerator + 256 denominator bits.  A product
+        # of 128 selected edges therefore reaches exactly 65,536 bits before
+        # any reduction; numerator/denominator are coprime odd integers.
+        ratio = Fraction(2**255 + 3, 2**255 + 1)
+        return ExactEdge(
+            gt,
+            prediction,
+            Fraction(1),
+            delta,
+            ratio,
+            f"s:{gt:03}:{prediction:03}".encode(),
+            diagnostic,
+            Fraction(0),
+            delta,
+            delta,
+        )
+    if kind == "bitstress_degenerate":
+        # At n=128 this single ambiguous workload simultaneously exercises:
+        # - all 16,384 eligible edges;
+        # - K6 over a non-singleton V optimum;
+        # - the three exact ambiguity envelopes;
+        # - a severity mean bound of exactly 65,536 bits; and
+        # - onset/offset publication through exact /48 at exactly 65,536 bits.
+        #
+        # severity: D=256, A=242, K=128
+        #   128*D + (A + 127*D) + ceil(log2(K)) + ceil(log2(K))
+        #   = 65,536.
+        # tick metrics: B=65,516, K=128
+        #   B + ceil(log2(K)) + bit_length(K*48) = 65,536.
+        severity_near_limit = Fraction(2**241, 2**255 + 1)
+        tick_near_limit = 2**65_515
+        return ExactEdge(
+            gt,
+            prediction,
+            Fraction(1),
+            0,
+            Fraction(0),
+            b"same-scientific-key",
+            diagnostic,
+            severity_near_limit,
+            tick_near_limit,
+            tick_near_limit,
+        )
     raise ValueError(f"unknown workload kind {kind!r}")
 
 
 def _graph(kind: str, size: int) -> CandidateGraph:
-    mode = "product" if kind == "unique_product" else "additive"
+    mode = (
+        "product"
+        if kind in ("unique_product", "bitstress_product")
+        else "additive"
+    )
     return CandidateGraph(
         size,
         size,
@@ -285,6 +360,9 @@ def _measure_bit_boundaries() -> dict[str, Any]:
 
 
 def _platform() -> dict[str, Any]:
+    if not sys.dont_write_bytecode:
+        raise RuntimeError(
+            "O-09 evidence requires PYTHONDONTWRITEBYTECODE=1")
     python = require_gate_platform_python()
     lock = frozen_metrology_lock()["bit_identity"]["gate_platform"]
     actual = {
@@ -294,6 +372,7 @@ def _platform() -> dict[str, Any]:
         "arch": platform.machine(),
         "os_marketing": platform.mac_ver()[0],
         "python": python,
+        "numpy": np.__version__,
     }
     if actual["kernel"].lower() != lock["os"]:
         raise RuntimeError(f"gate OS mismatch: {actual} vs {lock}")
@@ -301,6 +380,8 @@ def _platform() -> dict[str, Any]:
         raise RuntimeError(f"gate arch mismatch: {actual} vs {lock}")
     if actual["os_marketing"] != lock["os_marketing"].removeprefix("macOS "):
         raise RuntimeError(f"gate marketing OS mismatch: {actual} vs {lock}")
+    if actual["numpy"] != lock["numpy"]:
+        raise RuntimeError(f"gate NumPy mismatch: {actual} vs {lock}")
     return {"actual": actual, "lock": lock}
 
 
@@ -362,15 +443,19 @@ def main() -> None:
     args = parser.parse_args()
 
     platform_evidence = _platform()
-    status = _git("status", "--porcelain")
-    material_status = "\n".join(
-        line for line in status.splitlines()
-        if "__pycache__/" not in line and not line.endswith(".pyc")
+    caches = sorted(
+        str(path.relative_to(ROOT))
+        for path in (ROOT / "ml_v3").rglob("__pycache__")
     )
-    if material_status:
+    if caches:
+        raise RuntimeError(
+            "benchmark requires an archive-like source tree without bytecode "
+            f"caches; found: {caches[:5]}")
+    status = _git("status", "--porcelain")
+    if status:
         raise RuntimeError(
             "benchmark requires a clean immutable source worktree; status:\n"
-            + material_status)
+            + status)
     commit = _git("rev-parse", "HEAD")
     sizes = [size for size in (8, 16, 32, 64, 96, 128)
              if size <= args.max_size]
@@ -389,6 +474,36 @@ def main() -> None:
             workloads.append({
                 "kind": kind,
                 "size": size,
+                "runs": runs,
+                "summary": {
+                    "wall_seconds": _quantiles([
+                        run["measurement"]["wall_seconds"] for run in runs]),
+                    "cpu_seconds": _quantiles([
+                        run["measurement"]["cpu_seconds"] for run in runs]),
+                    "peak_rss_bytes": max(
+                        run["measurement"]["peak_rss_bytes"] for run in runs),
+                    "scientific_result_sha256": next(iter(
+                        deterministic_hashes)),
+                },
+            })
+    if args.max_size == 128:
+        for kind in (
+            "bitstress_additive",
+            "bitstress_product",
+            "bitstress_degenerate",
+        ):
+            runs = [
+                _run_child(kind, 128) for _ in range(args.repeat_large)
+            ]
+            deterministic_hashes = {
+                run["scientific_result_sha256"] for run in runs
+            }
+            if len(deterministic_hashes) != 1:
+                raise RuntimeError(
+                    f"non-deterministic scientific result for {kind}/128")
+            workloads.append({
+                "kind": kind,
+                "size": 128,
                 "runs": runs,
                 "summary": {
                     "wall_seconds": _quantiles([
@@ -426,7 +541,7 @@ def main() -> None:
 
     protected = {
         path: sha256_of_file(ROOT / path)
-        for path in (*PROTECTED_PATHS, *FROZEN_O_PATHS)
+        for path in (*PROTECTED_PATHS, *FROZEN_O_PATHS, *PROVENANCE_PATHS)
         if (ROOT / path).is_file()
     }
     evidence = {
@@ -435,6 +550,20 @@ def main() -> None:
         "commit": commit,
         "platform": platform_evidence,
         "configuration": {
+            "invocation": [
+                sys.executable,
+                "-m",
+                "ml_v3.benchmark.run_rev8_o09_candidate",
+                "--output",
+                str(args.output),
+                "--max-size",
+                str(args.max_size),
+                "--repeat-small",
+                str(args.repeat_small),
+                "--repeat-large",
+                str(args.repeat_large),
+            ],
+            "python_dont_write_bytecode": sys.dont_write_bytecode,
             "max_size": args.max_size,
             "repeat_small": args.repeat_small,
             "repeat_large": args.repeat_large,
@@ -456,6 +585,8 @@ def main() -> None:
             ),
         },
     }
+    evidence["payload_sha256"] = hashlib.sha256(
+        canonical_bytes(evidence)).hexdigest()
     write_canonical(args.output, evidence)
     print(sha256_of_file(args.output))
 
