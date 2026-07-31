@@ -258,17 +258,36 @@ across `M*`, both variances and both means are invariant, leaving only `Σxy`,
 which is separable — so equal lower and upper envelopes prove rho is a
 singleton rather than merely suggesting it.
 
-**One deviation, declared not silent.** `SPEARMAN_CERTIFICATE_UNAVAILABLE` is
-a fourth reason code that §11.4 does not enumerate. It is returned when the
-kernel can prove neither singleton nor non-singleton. Forcing that case into
-`PAIRING_AMBIGUOUS` would assert "rho is not a singleton" — a claim the
-kernel has not established — so a distinct code is the more honest outcome,
-and both N/A results block PASS identically, so there is no gate-safety
-difference today. It is nonetheless an **activation prerequisite**: before any
-O-09 ballot, either §11.4 enumerates this code or the implementation closes
-the general variable-value-marginal case. This coincides with the already
-declared `GENERAL_VARIABLE_VALUE_MARGINAL_SPEARMAN_NOT_CERTIFIED` limitation;
-it is named here so it is explicit rather than implied.
+**One deviation — CLOSED as of `11365cdb`, recorded here for the trail.**
+`SPEARMAN_CERTIFICATE_UNAVAILABLE` was a fourth reason code §11.4 did not
+enumerate. It is returned when the kernel can prove neither singleton nor
+non-singleton. Forcing that case into `PAIRING_AMBIGUOUS` would assert "rho
+is not a singleton" — a claim the kernel has not established — so a distinct
+code is the more honest outcome, and both N/A results block PASS identically,
+so there was never a gate-safety difference. The gap was normative, not
+scientific: the authority did not name an outcome the implementation already
+produced conservatively.
+
+It was closed by a signed micro-amend ballot (`e36d2422`,
+`docs/REV8_CANDIDATE_S6_SPEARMAN_REASON_CODE_MICRO_AMEND_BALLOT.md`) and the
+document-only §11.4 patch it authorized (`11365cdb`). Two things about that
+closure must not be lost:
+
+- **It was signed without the three-lens counter-check** that every other
+  REV8 decision went through. §6 of the ballot records that derogation
+  explicitly and states the ballot must be reopened if a later review rejects
+  or amends the text. A dedicated review prompt exists and was not run before
+  signing.
+- **It closes the naming, not the science.** The general
+  variable-value-marginal case remains **NOT CERTIFIED**, and the
+  `GENERAL_VARIABLE_VALUE_MARGINAL_SPEARMAN_NOT_CERTIFIED` limitation still
+  stands. Signing S6 did not make the candidate ballot-ready and did not
+  activate anything.
+
+As originally stated, before the closure above: this was an activation
+prerequisite — before any O-09 ballot, either §11.4 had to enumerate this
+code or the implementation had to close the general variable-value-marginal
+case. The first of those two has now happened; the second has not.
 
 **Numeric authority (O-18) verified present, not assumed.** `sum_pairwise64`
 matches the §2.2 pinned form (`mid = floor(N/2)`, recursive split, rounding at
@@ -358,13 +377,16 @@ not blended.
 | S3 | Coverage envelope ranges over full `M*`, not the max-cardinality superset | `_edge_cost`/`_extreme_weight` :778-816 | SELF_VERIFIED | CONFERMATO |
 | S4 | `rho_equal` implements R23_02 verbatim | draft §11.5:790-804 vs `rho_equal` :369-380 | SELF_VERIFIED | CONFERMATO |
 | S5 | Fixed-marginal certificate is sufficient, not merely indicative | draft §11.4 vs :1042-1310; monotonicity-of-rho-in-Σxy derivation | SELF_VERIFIED | CONFERMATO |
-| S6 | Fourth reason code not enumerated in §11.4 | draft §11.4:782-785 (3 codes) vs `GroupReason`:131 | EXECUTION+STATIC_VERIFIED | **CONFERMATO — NORMATIVE AMEND REQUIRED** |
+| S6 | Fourth reason code not enumerated in §11.4 | draft §11.4:782-785 (3 codes at the time) vs `GroupReason`:131 | EXECUTION+STATIC_VERIFIED | **CONFERMATO — amend since signed (`e36d2422`) and applied (`11365cdb`); §11.4 now enumerates four** |
 | S7 | No `numpy.sum`/`math.fsum`/Kahan/fast-math on published quantities | grep, re-run fresh, 0 hits | SELF_VERIFIED | CONFERMATO |
 | S8 | `exact()` lossless above 2^53 | `exact_arith_v2.py`:56-74, re-executed | EXECUTION_VERIFIED | CONFERMATO |
 
-**Three lenses, formal table. Lens B is AMEND, not CLEAN** — a lens verdict
-must reflect its worst finding, and S6 is a real, unclosed normative gap, not
-a footnote alongside an otherwise-clean row.
+**Three lenses, formal table. Lens B was AMEND at the time of this pass** — a
+lens verdict must reflect its worst finding, and S6 was then a real, unclosed
+normative gap, not a footnote alongside an otherwise-clean row. It has since
+been closed by ballot (`e36d2422`) and patch (`11365cdb`); the verdict below
+is left as recorded rather than retroactively upgraded, with the resolution
+noted inline.
 
 *Lens A — Optimizer/Numeric: CLEAN.* `sum_pairwise64` pinned recursive form
 (`numeric_authority_v2.py`:104-127); `mean64` sums pairwise then divides once,
@@ -373,10 +395,14 @@ int/float paths separate, lossless above 2^53, execution-verified; no
 unpinned float reduction on published quantities in kernel or runner; declared
 complexity matches the code.
 
-*Lens B — Metrics/Statistics: AMEND.* S1–S5 and S7 confirmed. S6 stands as an
-open, named deviation: `SPEARMAN_CERTIFICATE_UNAVAILABLE` is real, fail-closed,
-and does not produce a false PASS — but it is not authorized by §11.4 as
-written, and that is a normative gap, not a scientific defect.
+*Lens B — Metrics/Statistics: AMEND (as recorded; the amend has since been
+made).* S1–S5 and S7 confirmed. S6 was an open, named deviation:
+`SPEARMAN_CERTIFICATE_UNAVAILABLE` is real, fail-closed, and does not produce
+a false PASS — but it was not authorized by §11.4 as written, and that was a
+normative gap, not a scientific defect. Resolved by `e36d2422`/`11365cdb`,
+which enumerate it. **Lens B does not thereby become CLEAN retroactively**:
+the amend was signed without the three-lens counter-check, so the lens whose
+finding it was has still not been independently re-run over the resolution.
 
 *Lens C — Semantics/Security/Governance: CLEAN.* `authority_status`/
 `ballot_ready` read-only, never reassigned by the runner (:70, :818); atomic
@@ -391,21 +417,31 @@ holds 26/26.
 two separate answers:
 
 ```text
-O-09 group-level evidence reliability  = GO-CON-FIX
-  (fix is normative/documentary — enumerate SPEARMAN_CERTIFICATE_UNAVAILABLE
-   in §11.4, or close the general case — not a code or benchmark defect)
+O-09 group-level evidence reliability  = GO (the GO-CON-FIX condition was the
+                                          S6 normative gap; it has since been
+                                          signed and applied — see below)
 O-09 activation / REV8 SPEC GO          = NO-GO
-  (unchanged: no ballot, no cap, REV7 and the REV8 candidate untouched)
+  (unchanged: no cap, no activation, REV7 and the REV8 candidate untouched)
 Independent runtime reviewer            = Hermes (round 2, execution-verified
                                            on hashes)
 Self-audit execution (this closure)     = Claude, execution-verified,
                                            not independent
-Kilo (full independent three-lens pass) = not yet run
+Full independent three-lens pass        = not yet run
 ```
 
-**Candidate S6 remediation text (proposed by Codex during this review cycle,
-NOT signed, NOT part of the contract until Marco approves it through the
-normal ballot process — recorded here only so the proposal is not lost):**
+**S6 status update.** The remediation text below was proposed by Codex during
+this review cycle. It was subsequently **signed** by the authority
+(`e36d2422`) and **applied** to §11.4 (`11365cdb`), so it is now part of the
+candidate normative authority rather than a proposal. Two qualifications
+carry forward and must not be dropped:
+
+- the signature was given **without** the three-lens counter-check every
+  other REV8 decision received; §6 of the ballot records that derogation and
+  requires the ballot to be reopened if a later review rejects the text;
+- it closes the **naming** only. The general variable-value-marginal case is
+  still **NOT CERTIFIED** and the corresponding limitation still stands.
+
+Signed text, as applied to §11.4:
 
 ```text
 Nel caso Spearman in cui la procedura esatta richiesta non disponga di un
@@ -450,10 +486,14 @@ Questo esito:
 Before any O-09 ballot, three items, in order of how much they constrain the
 ballot's scope:
 
-1. **Reason-code enumeration.** §11.4 must enumerate
-   `SPEARMAN_CERTIFICATE_UNAVAILABLE`, or the implementation must close the
-   general variable-value-marginal case. A ballot cannot activate a cap over a
-   surface that returns an unenumerated code.
+1. ~~**Reason-code enumeration.**~~ **DONE** — §11.4 now enumerates
+   `SPEARMAN_CERTIFICATE_UNAVAILABLE` (ballot `e36d2422`, patch `11365cdb`).
+   Two residual obligations attach to it and are not discharged: the ballot
+   was signed **without** the three-lens counter-check and must be reopened if
+   a later review rejects the text; and a targeted counter-check on the
+   patched draft's new SHA-256
+   (`be8658203e26fae3bc36d020733b6b7ed773d24ed0e78675330f08b459ff56cc`) is
+   required by the ballot itself and has **not** been performed.
 2. **Cost policy for `spearman_variable_unavailable`.** At size 64 it costs
    ~250× its own size-10 case and more than every size-128 workload measured
    here. Whether that warrants a structural cap distinct from the other
