@@ -6,6 +6,7 @@ from importlib.machinery import EXTENSION_SUFFIXES
 import itertools
 import os
 from pathlib import Path
+from random import Random
 import subprocess
 import tempfile
 import unittest
@@ -265,6 +266,178 @@ class PreflightTests(unittest.TestCase):
             provisional_preflight_probe(
                 graph(129, 128, many_edges)).provisional_exceeded,
         )
+
+    def test_shape_ceiling_boundaries_are_permanently_materialized(self):
+        """Pin under/on/over behavior for every O-09 shape ceiling.
+
+        The edge ceiling is derived from the two dimensional ceilings because
+        duplicate ``(gt, prediction)`` pairs are invalid.  Its over case must
+        therefore co-occur with at least one dimensional exceed rather than
+        pretending that ``ELIGIBLE_EDGES`` can fire alone.
+        """
+        for count, expected in ((127, ()), (128, ()), (129, ("GT",))):
+            with self.subTest(axis="gt", count=count):
+                self.assertEqual(
+                    provisional_preflight_probe(
+                        graph(count, 0, [])).provisional_exceeded,
+                    expected,
+                )
+        for count, expected in (
+            (127, ()),
+            (128, ()),
+            (129, ("PREDICTION",)),
+        ):
+            with self.subTest(axis="prediction", count=count):
+                self.assertEqual(
+                    provisional_preflight_probe(
+                        graph(0, count, [])).provisional_exceeded,
+                    expected,
+                )
+
+        dense_edges = tuple(
+            edge(gt, prediction)
+            for gt in range(129)
+            for prediction in range(128)
+        )
+        edge_cases = (
+            (128, dense_edges[:16_383], ()),
+            (128, dense_edges[:16_384], ()),
+            (129, dense_edges[:16_385], ("GT", "ELIGIBLE_EDGES")),
+        )
+        for gt_count, rows, expected in edge_cases:
+            with self.subTest(edge_count=len(rows)):
+                self.assertEqual(
+                    provisional_preflight_probe(
+                        graph(gt_count, 128, rows)).provisional_exceeded,
+                    expected,
+                )
+
+    def test_ballot_reference_bound_matches_candidate_probe(self):
+        """Cross-check the A1 §2.2 formula independently of its code path."""
+        def ceil_log2(value):
+            return 0 if value <= 1 else (value - 1).bit_length()
+
+        def int_bits(value):
+            return abs(value).bit_length()
+
+        def rational_bits(value):
+            return int_bits(value.numerator) + value.denominator.bit_length()
+
+        def sum_bound(values, cardinality, divide):
+            if not values:
+                return 2
+            limit = min(cardinality, len(values))
+            top_denominators = sum(sorted(
+                (value.denominator.bit_length() for value in values),
+                reverse=True,
+            )[:limit])
+            largest_term = 1
+            for index, value in enumerate(values):
+                other_denominators = sorted(
+                    (
+                        other.denominator.bit_length()
+                        for other_index, other in enumerate(values)
+                        if other_index != index
+                    ),
+                    reverse=True,
+                )
+                largest_term = max(
+                    largest_term,
+                    int_bits(value.numerator)
+                    + sum(other_denominators[:max(0, limit - 1)]),
+                )
+            result = top_denominators + largest_term + ceil_log2(limit)
+            if divide and limit > 1:
+                result += ceil_log2(limit)
+            return result
+
+        def product_bound(values, cardinality):
+            if not values:
+                return 2
+            limit = min(cardinality, len(values))
+            return sum(sorted(
+                (int_bits(value.numerator) for value in values),
+                reverse=True,
+            )[:limit]) + sum(sorted(
+                (value.denominator.bit_length() for value in values),
+                reverse=True,
+            )[:limit])
+
+        def integer_bound(values, cardinality, divide):
+            if not values:
+                return 1
+            limit = min(cardinality, len(values))
+            result = max(int_bits(value) for value in values)
+            result += ceil_log2(limit)
+            if divide:
+                result += int_bits(limit * 48)
+            return result
+
+        def reference_bound(candidate):
+            cardinality = max(
+                1, min(candidate.gt_count, candidate.prediction_count))
+            k2 = [row.k2_iou for row in candidate.edges]
+            k4 = [row.k4_cost for row in candidate.edges]
+            severity = [row.severity_error for row in candidate.edges]
+            k3 = [row.k3_tick_error for row in candidate.edges]
+            onset = [row.onset_error_ticks for row in candidate.edges]
+            offset = [row.offset_error_ticks for row in candidate.edges]
+            return max(
+                sum_bound(k2, cardinality, False),
+                (
+                    product_bound(k4, cardinality)
+                    if candidate.k4_mode == "product"
+                    else sum_bound(k4, cardinality, False)
+                ),
+                sum_bound(severity, cardinality, True),
+                integer_bound(k3, cardinality, False),
+                integer_bound(onset, cardinality, True),
+                integer_bound(offset, cardinality, True),
+                max(
+                    (rational_bits(value)
+                     for value in (*k2, *k4, *severity)),
+                    default=2,
+                ),
+            )
+
+        random = Random(20260802)
+        for case in range(250):
+            gt_count = random.randrange(0, 9)
+            prediction_count = random.randrange(0, 9)
+            mode = random.choice(("additive", "product"))
+            pairs = [
+                (gt, prediction)
+                for gt in range(gt_count)
+                for prediction in range(prediction_count)
+            ]
+            random.shuffle(pairs)
+            pairs = pairs[:random.randrange(len(pairs) + 1)]
+            rows = []
+            for ordinal, (gt, prediction) in enumerate(pairs):
+                k4 = Fraction(
+                    random.randrange(1, 65), random.randrange(1, 65))
+                if mode == "product" and k4 < 1:
+                    k4 = 1 / k4
+                rows.append(edge(
+                    gt,
+                    prediction,
+                    k2=Fraction(random.randrange(0, 65), 64),
+                    k3=random.randrange(0, 2**16),
+                    k4=k4,
+                    scientific=f"s:{ordinal}".encode(),
+                    diagnostic=f"d:{ordinal}".encode(),
+                    severity=Fraction(
+                        random.randrange(0, 65), random.randrange(1, 65)),
+                    onset=random.randrange(0, 2**16),
+                    offset=random.randrange(0, 2**16),
+                ))
+            candidate = graph(gt_count, prediction_count, rows, mode)
+            with self.subTest(case=case, mode=mode):
+                self.assertEqual(
+                    provisional_preflight_probe(
+                        candidate).exact_scalar_bit_bound,
+                    reference_bound(candidate),
+                )
 
     def test_probe_detects_large_exact_scalar_bound(self):
         huge = Fraction(2**40_000, 2**40_000 + 1)
