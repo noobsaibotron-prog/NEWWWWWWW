@@ -783,31 +783,7 @@ Reason code:
 almeno un n<10             -> N/A / INSUFFICIENT_MATCHED_SUPPORT
 almeno una varianza zero   -> N/A / SPEARMAN_UNDEFINED
 rho non singleton          -> N/A / PAIRING_AMBIGUOUS
-certificato non disponibile -> N/A / SPEARMAN_CERTIFICATE_UNAVAILABLE
 ```
-
-`DECISIONE_S6 — APPROVATA E FIRMATA`
-
-Il quarto codice copre il caso in cui la procedura esatta richiesta non
-disponga di un certificato sufficiente a dimostrare l'unicità del valore di
-rho su `M*`. Non è la stessa cosa di `PAIRING_AMBIGUOUS`, che asserisce la
-non-singolarità e richiede quindi di averla dimostrata.
-
-```text
-Nel caso Spearman in cui la procedura esatta richiesta non disponga di un
-certificato sufficiente a dimostrare l'unicità del valore su M*, il risultato
-è N/A con reason code SPEARMAN_CERTIFICATE_UNAVAILABLE.
-
-Questo esito:
-- non è PASS;
-- non è zero;
-- non è una failure runtime;
-- non può essere convertito in PAIRING_AMBIGUOUS senza prova di non-singleton;
-- impedisce il PASS di qualunque gate che richieda una Spearman definita.
-```
-
-La decisione nomina soltanto l'esito: non chiude il gap scientifico del caso
-generale variable-value-marginal, che resta non certificato.
 
 Se Spearman è gate obbligatorio, N/A impedisce PASS. `M_can` è diagnostico.
 
