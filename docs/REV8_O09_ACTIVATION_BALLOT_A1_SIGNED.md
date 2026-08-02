@@ -1,12 +1,12 @@
 # REV8 — O-09 — ACTIVATION BALLOT ADDENDUM (A1, NARROW)
 
-**Stato:** `DRAFT — S6 TRANSFER EFFECTIVE — PENDING POST-TRANSFER RECHECK — NOT YET SIGNABLE`
+**Stato:** `SIGNED — APPROVED — PENDING POST-SIGNATURE RECHECK — NOT EFFECTIVE`
 
-Questo documento è **preparato e non firmato**. La policy S6 è ora efficace
-nella composizione R23C, ma il retarget A1 deve ricevere un nuovo counter-check
-indipendente sul proprio SHA prima della firma. Nulla diventa attivo con la
-sola firma: servono anche un recheck post-firma `CLEAN` e il relativo report
-immutabile. Fino ad allora `REV8 SPEC GO = NO` e i cap restano
+Questo documento è **firmato e approvato**, dopo un counter-check
+pre-firma `3/3 CLEAN` sullo snapshot retargetizzato. La policy S6 è efficace
+nella composizione R23C. Nulla diventa però attivo con la sola firma: servono
+anche un recheck post-firma `CLEAN` e il relativo report immutabile. Fino ad
+allora `REV8 SPEC GO = NO` e i cap restano
 `PROVISIONAL_PENDING_BENCHMARK_O09`.
 
 ## 1. Oggetto e autorità invocata
@@ -360,9 +360,16 @@ del predecessore. Il `BLOCK` R23C registrato in quel report era corretto per
 quello snapshot ed è stato successivamente chiuso dagli artefatti S6 transfer
 firmati e verificati elencati nella §1.
 
-Un nuovo counter-check sullo SHA retargetizzato è obbligatorio prima della
-firma. Non è ammessa alcuna deroga di processo: finché il nuovo report non è
-`CLEAN`, lo stato resta `NOT YET SIGNABLE`.
+Il nuovo counter-check sullo SHA retargetizzato è materializzato in:
+
+```text
+docs/REV8_O09_A1_POST_TRANSFER_PRE_SIGNATURE_COUNTERCHECK_REPORT.md
+SHA-256 1da135ae77442f0471c2a3968af921e8f3162ac7705de6084f828505b2324748
+Commit 829c0d29f89b2ee348270533cdfcf5a8cf4f0a97
+Verdetto 3/3 CLEAN
+```
+
+La firma non usa alcuna deroga di processo.
 
 ### 8.1 Deroga tecnica di scope rispetto al report per-sottografo
 
@@ -386,11 +393,11 @@ del report per-sottografo e sottoporla a nuovo ballot/counter-check.
 ## 9. Firma dell'autorità
 
 ```text
-Decisione complessiva: [ DA COMPILARE — APPROVO / RESPINGO / APPROVO CON MODIFICHE ]
-Firma/nome:            [ DA COMPILARE ]
-Data:                  [ DA COMPILARE ]
+Decisione complessiva: APPROVO
+Firma/nome:            Marco
+Data:                  2026-08-02
 
-Deroga tecnica di scope §8.1 accettata consapevolmente: [ SI / NO ]
+Deroga tecnica di scope §8.1 accettata consapevolmente: SI
 ```
 
 Transizione di stato vincolante:
