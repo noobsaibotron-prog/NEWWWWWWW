@@ -11,6 +11,7 @@ import unittest
 from unittest import mock
 
 from ml_v3.benchmark import rev8_o09_group_candidate as subject
+from ml_v3.benchmark import rev8_o09_candidate as per_subgraph
 from ml_v3.benchmark.rev8_o09_candidate import (
     CandidateGraph,
     ExactEdge,
@@ -930,6 +931,71 @@ class RuntimeFailureTests(unittest.TestCase):
             ))
         self.assertEqual(result.status, GroupStatus.REJECTED)
         self.assertEqual(result.reason, GroupReason.SOLVER_RUNTIME_FAILURE)
+
+    def _group_surfaces(self):
+        """The three group entry points, each with a minimal valid input."""
+        values = tuple(Fraction(index) for index in range(10))
+        return (
+            (
+                "ap",
+                lambda: evaluate_group_ap((
+                    APPartition(("part",), diagonal_graph(1), (Fraction(1),)),
+                )),
+            ),
+            (
+                "coverage",
+                lambda: evaluate_group_coverage((
+                    CoveragePartition(
+                        ("unit",), ("part",), diagonal_graph(1),
+                        (True,), (True,),
+                    ),
+                )),
+            ),
+            (
+                "spearman",
+                lambda: evaluate_group_spearman((
+                    SpearmanPartition(
+                        ("part",), diagonal_graph(10), values, values,
+                    ),
+                )),
+            ),
+        )
+
+    def test_every_declared_runtime_failure_is_fail_closed_on_every_surface(self):
+        """No member of the taxonomy may escape as a bare exception.
+
+        The named tests above pin RuntimeError only.  TimeoutError was absent
+        from the group taxonomy while the A1 enforcement tranche added it to
+        the per-subgraph one, so a timeout escaped uncaught on this path —
+        exactly how the expensive Spearman variable-marginal case would fail.
+        This sweeps the whole declared taxonomy across all three surfaces so a
+        future addition cannot be covered on one surface and missed on another.
+        """
+        for failure in subject._RUNTIME_FAILURES:
+            for label, call in self._group_surfaces():
+                with self.subTest(failure=failure.__name__, surface=label):
+                    with mock.patch.object(
+                        subject,
+                        "exact_maximum_cardinality",
+                        side_effect=failure("injected"),
+                    ):
+                        result = call()
+                    self.assertEqual(result.status, GroupStatus.REJECTED)
+                    self.assertEqual(
+                        result.reason, GroupReason.SOLVER_RUNTIME_FAILURE)
+
+    def test_group_runtime_taxonomy_matches_the_per_subgraph_authority(self):
+        """Structural guard against the two kernels drifting apart again.
+
+        The fail policy names one set of fatal runtime reasons; two kernels
+        implementing different sets means one of them is wrong.  Equality is
+        asserted as a set so ordering is irrelevant.
+        """
+        self.assertEqual(
+            set(subject._RUNTIME_FAILURES),
+            set(per_subgraph._A1_RUNTIME_FAILURES),
+        )
+        self.assertIn(TimeoutError, subject._RUNTIME_FAILURES)
 
 
 if __name__ == "__main__":

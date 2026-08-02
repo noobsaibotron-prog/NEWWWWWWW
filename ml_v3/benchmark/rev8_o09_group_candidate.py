@@ -550,7 +550,17 @@ def _ensure_unique_partition_keys(
         raise GroupCandidateError("partition_key values must be unique")
 
 
-_RUNTIME_FAILURES = (MemoryError, RuntimeError, OverflowError)
+# Must stay identical to _A1_RUNTIME_FAILURES in the per-subgraph kernel.
+# TimeoutError was missing here while the A1 enforcement tranche added it
+# there, so a timeout on the group path escaped as a bare exception instead
+# of the SOLVER_RUNTIME_FAILURE the fail policy requires — and a timeout is
+# precisely how the expensive Spearman variable-marginal path would fail.
+_RUNTIME_FAILURES = (
+    MemoryError,
+    RuntimeError,
+    OverflowError,
+    TimeoutError,
+)
 
 
 def evaluate_group_ap(
