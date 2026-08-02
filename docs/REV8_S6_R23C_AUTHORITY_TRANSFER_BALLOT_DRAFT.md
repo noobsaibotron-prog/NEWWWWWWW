@@ -70,9 +70,15 @@ Il trasferimento:
 ## 4. Evidenza
 
 ```text
-Ballot S6 storico firmato:
-docs/REV8_CANDIDATE_S6_SPEARMAN_REASON_CODE_MICRO_AMEND_BALLOT.md
+Snapshot S6 firmato storico:
 SHA-256 b94c1b2c061db384d2b6a61688def5656b5bcdf75ec05a2904c2b45cd14220bf
+Commit e36d2422b5895abb0721b11f34805090c4ad374a
+Recuperabile con: git show e36d2422:docs/REV8_CANDIDATE_S6_SPEARMAN_REASON_CODE_MICRO_AMEND_BALLOT.md
+
+Documento S6 corrente con errata di authority:
+docs/REV8_CANDIDATE_S6_SPEARMAN_REASON_CODE_MICRO_AMEND_BALLOT.md
+SHA-256 2904cf07884f1e1876cb3b8ceb6726ff1ab6cbbaba70a3158fae9e37bffd6bcb
+Commit errata 3f992455bd2cc58fb7501b10bb2e1e09f86f8abd
 
 Patch storico verificato — NON PIU' NEL WORKTREE, solo in git history:
 docs/REV8_MATCHING_FORMALIZATION_ROUND2_3_NORMATIVE_SIGNED_DRAFT.md
