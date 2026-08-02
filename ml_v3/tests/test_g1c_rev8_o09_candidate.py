@@ -15,12 +15,16 @@ from unittest import mock
 from ml_v3.benchmark import run_rev8_o09_candidate as runner_module
 
 from ml_v3.benchmark.rev8_o09_candidate import (
+    CandidateEvaluationReason,
+    CandidateEvaluationStatus,
     CandidateGraph,
     CandidateGraphError,
     ExactEdge,
     PROVISIONAL_MAX_EXACT_SCALAR_BITS,
     a1_exhaustive,
     a2_exact,
+    evaluate_a2_batch_fail_closed,
+    evaluate_a2_fail_closed,
     provisional_preflight_probe,
     rational_bit_length,
 )
@@ -481,6 +485,214 @@ class PreflightTests(unittest.TestCase):
         )
         self.assertIn(
             "EXACT_SCALAR_BIT_LENGTH", probe.provisional_exceeded)
+
+
+class A1EnforcementTests(unittest.TestCase):
+    SOLVER = "ml_v3.benchmark.rev8_o09_candidate.a2_exact"
+
+    def test_shape_under_on_over_enforcement_is_pre_solve(self):
+        sentinel = object()
+        for axis, count, expected_witness in (
+            ("gt", 127, None),
+            ("gt", 128, None),
+            ("gt", 129, ("GT",)),
+            ("prediction", 127, None),
+            ("prediction", 128, None),
+            ("prediction", 129, ("PREDICTION",)),
+        ):
+            candidate = (
+                graph(count, 0, [])
+                if axis == "gt"
+                else graph(0, count, [])
+            )
+            with self.subTest(axis=axis, count=count):
+                with mock.patch(self.SOLVER, return_value=sentinel) as solver:
+                    result = evaluate_a2_fail_closed(candidate)
+                if expected_witness is None:
+                    solver.assert_called_once_with(candidate)
+                    self.assertEqual(
+                        result.status, CandidateEvaluationStatus.EVALUATED)
+                    self.assertEqual(result.reason, CandidateEvaluationReason.OK)
+                    self.assertIs(result.value, sentinel)
+                    self.assertEqual(
+                        result.preflight.authority_status,
+                        "A1_ACTIVE_ENFORCEMENT",
+                    )
+                else:
+                    solver.assert_not_called()
+                    self.assertEqual(
+                        result.status, CandidateEvaluationStatus.REJECTED)
+                    self.assertEqual(
+                        result.reason,
+                        CandidateEvaluationReason.SOLVER_STRUCTURAL_LIMIT_EXCEEDED,
+                    )
+                    self.assertEqual(result.witness, expected_witness)
+
+    def test_edge_under_on_over_enforcement_is_pre_solve(self):
+        dense_edges = tuple(
+            edge(gt, prediction)
+            for gt in range(129)
+            for prediction in range(128)
+        )
+        cases = (
+            (128, dense_edges[:16_383], None),
+            (128, dense_edges[:16_384], None),
+            (129, dense_edges[:16_385], ("GT", "ELIGIBLE_EDGES")),
+        )
+        for gt_count, rows, expected_witness in cases:
+            candidate = graph(gt_count, 128, rows)
+            with self.subTest(edge_count=len(rows)):
+                with mock.patch(self.SOLVER, return_value=object()) as solver:
+                    result = evaluate_a2_fail_closed(candidate)
+                if expected_witness is None:
+                    solver.assert_called_once_with(candidate)
+                    self.assertEqual(
+                        result.status, CandidateEvaluationStatus.EVALUATED)
+                else:
+                    solver.assert_not_called()
+                    self.assertEqual(result.witness, expected_witness)
+                    self.assertEqual(
+                        result.reason,
+                        CandidateEvaluationReason.SOLVER_STRUCTURAL_LIMIT_EXCEEDED,
+                    )
+
+    def test_exact_scalar_under_on_over_enforcement_is_pre_solve(self):
+        cases = (
+            (Fraction(2**32_766, 2**32_767 + 1), 65_535, False),
+            (Fraction(2**32_767, 2**32_767 + 1), 65_536, False),
+            (Fraction(2**32_767, 2**32_768 + 1), 65_537, True),
+        )
+        for value, bound, rejected in cases:
+            candidate = graph(1, 1, [edge(0, 0, k2=value)])
+            with self.subTest(bound=bound):
+                with mock.patch(self.SOLVER, return_value=object()) as solver:
+                    result = evaluate_a2_fail_closed(candidate)
+                self.assertEqual(result.preflight.exact_scalar_bit_bound, bound)
+                if rejected:
+                    solver.assert_not_called()
+                    self.assertEqual(
+                        result.reason,
+                        CandidateEvaluationReason.SOLVER_STRUCTURAL_LIMIT_EXCEEDED,
+                    )
+                    self.assertEqual(
+                        result.witness, ("EXACT_SCALAR_BIT_LENGTH",))
+                else:
+                    solver.assert_called_once_with(candidate)
+                    self.assertEqual(
+                        result.status, CandidateEvaluationStatus.EVALUATED)
+
+    def test_per_subgraph_constraint_failure_has_no_value(self):
+        candidate = graph(1, 1, [edge(0, 0)])
+        with mock.patch(
+            self.SOLVER,
+            side_effect=CandidateGraphError("invalid internal constraint"),
+        ):
+            result = evaluate_a2_fail_closed(candidate)
+        self.assertEqual(result.status, CandidateEvaluationStatus.REJECTED)
+        self.assertEqual(
+            result.reason,
+            CandidateEvaluationReason.SOLVER_CONSTRAINT_MODEL_INVALID,
+        )
+        self.assertIsNone(result.value)
+        self.assertEqual(result.witness, "invalid internal constraint")
+
+    def test_per_subgraph_runtime_failure_has_no_value(self):
+        candidate = graph(1, 1, [edge(0, 0)])
+        with mock.patch(self.SOLVER, side_effect=MemoryError):
+            result = evaluate_a2_fail_closed(candidate)
+        self.assertEqual(result.status, CandidateEvaluationStatus.REJECTED)
+        self.assertEqual(
+            result.reason,
+            CandidateEvaluationReason.SOLVER_RUNTIME_FAILURE,
+        )
+        self.assertIsNone(result.value)
+        self.assertEqual(result.witness, "MemoryError")
+
+    def test_clean_enforced_value_matches_exact_solver(self):
+        candidate = graph(2, 2, [
+            edge(0, 0, scientific=b"a", diagnostic=b"2"),
+            edge(1, 1, scientific=b"b", diagnostic=b"1"),
+        ])
+        expected = a2_exact(candidate)
+        result = evaluate_a2_fail_closed(candidate)
+        self.assertEqual(result.status, CandidateEvaluationStatus.EVALUATED)
+        self.assertEqual(result.reason, CandidateEvaluationReason.OK)
+        self.assertEqual(result.value, expected)
+        self.assertIsNone(result.witness)
+
+    def test_batch_preflights_every_graph_before_any_solve(self):
+        clean = graph(1, 1, [edge(0, 0)])
+        oversized = graph(129, 0, [])
+        with mock.patch(self.SOLVER) as solver:
+            result = evaluate_a2_batch_fail_closed((clean, oversized))
+        solver.assert_not_called()
+        self.assertEqual(result.status, CandidateEvaluationStatus.REJECTED)
+        self.assertEqual(
+            result.reason,
+            CandidateEvaluationReason.SOLVER_STRUCTURAL_LIMIT_EXCEEDED,
+        )
+        self.assertIsNone(result.values)
+        self.assertEqual(result.witness, ((1, ("GT",)),))
+
+    def test_batch_runtime_failure_discards_prior_values(self):
+        graphs = (
+            graph(1, 1, [edge(0, 0)]),
+            graph(1, 1, [edge(0, 0)]),
+        )
+        with mock.patch(
+            self.SOLVER,
+            side_effect=(object(), RuntimeError("boom")),
+        ) as solver:
+            result = evaluate_a2_batch_fail_closed(graphs)
+        self.assertEqual(solver.call_count, 2)
+        self.assertEqual(result.status, CandidateEvaluationStatus.REJECTED)
+        self.assertEqual(
+            result.reason,
+            CandidateEvaluationReason.SOLVER_RUNTIME_FAILURE,
+        )
+        self.assertIsNone(result.values)
+        self.assertEqual(
+            result.witness, {"graph_index": 1, "exception": "RuntimeError"})
+
+    def test_batch_constraint_failure_discards_prior_values(self):
+        graphs = (
+            graph(1, 1, [edge(0, 0)]),
+            graph(1, 1, [edge(0, 0)]),
+        )
+        with mock.patch(
+            self.SOLVER,
+            side_effect=(object(), CandidateGraphError("bad model")),
+        ) as solver:
+            result = evaluate_a2_batch_fail_closed(graphs)
+        self.assertEqual(solver.call_count, 2)
+        self.assertEqual(result.status, CandidateEvaluationStatus.REJECTED)
+        self.assertEqual(
+            result.reason,
+            CandidateEvaluationReason.SOLVER_CONSTRAINT_MODEL_INVALID,
+        )
+        self.assertIsNone(result.values)
+        self.assertEqual(
+            result.witness,
+            {"graph_index": 1, "detail": "bad model"},
+        )
+
+    def test_clean_batch_returns_only_complete_values(self):
+        graphs = (
+            graph(1, 1, [edge(0, 0)]),
+            graph(0, 0, []),
+        )
+        first, second = object(), object()
+        with mock.patch(self.SOLVER, side_effect=(first, second)) as solver:
+            result = evaluate_a2_batch_fail_closed(graphs)
+        self.assertEqual(solver.call_count, 2)
+        self.assertEqual(result.status, CandidateEvaluationStatus.EVALUATED)
+        self.assertEqual(result.reason, CandidateEvaluationReason.OK)
+        self.assertEqual(result.values, (first, second))
+        self.assertIsNone(result.witness)
+        self.assertTrue(all(
+            probe.authority_status == "A1_ACTIVE_ENFORCEMENT"
+            for probe in result.preflights
+        ))
 
 
 class BenchmarkRunnerTests(unittest.TestCase):

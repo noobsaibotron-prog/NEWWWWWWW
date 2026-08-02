@@ -28,7 +28,8 @@ No float, greedy, first-fit, approximation, or fallback path exists here.
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from enum import Enum
 from fractions import Fraction
 import heapq
 from typing import Iterable, Literal, Sequence
@@ -41,12 +42,18 @@ __all__ = [
     "PROVISIONAL_MAX_PREDICTIONS",
     "CandidateGraph",
     "CandidateGraphError",
+    "CandidateBatchEvaluation",
+    "CandidateEvaluation",
+    "CandidateEvaluationReason",
+    "CandidateEvaluationStatus",
     "CandidateResult",
     "ExactEdge",
     "Objective",
     "PreflightProbe",
     "a1_exhaustive",
     "a2_exact",
+    "evaluate_a2_batch_fail_closed",
+    "evaluate_a2_fail_closed",
     "exact_maximum_cardinality",
     "provisional_preflight_probe",
     "rational_bit_length",
@@ -193,6 +200,48 @@ class CandidateResult:
     onset_upper_ticks: Fraction | None
     offset_upper_ticks: Fraction | None
     m_star: tuple[tuple[tuple[int, int], ...], ...] | None
+
+
+class CandidateEvaluationStatus(str, Enum):
+    """Fail-closed status for the isolated A1 enforcement surface."""
+
+    EVALUATED = "EVALUATED"
+    REJECTED = "REJECTED"
+
+
+class CandidateEvaluationReason(str, Enum):
+    """Normative A1 outcome reason for a per-subgraph or batch evaluation."""
+
+    OK = "OK"
+    SOLVER_STRUCTURAL_LIMIT_EXCEEDED = "SOLVER_STRUCTURAL_LIMIT_EXCEEDED"
+    SOLVER_RUNTIME_FAILURE = "SOLVER_RUNTIME_FAILURE"
+    SOLVER_CONSTRAINT_MODEL_INVALID = "SOLVER_CONSTRAINT_MODEL_INVALID"
+
+
+@dataclass(frozen=True)
+class CandidateEvaluation:
+    """One fail-closed per-subgraph result.
+
+    ``value`` is absent for every rejection.  This prevents callers from
+    accidentally publishing a partial solve alongside a fatal status.
+    """
+
+    status: CandidateEvaluationStatus
+    reason: CandidateEvaluationReason
+    value: CandidateResult | None
+    preflight: "PreflightProbe"
+    witness: object | None = None
+
+
+@dataclass(frozen=True)
+class CandidateBatchEvaluation:
+    """Fail-closed aggregate over gate-contributing subgraphs."""
+
+    status: CandidateEvaluationStatus
+    reason: CandidateEvaluationReason
+    values: tuple[CandidateResult, ...] | None
+    preflights: tuple["PreflightProbe", ...]
+    witness: object | None = None
 
 
 def _edge_map(graph: CandidateGraph) -> dict[tuple[int, int], ExactEdge]:
@@ -876,4 +925,120 @@ def provisional_preflight_probe(graph: CandidateGraph) -> PreflightProbe:
         eligible_edges=len(graph.edges),
         exact_scalar_bit_bound=exact_scalar_bound,
         provisional_exceeded=tuple(exceeded),
+    )
+
+
+_A1_RUNTIME_FAILURES = (MemoryError, RuntimeError, OverflowError)
+_A1_ACTIVE_AUTHORITY_STATUS = "A1_ACTIVE_ENFORCEMENT"
+
+
+def evaluate_a2_fail_closed(graph: CandidateGraph) -> CandidateEvaluation:
+    """Apply signed A1 limits before invoking the exact solver.
+
+    The probe retains its historical evidence-only field names so old
+    benchmark artifacts remain replayable.  This wrapper is the separate
+    enforcement surface authorized after the A1 post-signature CLEAN report:
+    any active per-subgraph ceiling exceed is fatal and no solve is attempted.
+    """
+    if not isinstance(graph, CandidateGraph):
+        raise CandidateGraphError("graph must be CandidateGraph")
+    probe = replace(
+        provisional_preflight_probe(graph),
+        authority_status=_A1_ACTIVE_AUTHORITY_STATUS,
+    )
+    if probe.provisional_exceeded:
+        return CandidateEvaluation(
+            CandidateEvaluationStatus.REJECTED,
+            CandidateEvaluationReason.SOLVER_STRUCTURAL_LIMIT_EXCEEDED,
+            None,
+            probe,
+            witness=probe.provisional_exceeded,
+        )
+    try:
+        value = a2_exact(graph)
+    except CandidateGraphError as error:
+        return CandidateEvaluation(
+            CandidateEvaluationStatus.REJECTED,
+            CandidateEvaluationReason.SOLVER_CONSTRAINT_MODEL_INVALID,
+            None,
+            probe,
+            witness=str(error),
+        )
+    except _A1_RUNTIME_FAILURES as error:
+        return CandidateEvaluation(
+            CandidateEvaluationStatus.REJECTED,
+            CandidateEvaluationReason.SOLVER_RUNTIME_FAILURE,
+            None,
+            probe,
+            witness=type(error).__name__,
+        )
+    return CandidateEvaluation(
+        CandidateEvaluationStatus.EVALUATED,
+        CandidateEvaluationReason.OK,
+        value,
+        probe,
+    )
+
+
+def evaluate_a2_batch_fail_closed(
+    graphs: tuple[CandidateGraph, ...],
+) -> CandidateBatchEvaluation:
+    """Evaluate gate-contributing subgraphs with fatal batch propagation.
+
+    Every graph is preflighted before the first solve.  A structural exceed in
+    any member therefore prevents all solving.  Runtime or constraint failure
+    during the solve phase discards every accumulated value and returns no
+    partial scientific result.
+    """
+    if not isinstance(graphs, tuple) or any(
+            not isinstance(graph, CandidateGraph) for graph in graphs):
+        raise CandidateGraphError("graphs must be a tuple of CandidateGraph")
+    preflights = tuple(
+        replace(
+            provisional_preflight_probe(graph),
+            authority_status=_A1_ACTIVE_AUTHORITY_STATUS,
+        )
+        for graph in graphs
+    )
+    structural = tuple(
+        (index, probe.provisional_exceeded)
+        for index, probe in enumerate(preflights)
+        if probe.provisional_exceeded
+    )
+    if structural:
+        return CandidateBatchEvaluation(
+            CandidateEvaluationStatus.REJECTED,
+            CandidateEvaluationReason.SOLVER_STRUCTURAL_LIMIT_EXCEEDED,
+            None,
+            preflights,
+            witness=structural,
+        )
+    values: list[CandidateResult] = []
+    for index, graph in enumerate(graphs):
+        try:
+            values.append(a2_exact(graph))
+        except CandidateGraphError as error:
+            return CandidateBatchEvaluation(
+                CandidateEvaluationStatus.REJECTED,
+                CandidateEvaluationReason.SOLVER_CONSTRAINT_MODEL_INVALID,
+                None,
+                preflights,
+                witness={"graph_index": index, "detail": str(error)},
+            )
+        except _A1_RUNTIME_FAILURES as error:
+            return CandidateBatchEvaluation(
+                CandidateEvaluationStatus.REJECTED,
+                CandidateEvaluationReason.SOLVER_RUNTIME_FAILURE,
+                None,
+                preflights,
+                witness={
+                    "graph_index": index,
+                    "exception": type(error).__name__,
+                },
+            )
+    return CandidateBatchEvaluation(
+        CandidateEvaluationStatus.EVALUATED,
+        CandidateEvaluationReason.OK,
+        tuple(values),
+        preflights,
     )
