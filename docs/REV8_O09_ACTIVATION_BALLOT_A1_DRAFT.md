@@ -1,12 +1,13 @@
 # REV8 — O-09 — ACTIVATION BALLOT ADDENDUM (A1, NARROW)
 
-**Stato:** `DRAFT — BLOCKED PENDING S6→R23C TRANSFER — NOT SIGNABLE`
+**Stato:** `DRAFT — S6 TRANSFER EFFECTIVE — PENDING POST-TRANSFER RECHECK — NOT YET SIGNABLE`
 
-Questo documento è **preparato, non firmato e non ancora firmabile**. Prima
-della firma, la policy S6 deve essere trasferita e verificata sulla catena
-normativa R23C corrente. Nulla è attivo finché il blocker non è chiuso e la §9
-non è compilata dall'autorità scientifica. Fino ad allora `REV8 SPEC GO = NO`
-e i cap restano `PROVISIONAL_PENDING_BENCHMARK_O09`.
+Questo documento è **preparato e non firmato**. La policy S6 è ora efficace
+nella composizione R23C, ma il retarget A1 deve ricevere un nuovo counter-check
+indipendente sul proprio SHA prima della firma. Nulla diventa attivo con la
+sola firma: servono anche un recheck post-firma `CLEAN` e il relativo report
+immutabile. Fino ad allora `REV8 SPEC GO = NO` e i cap restano
+`PROVISIONAL_PENDING_BENCHMARK_O09`.
 
 ## 1. Oggetto e autorità invocata
 
@@ -34,11 +35,16 @@ ballot firmato SHA-256
 report post-firma CLEAN SHA-256
 e2223fa357d76b162508ba724ac36a529a9c5a1dc57dd894d5c39689ab070157
 
-S6 transfer richiesto prima della firma A1:
-docs/REV8_S6_R23C_AUTHORITY_TRANSFER_BALLOT_DRAFT.md
-SHA-256: 321c0bb0d6cf770d3d612b362bba4427b06f17a36d7913a6d2fedd8856b3f491
-Commit draft: bdb51ae4801be5c0a3a135c5b95194ed600f2a57
-Stato: DRAFT — NON FIRMATO
+S6 transfer firmato:
+docs/REV8_S6_R23C_AUTHORITY_TRANSFER_BALLOT_SIGNED.md
+SHA-256: 8dab8b7ad0fb25f5263358dd26600d201a036210d808840d6c8e1d07051649c0
+Commit: 7fe229d0cd1f6e5af629a00cfa5ed79fb3b7b7b1
+
+S6 transfer post-signature recheck:
+docs/REV8_S6_R23C_AUTHORITY_TRANSFER_POST_SIGNATURE_RECHECK_REPORT.md
+SHA-256: b148e6340dd3c9b46ca0f6787209cc6d2df00a6512e34c5bce164b81b1349c7a
+Commit: 88315f0f82a96a8906fe6a382c8f679ab4f73304
+Verdetto: 3/3 CLEAN — TRANSFER EFFICACE
 
 Evidenza per-sottografo (counter-check a tre lenti, commit 030ec8bb):
 docs/REV8_O09_PER_SUBGRAPH_BENCHMARK_REPORT.md
@@ -61,8 +67,8 @@ SHA-256: 88d24d1522e3bfb0a012b19b1b8edf2ff4087ff9e3534c82aa21aa946acd2570
 ```
 
 Il precedente target S6 `NORMATIVE_SIGNED_DRAFT` SHA `be865...` è evidenza
-storica, non l'artefatto normativo corrente. A1 non può essere firmato finché
-il transfer S6 non è approvato e verificato sulla composizione R23C.
+storica, non l'artefatto normativo corrente. Il transfer esterno firmato e il
+suo recheck CLEAN hanno chiuso quel blocker senza riscrivere il target R23C.
 
 ## 2. Cap — i quattro numeri attivati
 
@@ -316,11 +322,12 @@ la sua ottimalità**: nessuna evidenza raccolta dice che 128 sia il numero
 - Non dichiara materializzato l'enforcement candidate: wrapper, reason code e
   fatal blast radius richiedono una tranche separata e un nuovo counter-check.
 
-## 8. Counter-check indipendente a tre lenti — completato
+## 8. Counter-check indipendente a tre lenti
 
 Il primo tentativo storico di workflow a dieci agenti non aveva prodotto
 evidenza utilizzabile. Prima di questo freeze è stato però completato un nuovo
-counter-check indipendente e mirato con tre lenti distinte:
+counter-check indipendente e mirato con tre lenti distinte. I verdetti dello
+snapshot pre-transfer erano:
 
 ```text
 Metriche / fail-closed = CLEAN contenutistico; BLOCK operativo finché S6 non è trasferita
@@ -329,19 +336,23 @@ Semantica / authority  = CLEAN dopo rimozione del conteggio ledger stale;
                          BLOCK operativo finché S6 non è trasferita
 ```
 
-Il report riproducibile è materializzato in
-`docs/REV8_O09_A1_THREE_LENS_COUNTERCHECK_REPORT.md`. Le tre lenti non hanno
-modificato i file. Sono inoltre passati 22 test mirati (8 A1 + 14 S6) e
-540/540 test nella suite canonica CPython 3.12.13.
+Il report pre-transfer è materializzato in
+`docs/REV8_O09_A1_THREE_LENS_COUNTERCHECK_REPORT.md` (SHA-256
+`57258ee4e9b2aeaf92484107c2a9d8b47cb43fdd97b0631726070e016565ee1d`).
+Verificava A1 SHA `ffe2eca9...` e non può essere riutilizzato come verifica di
+questo retarget. Le tre lenti non avevano modificato i file. Erano inoltre
+passati 22 test mirati (8 A1 + 14 S6) e 540/540 test nella suite canonica
+CPython 3.12.13.
 
 Il counter-check sul patch S6 storico resta separato in
 `docs/REV8_S6_TARGETED_COUNTERCHECK_REPORT.md`: è `CLEAN` soltanto sui byte
-del predecessore, mentre la catena R23C corrente resta `BLOCK` finché il
-transfer non è firmato e seguito da recheck post-firma `CLEAN`.
+del predecessore. Il `BLOCK` R23C registrato in quel report era corretto per
+quello snapshot ed è stato successivamente chiuso dagli artefatti S6 transfer
+firmati e verificati elencati nella §1.
 
-Non è quindi richiesta alcuna deroga di processo per A1. Il solo `BLOCK`
-residuo del counter-check è la precondizione S6→R23C già dichiarata
-nell'header e nella §1.
+Un nuovo counter-check sullo SHA retargetizzato è obbligatorio prima della
+firma. Non è ammessa alcuna deroga di processo: finché il nuovo report non è
+`CLEAN`, lo stato resta `NOT YET SIGNABLE`.
 
 ### 8.1 Deroga tecnica di scope rispetto al report per-sottografo
 
@@ -374,24 +385,39 @@ Deroga tecnica di scope §8.1 accettata consapevolmente: [ SI / NO ]
 
 Transizione di stato vincolante:
 
-- `APPROVO` attiva la §10 soltanto se il transfer S6 è già efficace nella
-  composizione R23C e la deroga tecnica §8.1 vale `SI`;
+- `APPROVO` firma la decisione soltanto se il transfer S6 è già efficace nella
+  composizione R23C e la deroga tecnica §8.1 vale `SI`; la firma resta
+  **non efficace** finché il recheck post-firma non è `CLEAN`;
+- soltanto il freeze del report post-firma `CLEAN` rende attivi i quattro
+  ceiling nella composizione esterna;
 - transfer S6 non efficace oppure deroga tecnica `NO` lasciano i ceiling
   provvisori e inattivi;
 - `RESPINGO` lascia i ceiling provvisori e inattivi;
 - `APPROVO CON MODIFICHE` non attiva nulla: richiede patch, verifica su commit
   immutabile e nuova firma finale.
 
-## 10. Stato dopo la firma (se APPROVO)
+## 10. Stato dopo la firma, prima del recheck (se APPROVO)
 
 ```text
-O-09 quattro ceiling §10        = ATTIVI
+O-09 quattro ceiling §10        = FIRMATI, NON EFFICACI PENDING RECHECK
 Cap group-level (17)            = NON ATTIVI, fuori scope
 Spearman variable-marginal      = NON CERTIFICATO (invariato)
 G_eligible/G_defined/G_NA       = NOT_EVALUATED (O-13, invariato)
-Patch document-only §10         = AUTORIZZATA, NON ANCORA APPLICATA
+Target R23C                     = IMMUTATO; NESSUNA PATCH IN-PLACE
 Enforcement candidate           = NON MATERIALIZZATO; NESSUN PASS CONFORME
 Counter-check nuovo SHA         = OBBLIGATORIO
 REV8 SPEC GO                    = NO (restante ledger non verificato da A1)
+Runtime/training                = NON AUTORIZZATI
+```
+
+### 10.1 Stato soltanto dopo recheck post-firma CLEAN
+
+```text
+authority applicabile           = R23C + S6 transfer + A1 firmato + report CLEAN
+O-09 quattro ceiling §10        = ATTIVI NORMATIVAMENTE
+Target R23C                     = IMMUTATO
+Cap group-level (17)            = NON ATTIVI
+Enforcement candidate           = NON MATERIALIZZATO; NESSUN PASS CONFORME
+REV8 SPEC GO                    = NO
 Runtime/training                = NON AUTORIZZATI
 ```
