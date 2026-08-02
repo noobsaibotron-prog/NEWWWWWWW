@@ -1,6 +1,6 @@
 # REV8 S6 — R23C authority-transfer ballot
 
-**Stato:** `DRAFT — PENDING SIGNATURE — NO AUTHORITY YET`
+**Stato:** `SIGNED — APPROVED — PENDING POST-SIGNATURE RECHECK — NOT EFFECTIVE`
 
 **REV8 SPEC GO:** `NO`
 
@@ -104,9 +104,9 @@ Evidence freeze commit:
 ## 5. Firma dell'autorità
 
 ```text
-Decisione complessiva: [ DA COMPILARE — APPROVO / RESPINGO ]
-Firma/nome:            [ DA COMPILARE ]
-Data:                  [ DA COMPILARE ]
+Decisione complessiva: APPROVO
+Firma/nome:            Marco
+Data:                  2026-08-02
 SHA target R23C:       684d8fd7ebfff4a9924b1105771acb9eb92d2bb9f97fd8295a60df77bfb9f0cb
 ```
 
