@@ -489,6 +489,10 @@ class PreflightTests(unittest.TestCase):
 
 class A1EnforcementTests(unittest.TestCase):
     SOLVER = "ml_v3.benchmark.rev8_o09_candidate.a2_exact"
+    PROBE = (
+        "ml_v3.benchmark.rev8_o09_candidate."
+        "provisional_preflight_probe"
+    )
 
     def test_shape_under_on_over_enforcement_is_pre_solve(self):
         sentinel = object()
@@ -608,6 +612,55 @@ class A1EnforcementTests(unittest.TestCase):
         self.assertIsNone(result.value)
         self.assertEqual(result.witness, "MemoryError")
 
+    def test_per_subgraph_timeout_has_no_value(self):
+        candidate = graph(1, 1, [edge(0, 0)])
+        with mock.patch(self.SOLVER, side_effect=TimeoutError):
+            result = evaluate_a2_fail_closed(candidate)
+        self.assertEqual(result.status, CandidateEvaluationStatus.REJECTED)
+        self.assertEqual(
+            result.reason,
+            CandidateEvaluationReason.SOLVER_RUNTIME_FAILURE,
+        )
+        self.assertIsNone(result.value)
+        self.assertEqual(result.witness, "TimeoutError")
+
+    def test_per_subgraph_preflight_runtime_failure_is_rejected(self):
+        candidate = graph(1, 1, [edge(0, 0)])
+        with (
+            mock.patch(self.PROBE, side_effect=MemoryError),
+            mock.patch(self.SOLVER) as solver,
+        ):
+            result = evaluate_a2_fail_closed(candidate)
+        solver.assert_not_called()
+        self.assertEqual(result.status, CandidateEvaluationStatus.REJECTED)
+        self.assertEqual(
+            result.reason,
+            CandidateEvaluationReason.SOLVER_RUNTIME_FAILURE,
+        )
+        self.assertIsNone(result.value)
+        self.assertIsNone(result.preflight)
+        self.assertEqual(result.witness, "MemoryError")
+
+    def test_per_subgraph_preflight_model_failure_is_rejected(self):
+        candidate = graph(1, 1, [edge(0, 0)])
+        with (
+            mock.patch(
+                self.PROBE,
+                side_effect=CandidateGraphError("invalid preflight model"),
+            ),
+            mock.patch(self.SOLVER) as solver,
+        ):
+            result = evaluate_a2_fail_closed(candidate)
+        solver.assert_not_called()
+        self.assertEqual(result.status, CandidateEvaluationStatus.REJECTED)
+        self.assertEqual(
+            result.reason,
+            CandidateEvaluationReason.SOLVER_CONSTRAINT_MODEL_INVALID,
+        )
+        self.assertIsNone(result.value)
+        self.assertIsNone(result.preflight)
+        self.assertEqual(result.witness, "invalid preflight model")
+
     def test_clean_enforced_value_matches_exact_solver(self):
         candidate = graph(2, 2, [
             edge(0, 0, scientific=b"a", diagnostic=b"2"),
@@ -633,6 +686,60 @@ class A1EnforcementTests(unittest.TestCase):
         )
         self.assertIsNone(result.values)
         self.assertEqual(result.witness, ((1, ("GT",)),))
+
+    def test_batch_preflight_runtime_failure_is_rejected(self):
+        graphs = (graph(1, 1, [edge(0, 0)]),)
+        with (
+            mock.patch(self.PROBE, side_effect=MemoryError),
+            mock.patch(self.SOLVER) as solver,
+        ):
+            result = evaluate_a2_batch_fail_closed(graphs)
+        solver.assert_not_called()
+        self.assertEqual(result.status, CandidateEvaluationStatus.REJECTED)
+        self.assertEqual(
+            result.reason,
+            CandidateEvaluationReason.SOLVER_RUNTIME_FAILURE,
+        )
+        self.assertIsNone(result.values)
+        self.assertIsNone(result.preflights)
+        self.assertEqual(result.witness, "MemoryError")
+
+    def test_batch_preflight_timeout_is_rejected(self):
+        graphs = (graph(1, 1, [edge(0, 0)]),)
+        with (
+            mock.patch(self.PROBE, side_effect=TimeoutError),
+            mock.patch(self.SOLVER) as solver,
+        ):
+            result = evaluate_a2_batch_fail_closed(graphs)
+        solver.assert_not_called()
+        self.assertEqual(result.status, CandidateEvaluationStatus.REJECTED)
+        self.assertEqual(
+            result.reason,
+            CandidateEvaluationReason.SOLVER_RUNTIME_FAILURE,
+        )
+        self.assertIsNone(result.values)
+        self.assertIsNone(result.preflights)
+        self.assertEqual(result.witness, "TimeoutError")
+
+    def test_batch_preflight_model_failure_is_rejected(self):
+        graphs = (graph(1, 1, [edge(0, 0)]),)
+        with (
+            mock.patch(
+                self.PROBE,
+                side_effect=CandidateGraphError("invalid preflight model"),
+            ),
+            mock.patch(self.SOLVER) as solver,
+        ):
+            result = evaluate_a2_batch_fail_closed(graphs)
+        solver.assert_not_called()
+        self.assertEqual(result.status, CandidateEvaluationStatus.REJECTED)
+        self.assertEqual(
+            result.reason,
+            CandidateEvaluationReason.SOLVER_CONSTRAINT_MODEL_INVALID,
+        )
+        self.assertIsNone(result.values)
+        self.assertIsNone(result.preflights)
+        self.assertEqual(result.witness, "invalid preflight model")
 
     def test_batch_runtime_failure_discards_prior_values(self):
         graphs = (
@@ -689,9 +796,10 @@ class A1EnforcementTests(unittest.TestCase):
         self.assertEqual(result.reason, CandidateEvaluationReason.OK)
         self.assertEqual(result.values, (first, second))
         self.assertIsNone(result.witness)
+        self.assertIsNotNone(result.preflights)
         self.assertTrue(all(
             probe.authority_status == "A1_ACTIVE_ENFORCEMENT"
-            for probe in result.preflights
+            for probe in result.preflights or ()
         ))
 
 
@@ -699,8 +807,28 @@ class BenchmarkRunnerTests(unittest.TestCase):
     def test_evidence_schema_tracks_isolated_startup_payload(self):
         self.assertEqual(
             EVIDENCE_SCHEMA,
-            "aieq-v3-rev8-o09-candidate-benchmark-4",
+            "aieq-v3-rev8-o09-candidate-benchmark-5",
         )
+
+    def test_runner_uses_active_fail_closed_evaluation_surface(self):
+        rejected = mock.Mock(
+            status=CandidateEvaluationStatus.REJECTED,
+            reason=CandidateEvaluationReason.SOLVER_RUNTIME_FAILURE,
+            value=None,
+            preflight=None,
+            witness="MemoryError",
+        )
+        with mock.patch(
+            "ml_v3.benchmark.run_rev8_o09_candidate."
+            "evaluate_a2_fail_closed",
+            return_value=rejected,
+        ) as evaluate:
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "active A1 enforcement rejected",
+            ):
+                _measure_solver("unique_additive", 2)
+        evaluate.assert_called_once()
 
     def test_exact_evidence_uses_hex_strings_beyond_decimal_guard(self):
         huge = Fraction(-(2**65_535 + 1), 2**65_536 + 1)

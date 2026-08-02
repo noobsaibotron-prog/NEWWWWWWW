@@ -24,6 +24,12 @@ A2 computes the same exact objective without enumerating ``M*``:
   whose prefix remains the complete V objective.
 
 No float, greedy, first-fit, approximation, or fallback path exists here.
+
+In the separate post-A1 enforcement tranche,
+``evaluate_a2_fail_closed`` and
+``evaluate_a2_batch_fail_closed`` are the isolated enforcement entry points
+for the four active per-subgraph ceilings.  They remain candidate-only: this
+module is still not exported to, or reachable from, the live REV7 evaluator.
 """
 from __future__ import annotations
 
@@ -51,7 +57,6 @@ __all__ = [
     "Objective",
     "PreflightProbe",
     "a1_exhaustive",
-    "a2_exact",
     "evaluate_a2_batch_fail_closed",
     "evaluate_a2_fail_closed",
     "exact_maximum_cardinality",
@@ -229,7 +234,7 @@ class CandidateEvaluation:
     status: CandidateEvaluationStatus
     reason: CandidateEvaluationReason
     value: CandidateResult | None
-    preflight: "PreflightProbe"
+    preflight: "PreflightProbe | None"
     witness: object | None = None
 
 
@@ -240,7 +245,7 @@ class CandidateBatchEvaluation:
     status: CandidateEvaluationStatus
     reason: CandidateEvaluationReason
     values: tuple[CandidateResult, ...] | None
-    preflights: tuple["PreflightProbe", ...]
+    preflights: tuple["PreflightProbe", ...] | None
     witness: object | None = None
 
 
@@ -718,7 +723,13 @@ def _solve_profile(graph: CandidateGraph, cardinality: int, profile: Profile
 
 
 def a2_exact(graph: CandidateGraph) -> CandidateResult:
-    """Exact non-enumerative candidate subject for the O-09 benchmark."""
+    """Unchecked exact solver primitive used by oracle and unit tests.
+
+    Scientific evaluation callers must use :func:`evaluate_a2_fail_closed` or
+    :func:`evaluate_a2_batch_fail_closed`; this primitive does not enforce the
+    signed A1 structural ceilings and is intentionally absent from
+    :data:`__all__`.
+    """
     cardinality = _hopcroft_karp_size(graph)
     objective_match, ambiguous = _solve_profile_details(
         graph, cardinality, "objective")
@@ -928,7 +939,12 @@ def provisional_preflight_probe(graph: CandidateGraph) -> PreflightProbe:
     )
 
 
-_A1_RUNTIME_FAILURES = (MemoryError, RuntimeError, OverflowError)
+_A1_RUNTIME_FAILURES = (
+    MemoryError,
+    RuntimeError,
+    OverflowError,
+    TimeoutError,
+)
 _A1_ACTIVE_AUTHORITY_STATUS = "A1_ACTIVE_ENFORCEMENT"
 
 
@@ -937,15 +953,32 @@ def evaluate_a2_fail_closed(graph: CandidateGraph) -> CandidateEvaluation:
 
     The probe retains its historical evidence-only field names so old
     benchmark artifacts remain replayable.  This wrapper is the separate
-    enforcement surface authorized after the A1 post-signature CLEAN report:
-    any active per-subgraph ceiling exceed is fatal and no solve is attempted.
+    enforcement surface implemented in a separate post-A1 tranche: any active
+    per-subgraph ceiling exceed is fatal and no solve is attempted.
     """
     if not isinstance(graph, CandidateGraph):
         raise CandidateGraphError("graph must be CandidateGraph")
-    probe = replace(
-        provisional_preflight_probe(graph),
-        authority_status=_A1_ACTIVE_AUTHORITY_STATUS,
-    )
+    try:
+        probe = replace(
+            provisional_preflight_probe(graph),
+            authority_status=_A1_ACTIVE_AUTHORITY_STATUS,
+        )
+    except CandidateGraphError as error:
+        return CandidateEvaluation(
+            CandidateEvaluationStatus.REJECTED,
+            CandidateEvaluationReason.SOLVER_CONSTRAINT_MODEL_INVALID,
+            None,
+            None,
+            witness=str(error),
+        )
+    except _A1_RUNTIME_FAILURES as error:
+        return CandidateEvaluation(
+            CandidateEvaluationStatus.REJECTED,
+            CandidateEvaluationReason.SOLVER_RUNTIME_FAILURE,
+            None,
+            None,
+            witness=type(error).__name__,
+        )
     if probe.provisional_exceeded:
         return CandidateEvaluation(
             CandidateEvaluationStatus.REJECTED,
@@ -993,13 +1026,30 @@ def evaluate_a2_batch_fail_closed(
     if not isinstance(graphs, tuple) or any(
             not isinstance(graph, CandidateGraph) for graph in graphs):
         raise CandidateGraphError("graphs must be a tuple of CandidateGraph")
-    preflights = tuple(
-        replace(
-            provisional_preflight_probe(graph),
-            authority_status=_A1_ACTIVE_AUTHORITY_STATUS,
+    try:
+        preflights = tuple(
+            replace(
+                provisional_preflight_probe(graph),
+                authority_status=_A1_ACTIVE_AUTHORITY_STATUS,
+            )
+            for graph in graphs
         )
-        for graph in graphs
-    )
+    except CandidateGraphError as error:
+        return CandidateBatchEvaluation(
+            CandidateEvaluationStatus.REJECTED,
+            CandidateEvaluationReason.SOLVER_CONSTRAINT_MODEL_INVALID,
+            None,
+            None,
+            witness=str(error),
+        )
+    except _A1_RUNTIME_FAILURES as error:
+        return CandidateBatchEvaluation(
+            CandidateEvaluationStatus.REJECTED,
+            CandidateEvaluationReason.SOLVER_RUNTIME_FAILURE,
+            None,
+            None,
+            witness=type(error).__name__,
+        )
     structural = tuple(
         (index, probe.provisional_exceeded)
         for index, probe in enumerate(preflights)

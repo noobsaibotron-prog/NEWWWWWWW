@@ -1,8 +1,8 @@
 """Run the isolated REV8 O-09 kernel benchmark on the frozen gate platform.
 
-The output is evidence, not authority.  In particular, this runner cannot
-activate the provisional caps and deliberately reports that group-level
-AP/Spearman/B-001 coverage is still pending.
+The output is evidence, not authority.  The four signed A1 per-subgraph caps
+are enforced fail-closed before every A2 solve; group-level AP/Spearman/B-001
+caps remain outside this runner and are still pending separate authority.
 
 Each timed workload runs in a fresh child process.  The wall/CPU timer covers
 the exact solve only.  Peak RSS is the worker high-water mark through result
@@ -30,10 +30,12 @@ from typing import Any
 import numpy as np
 
 from ml_v3.benchmark.rev8_o09_candidate import (
+    CandidateEvaluationReason,
+    CandidateEvaluationStatus,
     CandidateGraph,
     CandidateResult,
     ExactEdge,
-    a2_exact,
+    evaluate_a2_fail_closed,
     exact_maximum_cardinality,
     provisional_preflight_probe,
     rational_bit_length,
@@ -49,7 +51,7 @@ from ml_v3.contracts.metrology_lock import (
 )
 
 ROOT = Path(__file__).resolve().parents[2]
-EVIDENCE_SCHEMA = "aieq-v3-rev8-o09-candidate-benchmark-4"
+EVIDENCE_SCHEMA = "aieq-v3-rev8-o09-candidate-benchmark-5"
 PROTECTED_PATHS = (
     "docs/MOTORE_V3_G1_CONTRACT_REV8_CANDIDATE.md",
     "docs/MOTORE_V3_G1_CONTRACT.md",
@@ -272,12 +274,24 @@ def _graph(kind: str, size: int) -> CandidateGraph:
 
 def _measure_solver(kind: str, size: int) -> dict[str, Any]:
     graph = _graph(kind, size)
-    probe = provisional_preflight_probe(graph)
     wall_start = perf_counter()
     cpu_start = process_time()
-    result = a2_exact(graph)
+    evaluation = evaluate_a2_fail_closed(graph)
     cpu = process_time() - cpu_start
     wall = perf_counter() - wall_start
+    if (
+        evaluation.status is not CandidateEvaluationStatus.EVALUATED
+        or evaluation.reason is not CandidateEvaluationReason.OK
+        or evaluation.value is None
+        or evaluation.preflight is None
+    ):
+        raise RuntimeError(
+            "active A1 enforcement rejected O-09 workload "
+            f"{kind}/{size}: reason={evaluation.reason.value}, "
+            f"witness={evaluation.witness!r}"
+        )
+    result = evaluation.value
+    probe = evaluation.preflight
     scientific = _result_payload(result)
     return {
         "kind": kind,
