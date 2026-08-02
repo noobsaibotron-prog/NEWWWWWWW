@@ -50,9 +50,15 @@ Evidenza per-sottografo (counter-check a tre lenti, commit 030ec8bb):
 docs/REV8_O09_PER_SUBGRAPH_BENCHMARK_REPORT.md
 SHA-256: 0789e9070fa959e8cd15f18961da7b053562245c5762c953fd6adc92a563977f
 
-Evidenza group-level (revisore singolo + Hermes sugli hash):
+Evidenza group-level corrente, con withdrawal dei falsi claim S6:
 docs/REV8_O09_GROUP_BENCHMARK_REPORT.md
+SHA-256: ae14e4fbf015143d21cec50459c5b6cbd10d861aca7e7a9aa538da8b21667eab
+Commit: 3f992455bd2cc58fb7501b10bb2e1e09f86f8abd
+
+Snapshot group-level storico precedente al withdrawal:
 SHA-256: 508906fdc7fc69f7e8411255f1fed74e1e61055eada11d5e0b5fbcc7f4fbac1a
+Commit: ea8e22b257ba95f06de60726a802470b41178985
+Recuperabile con: git show ea8e22b2:docs/REV8_O09_GROUP_BENCHMARK_REPORT.md
 
 Implementazione:
 ml_v3/benchmark/rev8_o09_candidate.py
@@ -66,9 +72,12 @@ docs/REV8_S6_TARGETED_COUNTERCHECK_REPORT.md
 SHA-256: 88d24d1522e3bfb0a012b19b1b8edf2ff4087ff9e3534c82aa21aa946acd2570
 ```
 
-Il precedente target S6 `NORMATIVE_SIGNED_DRAFT` SHA `be865...` è evidenza
-storica, non l'artefatto normativo corrente. Il transfer esterno firmato e il
-suo recheck CLEAN hanno chiuso quel blocker senza riscrivere il target R23C.
+Il target S6 originariamente firmato era il `NORMATIVE_SIGNED_DRAFT` SHA
+`8f5857...`; lo snapshot `be865...` è invece l'evidenza storica post-patch del
+commit `11365cdb`, poi rimossa dal worktree per ripristinare il pin congelato.
+Nessuno dei due è l'artefatto normativo corrente. Il transfer esterno firmato
+e il suo recheck CLEAN hanno chiuso quel blocker senza riscrivere il target
+R23C.
 
 ## 2. Cap — i quattro numeri attivati
 
@@ -191,9 +200,10 @@ se dimostra equivalenza osservabile con la formula normativa A1.
 
 ## 3. Scope — cosa è attivato e cosa esplicitamente no
 
-**ATTIVATO NORMATIVAMENTE DOPO LA FIRMA:** i quattro ceiling di §10, per
-sottografo `(evaluation_unit_key, record_family, problem_type)`. Un evaluator
-REV8 conforme DOVRÀ valutarli nel preflight prima del calcolo parziale.
+**ATTIVATO NORMATIVAMENTE SOLTANTO DOPO FIRMA E RECHECK POST-FIRMA CLEAN:** i
+quattro ceiling di §10, per sottografo
+`(evaluation_unit_key, record_family, problem_type)`. Un evaluator REV8
+conforme DOVRÀ valutarli nel preflight prima del calcolo parziale.
 
 Questa attivazione è una decisione dell'autorità, non la materializzazione del
 reject-path. Il kernel evidence-only citato nel ballot continua intenzionalmente
