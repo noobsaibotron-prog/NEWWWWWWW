@@ -1,6 +1,47 @@
 # REV8 — CANDIDATE S6 — SPEARMAN REASON CODE MICRO-AMEND BALLOT
 
-**Stato:** `SIGNED — APPROVED`
+**Stato:** `SIGNED — APPROVED — TARGET SUPERATO, EFFETTO NORMATIVO NON ANCORA
+CONSEGUITO`
+
+## 0. ERRATA — leggere prima di tutto il resto
+
+**La policy firmata in §3 resta valida. Il documento che questo ballot indica
+come target, no.**
+
+Il target dichiarato in §1 è
+`REV8_MATCHING_FORMALIZATION_ROUND2_3_NORMATIVE_SIGNED_DRAFT.md`. Quel file è
+un **anello superato** della catena normativa. La catena reale è:
+
+```text
+SIGNED_DRAFT  ->  (red-team R23)  ->  AMENDED_DRAFT  ->  RC_AMENDED_DRAFT
+```
+
+e `docs/MOTORE_V3_G1_CONTRACT_REV8_CANDIDATE.md` — target del ballot B-001
+firmato — dichiara come propria matching formalization
+`REV8_MATCHING_FORMALIZATION_ROUND2_3_NORMATIVE_RC_AMENDED_DRAFT.md`
+(SHA-256 `684d8fd7ebfff4a9924b1105771acb9eb92d2bb9f97fd8295a60df77bfb9f0cb`).
+
+Conseguenza: **sull'autorità corrente `SPEARMAN_CERTIFICATE_UNAVAILABLE` non è
+enumerato.** La firma di questo ballot ha approvato una policy; non ha
+prodotto l'effetto normativo che il ballot descriveva.
+
+Storia degli atti, senza reticenze:
+
+- La patch autorizzata fu applicata al SIGNED_DRAFT in `11365cdb`, portandone
+  lo SHA da `8f5857a8…` a `be865820…`.
+- Quell'atto **ruppe un pin congelato**: `REV8_ROUND2_3_R23C_FREEZE_MANIFEST.md`
+  §4 fissa il signed draft a `8f5857a8…`, e altri cinque documenti pinnano lo
+  stesso valore, incluso il §1 di questo ballot.
+- Il pin è stato ripristinato in `ba17a949`. Il SIGNED_DRAFT è di nuovo
+  `8f5857a8…` e non contiene S6. Il testo patchato resta recuperabile a
+  `11365cdb` come evidenza storica.
+
+Il trasferimento della policy sull'autorità viva è oggetto di un ballot
+separato e **non ancora firmato**:
+`docs/REV8_S6_R23C_AUTHORITY_TRANSFER_BALLOT_DRAFT.md`.
+
+Fino a quella firma e al suo recheck, ogni affermazione secondo cui «§11.4
+enumera quattro reason code» è **falsa sull'autorità corrente**.
 
 ## 1. Oggetto
 
@@ -141,10 +182,16 @@ certificato di unicità di rho su M* non è disponibile
 
 ## 8. Stato dopo la firma
 
+Stato aggiornato dopo l'errata §0 — sostituisce quello originale:
+
 ```text
-S6 reason code policy                   = FIRMATA
-Patch document-only §11.4               = AUTORIZZATA, NON ANCORA APPLICATA
-Counter-check nuovo SHA                 = OBBLIGATORIO
+S6 reason code policy                   = FIRMATA (valida)
+Effetto normativo sull'autorità viva    = NON CONSEGUITO (target superato)
+Patch su SIGNED_DRAFT (11365cdb)        = APPLICATA, POI RIPRISTINATA (ba17a949)
+                                          — evidenza storica, non autorità
+Pin congelato 8f5857a8                  = RIPRISTINATO, sei documenti coerenti
+Transfer su RC_AMENDED                  = RICHIESTO, BALLOT NON FIRMATO
+Counter-check post-transfer             = OBBLIGATORIO
 Counter-check a tre lenti su S6         = DOVUTO, NON ESEGUITO (deroga §6)
 Caso generale variable-value-marginal   = NON CERTIFICATO (invariato)
 G_eligible/G_defined/G_NA e gate floor  = NOT_EVALUATED (invariato)

@@ -74,9 +74,14 @@ Ballot S6 storico firmato:
 docs/REV8_CANDIDATE_S6_SPEARMAN_REASON_CODE_MICRO_AMEND_BALLOT.md
 SHA-256 b94c1b2c061db384d2b6a61688def5656b5bcdf75ec05a2904c2b45cd14220bf
 
-Patch storico verificato:
+Patch storico verificato — NON PIU' NEL WORKTREE, solo in git history:
 docs/REV8_MATCHING_FORMALIZATION_ROUND2_3_NORMATIVE_SIGNED_DRAFT.md
 SHA-256 be8658203e26fae3bc36d020733b6b7ed773d24ed0e78675330f08b459ff56cc
+Recuperabile con: git show 11365cdb:docs/REV8_MATCHING_FORMALIZATION_ROUND2_3_NORMATIVE_SIGNED_DRAFT.md
+Motivo: quel patch aveva rotto il pin congelato del freeze manifest R23C
+(8f5857a8...), ripristinato in ba17a949. Il file nel worktree e' tornato a
+8f5857a8... e NON contiene S6. Verificare questo SHA contro il file vivo
+fallirebbe: e' atteso, non un'anomalia.
 
 Implementazione candidata:
 ml_v3/benchmark/rev8_o09_group_candidate.py
