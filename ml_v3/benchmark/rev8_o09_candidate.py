@@ -50,6 +50,7 @@ __all__ = [
     "CandidateGraphError",
     "CandidateBatchEvaluation",
     "CandidateEvaluation",
+    "CandidatePreflightEvaluation",
     "CandidateEvaluationReason",
     "CandidateEvaluationStatus",
     "CandidateResult",
@@ -59,6 +60,7 @@ __all__ = [
     "a1_exhaustive",
     "evaluate_a2_batch_fail_closed",
     "evaluate_a2_fail_closed",
+    "evaluate_a1_preflight_fail_closed",
     "exact_maximum_cardinality",
     "provisional_preflight_probe",
     "rational_bit_length",
@@ -221,6 +223,16 @@ class CandidateEvaluationReason(str, Enum):
     SOLVER_STRUCTURAL_LIMIT_EXCEEDED = "SOLVER_STRUCTURAL_LIMIT_EXCEEDED"
     SOLVER_RUNTIME_FAILURE = "SOLVER_RUNTIME_FAILURE"
     SOLVER_CONSTRAINT_MODEL_INVALID = "SOLVER_CONSTRAINT_MODEL_INVALID"
+
+
+@dataclass(frozen=True)
+class CandidatePreflightEvaluation:
+    """One fail-closed application of the four active A1 ceilings."""
+
+    status: CandidateEvaluationStatus
+    reason: CandidateEvaluationReason
+    preflight: "PreflightProbe | None"
+    witness: object | None = None
 
 
 @dataclass(frozen=True)
@@ -948,14 +960,10 @@ _A1_RUNTIME_FAILURES = (
 _A1_ACTIVE_AUTHORITY_STATUS = "A1_ACTIVE_ENFORCEMENT"
 
 
-def evaluate_a2_fail_closed(graph: CandidateGraph) -> CandidateEvaluation:
-    """Apply signed A1 limits before invoking the exact solver.
-
-    The probe retains its historical evidence-only field names so old
-    benchmark artifacts remain replayable.  This wrapper is the separate
-    enforcement surface implemented in a separate post-A1 tranche: any active
-    per-subgraph ceiling exceed is fatal and no solve is attempted.
-    """
+def evaluate_a1_preflight_fail_closed(
+    graph: CandidateGraph,
+) -> CandidatePreflightEvaluation:
+    """Apply the signed A1 per-subgraph ceilings without solving the graph."""
     if not isinstance(graph, CandidateGraph):
         raise CandidateGraphError("graph must be CandidateGraph")
     try:
@@ -964,29 +972,53 @@ def evaluate_a2_fail_closed(graph: CandidateGraph) -> CandidateEvaluation:
             authority_status=_A1_ACTIVE_AUTHORITY_STATUS,
         )
     except CandidateGraphError as error:
-        return CandidateEvaluation(
+        return CandidatePreflightEvaluation(
             CandidateEvaluationStatus.REJECTED,
             CandidateEvaluationReason.SOLVER_CONSTRAINT_MODEL_INVALID,
-            None,
             None,
             witness=str(error),
         )
     except _A1_RUNTIME_FAILURES as error:
-        return CandidateEvaluation(
+        return CandidatePreflightEvaluation(
             CandidateEvaluationStatus.REJECTED,
             CandidateEvaluationReason.SOLVER_RUNTIME_FAILURE,
-            None,
             None,
             witness=type(error).__name__,
         )
     if probe.provisional_exceeded:
-        return CandidateEvaluation(
+        return CandidatePreflightEvaluation(
             CandidateEvaluationStatus.REJECTED,
             CandidateEvaluationReason.SOLVER_STRUCTURAL_LIMIT_EXCEEDED,
-            None,
             probe,
             witness=probe.provisional_exceeded,
         )
+    return CandidatePreflightEvaluation(
+        CandidateEvaluationStatus.EVALUATED,
+        CandidateEvaluationReason.OK,
+        probe,
+    )
+
+
+def evaluate_a2_fail_closed(graph: CandidateGraph) -> CandidateEvaluation:
+    """Apply signed A1 limits before invoking the exact solver.
+
+    The probe retains its historical evidence-only field names so old
+    benchmark artifacts remain replayable.  This wrapper is the separate
+    enforcement surface implemented in a separate post-A1 tranche: any active
+    per-subgraph ceiling exceed is fatal and no solve is attempted.
+    """
+    preflight_evaluation = evaluate_a1_preflight_fail_closed(graph)
+    probe = preflight_evaluation.preflight
+    if preflight_evaluation.status is CandidateEvaluationStatus.REJECTED:
+        return CandidateEvaluation(
+            preflight_evaluation.status,
+            preflight_evaluation.reason,
+            None,
+            probe,
+            witness=preflight_evaluation.witness,
+        )
+    if probe is None:
+        raise AssertionError("successful A1 preflight omitted its probe")
     try:
         value = a2_exact(graph)
     except CandidateGraphError as error:
@@ -1026,43 +1058,36 @@ def evaluate_a2_batch_fail_closed(
     if not isinstance(graphs, tuple) or any(
             not isinstance(graph, CandidateGraph) for graph in graphs):
         raise CandidateGraphError("graphs must be a tuple of CandidateGraph")
-    try:
-        preflights = tuple(
-            replace(
-                provisional_preflight_probe(graph),
-                authority_status=_A1_ACTIVE_AUTHORITY_STATUS,
-            )
-            for graph in graphs
-        )
-    except CandidateGraphError as error:
+    preflights: list[PreflightProbe] = []
+    structural: list[tuple[int, object]] = []
+    for index, graph in enumerate(graphs):
+        evaluation = evaluate_a1_preflight_fail_closed(graph)
+        if evaluation.preflight is not None:
+            preflights.append(evaluation.preflight)
+        if evaluation.status is CandidateEvaluationStatus.EVALUATED:
+            continue
+        if (
+            evaluation.reason
+            is CandidateEvaluationReason.SOLVER_STRUCTURAL_LIMIT_EXCEEDED
+        ):
+            structural.append((index, evaluation.witness))
+            continue
         return CandidateBatchEvaluation(
-            CandidateEvaluationStatus.REJECTED,
-            CandidateEvaluationReason.SOLVER_CONSTRAINT_MODEL_INVALID,
+            evaluation.status,
+            evaluation.reason,
             None,
             None,
-            witness=str(error),
+            witness=evaluation.witness,
         )
-    except _A1_RUNTIME_FAILURES as error:
-        return CandidateBatchEvaluation(
-            CandidateEvaluationStatus.REJECTED,
-            CandidateEvaluationReason.SOLVER_RUNTIME_FAILURE,
-            None,
-            None,
-            witness=type(error).__name__,
-        )
-    structural = tuple(
-        (index, probe.provisional_exceeded)
-        for index, probe in enumerate(preflights)
-        if probe.provisional_exceeded
-    )
     if structural:
         return CandidateBatchEvaluation(
             CandidateEvaluationStatus.REJECTED,
             CandidateEvaluationReason.SOLVER_STRUCTURAL_LIMIT_EXCEEDED,
             None,
-            preflights,
-            witness=structural,
+            tuple(preflights),
+            witness=tuple(structural),
         )
+    preflight_tuple = tuple(preflights)
     values: list[CandidateResult] = []
     for index, graph in enumerate(graphs):
         try:
@@ -1072,7 +1097,7 @@ def evaluate_a2_batch_fail_closed(
                 CandidateEvaluationStatus.REJECTED,
                 CandidateEvaluationReason.SOLVER_CONSTRAINT_MODEL_INVALID,
                 None,
-                preflights,
+                preflight_tuple,
                 witness={"graph_index": index, "detail": str(error)},
             )
         except _A1_RUNTIME_FAILURES as error:
@@ -1080,7 +1105,7 @@ def evaluate_a2_batch_fail_closed(
                 CandidateEvaluationStatus.REJECTED,
                 CandidateEvaluationReason.SOLVER_RUNTIME_FAILURE,
                 None,
-                preflights,
+                preflight_tuple,
                 witness={
                     "graph_index": index,
                     "exception": type(error).__name__,
@@ -1090,5 +1115,5 @@ def evaluate_a2_batch_fail_closed(
         CandidateEvaluationStatus.EVALUATED,
         CandidateEvaluationReason.OK,
         tuple(values),
-        preflights,
+        preflight_tuple,
     )

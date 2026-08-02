@@ -5,9 +5,10 @@ are enforced fail-closed before every A2 solve; group-level AP/Spearman/B-001
 caps remain outside this runner and are still pending separate authority.
 
 Each timed workload runs in a fresh child process.  The wall/CPU timer covers
-the exact solve only.  Peak RSS is the worker high-water mark through result
-materialization, including imports, graph construction, preflight, and solve;
-later evidence hashing/JSON encoding is outside that sample.
+the active A1 preflight and exact solve.  Peak RSS is the worker high-water
+mark through result materialization, including imports, graph construction,
+preflight, and solve; later evidence hashing/JSON encoding is outside that
+sample.
 """
 from __future__ import annotations
 
@@ -35,6 +36,7 @@ from ml_v3.benchmark.rev8_o09_candidate import (
     CandidateGraph,
     CandidateResult,
     ExactEdge,
+    evaluate_a1_preflight_fail_closed,
     evaluate_a2_fail_closed,
     exact_maximum_cardinality,
     provisional_preflight_probe,
@@ -52,6 +54,9 @@ from ml_v3.contracts.metrology_lock import (
 
 ROOT = Path(__file__).resolve().parents[2]
 EVIDENCE_SCHEMA = "aieq-v3-rev8-o09-candidate-benchmark-5"
+A1_EVIDENCE_AUTHORITY_STATUS = (
+    "A1_PER_SUBGRAPH_CAPS_ACTIVE_GROUP_CAPS_NOT_ACTIVE"
+)
 PROTECTED_PATHS = (
     "docs/MOTORE_V3_G1_CONTRACT_REV8_CANDIDATE.md",
     "docs/MOTORE_V3_G1_CONTRACT.md",
@@ -329,6 +334,7 @@ def _measure_ap_prefix(size: int) -> dict[str, Any]:
     cpu_start = process_time()
     tp: list[int] = []
     edge_volume = 0
+    preflight_statuses: set[str] = set()
     for threshold_count in range(1, size + 1):
         active = tuple(
             edge
@@ -354,6 +360,18 @@ def _measure_ap_prefix(size: int) -> dict[str, Any]:
                 for edge in active
             ),
         )
+        evaluation = evaluate_a1_preflight_fail_closed(prefix)
+        if (
+            evaluation.status is not CandidateEvaluationStatus.EVALUATED
+            or evaluation.reason is not CandidateEvaluationReason.OK
+            or evaluation.preflight is None
+        ):
+            raise RuntimeError(
+                "active A1 enforcement rejected AP prefix "
+                f"{threshold_count}/{size}: reason={evaluation.reason.value}, "
+                f"witness={evaluation.witness!r}"
+            )
+        preflight_statuses.add(evaluation.preflight.authority_status)
         tp.append(exact_maximum_cardinality(prefix))
     cpu = process_time() - cpu_start
     wall = perf_counter() - wall_start
@@ -374,6 +392,10 @@ def _measure_ap_prefix(size: int) -> dict[str, Any]:
         "scientific_result_sha256": hashlib.sha256(
             canonical_bytes(payload)).hexdigest(),
         "scientific_result": payload,
+        "a1_preflight": {
+            "authority_statuses": sorted(preflight_statuses),
+            "prefixes_evaluated": size,
+        },
     }
 
 
@@ -776,7 +798,7 @@ def main() -> None:
                     "worker loaded-module evidence differs from the parent")
     evidence = {
         "schema": EVIDENCE_SCHEMA,
-        "authority_status": "EVIDENCE_ONLY_CAPS_NOT_ACTIVE",
+        "authority_status": A1_EVIDENCE_AUTHORITY_STATUS,
         "commit": commit,
         "platform": platform_evidence,
         "configuration": {

@@ -29,6 +29,7 @@ from ml_v3.benchmark.rev8_o09_candidate import (
     rational_bit_length,
 )
 from ml_v3.benchmark.run_rev8_o09_candidate import (
+    A1_EVIDENCE_AUTHORITY_STATUS,
     EVIDENCE_SCHEMA,
     _fraction,
     _external_output_path,
@@ -809,6 +810,10 @@ class BenchmarkRunnerTests(unittest.TestCase):
             EVIDENCE_SCHEMA,
             "aieq-v3-rev8-o09-candidate-benchmark-5",
         )
+        self.assertEqual(
+            A1_EVIDENCE_AUTHORITY_STATUS,
+            "A1_PER_SUBGRAPH_CAPS_ACTIVE_GROUP_CAPS_NOT_ACTIVE",
+        )
 
     def test_runner_uses_active_fail_closed_evaluation_surface(self):
         rejected = mock.Mock(
@@ -1077,10 +1082,42 @@ class BenchmarkRunnerTests(unittest.TestCase):
                     first["scientific_result"]["objective"]["k1"], 4)
 
     def test_ap_prefix_probe_is_complete_and_monotone(self):
-        result = _measure_ap_prefix(8)["scientific_result"]
+        evidence = _measure_ap_prefix(8)
+        result = evidence["scientific_result"]
         self.assertEqual(result["thresholds"], 8)
         self.assertEqual(result["tp_by_prefix"], list(range(1, 9)))
         self.assertEqual(result["edge_incidence_volume"], 8 * sum(range(1, 9)))
+        self.assertEqual(evidence["a1_preflight"], {
+            "authority_statuses": ["A1_ACTIVE_ENFORCEMENT"],
+            "prefixes_evaluated": 8,
+        })
+
+    def test_ap_prefix_rejection_prevents_cardinality_solve(self):
+        rejected = mock.Mock(
+            status=CandidateEvaluationStatus.REJECTED,
+            reason=(
+                CandidateEvaluationReason.SOLVER_STRUCTURAL_LIMIT_EXCEEDED
+            ),
+            preflight=None,
+            witness=("GT",),
+        )
+        with (
+            mock.patch(
+                "ml_v3.benchmark.run_rev8_o09_candidate."
+                "evaluate_a1_preflight_fail_closed",
+                return_value=rejected,
+            ),
+            mock.patch(
+                "ml_v3.benchmark.run_rev8_o09_candidate."
+                "exact_maximum_cardinality",
+            ) as cardinality,
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "active A1 enforcement rejected AP prefix",
+            ):
+                _measure_ap_prefix(2)
+        cardinality.assert_not_called()
 
     def test_bit_boundary_bundle_preserves_under_on_over(self):
         cases = {
