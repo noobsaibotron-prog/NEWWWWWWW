@@ -5,6 +5,7 @@ activate REV8 and do not make the provisional group caps normative.
 """
 from __future__ import annotations
 
+from dataclasses import replace
 from fractions import Fraction
 import itertools
 import unittest
@@ -760,6 +761,10 @@ class ValidationTests(unittest.TestCase):
             forward.preflight.subgraph_provisional_exceeded,
             ((("part-b",), ("GT",)),),
         )
+        self.assertEqual(
+            forward.preflight.authority_status,
+            subject._GROUP_A1_EVIDENCE_AUTHORITY_STATUS,
+        )
 
     def test_macro_input_shape_is_fail_closed(self):
         with self.assertRaisesRegex(GroupCandidateError, "contain"):
@@ -770,6 +775,252 @@ class ValidationTests(unittest.TestCase):
             reduce_macro_coverage_math(
                 (("bad",),),  # type: ignore[arg-type]
             )
+
+
+class ActiveA1CompositionTests(unittest.TestCase):
+    def test_every_subgraph_consumes_active_a1_in_canonical_order(self):
+        graph_a = diagonal_graph(1)
+        graph_z = diagonal_graph(2)
+        values_a = (Fraction(0),)
+        values_z = (Fraction(0), Fraction(1))
+        surfaces = (
+            (
+                "ap",
+                lambda: evaluate_group_ap((
+                    APPartition(("z",), graph_z, (Fraction(1),) * 2),
+                    APPartition(("a",), graph_a, (Fraction(1),)),
+                )),
+            ),
+            (
+                "coverage",
+                lambda: evaluate_group_coverage((
+                    CoveragePartition(
+                        ("unit",), ("z",), graph_z,
+                        (False, False), (False, False),
+                    ),
+                    CoveragePartition(
+                        ("unit",), ("a",), graph_a, (False,), (False,),
+                    ),
+                )),
+            ),
+            (
+                "spearman",
+                lambda: evaluate_group_spearman((
+                    SpearmanPartition(
+                        ("z",), graph_z, values_z, values_z,
+                    ),
+                    SpearmanPartition(
+                        ("a",), graph_a, values_a, values_a,
+                    ),
+                )),
+            ),
+        )
+        active = subject.evaluate_a1_preflight_fail_closed
+        for label, call in surfaces:
+            with self.subTest(surface=label):
+                with mock.patch.object(
+                    subject,
+                    "evaluate_a1_preflight_fail_closed",
+                    wraps=active,
+                ) as evaluate:
+                    result = call()
+                self.assertEqual(
+                    [row.args[0] for row in evaluate.call_args_list],
+                    [graph_a, graph_z],
+                )
+                self.assertIsNotNone(result.preflight)
+                self.assertEqual(
+                    result.preflight.authority_status,
+                    subject._GROUP_A1_EVIDENCE_AUTHORITY_STATUS,
+                )
+        self.assertNotIn("provisional_preflight_probe", subject.__dict__)
+
+    def test_active_a1_structural_exceed_rejects_before_any_group_solve(self):
+        oversized = graph(129, 0, [])
+        with mock.patch.object(
+            subject,
+            "exact_maximum_cardinality",
+        ) as solve:
+            result = evaluate_group_ap((
+                APPartition(("oversized",), oversized, ()),
+            ))
+        solve.assert_not_called()
+        self.assertEqual(result.status, GroupStatus.REJECTED)
+        self.assertEqual(
+            result.reason,
+            GroupReason.SOLVER_STRUCTURAL_LIMIT_EXCEEDED,
+        )
+        self.assertIsNotNone(result.preflight)
+        self.assertEqual(
+            result.preflight.subgraph_provisional_exceeded,
+            ((("oversized",), ("GT",)),),
+        )
+        self.assertEqual(
+            result.preflight.authority_status,
+            subject._GROUP_A1_EVIDENCE_AUTHORITY_STATUS,
+        )
+
+    def test_non_active_subgraph_probe_is_rejected_as_invalid_authority(self):
+        active = per_subgraph.evaluate_a1_preflight_fail_closed(
+            diagonal_graph(1))
+        self.assertIsNotNone(active.preflight)
+        invalid = replace(
+            active,
+            preflight=replace(
+                active.preflight,
+                authority_status="PROVISIONAL_DIAGNOSTIC_ONLY",
+            ),
+        )
+        with mock.patch.object(
+            subject,
+            "evaluate_a1_preflight_fail_closed",
+            return_value=invalid,
+        ):
+            result = evaluate_group_ap((
+                APPartition(("part",), diagonal_graph(1), (Fraction(1),)),
+            ))
+        self.assertEqual(result.status, GroupStatus.REJECTED)
+        self.assertEqual(
+            result.reason,
+            GroupReason.SOLVER_CONSTRAINT_MODEL_INVALID,
+        )
+        self.assertIsNone(result.value)
+        self.assertIsNone(result.preflight)
+        self.assertIn("active A1 authority", result.witness)
+
+    def test_inconsistent_active_a1_outcomes_fail_closed(self):
+        clean_graph = diagonal_graph(1)
+        clean = per_subgraph.evaluate_a1_preflight_fail_closed(clean_graph)
+        dirty = per_subgraph.evaluate_a1_preflight_fail_closed(
+            graph(129, 0, []))
+        self.assertIsNotNone(clean.preflight)
+        self.assertIsNotNone(dirty.preflight)
+        cases = (
+            replace(
+                clean,
+                status=per_subgraph.CandidateEvaluationStatus.REJECTED,
+                reason=per_subgraph.CandidateEvaluationReason.SOLVER_STRUCTURAL_LIMIT_EXCEEDED,
+                witness=("GT",),
+            ),
+            replace(dirty, witness=("PREDICTION",)),
+            replace(
+                dirty,
+                status=per_subgraph.CandidateEvaluationStatus.EVALUATED,
+                reason=per_subgraph.CandidateEvaluationReason.OK,
+                witness=None,
+            ),
+            replace(clean, witness="unexpected"),
+            replace(
+                clean,
+                status=per_subgraph.CandidateEvaluationStatus.REJECTED,
+                reason=per_subgraph.CandidateEvaluationReason.SOLVER_RUNTIME_FAILURE,
+                witness="RuntimeError",
+            ),
+            replace(
+                clean,
+                preflight=per_subgraph.evaluate_a1_preflight_fail_closed(
+                    diagonal_graph(2)).preflight,
+            ),
+        )
+        for index, inconsistent in enumerate(cases):
+            with self.subTest(case=index):
+                with mock.patch.object(
+                    subject,
+                    "evaluate_a1_preflight_fail_closed",
+                    return_value=inconsistent,
+                ), mock.patch.object(
+                    subject,
+                    "exact_maximum_cardinality",
+                ) as solve:
+                    result = evaluate_group_ap((
+                        APPartition(
+                            ("part",), clean_graph, (Fraction(1),),
+                        ),
+                    ))
+                solve.assert_not_called()
+                self.assertEqual(result.status, GroupStatus.REJECTED)
+                self.assertEqual(
+                    result.reason,
+                    GroupReason.SOLVER_CONSTRAINT_MODEL_INVALID,
+                )
+                self.assertIsNone(result.value)
+                self.assertIsNone(result.preflight)
+
+    def test_fatal_a1_rejection_overrides_prior_structural_on_all_surfaces(self):
+        oversized = graph(129, 0, [])
+        clean = diagonal_graph(1)
+        structural = per_subgraph.evaluate_a1_preflight_fail_closed(oversized)
+        fatal = per_subgraph.CandidatePreflightEvaluation(
+            per_subgraph.CandidateEvaluationStatus.REJECTED,
+            per_subgraph.CandidateEvaluationReason.SOLVER_RUNTIME_FAILURE,
+            None,
+            witness="TimeoutError",
+        )
+        gt_values = tuple(Fraction(index) for index in range(129))
+        surfaces = (
+            (
+                "ap",
+                (
+                    APPartition(("a-structural",), oversized, ()),
+                    APPartition(("z-fatal",), clean, (Fraction(1),)),
+                ),
+                evaluate_group_ap,
+            ),
+            (
+                "coverage",
+                (
+                    CoveragePartition(
+                        ("unit",), ("a-structural",), oversized,
+                        (False,) * 129, (),
+                    ),
+                    CoveragePartition(
+                        ("unit",), ("z-fatal",), clean, (False,), (False,),
+                    ),
+                ),
+                evaluate_group_coverage,
+            ),
+            (
+                "spearman",
+                (
+                    SpearmanPartition(
+                        ("a-structural",), oversized, gt_values, (),
+                    ),
+                    SpearmanPartition(
+                        ("z-fatal",), clean, (Fraction(0),), (Fraction(0),),
+                    ),
+                ),
+                evaluate_group_spearman,
+            ),
+        )
+        for label, partitions, evaluate_group in surfaces:
+            for reverse in (False, True):
+                ordered = tuple(reversed(partitions)) if reverse else partitions
+                with self.subTest(surface=label, reversed=reverse):
+                    with mock.patch.object(
+                        subject,
+                        "evaluate_a1_preflight_fail_closed",
+                        side_effect=(structural, fatal),
+                    ) as active, mock.patch.object(
+                        subject,
+                        "exact_maximum_cardinality",
+                    ) as solve:
+                        result = evaluate_group(ordered)
+                    self.assertEqual(
+                        [row.args[0] for row in active.call_args_list],
+                        [oversized, clean],
+                    )
+                    solve.assert_not_called()
+                    self.assertEqual(result.status, GroupStatus.REJECTED)
+                    self.assertEqual(
+                        result.reason,
+                        GroupReason.SOLVER_RUNTIME_FAILURE,
+                    )
+                    self.assertIsNone(result.preflight)
+                    self.assertEqual(result.witness, {
+                        "partition_key": ("z-fatal",),
+                        "a1_reason": "SOLVER_RUNTIME_FAILURE",
+                        "a1_witness": "TimeoutError",
+                    })
 
 
 class PreflightBoundaryTests(unittest.TestCase):
@@ -997,14 +1248,7 @@ class RuntimeFailureTests(unittest.TestCase):
                     self.assertEqual(result.witness, failure.__name__)
 
     def test_preflight_failure_is_fail_closed_on_every_surface(self):
-        """The preflight phase must translate failures like the solve does.
-
-        _group_preflight calls provisional_preflight_probe and
-        rational_bit_length, so it raises the same failures the solve loops
-        already translate — but it sat outside every try block, so the same
-        exception was fail-closed one step later and fail-open here.  All
-        Twelve combinations are pinned: four failure kinds by three surfaces.
-        """
+        """Unexpected failure invoking active A1 remains fail-closed."""
         cases = (
             (MemoryError, GroupReason.SOLVER_RUNTIME_FAILURE),
             (TimeoutError, GroupReason.SOLVER_RUNTIME_FAILURE),
@@ -1016,7 +1260,7 @@ class RuntimeFailureTests(unittest.TestCase):
                 with self.subTest(failure=failure.__name__, surface=label):
                     with mock.patch.object(
                         subject,
-                        "provisional_preflight_probe",
+                        "evaluate_a1_preflight_fail_closed",
                         side_effect=failure("injected"),
                     ):
                         result = call()
@@ -1026,6 +1270,45 @@ class RuntimeFailureTests(unittest.TestCase):
                         result.preflight,
                         "no probe exists when the preflight itself failed",
                     )
+
+    def test_active_a1_returned_failure_is_consumed_on_every_surface(self):
+        """Group reason and key-addressed witness come from signed A1."""
+        cases = (
+            (
+                per_subgraph.CandidateEvaluationReason.SOLVER_RUNTIME_FAILURE,
+                GroupReason.SOLVER_RUNTIME_FAILURE,
+                "MemoryError",
+            ),
+            (
+                per_subgraph.CandidateEvaluationReason.SOLVER_CONSTRAINT_MODEL_INVALID,
+                GroupReason.SOLVER_CONSTRAINT_MODEL_INVALID,
+                "invalid preflight model",
+            ),
+        )
+        for candidate_reason, group_reason, witness in cases:
+            rejection = per_subgraph.CandidatePreflightEvaluation(
+                per_subgraph.CandidateEvaluationStatus.REJECTED,
+                candidate_reason,
+                None,
+                witness=witness,
+            )
+            for label, call in self._group_surfaces():
+                with self.subTest(reason=candidate_reason.value, surface=label):
+                    with mock.patch.object(
+                        subject,
+                        "evaluate_a1_preflight_fail_closed",
+                        return_value=rejection,
+                    ):
+                        result = call()
+                    self.assertEqual(result.status, GroupStatus.REJECTED)
+                    self.assertEqual(result.reason, group_reason)
+                    self.assertIsNone(result.value)
+                    self.assertIsNone(result.preflight)
+                    self.assertEqual(result.witness, {
+                        "partition_key": ("part",),
+                        "a1_reason": candidate_reason.value,
+                        "a1_witness": witness,
+                    })
 
     def test_pre_solve_preparation_is_fail_closed_on_every_surface(self):
         """Preparation before `_group_preflight` uses the same fail policy."""

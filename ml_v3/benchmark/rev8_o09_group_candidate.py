@@ -30,10 +30,13 @@ from typing import Callable, Generic, Literal, TypeVar
 
 from ml_v3.benchmark.rev8_o09_candidate import (
     PROVISIONAL_MAX_EXACT_SCALAR_BITS,
+    CandidateEvaluationReason,
+    CandidateEvaluationStatus,
     CandidateGraph,
     CandidateGraphError,
+    PreflightProbe,
+    evaluate_a1_preflight_fail_closed,
     exact_maximum_cardinality,
-    provisional_preflight_probe,
     rational_bit_length,
     _solve_profile,
     _solve_profile_details,
@@ -108,6 +111,10 @@ SPEARMAN_MAX_SUPPORT = 128
 # materialization even when a small exact input such as 1/3 expands to a
 # binary64 rational with a long power-of-two denominator.
 BINARY64_EXACT_RATIONAL_BIT_BOUND = 2_100
+_GROUP_A1_EVIDENCE_AUTHORITY_STATUS = (
+    "A1_PER_SUBGRAPH_CAPS_ACTIVE_GROUP_CAPS_NOT_ACTIVE"
+)
+_ACTIVE_A1_PROBE_AUTHORITY_STATUS = "A1_ACTIVE_ENFORCEMENT"
 
 
 class GroupCandidateError(ValueError):
@@ -155,7 +162,7 @@ class GroupPreflightProbe:
         tuple[tuple[str, ...], tuple[str, ...]], ...
     ]
     provisional_exceeded: tuple[str, ...]
-    authority_status: str = "PROVISIONAL_GROUP_DIAGNOSTIC_ONLY"
+    authority_status: str = _GROUP_A1_EVIDENCE_AUTHORITY_STATUS
 
 
 @dataclass(frozen=True)
@@ -175,6 +182,24 @@ class _GroupEvaluationState:
     """Phase state used only to preserve completed preflight provenance."""
 
     preflight: GroupPreflightProbe | None = None
+
+
+class _ActiveA1PreflightFailure(Exception):
+    """Fail-closed outcome returned by the signed per-subgraph surface."""
+
+    def __init__(
+        self,
+        reason: GroupReason,
+        partition_key: tuple[str, ...],
+        witness: object | None,
+    ) -> None:
+        super().__init__(reason.value)
+        self.reason = reason
+        self.witness = {
+            "partition_key": partition_key,
+            "a1_reason": reason.value,
+            "a1_witness": witness,
+        }
 
 
 def _fraction_tuple(values: object, size: int, label: str) -> tuple[Fraction, ...]:
@@ -392,6 +417,81 @@ def _ceil_log2_positive(value: int) -> int:
     return 0 if value <= 1 else (value - 1).bit_length()
 
 
+def _active_a1_subgraph_probes(
+    graphs: tuple[CandidateGraph, ...],
+    partition_keys: tuple[tuple[str, ...], ...],
+) -> tuple[PreflightProbe, ...]:
+    """Consume the signed A1 surface for every group-level subgraph.
+
+    A structural A1 rejection still carries a valid active probe and is
+    composed into the group probe so the key-addressed exceedance can be
+    reported before any solve.  Runtime/model rejection has no complete group
+    probe and is carried to `_guarded_group_preflight` without reimplementing
+    the signed surface's failure classification.
+    """
+    probes: list[PreflightProbe] = []
+    reason_map = {
+        CandidateEvaluationReason.SOLVER_STRUCTURAL_LIMIT_EXCEEDED:
+            GroupReason.SOLVER_STRUCTURAL_LIMIT_EXCEEDED,
+        CandidateEvaluationReason.SOLVER_RUNTIME_FAILURE:
+            GroupReason.SOLVER_RUNTIME_FAILURE,
+        CandidateEvaluationReason.SOLVER_CONSTRAINT_MODEL_INVALID:
+            GroupReason.SOLVER_CONSTRAINT_MODEL_INVALID,
+    }
+    for graph, partition_key in zip(graphs, partition_keys):
+        evaluation = evaluate_a1_preflight_fail_closed(graph)
+        if evaluation.status is CandidateEvaluationStatus.EVALUATED:
+            if (
+                evaluation.reason is not CandidateEvaluationReason.OK
+                or evaluation.preflight is None
+                or evaluation.witness is not None
+                or evaluation.preflight.provisional_exceeded
+            ):
+                raise CandidateGraphError(
+                    "active A1 preflight returned an invalid success outcome")
+            probe = evaluation.preflight
+        elif evaluation.status is CandidateEvaluationStatus.REJECTED:
+            reason = reason_map.get(evaluation.reason)
+            if reason is None:
+                raise CandidateGraphError(
+                    "active A1 preflight returned an invalid rejection reason")
+            if (
+                reason is GroupReason.SOLVER_STRUCTURAL_LIMIT_EXCEEDED
+                and evaluation.preflight is not None
+                and bool(evaluation.preflight.provisional_exceeded)
+                and evaluation.witness
+                == evaluation.preflight.provisional_exceeded
+            ):
+                probe = evaluation.preflight
+            elif (
+                reason is GroupReason.SOLVER_STRUCTURAL_LIMIT_EXCEEDED
+                or evaluation.preflight is not None
+            ):
+                raise CandidateGraphError(
+                    "active A1 preflight returned an inconsistent rejection")
+            else:
+                raise _ActiveA1PreflightFailure(
+                    reason,
+                    partition_key,
+                    evaluation.witness,
+                )
+        else:
+            raise CandidateGraphError(
+                "active A1 preflight returned an unknown status")
+        if probe.authority_status != _ACTIVE_A1_PROBE_AUTHORITY_STATUS:
+            raise CandidateGraphError(
+                "subgraph preflight did not originate from active A1 authority")
+        if (
+            probe.gt_count != graph.gt_count
+            or probe.prediction_count != graph.prediction_count
+            or probe.eligible_edges != len(graph.edges)
+        ):
+            raise CandidateGraphError(
+                "active A1 preflight probe does not describe its subgraph")
+        probes.append(probe)
+    return tuple(probes)
+
+
 def _group_preflight(
     metric: Metric,
     graphs: tuple[CandidateGraph, ...],
@@ -413,7 +513,7 @@ def _group_preflight(
     if len(partition_keys) != len(graphs):
         raise GroupCandidateError(
             "partition_keys must align exactly with graphs")
-    probes = tuple(provisional_preflight_probe(graph) for graph in graphs)
+    probes = _active_a1_subgraph_probes(graphs, partition_keys)
     total_gt = sum(graph.gt_count for graph in graphs)
     total_predictions = sum(graph.prediction_count for graph in graphs)
     total_edges = sum(len(graph.edges) for graph in graphs)
@@ -559,14 +659,10 @@ def _guarded_group_preflight(
 ) -> tuple[GroupPreflightProbe | None, GroupResult[object] | None]:
     """Run :func:`_group_preflight` under the solve loops' failure policy.
 
-    The preflight calls ``provisional_preflight_probe`` and
-    ``rational_bit_length`` on caller-supplied graphs and exact values, so it
-    can raise exactly the failures the solve loops already translate.  Left
-    unguarded it was fail-open: a MemoryError, TimeoutError or
-    CandidateGraphError during preflight escaped as a bare exception, with no
-    reason code and outside the "any fatal failure blocks PASS" guarantee,
-    while the very same exception raised one step later — inside the solve —
-    was correctly translated.
+    The preflight consumes the signed per-subgraph A1 entrypoint, then applies
+    the still-provisional group bounds and exact-value checks.  Failures
+    returned by active A1 retain their signed classification and key-addressed
+    witness; failures in group-only work use the solve loops' taxonomy.
 
     ``GroupCandidateError`` is deliberately NOT caught: malformed abstract
     input is a caller defect, and the surrounding validation raises it to the
@@ -577,6 +673,14 @@ def _guarded_group_preflight(
     """
     try:
         probe = _group_preflight(*args, **kwargs)  # type: ignore[arg-type]
+    except _ActiveA1PreflightFailure as error:
+        return None, GroupResult(
+            GroupStatus.REJECTED,
+            error.reason,
+            None,
+            None,
+            witness=error.witness,
+        )
     except CandidateGraphError as error:
         return None, GroupResult(
             GroupStatus.REJECTED,

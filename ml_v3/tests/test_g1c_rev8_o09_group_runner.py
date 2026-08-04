@@ -182,8 +182,12 @@ class ProvenanceAndGovernanceTests(unittest.TestCase):
 
     def test_runner_cannot_claim_ballot_readiness(self):
         self.assertFalse(GROUP_CANDIDATE_BALLOT_READY)
+        self.assertEqual(
+            runner.EVIDENCE_SCHEMA,
+            "aieq-v3-rev8-o09-group-candidate-benchmark-2",
+        )
         self.assertEqual(runner.AUTHORITY_STATUS, (
-            "EVIDENCE_ONLY_GROUP_CAPS_NOT_ACTIVE"
+            "A1_PER_SUBGRAPH_CAPS_ACTIVE_GROUP_CAPS_NOT_ACTIVE"
         ))
         self.assertIn(
             "GENERAL_VARIABLE_VALUE_MARGINAL_SPEARMAN_NOT_CERTIFIED",

@@ -1,8 +1,9 @@
 """Run isolated evidence-only benchmarks for REV8 O-09 group surfaces.
 
 This runner measures the candidate AP, B-001 coverage and Spearman group
-primitives.  It cannot activate any provisional cap or close O-09.  In
-particular, general variable-value-marginal Spearman, published ``rho64``,
+primitives.  Every subgraph consumes the signed active A1 preflight; the 17
+group-level caps remain evidence-only and cannot close O-09.  In particular,
+general variable-value-marginal Spearman, published ``rho64``,
 ``G_eligible``/``G_defined``/``G_NA`` and gate floors remain explicit
 activation blockers.
 
@@ -42,6 +43,7 @@ from ml_v3.benchmark.rev8_o09_group_candidate import (
     GROUP_CANDIDATE_LIMITATIONS,
     PROVISIONAL_MAX_EXACT_SCALAR_BITS,
     SPEARMAN_MAX_PARTITIONS,
+    _GROUP_A1_EVIDENCE_AUTHORITY_STATUS,
     APPartition,
     CoveragePartition,
     GroupReason,
@@ -67,8 +69,8 @@ from ml_v3.contracts.numeric_authority_v2 import exact_n64, rn64
 from ml_v3.contracts.normalize_v2 import normalized_canonical_bytes
 
 ROOT = Path(__file__).resolve().parents[2]
-EVIDENCE_SCHEMA = "aieq-v3-rev8-o09-group-candidate-benchmark-1"
-AUTHORITY_STATUS = "EVIDENCE_ONLY_GROUP_CAPS_NOT_ACTIVE"
+EVIDENCE_SCHEMA = "aieq-v3-rev8-o09-group-candidate-benchmark-2"
+AUTHORITY_STATUS = _GROUP_A1_EVIDENCE_AUTHORITY_STATUS
 BOOTSTRAP_PATH = (
     ROOT / "ml_v3/benchmark/rev8_o09_group_isolated_bootstrap.py"
 )
