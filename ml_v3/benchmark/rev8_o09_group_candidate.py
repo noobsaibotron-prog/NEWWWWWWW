@@ -26,7 +26,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from enum import Enum
 from fractions import Fraction
-from typing import Generic, Literal, TypeVar
+from typing import Callable, Generic, Literal, TypeVar
 
 from ml_v3.benchmark.rev8_o09_candidate import (
     PROVISIONAL_MAX_EXACT_SCALAR_BITS,
@@ -163,11 +163,18 @@ class GroupResult(Generic[T]):
     status: GroupStatus
     reason: GroupReason
     value: T | None
-    # None only when the preflight itself failed, so no probe exists to
-    # report.  Mirrors CandidatePreflightEvaluation.preflight in the
-    # per-subgraph kernel, which uses the same convention for the same reason.
+    # None only when preparation failed before a probe existed, or when the
+    # preflight itself failed.  Once a probe is completed, every later result
+    # — including a rejection — preserves it as phase provenance.
     preflight: GroupPreflightProbe | None
     witness: object | None = None
+
+
+@dataclass
+class _GroupEvaluationState:
+    """Phase state used only to preserve completed preflight provenance."""
+
+    preflight: GroupPreflightProbe | None = None
 
 
 def _fraction_tuple(values: object, size: int, label: str) -> tuple[Fraction, ...]:
@@ -609,10 +616,54 @@ _RUNTIME_FAILURES = (
 )
 
 
+def _run_group_evaluation(
+    evaluator: Callable[[_GroupEvaluationState], GroupResult[T]],
+) -> GroupResult[T]:
+    """Run one complete group evaluation with phase-aware provenance.
+
+    Preparation happens before a preflight probe exists; failures there must
+    therefore report ``preflight=None``.  Once the internal evaluator records
+    a completed probe in ``state``, every later failure preserves it.  This
+    makes the public fail-closed boundary cover preparation, solving and
+    publication without erasing evidence already acquired.
+
+    ``GroupCandidateError`` is deliberately not caught: malformed abstract
+    input remains an API contract violation visible to the caller.
+    """
+    state: _GroupEvaluationState | None = None
+    try:
+        state = _GroupEvaluationState()
+        return evaluator(state)
+    except CandidateGraphError as error:
+        return GroupResult(
+            GroupStatus.REJECTED,
+            GroupReason.SOLVER_CONSTRAINT_MODEL_INVALID,
+            None,
+            None if state is None else state.preflight,
+            witness=str(error),
+        )
+    except _RUNTIME_FAILURES as error:
+        return GroupResult(
+            GroupStatus.REJECTED,
+            GroupReason.SOLVER_RUNTIME_FAILURE,
+            None,
+            None if state is None else state.preflight,
+            witness=type(error).__name__,
+        )
+
+
 def evaluate_group_ap(
     partitions: tuple[APPartition, ...],
 ) -> GroupResult[APValue]:
     """Compute exact group AP, inserting equal-confidence predictions at once."""
+    return _run_group_evaluation(
+        lambda state: _evaluate_group_ap(state, partitions))
+
+
+def _evaluate_group_ap(
+    state: _GroupEvaluationState,
+    partitions: tuple[APPartition, ...],
+) -> GroupResult[APValue]:
     if not isinstance(partitions, tuple) or any(
             not isinstance(partition, APPartition) for partition in partitions):
         raise GroupCandidateError("partitions must be a tuple of APPartition")
@@ -660,6 +711,7 @@ def evaluate_group_ap(
     if preflight_failure is not None:
         return preflight_failure  # type: ignore[return-value]
     assert probe is not None
+    state.preflight = probe
     if probe.provisional_exceeded:
         return _preflight_rejection(probe)  # type: ignore[return-value]
     gt_count = sum(graph.gt_count for graph in graphs)
@@ -878,6 +930,14 @@ def evaluate_group_coverage(
     partitions: tuple[CoveragePartition, ...],
 ) -> GroupResult[CoverageValue]:
     """Compute B-001 per unit, then its pinned hierarchical group mean."""
+    return _run_group_evaluation(
+        lambda state: _evaluate_group_coverage(state, partitions))
+
+
+def _evaluate_group_coverage(
+    state: _GroupEvaluationState,
+    partitions: tuple[CoveragePartition, ...],
+) -> GroupResult[CoverageValue]:
     if not isinstance(partitions, tuple) or any(
             not isinstance(partition, CoveragePartition)
             for partition in partitions):
@@ -908,6 +968,7 @@ def evaluate_group_coverage(
     if preflight_failure is not None:
         return preflight_failure  # type: ignore[return-value]
     assert probe is not None
+    state.preflight = probe
     if probe.provisional_exceeded:
         return _preflight_rejection(probe)  # type: ignore[return-value]
     if not any(
@@ -1148,6 +1209,14 @@ def evaluate_group_spearman(
     partitions: tuple[SpearmanPartition, ...],
 ) -> GroupResult[SpearmanValue]:
     """Certify one exact rho across all composed per-partition optima."""
+    return _run_group_evaluation(
+        lambda state: _evaluate_group_spearman(state, partitions))
+
+
+def _evaluate_group_spearman(
+    state: _GroupEvaluationState,
+    partitions: tuple[SpearmanPartition, ...],
+) -> GroupResult[SpearmanValue]:
     if not isinstance(partitions, tuple) or any(
             not isinstance(partition, SpearmanPartition)
             for partition in partitions):
@@ -1181,6 +1250,7 @@ def evaluate_group_spearman(
     if preflight_failure is not None:
         return preflight_failure  # type: ignore[return-value]
     assert probe is not None
+    state.preflight = probe
     if probe.provisional_exceeded:
         return _preflight_rejection(probe)  # type: ignore[return-value]
     canonical: list[tuple[tuple[int, int], ...]] = []

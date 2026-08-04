@@ -972,8 +972,12 @@ class RuntimeFailureTests(unittest.TestCase):
         This sweeps the whole declared taxonomy across all three surfaces so a
         future addition cannot be covered on one surface and missed on another.
         """
+        surfaces = self._group_surfaces()
+        baseline_probes = {
+            label: call().preflight for label, call in surfaces
+        }
         for failure in subject._RUNTIME_FAILURES:
-            for label, call in self._group_surfaces():
+            for label, call in surfaces:
                 with self.subTest(failure=failure.__name__, surface=label):
                     with mock.patch.object(
                         subject,
@@ -984,6 +988,13 @@ class RuntimeFailureTests(unittest.TestCase):
                     self.assertEqual(result.status, GroupStatus.REJECTED)
                     self.assertEqual(
                         result.reason, GroupReason.SOLVER_RUNTIME_FAILURE)
+                    self.assertIsNone(result.value)
+                    self.assertEqual(
+                        result.preflight,
+                        baseline_probes[label],
+                        "solve failure must preserve the exact completed probe",
+                    )
+                    self.assertEqual(result.witness, failure.__name__)
 
     def test_preflight_failure_is_fail_closed_on_every_surface(self):
         """The preflight phase must translate failures like the solve does.
@@ -1015,6 +1026,135 @@ class RuntimeFailureTests(unittest.TestCase):
                         result.preflight,
                         "no probe exists when the preflight itself failed",
                     )
+
+    def test_pre_solve_preparation_is_fail_closed_on_every_surface(self):
+        """Preparation before `_group_preflight` uses the same fail policy."""
+        cases = (
+            (MemoryError, GroupReason.SOLVER_RUNTIME_FAILURE),
+            (TimeoutError, GroupReason.SOLVER_RUNTIME_FAILURE),
+            (RuntimeError, GroupReason.SOLVER_RUNTIME_FAILURE),
+            (OverflowError, GroupReason.SOLVER_RUNTIME_FAILURE),
+            (CandidateGraphError, GroupReason.SOLVER_CONSTRAINT_MODEL_INVALID),
+        )
+        for failure, expected_reason in cases:
+            for label, call in self._group_surfaces():
+                with self.subTest(failure=failure.__name__, surface=label):
+                    with mock.patch.object(
+                        subject,
+                        "normalized_canonical_bytes",
+                        side_effect=failure("injected"),
+                    ):
+                        result = call()
+                    self.assertEqual(result.status, GroupStatus.REJECTED)
+                    self.assertEqual(result.reason, expected_reason)
+                    self.assertIsNone(result.value)
+                    self.assertIsNone(
+                        result.preflight,
+                        "preflight cannot exist when preparation failed",
+                    )
+
+    def test_wrapper_state_initialization_is_fail_closed_on_every_surface(self):
+        """Even failure before evaluator entry follows the pre-probe policy."""
+        cases = (
+            (MemoryError, GroupReason.SOLVER_RUNTIME_FAILURE, "MemoryError"),
+            (TimeoutError, GroupReason.SOLVER_RUNTIME_FAILURE, "TimeoutError"),
+            (RuntimeError, GroupReason.SOLVER_RUNTIME_FAILURE, "RuntimeError"),
+            (OverflowError, GroupReason.SOLVER_RUNTIME_FAILURE, "OverflowError"),
+            (
+                CandidateGraphError,
+                GroupReason.SOLVER_CONSTRAINT_MODEL_INVALID,
+                "injected",
+            ),
+        )
+        for failure, expected_reason, expected_witness in cases:
+            for label, call in self._group_surfaces():
+                with self.subTest(failure=failure.__name__, surface=label):
+                    with mock.patch.object(
+                        subject,
+                        "_GroupEvaluationState",
+                        side_effect=failure("injected"),
+                    ):
+                        result = call()
+                    self.assertEqual(result.status, GroupStatus.REJECTED)
+                    self.assertEqual(result.reason, expected_reason)
+                    self.assertIsNone(result.value)
+                    self.assertIsNone(result.preflight)
+                    self.assertEqual(result.witness, expected_witness)
+
+    def test_post_preflight_failures_preserve_completed_probe(self):
+        """The outer fail boundary must not erase acquired provenance."""
+        values = tuple(Fraction(index) for index in range(10))
+        ap_partitions = (
+            APPartition(("part",), diagonal_graph(1), (Fraction(1),)),
+        )
+        coverage_partitions = (
+            CoveragePartition(
+                ("unit",), ("part",), diagonal_graph(1), (True,), (True,),
+            ),
+        )
+        spearman_partitions = (
+            SpearmanPartition(
+                ("part",), diagonal_graph(10), values, values,
+            ),
+        )
+        surfaces = (
+            ("ap", "rn64", lambda: evaluate_group_ap(ap_partitions)),
+            (
+                "coverage",
+                "mean64",
+                lambda: evaluate_group_coverage(coverage_partitions),
+            ),
+            (
+                "spearman",
+                "_rho_identity",
+                lambda: evaluate_group_spearman(spearman_partitions),
+            ),
+        )
+        baseline_probes = {
+            label: call().preflight for label, _target, call in surfaces
+        }
+        cases = (
+            (
+                RuntimeError,
+                GroupReason.SOLVER_RUNTIME_FAILURE,
+                "RuntimeError",
+            ),
+            (
+                CandidateGraphError,
+                GroupReason.SOLVER_CONSTRAINT_MODEL_INVALID,
+                "injected",
+            ),
+        )
+        for failure, expected_reason, expected_witness in cases:
+            for label, target, call in surfaces:
+                with self.subTest(failure=failure.__name__, surface=label):
+                    with mock.patch.object(
+                        subject,
+                        target,
+                        side_effect=failure("injected"),
+                    ):
+                        result = call()
+                    self.assertEqual(result.status, GroupStatus.REJECTED)
+                    self.assertEqual(result.reason, expected_reason)
+                    self.assertIsNone(result.value)
+                    self.assertEqual(
+                        result.preflight,
+                        baseline_probes[label],
+                        "the exact completed preflight probe must be preserved",
+                    )
+                    self.assertEqual(result.witness, expected_witness)
+
+    def test_group_boundary_does_not_swallow_unclassified_type_error(self):
+        """Programmer errors inside the guarded phase remain visible."""
+        for label, call in self._group_surfaces():
+            with self.subTest(surface=label):
+                with mock.patch.object(
+                    subject,
+                    "normalized_canonical_bytes",
+                    side_effect=TypeError("injected"),
+                ):
+                    with self.assertRaisesRegex(TypeError, "injected"):
+                        call()
 
     def test_preflight_guard_does_not_swallow_malformed_input(self):
         """GroupCandidateError must still reach the caller.
