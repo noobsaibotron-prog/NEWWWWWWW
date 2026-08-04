@@ -45,6 +45,7 @@ from ml_v3.benchmark.rev8_o09_group_candidate import (
     APPartition,
     CoveragePartition,
     GroupReason,
+    GroupResult,
     GroupStatus,
     SpearmanPartition,
     evaluate_group_ap,
@@ -361,6 +362,15 @@ def _measure_call(kind: str, size: int) -> tuple[object, dict[str, Any]]:
     }
 
 
+def _preflight_exceeded_for_evidence(
+    result: GroupResult[Any],
+) -> list[str] | None:
+    """Serialize structural exceedances without fabricating a failed probe."""
+    if result.preflight is None:
+        return None
+    return list(result.preflight.provisional_exceeded)
+
+
 def _measure_cap_boundaries() -> dict[str, object]:
     empty = _graph(0, 0, ())
     cases: list[dict[str, object]] = []
@@ -378,7 +388,7 @@ def _measure_cap_boundaries() -> dict[str, object]:
                 "value": count,
                 "status": result.status.value,
                 "reason": result.reason.value,
-                "exceeded": list(result.preflight.provisional_exceeded),
+                "exceeded": _preflight_exceeded_for_evidence(result),
             }
         )
     for count in (COVERAGE_MAX_UNITS, COVERAGE_MAX_UNITS + 1):
@@ -400,7 +410,7 @@ def _measure_cap_boundaries() -> dict[str, object]:
                 "value": count,
                 "status": result.status.value,
                 "reason": result.reason.value,
-                "exceeded": list(result.preflight.provisional_exceeded),
+                "exceeded": _preflight_exceeded_for_evidence(result),
             }
         )
     for count in (SPEARMAN_MAX_PARTITIONS, SPEARMAN_MAX_PARTITIONS + 1):
@@ -418,7 +428,7 @@ def _measure_cap_boundaries() -> dict[str, object]:
                 "value": count,
                 "status": result.status.value,
                 "reason": result.reason.value,
-                "exceeded": list(result.preflight.provisional_exceeded),
+                "exceeded": _preflight_exceeded_for_evidence(result),
             }
         )
     for bits in (
@@ -443,7 +453,7 @@ def _measure_cap_boundaries() -> dict[str, object]:
                 "value": bits,
                 "status": result.status.value,
                 "reason": result.reason.value,
-                "exceeded": list(result.preflight.provisional_exceeded),
+                "exceeded": _preflight_exceeded_for_evidence(result),
             }
         )
     return {

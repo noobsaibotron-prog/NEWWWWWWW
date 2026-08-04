@@ -5,6 +5,7 @@ from fractions import Fraction
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 
 from ml_v3.benchmark import rev8_o09_group_isolated_bootstrap as bootstrap
 from ml_v3.benchmark import run_rev8_o09_group_candidate as runner
@@ -103,6 +104,31 @@ class WorkloadTests(unittest.TestCase):
         self.assertNotEqual(exact[65_535]["status"], "REJECTED")
         self.assertNotEqual(exact[65_536]["status"], "REJECTED")
         self.assertEqual(exact[65_537]["status"], "REJECTED")
+
+    def test_cap_boundary_evidence_preserves_absent_preflight(self):
+        """A preflight failure must remain reportable without a fake probe."""
+        failure = GroupResult(
+            GroupStatus.REJECTED,
+            GroupReason.SOLVER_RUNTIME_FAILURE,
+            None,
+            None,
+            witness="TimeoutError",
+        )
+        with (
+            mock.patch.object(
+                runner, "evaluate_group_ap", return_value=failure),
+            mock.patch.object(
+                runner, "evaluate_group_coverage", return_value=failure),
+            mock.patch.object(
+                runner, "evaluate_group_spearman", return_value=failure),
+        ):
+            result = runner._measure_cap_boundaries()
+        self.assertTrue(result["cases"])
+        for row in result["cases"]:
+            self.assertEqual(row["status"], GroupStatus.REJECTED.value)
+            self.assertEqual(
+                row["reason"], GroupReason.SOLVER_RUNTIME_FAILURE.value)
+            self.assertIsNone(row["exceeded"])
 
 
 class EvidenceEncodingTests(unittest.TestCase):

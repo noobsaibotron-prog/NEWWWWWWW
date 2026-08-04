@@ -992,7 +992,7 @@ class RuntimeFailureTests(unittest.TestCase):
         rational_bit_length, so it raises the same failures the solve loops
         already translate — but it sat outside every try block, so the same
         exception was fail-closed one step later and fail-open here.  All
-        nine combinations are pinned: three failure kinds by three surfaces.
+        Twelve combinations are pinned: four failure kinds by three surfaces.
         """
         cases = (
             (MemoryError, GroupReason.SOLVER_RUNTIME_FAILURE),
