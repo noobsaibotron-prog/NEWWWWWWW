@@ -163,7 +163,10 @@ class GroupResult(Generic[T]):
     status: GroupStatus
     reason: GroupReason
     value: T | None
-    preflight: GroupPreflightProbe
+    # None only when the preflight itself failed, so no probe exists to
+    # report.  Mirrors CandidatePreflightEvaluation.preflight in the
+    # per-subgraph kernel, which uses the same convention for the same reason.
+    preflight: GroupPreflightProbe | None
     witness: object | None = None
 
 
@@ -543,6 +546,49 @@ def _preflight_rejection(probe: GroupPreflightProbe) -> GroupResult[object]:
     )
 
 
+def _guarded_group_preflight(
+    *args: object,
+    **kwargs: object,
+) -> tuple[GroupPreflightProbe | None, GroupResult[object] | None]:
+    """Run :func:`_group_preflight` under the solve loops' failure policy.
+
+    The preflight calls ``provisional_preflight_probe`` and
+    ``rational_bit_length`` on caller-supplied graphs and exact values, so it
+    can raise exactly the failures the solve loops already translate.  Left
+    unguarded it was fail-open: a MemoryError, TimeoutError or
+    CandidateGraphError during preflight escaped as a bare exception, with no
+    reason code and outside the "any fatal failure blocks PASS" guarantee,
+    while the very same exception raised one step later — inside the solve —
+    was correctly translated.
+
+    ``GroupCandidateError`` is deliberately NOT caught: malformed abstract
+    input is a caller defect, and the surrounding validation raises it to the
+    caller by design.
+
+    Returns ``(probe, None)`` on success and ``(None, rejection)`` on failure;
+    exactly one element is ever populated.
+    """
+    try:
+        probe = _group_preflight(*args, **kwargs)  # type: ignore[arg-type]
+    except CandidateGraphError as error:
+        return None, GroupResult(
+            GroupStatus.REJECTED,
+            GroupReason.SOLVER_CONSTRAINT_MODEL_INVALID,
+            None,
+            None,
+            witness=str(error),
+        )
+    except _RUNTIME_FAILURES as error:
+        return None, GroupResult(
+            GroupStatus.REJECTED,
+            GroupReason.SOLVER_RUNTIME_FAILURE,
+            None,
+            None,
+            witness=type(error).__name__,
+        )
+    return probe, None
+
+
 def _ensure_unique_partition_keys(
     keys: tuple[tuple[str, ...], ...],
 ) -> None:
@@ -597,7 +643,7 @@ def evaluate_group_ap(
                 partition.prediction_confidence[edge.prediction] >= threshold
                 for edge in partition.graph.edges
             )
-    probe = _group_preflight(
+    probe, preflight_failure = _guarded_group_preflight(
         "AP",
         graphs,
         distinct_thresholds=len(thresholds),
@@ -611,6 +657,9 @@ def evaluate_group_ap(
             for confidence in partition.prediction_confidence
         ),
     )
+    if preflight_failure is not None:
+        return preflight_failure  # type: ignore[return-value]
+    assert probe is not None
     if probe.provisional_exceeded:
         return _preflight_rejection(probe)  # type: ignore[return-value]
     gt_count = sum(graph.gt_count for graph in graphs)
@@ -845,7 +894,7 @@ def evaluate_group_coverage(
     by_unit: dict[tuple[str, ...], list[CoveragePartition]] = {}
     for partition in partitions:
         by_unit.setdefault(partition.unit_key, []).append(partition)
-    probe = _group_preflight(
+    probe, preflight_failure = _guarded_group_preflight(
         "COVERAGE",
         graphs,
         unit_count=len(by_unit),
@@ -856,6 +905,9 @@ def evaluate_group_coverage(
         partition_keys=tuple(
             partition.partition_key for partition in partitions),
     )
+    if preflight_failure is not None:
+        return preflight_failure  # type: ignore[return-value]
+    assert probe is not None
     if probe.provisional_exceeded:
         return _preflight_rejection(probe)  # type: ignore[return-value]
     if not any(
@@ -1114,7 +1166,7 @@ def evaluate_group_spearman(
         + len(set(partition.prediction_values))
         for partition in partitions
     )
-    probe = _group_preflight(
+    probe, preflight_failure = _guarded_group_preflight(
         "SPEARMAN",
         graphs,
         spearman_marginal_value_classes=marginal_value_classes,
@@ -1126,6 +1178,9 @@ def evaluate_group_spearman(
             for value in (*partition.gt_values, *partition.prediction_values)
         ),
     )
+    if preflight_failure is not None:
+        return preflight_failure  # type: ignore[return-value]
+    assert probe is not None
     if probe.provisional_exceeded:
         return _preflight_rejection(probe)  # type: ignore[return-value]
     canonical: list[tuple[tuple[int, int], ...]] = []

@@ -14,6 +14,7 @@ from ml_v3.benchmark import rev8_o09_group_candidate as subject
 from ml_v3.benchmark import rev8_o09_candidate as per_subgraph
 from ml_v3.benchmark.rev8_o09_candidate import (
     CandidateGraph,
+    CandidateGraphError,
     ExactEdge,
     a1_exhaustive,
 )
@@ -983,6 +984,51 @@ class RuntimeFailureTests(unittest.TestCase):
                     self.assertEqual(result.status, GroupStatus.REJECTED)
                     self.assertEqual(
                         result.reason, GroupReason.SOLVER_RUNTIME_FAILURE)
+
+    def test_preflight_failure_is_fail_closed_on_every_surface(self):
+        """The preflight phase must translate failures like the solve does.
+
+        _group_preflight calls provisional_preflight_probe and
+        rational_bit_length, so it raises the same failures the solve loops
+        already translate — but it sat outside every try block, so the same
+        exception was fail-closed one step later and fail-open here.  All
+        nine combinations are pinned: three failure kinds by three surfaces.
+        """
+        cases = (
+            (MemoryError, GroupReason.SOLVER_RUNTIME_FAILURE),
+            (TimeoutError, GroupReason.SOLVER_RUNTIME_FAILURE),
+            (OverflowError, GroupReason.SOLVER_RUNTIME_FAILURE),
+            (CandidateGraphError, GroupReason.SOLVER_CONSTRAINT_MODEL_INVALID),
+        )
+        for failure, expected_reason in cases:
+            for label, call in self._group_surfaces():
+                with self.subTest(failure=failure.__name__, surface=label):
+                    with mock.patch.object(
+                        subject,
+                        "provisional_preflight_probe",
+                        side_effect=failure("injected"),
+                    ):
+                        result = call()
+                    self.assertEqual(result.status, GroupStatus.REJECTED)
+                    self.assertEqual(result.reason, expected_reason)
+                    self.assertIsNone(
+                        result.preflight,
+                        "no probe exists when the preflight itself failed",
+                    )
+
+    def test_preflight_guard_does_not_swallow_malformed_input(self):
+        """GroupCandidateError must still reach the caller.
+
+        Malformed abstract input is a caller defect, not a solver failure;
+        translating it into a REJECTED result would hide a programming error
+        behind a scientific-looking reason code.
+        """
+        with self.assertRaises(GroupCandidateError):
+            evaluate_group_ap("not-a-tuple")
+        with self.assertRaises(GroupCandidateError):
+            evaluate_group_coverage("not-a-tuple")
+        with self.assertRaises(GroupCandidateError):
+            evaluate_group_spearman("not-a-tuple")
 
     def test_group_runtime_taxonomy_matches_the_per_subgraph_authority(self):
         """Structural guard against the two kernels drifting apart again.
