@@ -85,18 +85,44 @@ class WorkloadTests(unittest.TestCase):
         result, timing = runner._measure_call("cap_boundaries", 0)
         self.assertGreaterEqual(timing["wall_seconds"], 0.0)
         self.assertGreaterEqual(timing["cpu_seconds"], 0.0)
+        group_rows = tuple(
+            row for row in result["cases"]
+            if row["cap_id"] != "TRANSVERSE-EXACT-SCALAR"
+        )
+        self.assertEqual(len(group_rows), 51)
+        by_id: dict[str, dict[str, dict[str, object]]] = {}
+        for row in group_rows:
+            by_id.setdefault(row["cap_id"], {})[row["relation"]] = row
+        self.assertEqual(len(by_id), 17)
+        for cap_id, rows in by_id.items():
+            with self.subTest(cap_id=cap_id):
+                self.assertEqual(set(rows), {"under", "on", "over"})
+                cap = rows["on"]["cap"]
+                self.assertEqual(rows["under"]["value"], cap - 1)
+                self.assertEqual(rows["on"]["value"], cap)
+                self.assertEqual(rows["over"]["value"], cap + 1)
+                self.assertFalse(rows["under"]["target_exceeded"])
+                self.assertFalse(rows["on"]["target_exceeded"])
+                self.assertTrue(rows["over"]["target_exceeded"])
+                self.assertEqual(
+                    rows["over"]["status"],
+                    GroupStatus.REJECTED.value,
+                )
+                self.assertEqual(
+                    rows["over"]["reason"],
+                    GroupReason.SOLVER_STRUCTURAL_LIMIT_EXCEEDED.value,
+                )
+                self.assertTrue(rows["over"]["solver_not_called"])
+                self.assertEqual(rows["over"]["solver_calls"], [])
+        self.assertEqual(result["group_cap_matrix"], {
+            "row_count": 17,
+            "boundary_case_count": 51,
+            "durable_under_on_over": True,
+            "durable_no_solve_over": True,
+        })
         by_surface: dict[str, list[dict[str, object]]] = {}
         for row in result["cases"]:
             by_surface.setdefault(row["surface"], []).append(row)
-        for surface in (
-            "AP_PARTITIONS",
-            "COVERAGE_UNITS",
-            "SPEARMAN_PARTITIONS",
-            "EXACT_SCALAR_BITS",
-        ):
-            self.assertIn(surface, by_surface)
-            statuses = {row["status"] for row in by_surface[surface]}
-            self.assertIn(GroupStatus.REJECTED.value, statuses)
         exact = {
             row["value"]: row
             for row in by_surface["EXACT_SCALAR_BITS"]
@@ -184,7 +210,7 @@ class ProvenanceAndGovernanceTests(unittest.TestCase):
         self.assertFalse(GROUP_CANDIDATE_BALLOT_READY)
         self.assertEqual(
             runner.EVIDENCE_SCHEMA,
-            "aieq-v3-rev8-o09-group-candidate-benchmark-2",
+            "aieq-v3-rev8-o09-group-candidate-benchmark-3",
         )
         self.assertEqual(runner.AUTHORITY_STATUS, (
             "A1_PER_SUBGRAPH_CAPS_ACTIVE_GROUP_CAPS_NOT_ACTIVE"

@@ -36,6 +36,12 @@ from ml_v3.benchmark.rev8_o09_group_candidate import (
     reduce_macro_coverage_math,
     rho_equal,
 )
+from ml_v3.benchmark.rev8_o09_group_cap_fixtures import (
+    GROUP_CAP_SPECS,
+    build_group_cap_fixture,
+    evaluate_group_cap_fixture,
+    observed_group_cap_value,
+)
 from ml_v3.contracts.numeric_authority_v2 import exact_n64, mean64, rn64
 
 
@@ -1024,79 +1030,145 @@ class ActiveA1CompositionTests(unittest.TestCase):
 
 
 class PreflightBoundaryTests(unittest.TestCase):
-    def test_ap_group_shape_boundaries(self):
-        graphs = tuple(graph(0, 0, []) for _ in range(
-            subject.AP_MAX_PARTITIONS))
-        on = subject._group_preflight(  # type: ignore[attr-defined]
-            "AP",
-            graphs,
-            distinct_thresholds=subject.AP_MAX_DISTINCT_THRESHOLDS,
-            local_thresholds=subject.AP_MAX_LOCAL_THRESHOLDS,
-            prefix_edge_incidence=subject.AP_MAX_PREFIX_EDGE_INCIDENCE,
-        )
-        self.assertFalse(on.provisional_exceeded)
-        over = subject._group_preflight(  # type: ignore[attr-defined]
-            "AP",
-            (*graphs, graph(0, 0, [])),
-            distinct_thresholds=subject.AP_MAX_DISTINCT_THRESHOLDS + 1,
-            local_thresholds=subject.AP_MAX_LOCAL_THRESHOLDS + 1,
-            prefix_edge_incidence=subject.AP_MAX_PREFIX_EDGE_INCIDENCE + 1,
-        )
-        self.assertIn("GROUP_AP_PARTITIONS", over.provisional_exceeded)
-        self.assertIn(
-            "GROUP_AP_DISTINCT_THRESHOLDS",
-            over.provisional_exceeded,
-        )
-        self.assertIn(
-            "GROUP_AP_LOCAL_THRESHOLDS",
-            over.provisional_exceeded,
-        )
-        self.assertIn(
-            "GROUP_AP_PREFIX_EDGE_INCIDENCE",
-            over.provisional_exceeded,
-        )
+    def assert_cap_boundary_result(
+        self,
+        fixture,
+        expected_offset: int,
+    ) -> None:
+        spec = fixture.spec
+        relation = fixture.relation
+        with mock.patch.object(
+            subject,
+            "exact_maximum_cardinality",
+            return_value=0,
+        ) as cardinality, mock.patch.object(
+            subject,
+            "_solve_profile",
+            return_value=(),
+        ) as profile, mock.patch.object(
+            subject,
+            "_solve_profile_details",
+            return_value=((), False),
+        ) as profile_details:
+            result = evaluate_group_cap_fixture(fixture)
 
-    def test_coverage_unit_boundaries(self):
-        on = subject._group_preflight(  # type: ignore[attr-defined]
-            "COVERAGE",
-            (),
-            unit_count=subject.COVERAGE_MAX_UNITS,
-            maximum_partitions_per_unit=(
-                subject.COVERAGE_MAX_PARTITIONS_PER_UNIT
+        self.assertIsNotNone(result.preflight)
+        self.assertEqual(
+            observed_group_cap_value(fixture, result.preflight),
+            spec.cap + expected_offset,
+        )
+        target_exceeded = (
+            spec.exceed_tag in result.preflight.provisional_exceeded
+        )
+        self.assertEqual(target_exceeded, relation == "over")
+        if relation == "over":
+            self.assertEqual(result.status, GroupStatus.REJECTED)
+            self.assertEqual(
+                result.reason,
+                GroupReason.SOLVER_STRUCTURAL_LIMIT_EXCEEDED,
+            )
+            self.assertIsNone(result.value)
+            self.assertEqual(
+                result.witness,
+                result.preflight.provisional_exceeded,
+            )
+            cardinality.assert_not_called()
+            profile.assert_not_called()
+            profile_details.assert_not_called()
+
+    def test_all_17_group_caps_have_public_under_on_over_and_no_solve(self):
+        self.assertEqual(len(GROUP_CAP_SPECS), 17)
+        self.assertEqual(
+            len({spec.fixture_id for spec in GROUP_CAP_SPECS}), 17)
+        for spec in GROUP_CAP_SPECS:
+            for relation, expected_offset in (
+                ("under", -1),
+                ("on", 0),
+                ("over", 1),
+            ):
+                fixture = build_group_cap_fixture(
+                    spec.fixture_id, relation)  # type: ignore[arg-type]
+                with self.subTest(
+                    fixture_id=spec.fixture_id,
+                    relation=relation,
+                ):
+                    self.assert_cap_boundary_result(
+                        fixture, expected_offset)
+
+    def test_boundary_oracle_kills_representative_mutations(self):
+        on = build_group_cap_fixture("AP-01", "on")
+        with mock.patch.object(
+            subject,
+            "AP_MAX_PARTITIONS",
+            subject.AP_MAX_PARTITIONS - 1,
+        ), self.assertRaises(AssertionError):
+            self.assert_cap_boundary_result(on, 0)
+
+        over = build_group_cap_fixture("AP-01", "over")
+        with mock.patch.object(
+            subject,
+            "AP_MAX_PARTITIONS",
+            subject.AP_MAX_PARTITIONS + 1,
+        ), self.assertRaises(AssertionError):
+            self.assert_cap_boundary_result(over, 1)
+
+        reject = subject._preflight_rejection  # type: ignore[attr-defined]
+
+        def solve_before_rejection(probe):
+            subject.exact_maximum_cardinality(graph(0, 0, []))
+            return reject(probe)
+
+        with mock.patch.object(
+            subject,
+            "_preflight_rejection",
+            side_effect=solve_before_rejection,
+        ), self.assertRaises(AssertionError):
+            self.assert_cap_boundary_result(over, 1)
+
+    def test_combined_over_caps_are_ordered_and_still_pre_solve(self):
+        fixture = build_group_cap_fixture("AP-06", "over")
+        with mock.patch.object(
+            subject,
+            "exact_maximum_cardinality",
+        ) as cardinality, mock.patch.object(
+            subject,
+            "_solve_profile",
+        ) as profile, mock.patch.object(
+            subject,
+            "_solve_profile_details",
+        ) as profile_details:
+            result = evaluate_group_cap_fixture(fixture)
+        self.assertEqual(result.status, GroupStatus.REJECTED)
+        self.assertEqual(
+            result.preflight.provisional_exceeded,
+            (
+                "GROUP_AP_PREDICTIONS",
+                "GROUP_AP_LOCAL_THRESHOLDS",
             ),
         )
-        self.assertFalse(on.provisional_exceeded)
-        over = subject._group_preflight(  # type: ignore[attr-defined]
-            "COVERAGE",
-            (),
-            unit_count=subject.COVERAGE_MAX_UNITS + 1,
-            maximum_partitions_per_unit=(
-                subject.COVERAGE_MAX_PARTITIONS_PER_UNIT + 1
+        cardinality.assert_not_called()
+        profile.assert_not_called()
+        profile_details.assert_not_called()
+
+    def test_empty_groups_and_zero_support_remain_explicit_na(self):
+        cases = (
+            (evaluate_group_ap(()), GroupReason.NO_GT),
+            (
+                evaluate_group_coverage(()),
+                GroupReason.NO_ACTIONABLE_GT,
+            ),
+            (
+                evaluate_group_spearman(()),
+                GroupReason.INSUFFICIENT_MATCHED_SUPPORT,
             ),
         )
-        self.assertIn("GROUP_COVERAGE_UNITS", over.provisional_exceeded)
-        self.assertIn(
-            "GROUP_COVERAGE_PARTITIONS_PER_UNIT",
-            over.provisional_exceeded,
-        )
-
-    def test_spearman_support_boundary(self):
-        on = subject._group_preflight(  # type: ignore[attr-defined]
-            "SPEARMAN",
-            (graph(64, 64, []), graph(64, 64, [])),
-        )
-        self.assertNotIn(
-            "GROUP_SPEARMAN_SUPPORT",
-            on.provisional_exceeded,
-        )
-        over = subject._group_preflight(  # type: ignore[attr-defined]
-            "SPEARMAN",
-            (graph(65, 65, []), graph(64, 64, [])),
-        )
-        self.assertIn(
-            "GROUP_SPEARMAN_SUPPORT",
-            over.provisional_exceeded,
-        )
+        for result, reason in cases:
+            with self.subTest(reason=reason.value):
+                self.assertEqual(result.status, GroupStatus.NOT_APPLICABLE)
+                self.assertEqual(result.reason, reason)
+                self.assertIsNone(result.value)
+                self.assertIsNotNone(result.preflight)
+                self.assertFalse(result.preflight.provisional_exceeded)
 
     def test_exact_scalar_bit_boundary(self):
         on = subject._group_preflight(  # type: ignore[attr-defined]

@@ -32,17 +32,20 @@ from typing import Any
 
 import numpy as np
 
+from ml_v3.benchmark import rev8_o09_group_candidate as group_subject
 from ml_v3.benchmark.rev8_o09_candidate import CandidateGraph, ExactEdge
+from ml_v3.benchmark.rev8_o09_group_cap_fixtures import (
+    GROUP_CAP_SPECS,
+    build_group_cap_fixture,
+    observed_group_cap_value,
+)
 from ml_v3.benchmark.rev8_o09_group_candidate import (
     AP_MAX_DISTINCT_THRESHOLDS,
-    AP_MAX_PARTITIONS,
     BINARY64_EXACT_RATIONAL_BIT_BOUND,
     COVERAGE_MAX_PARTITIONS_PER_UNIT,
-    COVERAGE_MAX_UNITS,
     GROUP_CANDIDATE_BALLOT_READY,
     GROUP_CANDIDATE_LIMITATIONS,
     PROVISIONAL_MAX_EXACT_SCALAR_BITS,
-    SPEARMAN_MAX_PARTITIONS,
     _GROUP_A1_EVIDENCE_AUTHORITY_STATUS,
     APPartition,
     CoveragePartition,
@@ -69,7 +72,7 @@ from ml_v3.contracts.numeric_authority_v2 import exact_n64, rn64
 from ml_v3.contracts.normalize_v2 import normalized_canonical_bytes
 
 ROOT = Path(__file__).resolve().parents[2]
-EVIDENCE_SCHEMA = "aieq-v3-rev8-o09-group-candidate-benchmark-2"
+EVIDENCE_SCHEMA = "aieq-v3-rev8-o09-group-candidate-benchmark-3"
 AUTHORITY_STATUS = _GROUP_A1_EVIDENCE_AUTHORITY_STATUS
 BOOTSTRAP_PATH = (
     ROOT / "ml_v3/benchmark/rev8_o09_group_isolated_bootstrap.py"
@@ -90,6 +93,7 @@ PROVENANCE_PATHS = (
     "ml_v3/environment/requirements.lock",
     "ml_v3/benchmark/rev8_o09_candidate.py",
     "ml_v3/benchmark/rev8_o09_group_candidate.py",
+    "ml_v3/benchmark/rev8_o09_group_cap_fixtures.py",
     "ml_v3/benchmark/rev8_o09_group_isolated_bootstrap.py",
     "ml_v3/benchmark/run_rev8_o09_group_candidate.py",
     "ml_v3/tests/test_g1c_rev8_o09_candidate.py",
@@ -374,65 +378,106 @@ def _preflight_exceeded_for_evidence(
 
 
 def _measure_cap_boundaries() -> dict[str, object]:
-    empty = _graph(0, 0, ())
     cases: list[dict[str, object]] = []
+    relation_offsets = (("under", -1), ("on", 0), ("over", 1))
+    for spec in GROUP_CAP_SPECS:
+        for relation, offset in relation_offsets:
+            fixture = build_group_cap_fixture(
+                spec.fixture_id, relation)  # type: ignore[arg-type]
+            solve_calls: list[str] = []
 
-    for count in (AP_MAX_PARTITIONS, AP_MAX_PARTITIONS + 1):
-        result = evaluate_group_ap(
-            tuple(
-                APPartition((f"ap-{index}",), empty, ())
-                for index in range(count)
+            def cardinality(*_args: object, **_kwargs: object) -> int:
+                solve_calls.append("exact_maximum_cardinality")
+                return 0
+
+            def profile(
+                *_args: object,
+                **_kwargs: object,
+            ) -> tuple[tuple[int, int], ...]:
+                solve_calls.append("_solve_profile")
+                return ()
+
+            def profile_details(
+                *_args: object,
+                **_kwargs: object,
+            ) -> tuple[tuple[tuple[int, int], ...], bool]:
+                solve_calls.append("_solve_profile_details")
+                return (), False
+
+            originals = (
+                group_subject.exact_maximum_cardinality,
+                group_subject._solve_profile,  # type: ignore[attr-defined]
+                group_subject._solve_profile_details,  # type: ignore[attr-defined]
             )
-        )
-        cases.append(
-            {
-                "surface": "AP_PARTITIONS",
-                "value": count,
-                "status": result.status.value,
-                "reason": result.reason.value,
-                "exceeded": _preflight_exceeded_for_evidence(result),
-            }
-        )
-    for count in (COVERAGE_MAX_UNITS, COVERAGE_MAX_UNITS + 1):
-        result = evaluate_group_coverage(
-            tuple(
-                CoveragePartition(
-                    (f"unit-{index}",),
-                    (f"coverage-{index}",),
-                    empty,
-                    (),
-                    (),
+            try:
+                group_subject.exact_maximum_cardinality = cardinality
+                group_subject._solve_profile = profile  # type: ignore[attr-defined]
+                group_subject._solve_profile_details = (  # type: ignore[attr-defined]
+                    profile_details
                 )
-                for index in range(count)
-            )
-        )
-        cases.append(
-            {
-                "surface": "COVERAGE_UNITS",
-                "value": count,
-                "status": result.status.value,
-                "reason": result.reason.value,
-                "exceeded": _preflight_exceeded_for_evidence(result),
-            }
-        )
-    for count in (SPEARMAN_MAX_PARTITIONS, SPEARMAN_MAX_PARTITIONS + 1):
-        result = evaluate_group_spearman(
-            tuple(
-                SpearmanPartition(
-                    (f"spearman-{index}",), empty, (), ()
+                if spec.surface == "AP":
+                    result = evaluate_group_ap(  # type: ignore[arg-type]
+                        fixture.partitions)
+                elif spec.surface == "COVERAGE":
+                    result = evaluate_group_coverage(  # type: ignore[arg-type]
+                        fixture.partitions)
+                else:
+                    result = evaluate_group_spearman(  # type: ignore[arg-type]
+                        fixture.partitions)
+            finally:
+                group_subject.exact_maximum_cardinality = originals[0]
+                group_subject._solve_profile = originals[1]  # type: ignore[attr-defined]
+                group_subject._solve_profile_details = (  # type: ignore[attr-defined]
+                    originals[2]
                 )
-                for index in range(count)
+            expected = spec.cap + offset
+            observed = (
+                observed_group_cap_value(fixture, result.preflight)
+                if result.preflight is not None
+                else None
             )
-        )
-        cases.append(
-            {
-                "surface": "SPEARMAN_PARTITIONS",
-                "value": count,
-                "status": result.status.value,
-                "reason": result.reason.value,
-                "exceeded": _preflight_exceeded_for_evidence(result),
-            }
-        )
+            target_exceeded = bool(
+                result.preflight is not None
+                and spec.exceed_tag
+                in result.preflight.provisional_exceeded
+            )
+            if result.preflight is not None:
+                if (
+                    observed != expected
+                    or target_exceeded != (relation == "over")
+                ):
+                    raise RuntimeError(
+                        f"cap fixture {spec.fixture_id}/{relation} mismatch: "
+                        f"observed={observed}, expected={expected}, "
+                        f"target_exceeded={target_exceeded}"
+                    )
+                if relation == "over" and (
+                    result.status is not GroupStatus.REJECTED
+                    or result.reason
+                    is not GroupReason.SOLVER_STRUCTURAL_LIMIT_EXCEEDED
+                    or solve_calls
+                ):
+                    raise RuntimeError(
+                        f"cap fixture {spec.fixture_id}/over did not reject "
+                        f"pre-solve: status={result.status.value}, "
+                        f"reason={result.reason.value}, calls={solve_calls}"
+                    )
+            cases.append(
+                {
+                    "cap_id": spec.fixture_id,
+                    "surface": spec.surface,
+                    "relation": relation,
+                    "tag": spec.exceed_tag,
+                    "cap": spec.cap,
+                    "value": observed,
+                    "status": result.status.value,
+                    "reason": result.reason.value,
+                    "target_exceeded": target_exceeded,
+                    "exceeded": _preflight_exceeded_for_evidence(result),
+                    "solver_calls": solve_calls,
+                    "solver_not_called": not solve_calls,
+                }
+            )
     for bits in (
         PROVISIONAL_MAX_EXACT_SCALAR_BITS - 1,
         PROVISIONAL_MAX_EXACT_SCALAR_BITS,
@@ -451,15 +496,34 @@ def _measure_cap_boundaries() -> dict[str, object]:
         )
         cases.append(
             {
+                "cap_id": "TRANSVERSE-EXACT-SCALAR",
                 "surface": "EXACT_SCALAR_BITS",
+                "relation": (
+                    "under" if bits < PROVISIONAL_MAX_EXACT_SCALAR_BITS
+                    else "on" if bits == PROVISIONAL_MAX_EXACT_SCALAR_BITS
+                    else "over"
+                ),
+                "tag": "GROUP_EXACT_SCALAR_BIT_LENGTH",
+                "cap": PROVISIONAL_MAX_EXACT_SCALAR_BITS,
                 "value": bits,
                 "status": result.status.value,
                 "reason": result.reason.value,
+                "target_exceeded": bool(
+                    result.preflight is not None
+                    and "GROUP_EXACT_SCALAR_BIT_LENGTH"
+                    in result.preflight.provisional_exceeded
+                ),
                 "exceeded": _preflight_exceeded_for_evidence(result),
             }
         )
     return {
         "cases": cases,
+        "group_cap_matrix": {
+            "row_count": len(GROUP_CAP_SPECS),
+            "boundary_case_count": 3 * len(GROUP_CAP_SPECS),
+            "durable_under_on_over": True,
+            "durable_no_solve_over": True,
+        },
         "declared_binary64_exact_rational_bound": (
             BINARY64_EXACT_RATIONAL_BIT_BOUND
         ),
