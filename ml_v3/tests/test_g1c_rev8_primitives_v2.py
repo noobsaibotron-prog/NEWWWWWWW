@@ -62,6 +62,11 @@ from ml_v3.contracts.numeric_authority_v2 import (
     rn64,
     sum_pairwise64,
 )
+from ml_v3.contracts.support_v2 import (
+    SupportError,
+    UnitOutcome,
+    account_support,
+)
 
 
 def region(problem_type="Muddiness", start=0.0, end=1.0, lo=200.0, hi=500.0,
@@ -572,6 +577,108 @@ class P95Type7Tests(unittest.TestCase):
     def test_rejects_malformed_tokens(self):
         with self.assertRaises(NumericAuthorityError):
             p95_type7_64(["f64:zzzzzzzzzzzzzzzz"])
+
+
+class SupportAccountingTests(unittest.TestCase):
+    """§12 G_eligible / G_defined / G_NA."""
+
+    ELIGIBLE = (
+        ("g2", ("unit", "a")),
+        ("g2", ("unit", "b")),
+        ("g1", ("unit", "c")),
+        ("g3", ("unit", "d")),
+    )
+    OUTCOMES = (
+        UnitOutcome("g2", ("unit", "a"), True),
+        UnitOutcome("g2", ("unit", "b"), False, "INSUFFICIENT_MATCHED_SUPPORT"),
+        UnitOutcome("g1", ("unit", "c"), False, "SPEARMAN_UNDEFINED"),
+        UnitOutcome("g3", ("unit", "d"), False, "INSUFFICIENT_MATCHED_SUPPORT"),
+    )
+
+    def test_g_na_is_exactly_the_set_difference(self):
+        result = account_support(self.ELIGIBLE, self.OUTCOMES)
+        self.assertEqual(
+            set(result.g_na),
+            set(result.g_eligible) - set(result.g_defined),
+        )
+        self.assertFalse(set(result.g_defined) & set(result.g_na))
+
+    def test_one_defined_unit_makes_the_whole_group_defined(self):
+        """§12: G_defined counts groups with *at least one* defined unit.
+
+        g2 holds one defined and one N/A unit.  It belongs to G_defined and
+        must not also appear in G_NA — an N/A unit does not make its group
+        N/A, and double-counting it would inflate both populations.
+        """
+        result = account_support(self.ELIGIBLE, self.OUTCOMES)
+        self.assertIn("g2", result.g_defined)
+        self.assertNotIn("g2", result.g_na)
+        self.assertEqual(result.g_defined, ("g2",))
+        self.assertEqual(result.g_na, ("g1", "g3"))
+
+    def test_outcome_outside_the_frozen_eligible_set_is_rejected(self):
+        """The anti-gaming core: the denominator cannot grow after scoring."""
+        with self.assertRaisesRegex(SupportError, "outside the frozen"):
+            account_support(
+                self.ELIGIBLE,
+                self.OUTCOMES + (UnitOutcome("g9", ("unit", "x"), True),),
+            )
+
+    def test_missing_outcome_is_a_failure_not_an_implicit_na(self):
+        """Dropping a unit must not be a silent way to shrink the sample."""
+        with self.assertRaisesRegex(SupportError, "no outcome"):
+            account_support(self.ELIGIBLE, self.OUTCOMES[:3])
+
+    def test_duplicate_outcome_is_rejected(self):
+        with self.assertRaisesRegex(SupportError, "duplicate outcome"):
+            account_support(
+                self.ELIGIBLE, self.OUTCOMES + (self.OUTCOMES[0],))
+
+    def test_reason_code_is_required_exactly_when_not_defined(self):
+        with self.assertRaisesRegex(SupportError, "non-empty reason"):
+            UnitOutcome("g", ("unit",), False)
+        with self.assertRaisesRegex(SupportError, "must not carry"):
+            UnitOutcome("g", ("unit",), True, "SOME_REASON")
+
+    def test_group_reasons_are_a_set_not_an_elected_code(self):
+        """§12 pins no precedence among disagreeing units, so none is invented.
+
+        A group whose units fail for different reasons reports both, ordered
+        canonically.  A set is a superset of whatever single-code rule a
+        later amendment fixes.
+        """
+        eligible = (("g", ("unit", "a")), ("g", ("unit", "b")))
+        outcomes = (
+            UnitOutcome("g", ("unit", "a"), False, "SPEARMAN_UNDEFINED"),
+            UnitOutcome("g", ("unit", "b"), False, "PAIRING_AMBIGUOUS"),
+        )
+        result = account_support(eligible, outcomes)
+        self.assertEqual(
+            result.na_reasons,
+            (("g", ("PAIRING_AMBIGUOUS", "SPEARMAN_UNDEFINED")),),
+        )
+
+    def test_result_is_independent_of_input_order(self):
+        results = {
+            account_support(tuple(permutation), self.OUTCOMES).g_na
+            for permutation in itertools.permutations(self.ELIGIBLE)
+        }
+        self.assertEqual(len(results), 1)
+
+    def test_authority_status_declares_floors_unevaluated(self):
+        """Support is accounted; §12's gate floors are a separate, absent step."""
+        result = account_support(self.ELIGIBLE, self.OUTCOMES)
+        self.assertEqual(
+            result.authority_status,
+            "SUPPORT_ACCOUNTED_GATE_FLOORS_NOT_EVALUATED",
+        )
+
+    def test_module_is_unreachable_from_the_rev7_dispatcher(self):
+        for symbol in ("account_support", "UnitOutcome", "SupportAccounting"):
+            self.assertFalse(
+                hasattr(contracts_pkg, symbol),
+                f"{symbol} must not be exported by ml_v3.contracts",
+            )
 
 
 if __name__ == "__main__":
