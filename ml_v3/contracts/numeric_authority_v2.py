@@ -26,16 +26,34 @@ from .normalize_v2 import n64, normalized_canonical_bytes
 
 __all__ = [
     "NumericAuthorityError",
+    "P95_QUANTILE",
     "exact_n64",
     "float_from_n64",
     "mean64",
     "n64_from_bits",
+    "p95_type7_64",
     "rn64",
     "sum_pairwise64",
 ]
 
 _N64_RE = re.compile(r"f64:([0-9a-f]{16})\Z")
 _MEAN_KEY_DOMAINS = frozenset({"canonical", "utf8"})
+
+# §12 writes the Type-7 quantile as "q=0.95" without saying whether that
+# denotes the exact rational or the binary64 nearest to it.  They are not the
+# same number: binary64(0.95) is 4278419646001971/4503599627370496, strictly
+# below 19/20.  The choice is observable, not academic — whenever G-1 is a
+# multiple of 20 (G = 21, 41, 61, ...; 49 such G below 1000) the exact
+# rational puts h on an integer, so Type-7 selects x[j] with no interpolation,
+# while the binary64 sits one epsilon under and interpolates between x[j-1]
+# and x[j].  On a distribution with a tail jump — precisely what a p95
+# measures — the two publish different binary64 values.
+#
+# Resolved by the scientific authority (Marco, 2026-08-05): the exact rational.
+# §2.3 item 7 requires rational interpolation with a single rounding, and
+# admitting binary64(0.95) would inject a rounding *before* the interpolation;
+# and Type-7 is defined to land exactly on x[j] when h is integral.
+P95_QUANTILE = Fraction(19, 20)
 
 
 class NumericAuthorityError(ValueError):
@@ -125,6 +143,50 @@ def sum_pairwise64(values: Iterable[str]) -> str:
         )
 
     return reduce_span(0, len(items))
+
+
+def p95_type7_64(values: Iterable[str]) -> str | None:
+    """Diagnostic Type-7 p95 over already-publishable binary64 values.
+
+    §12, verbatim, with ``q`` fixed to :data:`P95_QUANTILE`::
+
+        G=0 -> N/A
+        G=1 -> x[0]
+        G>=2:
+          h = (G-1)*q
+          j = floor(h)
+          gamma = h-j
+          p95 = (1-gamma)*x[j] + gamma*x[j+1]
+
+    Per §2.3 item 7 the ordered binary64 inputs are read as exact rationals,
+    the interpolation is exact, and the result is rounded exactly once at the
+    end.  No intermediate value is materialized as binary64.
+
+    Sorting is by exact numeric value, not by token: two distinct tokens
+    cannot denote the same finite binary64, and equal values are
+    interchangeable, so the order is total on the published result.
+
+    This statistic is **diagnostic**.  §12 states a future p95 gate requires
+    frozen floors and a power analysis, neither of which exists; nothing here
+    makes p95 gating.
+
+    Empty input is N/A and returns ``None``, matching :func:`mean64`.
+    """
+    exact_values = sorted(exact_n64(value) for value in values)
+    count = len(exact_values)
+    if count == 0:
+        return None
+    if count == 1:
+        return rn64(exact_values[0])
+    position = (count - 1) * P95_QUANTILE
+    index = position.numerator // position.denominator
+    gamma = position - index
+    if gamma == 0:
+        return rn64(exact_values[index])
+    return rn64(
+        (1 - gamma) * exact_values[index]
+        + gamma * exact_values[index + 1]
+    )
 
 
 def _mean_order_bytes(

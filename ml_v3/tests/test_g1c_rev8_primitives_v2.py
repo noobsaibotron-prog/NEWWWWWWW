@@ -22,6 +22,7 @@ the only place the shapes are asserted.
 from __future__ import annotations
 
 import itertools
+import random
 import struct
 import unittest
 from fractions import Fraction
@@ -54,8 +55,10 @@ from ml_v3.contracts.normalize_v2 import (
 )
 from ml_v3.contracts.numeric_authority_v2 import (
     NumericAuthorityError,
+    P95_QUANTILE,
     exact_n64,
     mean64,
+    p95_type7_64,
     rn64,
     sum_pairwise64,
 )
@@ -489,6 +492,86 @@ class NumericAuthorityTests(unittest.TestCase):
             with self.subTest(token=token):
                 with self.assertRaises(NumericAuthorityError):
                     exact_n64(token)
+
+
+class P95Type7Tests(unittest.TestCase):
+    """§12 Type-7 p95, diagnostic only."""
+
+    @staticmethod
+    def _n(value):
+        return rn64(Fraction(value))
+
+    def test_quantile_is_the_exact_rational_not_binary64(self):
+        """The normative decision, pinned so it cannot drift silently.
+
+        §12 writes "q=0.95" without saying which number that is.  The two
+        candidates are observably different: binary64(0.95) is strictly below
+        19/20, so whenever G-1 is a multiple of 20 it moves h off the integer
+        and forces an interpolation where Type-7 must select x[j] outright.
+        The authority chose the exact rational on 2026-08-05.
+        """
+        self.assertEqual(P95_QUANTILE, Fraction(19, 20))
+        self.assertNotEqual(
+            P95_QUANTILE, Fraction(*(0.95).as_integer_ratio()))
+
+    def test_contract_edge_cases(self):
+        self.assertIsNone(p95_type7_64([]))
+        self.assertEqual(p95_type7_64([self._n(7)]), self._n(7))
+
+    def test_integral_h_selects_the_element_without_interpolating(self):
+        """G-1 multiple of 20 is where the q choice becomes visible.
+
+        With q=19/20 and G=21, h=19 exactly, so the result is x[19] itself.
+        Under binary64(0.95) it would interpolate between x[18] and x[19] and
+        publish a different binary64 on a tail jump — the case that motivated
+        pinning the quantile.
+        """
+        values = [self._n(0)] * 19 + [self._n(10 ** 6), self._n(10 ** 6)]
+        self.assertEqual(p95_type7_64(values), self._n(10 ** 6))
+        binary64_quantile = Fraction(*(0.95).as_integer_ratio())
+        position = Fraction(len(values) - 1) * binary64_quantile
+        self.assertNotEqual(position, position.numerator // position.denominator)
+
+    def test_matches_an_independently_written_exact_oracle(self):
+        def oracle(tokens):
+            ordered = sorted(exact_n64(token) for token in tokens)
+            count = len(ordered)
+            if count == 0:
+                return None
+            if count == 1:
+                return rn64(ordered[0])
+            position = Fraction(count - 1) * Fraction(19, 20)
+            index = position.__floor__()
+            gamma = position - index
+            if gamma == 0:
+                return rn64(ordered[index])
+            return rn64(
+                (1 - gamma) * ordered[index] + gamma * ordered[index + 1])
+
+        generator = random.Random(20260805)
+        for trial in range(200):
+            count = generator.randint(1, 60)
+            tokens = [
+                self._n(Fraction(
+                    generator.randint(-10 ** 6, 10 ** 6),
+                    generator.randint(1, 997),
+                ))
+                for _ in range(count)
+            ]
+            with self.subTest(trial=trial, count=count):
+                self.assertEqual(p95_type7_64(tokens), oracle(tokens))
+
+    def test_result_is_independent_of_input_order(self):
+        base = [self._n(3), self._n(1), self._n(2), self._n(5), self._n(4)]
+        results = {
+            p95_type7_64(list(permutation))
+            for permutation in itertools.permutations(base)
+        }
+        self.assertEqual(len(results), 1)
+
+    def test_rejects_malformed_tokens(self):
+        with self.assertRaises(NumericAuthorityError):
+            p95_type7_64(["f64:zzzzzzzzzzzzzzzz"])
 
 
 if __name__ == "__main__":
