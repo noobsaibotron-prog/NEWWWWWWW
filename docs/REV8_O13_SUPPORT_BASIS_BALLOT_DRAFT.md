@@ -297,9 +297,15 @@ REV8 SPEC GO            = NO
 ## 11. Ballot
 
 ```text
-Decisione O13F_02: ____________________
-Firma/nome:          ____________________
-Data:                ____________________
+Decisione O13F_02: APPROVO
+Firma/nome:          Marco
+Data:                2026-08-09
+
+SHA-256 ballot pre-firma verificato:
+016ab3fc0f206813a9157dc4d92d60bb90aa5809642fbcfcd2e5a0436eaadcdd
+
+Commit ballot pre-firma verificato:
+087336b62c5cb0d8412ec133991f7ec7d6cc2250
 ```
 
 Opzioni ammesse:
