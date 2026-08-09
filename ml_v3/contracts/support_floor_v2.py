@@ -1,12 +1,15 @@
-"""REV8 O-13 / O13F_01 — hash-bound support-floor evaluation.
+"""REV8 O-13 / O13F_01+O13F_02 — hash-bound support-floor evaluation.
 
 This module is candidate-only and deliberately absent from
 ``ml_v3.contracts.__init__``.  It consumes the support accounting produced by
 ``support_v2`` and answers one question only: is the preregistered independent
 support sufficient for the metric's own gate to run?
 
-``SUPPORT_SUFFICIENT`` is not a metric PASS.  The metric threshold, recall,
-coverage and clean-safety gates remain separate consumers.
+``support_basis`` keeps corpus-only preconditions from becoming unsigned
+defined-result floors while preserving both eligible and defined checks for
+mandatory metric support.  ``SUPPORT_SUFFICIENT`` is not a metric PASS.  The
+metric threshold, recall, coverage and clean-safety gates remain separate
+consumers.
 """
 from __future__ import annotations
 
@@ -24,6 +27,8 @@ __all__ = [
     "POLICY_SCHEMA",
     "POPULATION_PLAN_SCHEMA",
     "SOURCE_CONTRACT_SHA256",
+    "SUPPORT_BASIS_ELIGIBLE_AND_DEFINED",
+    "SUPPORT_BASIS_ELIGIBLE_ONLY",
     "StratumFloorResult",
     "StratumPopulation",
     "SupportFloorError",
@@ -33,7 +38,7 @@ __all__ = [
     "support_floor_policy_sha256",
 ]
 
-POLICY_SCHEMA = "aieq-v3-rev8-o13-support-floor-policy-2"
+POLICY_SCHEMA = "aieq-v3-rev8-o13-support-floor-policy-3"
 POPULATION_PLAN_SCHEMA = "aieq-v3-rev8-o13-stratum-population-plan-1"
 SOURCE_CONTRACT_SHA256 = (
     "398aea26daa6d48324f9df7e9dda54c38b332fb4fbfb230563d5c26172875745"
@@ -41,8 +46,15 @@ SOURCE_CONTRACT_SHA256 = (
 POLICY_REVISION = (
     "REV8-O13F-01@59bec34856a08aa43cc52bb123e904a44575f4f6"
     "+recheck@d0b9916cd08aff29dfde03ffe0c8f38c3656a96c"
+    "+O13F-02@26f35e753f96ebc48d0453e432e8f2a3f5380687"
+    "+recheck@1974f2f57a5bfa12b98c3aa6640ca58e2b825d5e"
 )
-O13F_AUTHORITY_STATUS = "SUPPORT_FLOORS_EVALUATED_METRIC_GATE_NOT_EVALUATED"
+O13F_AUTHORITY_STATUS = (
+    "SUPPORT_FLOORS_AND_BASIS_EVALUATED_METRIC_GATE_NOT_EVALUATED"
+)
+
+SUPPORT_BASIS_ELIGIBLE_AND_DEFINED = "eligible_and_defined"
+SUPPORT_BASIS_ELIGIBLE_ONLY = "eligible_only"
 
 _POLICY_KEYS = frozenset({
     "schema",
@@ -59,6 +71,7 @@ _STRATUM_KEYS = frozenset({
     "stratum_id",
     "population_kind",
     "parent_stratum_id",
+    "support_basis",
     "contract_floor",
     "power_required",
     "power_binding_kind",
@@ -67,6 +80,10 @@ _STRATUM_KEYS = frozenset({
     "n_required",
     "max_parent_fraction_numerator",
     "max_parent_fraction_denominator",
+})
+_SUPPORT_BASES = frozenset({
+    SUPPORT_BASIS_ELIGIBLE_AND_DEFINED,
+    SUPPORT_BASIS_ELIGIBLE_ONLY,
 })
 _SPLIT_ROLES = frozenset({"calibration", "development-metric", "final-test"})
 _POPULATION_KINDS = frozenset({
@@ -99,6 +116,7 @@ class _StratumRequirement:
     stratum_id: str
     population_kind: str
     parent_stratum_id: str | None
+    support_basis: str
     contract_floor: int
     power_required: bool
     power_binding_kind: str | None
@@ -133,6 +151,7 @@ class StratumFloorResult:
     stratum_id: str
     population_kind: str
     parent_stratum_id: str | None
+    support_basis: str
     contract_floor: int
     power_required: bool
     power_binding_kind: str | None
@@ -141,10 +160,10 @@ class StratumFloorResult:
     eligible_count: int
     defined_count: int
     n_required: int
-    eligible_minimum_ok: bool
-    defined_minimum_ok: bool
-    eligible_ceiling_ok: bool
-    defined_ceiling_ok: bool
+    eligible_minimum_ok: bool | None
+    defined_minimum_ok: bool | None
+    eligible_ceiling_ok: bool | None
+    defined_ceiling_ok: bool | None
 
 
 @dataclass(frozen=True)
@@ -203,6 +222,11 @@ def _parse_stratum(value: object, index: int) -> _StratumRequirement:
     parent = value["parent_stratum_id"]
     if parent is not None:
         parent = _require_text(parent, f"{label}.parent_stratum_id")
+    support_basis = _require_text(
+        value["support_basis"], f"{label}.support_basis"
+    )
+    if support_basis not in _SUPPORT_BASES:
+        raise SupportFloorError(f"{label}.support_basis is not canonical")
 
     contract_floor = _require_int(
         value["contract_floor"], f"{label}.contract_floor"
@@ -265,6 +289,7 @@ def _parse_stratum(value: object, index: int) -> _StratumRequirement:
         stratum_id,
         population_kind,
         parent,
+        support_basis,
         contract_floor,
         power_required,
         power_binding_kind,
@@ -319,6 +344,13 @@ def _validate_policy(
     if len(roots) != 1 or roots[0].parent_stratum_id is not None:
         raise SupportFloorError(
             "policy requires exactly one root all_eligible_groups stratum"
+        )
+    if (
+        policy["mandatory"]
+        and roots[0].support_basis != SUPPORT_BASIS_ELIGIBLE_AND_DEFINED
+    ):
+        raise SupportFloorError(
+            "mandatory policy root must use eligible_and_defined"
         )
     for item in strata:
         parent = item.parent_stratum_id
@@ -566,10 +598,18 @@ def evaluate_support_floors(
     for requirement in requirements:
         groups = population_sets[requirement.stratum_id]
         defined = groups & defined_groups
-        eligible_minimum_ok = len(groups) >= requirement.n_required
-        defined_minimum_ok = len(defined) >= requirement.n_required
-        eligible_ceiling_ok = True
-        defined_ceiling_ok = True
+        eligible_minimum_ok: bool | None = (
+            len(groups) >= requirement.n_required
+        )
+        defined_is_active = (
+            requirement.support_basis == SUPPORT_BASIS_ELIGIBLE_AND_DEFINED
+        )
+        defined_minimum_ok: bool | None = (
+            len(defined) >= requirement.n_required
+            if defined_is_active else None
+        )
+        eligible_ceiling_ok: bool | None = True
+        defined_ceiling_ok: bool | None = True if defined_is_active else None
         if requirement.parent_stratum_id is not None:
             parent_groups = population_sets[requirement.parent_stratum_id]
             parent_defined = parent_groups & defined_groups
@@ -579,39 +619,44 @@ def evaluate_support_floors(
                 requirement.max_parent_fraction_numerator,
                 requirement.max_parent_fraction_denominator,
             )
-            defined_ceiling_ok = _fraction_ok(
-                len(defined),
-                len(parent_defined),
-                requirement.max_parent_fraction_numerator,
-                requirement.max_parent_fraction_denominator,
-            )
+            if defined_is_active:
+                defined_ceiling_ok = _fraction_ok(
+                    len(defined),
+                    len(parent_defined),
+                    requirement.max_parent_fraction_numerator,
+                    requirement.max_parent_fraction_denominator,
+                )
         if not eligible_minimum_ok:
             reasons.add("SUPPORT_ELIGIBLE_FLOOR_NOT_MET")
-        if not defined_minimum_ok:
+        if defined_minimum_ok is False:
             reasons.add("SUPPORT_DEFINED_FLOOR_NOT_MET")
-        if requirement.stratum_id != root_id and not all((
+        active_checks = (
             eligible_minimum_ok,
-            defined_minimum_ok,
             eligible_ceiling_ok,
-            defined_ceiling_ok,
-        )):
+            *(
+                (defined_minimum_ok, defined_ceiling_ok)
+                if defined_is_active else ()
+            ),
+        )
+        if requirement.stratum_id != root_id and not all(active_checks):
             reasons.add("SUPPORT_STRATUM_FLOOR_NOT_MET")
         results.append(StratumFloorResult(
-            requirement.stratum_id,
-            requirement.population_kind,
-            requirement.parent_stratum_id,
-            requirement.contract_floor,
-            requirement.power_required,
-            requirement.power_binding_kind,
-            requirement.power_binding_id,
-            requirement.n_power,
-            len(groups),
-            len(defined),
-            requirement.n_required,
-            eligible_minimum_ok,
-            defined_minimum_ok,
-            eligible_ceiling_ok,
-            defined_ceiling_ok,
+            stratum_id=requirement.stratum_id,
+            population_kind=requirement.population_kind,
+            parent_stratum_id=requirement.parent_stratum_id,
+            support_basis=requirement.support_basis,
+            contract_floor=requirement.contract_floor,
+            power_required=requirement.power_required,
+            power_binding_kind=requirement.power_binding_kind,
+            power_binding_id=requirement.power_binding_id,
+            n_power=requirement.n_power,
+            eligible_count=len(groups),
+            defined_count=len(defined),
+            n_required=requirement.n_required,
+            eligible_minimum_ok=eligible_minimum_ok,
+            defined_minimum_ok=defined_minimum_ok,
+            eligible_ceiling_ok=eligible_ceiling_ok,
+            defined_ceiling_ok=defined_ceiling_ok,
         ))
 
     ordered_reasons = tuple(sorted(reasons, key=_REASON_ORDER.__getitem__))

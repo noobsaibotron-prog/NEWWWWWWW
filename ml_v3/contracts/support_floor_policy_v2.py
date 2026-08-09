@@ -21,6 +21,8 @@ from .support_floor_v2 import (
     POLICY_REVISION,
     POLICY_SCHEMA,
     SOURCE_CONTRACT_SHA256,
+    SUPPORT_BASIS_ELIGIBLE_AND_DEFINED,
+    SUPPORT_BASIS_ELIGIBLE_ONLY,
     StratumPopulation,
     SupportFloorError,
     stratum_population_plan_sha256,
@@ -36,7 +38,14 @@ __all__ = [
     "compile_support_floor_policy",
 ]
 
-COMPILER_AUTHORITY_STATUS = "POLICY_COMPILED_CANDIDATE_ONLY_NOT_ACTIVE"
+COMPILER_AUTHORITY_STATUS = (
+    "SUPPORT_BASIS_POLICY_V3_COMPILED_CANDIDATE_ONLY_NOT_ACTIVE"
+)
+
+_SUPPORT_BASES = frozenset({
+    SUPPORT_BASIS_ELIGIBLE_AND_DEFINED,
+    SUPPORT_BASIS_ELIGIBLE_ONLY,
+})
 
 
 class SupportFloorPolicyCompilationError(ValueError):
@@ -76,6 +85,7 @@ class SupportFloorPolicyTemplate:
     population_kind: str
     parent_stratum_id: str | None
     contract_floor: int
+    support_basis: str
     power_binding_kind: str | None = None
     power_binding_id: str | None = None
     max_parent_fraction_numerator: int | None = None
@@ -87,6 +97,11 @@ class SupportFloorPolicyTemplate:
         if self.parent_stratum_id is not None:
             _require_text(self.parent_stratum_id, "parent_stratum_id")
         _require_nonnegative_int(self.contract_floor, "contract_floor")
+        _require_text(self.support_basis, "support_basis")
+        if self.support_basis not in _SUPPORT_BASES:
+            raise SupportFloorPolicyCompilationError(
+                "support_basis is not canonical"
+            )
 
         kind = self.power_binding_kind
         binding_id = self.power_binding_id
@@ -271,6 +286,21 @@ def compile_support_floor_policy(
         raise SupportFloorPolicyCompilationError(
             "support-floor template stratum_id values must be unique"
         )
+    roots = tuple(
+        item for item in templates
+        if item.population_kind == "all_eligible_groups"
+    )
+    if len(roots) != 1 or roots[0].parent_stratum_id is not None:
+        raise SupportFloorPolicyCompilationError(
+            "templates require exactly one root all_eligible_groups stratum"
+        )
+    if (
+        mandatory
+        and roots[0].support_basis != SUPPORT_BASIS_ELIGIBLE_AND_DEFINED
+    ):
+        raise SupportFloorPolicyCompilationError(
+            "mandatory policy root must use eligible_and_defined"
+        )
 
     expected_population = _require_sha256(
         expected_population_plan_sha256,
@@ -323,6 +353,7 @@ def compile_support_floor_policy(
             "stratum_id": template.stratum_id,
             "population_kind": template.population_kind,
             "parent_stratum_id": template.parent_stratum_id,
+            "support_basis": template.support_basis,
             "contract_floor": template.contract_floor,
             "power_required": n_power is not None,
             "power_binding_kind": template.power_binding_kind,

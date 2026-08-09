@@ -21,6 +21,7 @@ the only place the shapes are asserted.
 """
 from __future__ import annotations
 
+import copy
 import hashlib
 import itertools
 import random
@@ -79,6 +80,8 @@ from ml_v3.contracts.support_floor_v2 import (
     POLICY_REVISION,
     POLICY_SCHEMA,
     SOURCE_CONTRACT_SHA256,
+    SUPPORT_BASIS_ELIGIBLE_AND_DEFINED,
+    SUPPORT_BASIS_ELIGIBLE_ONLY,
     StratumPopulation,
     SupportFloorError,
     evaluate_support_floors,
@@ -848,7 +851,7 @@ class HierarchicalMetricAggregationTests(unittest.TestCase):
 
 
 class SupportFloorPolicyTests(unittest.TestCase):
-    """O13F_01 hash binding and support-floor blast radius."""
+    """O13F_01+02 hash binding, support basis and blast radius."""
 
     @staticmethod
     def _groups(count, prefix="g"):
@@ -882,6 +885,7 @@ class SupportFloorPolicyTests(unittest.TestCase):
         n_power=None,
         numerator=None,
         denominator=None,
+        support_basis=SUPPORT_BASIS_ELIGIBLE_AND_DEFINED,
     ):
         if power_required:
             power_binding_kind = power_binding_kind or "gate"
@@ -893,6 +897,7 @@ class SupportFloorPolicyTests(unittest.TestCase):
             "stratum_id": stratum_id,
             "population_kind": population_kind,
             "parent_stratum_id": parent,
+            "support_basis": support_basis,
             "contract_floor": contract_floor,
             "power_required": power_required,
             "power_binding_kind": power_binding_kind,
@@ -981,6 +986,157 @@ class SupportFloorPolicyTests(unittest.TestCase):
             "SUPPORT_ELIGIBLE_FLOOR_NOT_MET", result.reason_codes
         )
         self.assertIn("SUPPORT_DEFINED_FLOOR_NOT_MET", result.reason_codes)
+
+    def test_eligible_only_corpus_stratum_ignores_defined_side(self):
+        support = self._accounting(35, 30)
+        corpus_groups = support.g_eligible[30:]
+        populations = (
+            StratumPopulation("overall", support.g_eligible),
+            StratumPopulation("source:rare", corpus_groups),
+        )
+        policy = self._policy((
+            self._stratum("overall", "all_eligible_groups", 30),
+            self._stratum(
+                "source:rare",
+                "source_family_groups",
+                5,
+                parent="overall",
+                support_basis=SUPPORT_BASIS_ELIGIBLE_ONLY,
+            ),
+        ), populations)
+        result = self._evaluate(policy, support, populations)
+        self.assertTrue(result.support_sufficient)
+        child = next(
+            row for row in result.strata if row.stratum_id == "source:rare"
+        )
+        self.assertEqual(child.support_basis, SUPPORT_BASIS_ELIGIBLE_ONLY)
+        self.assertTrue(child.eligible_minimum_ok)
+        self.assertTrue(child.eligible_ceiling_ok)
+        self.assertIsNone(child.defined_minimum_ok)
+        self.assertIsNone(child.defined_ceiling_ok)
+        self.assertEqual(child.defined_count, 0)
+
+    def test_activating_defined_side_changes_the_same_corpus_case_to_na(self):
+        support = self._accounting(35, 30)
+        corpus_groups = support.g_eligible[30:]
+        populations = (
+            StratumPopulation("overall", support.g_eligible),
+            StratumPopulation("source:rare", corpus_groups),
+        )
+        policy = self._policy((
+            self._stratum("overall", "all_eligible_groups", 30),
+            self._stratum(
+                "source:rare",
+                "source_family_groups",
+                5,
+                parent="overall",
+                support_basis=SUPPORT_BASIS_ELIGIBLE_AND_DEFINED,
+            ),
+        ), populations)
+        result = self._evaluate(policy, support, populations)
+        self.assertFalse(result.support_sufficient)
+        self.assertIn("SUPPORT_DEFINED_FLOOR_NOT_MET", result.reason_codes)
+        self.assertIn("SUPPORT_STRATUM_FLOOR_NOT_MET", result.reason_codes)
+
+    def test_eligible_only_ceiling_does_not_apply_defined_fraction(self):
+        support = self._accounting(35, 30)
+        child_groups = support.g_eligible[:16] + support.g_eligible[30:31]
+        populations = (
+            StratumPopulation("overall", support.g_eligible),
+            StratumPopulation("source:mixed", child_groups),
+        )
+        policy = self._policy((
+            self._stratum("overall", "all_eligible_groups", 30),
+            self._stratum(
+                "source:mixed",
+                "source_family_groups",
+                5,
+                parent="overall",
+                numerator=1,
+                denominator=2,
+                support_basis=SUPPORT_BASIS_ELIGIBLE_ONLY,
+            ),
+        ), populations)
+        result = self._evaluate(policy, support, populations)
+        self.assertTrue(result.support_sufficient)
+        child = next(
+            row for row in result.strata if row.stratum_id == "source:mixed"
+        )
+        self.assertEqual((child.eligible_count, child.defined_count), (17, 16))
+        self.assertTrue(child.eligible_ceiling_ok)
+        self.assertIsNone(child.defined_ceiling_ok)
+
+    def test_mandatory_root_cannot_disable_defined_floor(self):
+        support = self._accounting(30, 30)
+        populations = (StratumPopulation("overall", support.g_eligible),)
+        policy = self._policy((
+            self._stratum(
+                "overall",
+                "all_eligible_groups",
+                30,
+                support_basis=SUPPORT_BASIS_ELIGIBLE_ONLY,
+            ),
+        ), populations)
+        with self.assertRaisesRegex(
+            SupportFloorError, "root must use eligible_and_defined"
+        ):
+            support_floor_policy_sha256(policy)
+
+    def test_unknown_defined_only_and_missing_basis_are_rejected(self):
+        support = self._accounting(30, 30)
+        populations = (StratumPopulation("overall", support.g_eligible),)
+        policy = self._policy((
+            self._stratum("overall", "all_eligible_groups", 30),
+        ), populations)
+
+        defined_only = copy.deepcopy(policy)
+        defined_only["strata"][0]["support_basis"] = "defined_only"
+        with self.assertRaisesRegex(SupportFloorError, "not canonical"):
+            support_floor_policy_sha256(defined_only)
+
+        missing = copy.deepcopy(policy)
+        del missing["strata"][0]["support_basis"]
+        with self.assertRaisesRegex(SupportFloorError, "exact-key"):
+            support_floor_policy_sha256(missing)
+
+    def test_policy_v2_is_rejected_without_fallback(self):
+        support = self._accounting(30, 30)
+        populations = (StratumPopulation("overall", support.g_eligible),)
+        policy = self._policy((
+            self._stratum("overall", "all_eligible_groups", 30),
+        ), populations)
+        policy["schema"] = "aieq-v3-rev8-o13-support-floor-policy-2"
+        with self.assertRaisesRegex(SupportFloorError, "unexpected.*schema"):
+            support_floor_policy_sha256(policy)
+
+    def test_spearman_internal_pair_floor_only_changes_g_defined(self):
+        groups = self._groups(30)
+        eligible = tuple((group, ("unit", group)) for group in groups)
+        support = account_support(
+            eligible,
+            tuple(
+                UnitOutcome(
+                    group,
+                    unit_key,
+                    index < 29,
+                    None if index < 29 else "INSUFFICIENT_MATCHED_SUPPORT",
+                )
+                for index, (group, unit_key) in enumerate(eligible)
+            ),
+        )
+        self.assertEqual(
+            support.na_reasons[-1],
+            ("g029", ("INSUFFICIENT_MATCHED_SUPPORT",)),
+        )
+        populations = (StratumPopulation("overall", support.g_eligible),)
+        policy = self._policy((
+            self._stratum("overall", "all_eligible_groups", 30),
+        ), populations)
+        result = self._evaluate(policy, support, populations)
+        self.assertEqual(result.strata[0].n_required, 30)
+        self.assertEqual(result.strata[0].eligible_count, 30)
+        self.assertEqual(result.strata[0].defined_count, 29)
+        self.assertFalse(result.support_sufficient)
 
     def test_power_floor_uses_the_maximum(self):
         power_hash = "1" * 64
