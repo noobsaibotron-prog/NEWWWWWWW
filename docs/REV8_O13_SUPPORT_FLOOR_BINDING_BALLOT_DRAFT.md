@@ -226,10 +226,13 @@ SUPPORT_ACCOUNTING_INVALID
   -> FAIL di materializzazione dell'intero report
 ```
 
-I valori numerici calcolabili sotto floor possono essere pubblicati soltanto
-come diagnostici esplicitamente etichettati; non entrano nel campo normativo di
-gate, non soddisfano una claim e non vengono usati per scegliere una policy
-successiva.
+Sotto floor, il valore normativo della metrica è N/A. ECE e Brier conservano
+la sola eccezione diagnostica già autorizzata dal candidate quando il supporto
+è maggiore di zero; per le altre metriche nessun valore numerico sotto floor
+viene pubblicato, salvo che un'autorità preesistente lo classifichi
+esplicitamente come diagnostico. Un diagnostico autorizzato non entra nel campo
+normativo di gate, non soddisfa una claim e non viene usato per scegliere una
+policy successiva.
 
 ### 4.4 p95, ECE e Brier
 
@@ -304,9 +307,26 @@ La suite deve inoltre provare:
 8. N/A non entra in macro-mean né p95;
 9. permutare manifest, unità, risultati o strata non cambia i canonical bytes;
 10. il p95 diagnostico non può essere promosso a gate;
-11. un risultato numerico sotto floor resta soltanto diagnostico;
+11. sotto floor il valore normativo è N/A; soltanto ECE/Brier possono
+    conservare il reporting diagnostico già autorizzato con supporto >0;
 12. nessun codice REV8 è esportato dal dispatcher REV7 prima dello switch
     atomico.
+
+Le fixture sui vincoli non riducibili a un semplice minimo includono inoltre:
+
+```text
+30 positivi anomaly, 3 source family, almeno 5 ciascuna:
+  concentrazione massima 15/30 -> ammessa (50%)
+  concentrazione massima 16/30 -> insufficiente (>50%)
+
+source family:
+  2 family -> insufficiente
+  3 family -> la numerosità di ciascuna deve essere verificata separatamente
+
+clean-safety:
+  149 group_id ma un profilo a 9 -> insufficiente
+  149 group_id con tutti i 7 profili >=10 -> il solo supporto è sufficiente
+```
 
 Mutation obbligatoriamente uccise:
 
@@ -316,7 +336,7 @@ lower n_required after observing predictions
 ignore n_power
 ignore one mandatory stratum
 count units/assets instead of unique group_id
-turn N/A into zero
+turn N/A into zero or publish an unauthorized below-floor numeric value
 accept a self-hashed but unexpected policy
 fall back when the power plan is missing
 let diagnostic p95 satisfy a gate
