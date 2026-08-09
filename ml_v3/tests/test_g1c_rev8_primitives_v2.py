@@ -63,8 +63,12 @@ from ml_v3.contracts.numeric_authority_v2 import (
     sum_pairwise64,
 )
 from ml_v3.contracts.support_v2 import (
+    AGGREGATION_AUTHORITY_STATUS,
+    HierarchicalMetricAggregation,
+    MetricUnitResult,
     SupportError,
     UnitOutcome,
+    aggregate_unit_metric_values,
     account_support,
 )
 
@@ -674,11 +678,159 @@ class SupportAccountingTests(unittest.TestCase):
         )
 
     def test_module_is_unreachable_from_the_rev7_dispatcher(self):
-        for symbol in ("account_support", "UnitOutcome", "SupportAccounting"):
+        for symbol in (
+            "account_support",
+            "aggregate_unit_metric_values",
+            "UnitOutcome",
+            "MetricUnitResult",
+            "SupportAccounting",
+            "HierarchicalMetricAggregation",
+        ):
             self.assertFalse(
                 hasattr(contracts_pkg, symbol),
                 f"{symbol} must not be exported by ml_v3.contracts",
             )
+
+
+class HierarchicalMetricAggregationTests(unittest.TestCase):
+    """§12 defined unit -> group -> equal-weight macro reduction."""
+
+    @staticmethod
+    def _n(value):
+        return rn64(Fraction(value))
+
+    def test_groups_have_equal_weight_not_unit_weight(self):
+        """Three units in one group cannot outweigh one independent group."""
+        eligible = (
+            ("many", ("unit", "a")),
+            ("many", ("unit", "b")),
+            ("many", ("unit", "c")),
+            ("one", ("unit", "d")),
+        )
+        results = (
+            MetricUnitResult("many", ("unit", "a"), self._n(0)),
+            MetricUnitResult("many", ("unit", "b"), self._n(0)),
+            MetricUnitResult("many", ("unit", "c"), self._n(0)),
+            MetricUnitResult("one", ("unit", "d"), self._n(1)),
+        )
+        aggregate = aggregate_unit_metric_values(eligible, results)
+        self.assertEqual(
+            aggregate.group_values,
+            (("many", self._n(0)), ("one", self._n(1))),
+        )
+        self.assertEqual(aggregate.macro_mean64, self._n(Fraction(1, 2)))
+        self.assertNotEqual(aggregate.macro_mean64, self._n(Fraction(1, 4)))
+
+    def test_na_unit_is_excluded_not_converted_to_zero(self):
+        eligible = (
+            ("g", ("unit", "defined")),
+            ("g", ("unit", "na")),
+        )
+        results = (
+            MetricUnitResult("g", ("unit", "defined"), self._n(1)),
+            MetricUnitResult(
+                "g", ("unit", "na"), na_reason="PAIRING_ENVELOPE_UNAVAILABLE"
+            ),
+        )
+        aggregate = aggregate_unit_metric_values(eligible, results)
+        self.assertEqual(aggregate.group_values, (("g", self._n(1)),))
+        self.assertEqual(aggregate.macro_mean64, self._n(1))
+        self.assertEqual(aggregate.support.defined_unit_count, 1)
+        self.assertEqual(aggregate.support.na_unit_count, 1)
+
+    def test_all_na_is_published_as_no_macro_value(self):
+        eligible = (
+            ("g1", ("unit", "a")),
+            ("g2", ("unit", "b")),
+        )
+        results = (
+            MetricUnitResult("g1", ("unit", "a"), na_reason="NO_SUPPORT"),
+            MetricUnitResult("g2", ("unit", "b"), na_reason="NO_SUPPORT"),
+        )
+        aggregate = aggregate_unit_metric_values(eligible, results)
+        self.assertEqual(aggregate.support.g_defined, ())
+        self.assertEqual(aggregate.support.g_na, ("g1", "g2"))
+        self.assertEqual(aggregate.group_values, ())
+        self.assertIsNone(aggregate.macro_mean64)
+        self.assertIsNone(aggregate.p95_group64)
+
+    def test_p95_is_diagnostic_over_defined_group_values(self):
+        eligible = tuple(
+            (f"g{index}", ("unit", str(index))) for index in range(3)
+        ) + (("g-na", ("unit", "na")),)
+        results = tuple(
+            MetricUnitResult(
+                f"g{index}", ("unit", str(index)), self._n(index)
+            )
+            for index in range(3)
+        ) + (
+            MetricUnitResult("g-na", ("unit", "na"), na_reason="NO_SUPPORT"),
+        )
+        aggregate = aggregate_unit_metric_values(eligible, results)
+        self.assertEqual(
+            aggregate.p95_group64,
+            p95_type7_64([self._n(0), self._n(1), self._n(2)]),
+        )
+        self.assertEqual(
+            aggregate.authority_status,
+            AGGREGATION_AUTHORITY_STATUS,
+        )
+        self.assertIn("GATE_FLOORS_NOT_EVALUATED", aggregate.authority_status)
+
+    def test_result_is_independent_of_eligible_and_result_order(self):
+        eligible = (
+            ("g2", ("unit", "b")),
+            ("g1", ("unit", "a")),
+            ("g2", ("unit", "c")),
+        )
+        results = (
+            MetricUnitResult("g2", ("unit", "c"), self._n(3)),
+            MetricUnitResult("g1", ("unit", "a"), self._n(7)),
+            MetricUnitResult("g2", ("unit", "b"), self._n(1)),
+        )
+        expected = aggregate_unit_metric_values(eligible, results)
+        for eligible_order in itertools.permutations(eligible):
+            for result_order in itertools.permutations(results):
+                with self.subTest(
+                    eligible=eligible_order,
+                    results=result_order,
+                ):
+                    self.assertEqual(
+                        aggregate_unit_metric_values(
+                            tuple(eligible_order), tuple(result_order)
+                        ),
+                        expected,
+                    )
+
+    def test_missing_extra_and_duplicate_units_fail_closed(self):
+        eligible = (("g", ("unit", "a")),)
+        value = MetricUnitResult("g", ("unit", "a"), self._n(1))
+        with self.assertRaisesRegex(SupportError, "no outcome"):
+            aggregate_unit_metric_values(eligible, ())
+        with self.assertRaisesRegex(SupportError, "outside the frozen"):
+            aggregate_unit_metric_values(
+                eligible,
+                (value, MetricUnitResult("x", ("unit", "x"), self._n(1))),
+            )
+        with self.assertRaisesRegex(SupportError, "duplicate outcome"):
+            aggregate_unit_metric_values(eligible, (value, value))
+
+    def test_unit_state_is_an_exact_tagged_union(self):
+        with self.assertRaisesRegex(SupportError, "exactly one"):
+            MetricUnitResult("g", ("unit",))
+        with self.assertRaisesRegex(SupportError, "exactly one"):
+            MetricUnitResult(
+                "g",
+                ("unit",),
+                self._n(1),
+                "MUST_NOT_EXIST_WITH_VALUE",
+            )
+        with self.assertRaisesRegex(SupportError, "canonical finite N64"):
+            MetricUnitResult("g", ("unit",), "f64:7ff0000000000000")
+
+    def test_non_tuple_results_fail_closed(self):
+        with self.assertRaisesRegex(SupportError, "must be a tuple"):
+            aggregate_unit_metric_values((), [])
 
 
 if __name__ == "__main__":

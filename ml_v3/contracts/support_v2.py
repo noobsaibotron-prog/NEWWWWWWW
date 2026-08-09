@@ -43,16 +43,29 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .normalize_v2 import normalized_canonical_bytes
+from .numeric_authority_v2 import (
+    NumericAuthorityError,
+    float_from_n64,
+    mean64,
+    p95_type7_64,
+)
 
 __all__ = [
     "SUPPORT_AUTHORITY_STATUS",
+    "AGGREGATION_AUTHORITY_STATUS",
+    "HierarchicalMetricAggregation",
+    "MetricUnitResult",
     "SupportAccounting",
     "SupportError",
     "UnitOutcome",
+    "aggregate_unit_metric_values",
     "account_support",
 ]
 
 SUPPORT_AUTHORITY_STATUS = "SUPPORT_ACCOUNTED_GATE_FLOORS_NOT_EVALUATED"
+AGGREGATION_AUTHORITY_STATUS = (
+    "UNIT_GROUP_MACRO_MATERIALIZED_GATE_FLOORS_NOT_EVALUATED"
+)
 
 
 class SupportError(ValueError):
@@ -105,6 +118,65 @@ class SupportAccounting:
     defined_unit_count: int
     na_unit_count: int
     authority_status: str = SUPPORT_AUTHORITY_STATUS
+
+
+@dataclass(frozen=True)
+class MetricUnitResult:
+    """One metric's already-publishable result for one evaluation unit.
+
+    Metric-specific code owns the observation-to-unit reduction.  This
+    O-13 layer starts at the signed boundary where an eligible unit has
+    either one canonical binary64 value or one N/A reason, never both and
+    never neither.  Keeping that state as a tagged union is what prevents an
+    N/A unit from becoming an implicit numeric zero downstream.
+    """
+
+    group_id: str
+    unit_key: tuple[str, ...]
+    value64: str | None = None
+    na_reason: str | None = None
+
+    def __post_init__(self) -> None:
+        _validate_group_id(self.group_id)
+        _validate_unit_key(self.unit_key)
+        has_value = self.value64 is not None
+        has_reason = self.na_reason is not None
+        if has_value == has_reason:
+            raise SupportError(
+                "a metric unit must have exactly one of value64 or na_reason"
+            )
+        if has_value:
+            try:
+                float_from_n64(self.value64)
+            except NumericAuthorityError as exc:
+                raise SupportError("value64 must be canonical finite N64") from exc
+        else:
+            if not isinstance(self.na_reason, str) or not self.na_reason:
+                raise SupportError("na_reason must be a non-empty string")
+            if "\x00" in self.na_reason:
+                raise SupportError("na_reason must be NUL-free")
+
+    @property
+    def defined(self) -> bool:
+        return self.value64 is not None
+
+
+@dataclass(frozen=True)
+class HierarchicalMetricAggregation:
+    """O-13 unit-to-group-to-macro materialization for one metric.
+
+    ``unit_values`` and ``group_values`` retain the canonical identities used
+    by each reduction so a report reader can replay the hierarchy.  The p95
+    is diagnostic over defined group values only.  Gate floors remain absent
+    and the authority status says so explicitly.
+    """
+
+    support: SupportAccounting
+    unit_values: tuple[tuple[str, tuple[str, ...], str], ...]
+    group_values: tuple[tuple[str, str], ...]
+    macro_mean64: str | None
+    p95_group64: str | None
+    authority_status: str = AGGREGATION_AUTHORITY_STATUS
 
 
 def _validate_group_id(value: object) -> None:
@@ -215,4 +287,83 @@ def account_support(
         na_reasons=na_reasons,
         defined_unit_count=defined_unit_count,
         na_unit_count=na_unit_count,
+    )
+
+
+def aggregate_unit_metric_values(
+    eligible_units: tuple[tuple[str, tuple[str, ...]], ...],
+    unit_results: tuple[MetricUnitResult, ...],
+) -> HierarchicalMetricAggregation:
+    """Reduce defined unit values to equal-weight groups and macro mean.
+
+    The input unit value is already the metric-specific published binary64
+    for that evaluation unit.  This function performs the remaining signed
+    O-13 hierarchy exactly:
+
+    1. defined unit values are reduced within each group by ``mean64`` using
+       ``evaluation_unit_key`` ordering;
+    2. defined group values are reduced by ``mean64`` using raw UTF-8
+       ``group_id`` ordering, so every group has weight one;
+    3. diagnostic Type-7 p95 is computed over the same defined group values.
+
+    Support is materialized first and must cover the frozen eligible set
+    exactly.  Missing/extra/duplicate units therefore fail before any mean is
+    published.  N/A units have no value and cannot enter either reduction.
+    No support floor and no PASS/FAIL gate is evaluated here.
+    """
+    if not isinstance(unit_results, tuple):
+        raise SupportError("unit_results must be a tuple")
+    if any(not isinstance(result, MetricUnitResult) for result in unit_results):
+        raise SupportError("unit_results must contain MetricUnitResult values")
+
+    outcomes = tuple(
+        UnitOutcome(
+            result.group_id,
+            result.unit_key,
+            result.defined,
+            result.na_reason,
+        )
+        for result in unit_results
+    )
+    support = account_support(eligible_units, outcomes)
+
+    defined_by_group: dict[str, list[tuple[tuple[str, ...], str]]] = {}
+    unit_values: list[tuple[str, tuple[str, ...], str]] = []
+    for result in unit_results:
+        if not result.defined:
+            continue
+        assert result.value64 is not None  # tagged union enforced above
+        defined_by_group.setdefault(result.group_id, []).append(
+            (result.unit_key, result.value64)
+        )
+        unit_values.append((result.group_id, result.unit_key, result.value64))
+
+    unit_values.sort(
+        key=lambda item: (
+            _group_order(item[0]),
+            normalized_canonical_bytes(item[1]),
+        )
+    )
+
+    group_values: list[tuple[str, str]] = []
+    for group_id in support.g_defined:
+        value64 = mean64(defined_by_group.get(group_id, ()))
+        if value64 is None:  # Defensive: support says this group is defined.
+            raise SupportError(
+                f"defined group {group_id!r} has no defined unit value"
+            )
+        group_values.append((group_id, value64))
+
+    materialized_group_values = tuple(group_values)
+    macro_mean64 = mean64(materialized_group_values, key_domain="utf8")
+    p95_group64 = p95_type7_64(
+        value64 for _group_id, value64 in materialized_group_values
+    )
+
+    return HierarchicalMetricAggregation(
+        support=support,
+        unit_values=tuple(unit_values),
+        group_values=materialized_group_values,
+        macro_mean64=macro_mean64,
+        p95_group64=p95_group64,
     )
