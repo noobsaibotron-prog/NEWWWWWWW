@@ -877,10 +877,17 @@ class SupportFloorPolicyTests(unittest.TestCase):
         *,
         parent=None,
         power_required=False,
+        power_binding_kind=None,
+        power_binding_id=None,
         n_power=None,
         numerator=None,
         denominator=None,
     ):
+        if power_required:
+            power_binding_kind = power_binding_kind or "gate"
+            power_binding_id = (
+                power_binding_id or "average_precision:Resonance"
+            )
         required = max(contract_floor, n_power) if power_required else contract_floor
         return {
             "stratum_id": stratum_id,
@@ -888,6 +895,8 @@ class SupportFloorPolicyTests(unittest.TestCase):
             "parent_stratum_id": parent,
             "contract_floor": contract_floor,
             "power_required": power_required,
+            "power_binding_kind": power_binding_kind,
+            "power_binding_id": power_binding_id,
             "n_power": n_power,
             "n_required": required,
             "max_parent_fraction_numerator": numerator,

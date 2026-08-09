@@ -33,7 +33,7 @@ __all__ = [
     "support_floor_policy_sha256",
 ]
 
-POLICY_SCHEMA = "aieq-v3-rev8-o13-support-floor-policy-1"
+POLICY_SCHEMA = "aieq-v3-rev8-o13-support-floor-policy-2"
 POPULATION_PLAN_SCHEMA = "aieq-v3-rev8-o13-stratum-population-plan-1"
 SOURCE_CONTRACT_SHA256 = (
     "398aea26daa6d48324f9df7e9dda54c38b332fb4fbfb230563d5c26172875745"
@@ -61,6 +61,8 @@ _STRATUM_KEYS = frozenset({
     "parent_stratum_id",
     "contract_floor",
     "power_required",
+    "power_binding_kind",
+    "power_binding_id",
     "n_power",
     "n_required",
     "max_parent_fraction_numerator",
@@ -99,6 +101,8 @@ class _StratumRequirement:
     parent_stratum_id: str | None
     contract_floor: int
     power_required: bool
+    power_binding_kind: str | None
+    power_binding_id: str | None
     n_power: int | None
     n_required: int
     max_parent_fraction_numerator: int | None
@@ -129,6 +133,11 @@ class StratumFloorResult:
     stratum_id: str
     population_kind: str
     parent_stratum_id: str | None
+    contract_floor: int
+    power_required: bool
+    power_binding_kind: str | None
+    power_binding_id: str | None
+    n_power: int | None
     eligible_count: int
     defined_count: int
     n_required: int
@@ -201,15 +210,28 @@ def _parse_stratum(value: object, index: int) -> _StratumRequirement:
     power_required = value["power_required"]
     if not isinstance(power_required, bool):
         raise SupportFloorError(f"{label}.power_required must be a bool")
+    power_binding_kind = value["power_binding_kind"]
+    power_binding_id = value["power_binding_id"]
     n_power = value["n_power"]
     n_required = _require_int(value["n_required"], f"{label}.n_required")
     if power_required:
+        if power_binding_kind not in ("gate", "family"):
+            raise SupportFloorError(
+                f"{label}.power_binding_kind must be gate or family"
+            )
+        power_binding_id = _require_text(
+            power_binding_id, f"{label}.power_binding_id"
+        )
         n_power = _require_int(n_power, f"{label}.n_power", minimum=1)
         if n_required != max(contract_floor, n_power):
             raise SupportFloorError(
                 f"{label}.n_required must equal max(contract_floor, n_power)"
             )
     else:
+        if power_binding_kind is not None or power_binding_id is not None:
+            raise SupportFloorError(
+                f"{label} unpowered stratum must not carry a power binding"
+            )
         if n_power is not None:
             raise SupportFloorError(
                 f"{label}.n_power must be null when power is not required"
@@ -245,6 +267,8 @@ def _parse_stratum(value: object, index: int) -> _StratumRequirement:
         parent,
         contract_floor,
         power_required,
+        power_binding_kind,
+        power_binding_id,
         n_power,
         n_required,
         numerator,
@@ -576,6 +600,11 @@ def evaluate_support_floors(
             requirement.stratum_id,
             requirement.population_kind,
             requirement.parent_stratum_id,
+            requirement.contract_floor,
+            requirement.power_required,
+            requirement.power_binding_kind,
+            requirement.power_binding_id,
+            requirement.n_power,
             len(groups),
             len(defined),
             requirement.n_required,
