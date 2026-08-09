@@ -1,6 +1,6 @@
 # REV8 — O-13 — SUPPORT FLOOR BINDING BALLOT (O13F_01)
 
-**Stato:** `DRAFT — UNSIGNED — NOT EFFECTIVE`
+**Stato:** `SIGNED — APPROVED — PENDING POST-SIGNATURE RECHECK — NOT EFFECTIVE`
 
 Questo ballot non introduce nuovi floor numerici. Congela esclusivamente il
 dispatch fra i floor già presenti nel contratto, il piano di potenza
@@ -374,16 +374,19 @@ dispatch non firmato.
 
 ## 9. Firma dell'autorità
 
-Compilare soltanto dopo il freeze docs-only del presente draft e il
-counter-check sul suo commit immutabile.
+Firma registrata dopo il freeze docs-only e il counter-check sul commit
+immutabile del draft.
 
 ```text
-Decisione O13F_01:     APPROVO | RESPINGO | APPROVO CON MODIFICHE
-Firma/nome:
-Data:
+Decisione O13F_01:     APPROVO
+Firma/nome:            Marco
+Data:                  2026-08-09
 
-SHA-256 ballot verificato:
-Commit ballot verificato:
+SHA-256 ballot pre-firma verificato:
+f26de4f266a37b40007c8effebbc6dc048c07906b98a1d4fdda4e5eaeb81271d
+
+Commit ballot pre-firma verificato:
+45c49318f8cb8a6b9bbcb8cda29df929e5a5c563
 ```
 
 `APPROVO CON MODIFICHE` non rende efficace la decisione: richiede un nuovo
