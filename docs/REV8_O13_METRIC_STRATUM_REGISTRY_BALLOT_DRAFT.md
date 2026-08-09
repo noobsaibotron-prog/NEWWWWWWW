@@ -10,7 +10,7 @@ Base commit                     = 468f7e3212d386c916642f7a292d63af7e1d8ad0
 Amendment base                  = 3c2bf9aad616f1e5b8959509cac91aed3545367c
 Pre-sign freeze superseded      = 6ce33f9a30af23fd7c6b08ad5bcf7a61ac5d113d
 Counter-check superseded        = REV8_O13_METRIC_STRATUM_REGISTRY_BALLOT_COUNTERCHECK.md
-Decisione O13F_03               = NON FIRMATA
+Decisione O13F_03               = APPROVO — PENDING POST-SIGNATURE RECHECK
 Registry data artifact          = NON MATERIALIZZATO
 Official support-floor policies = NON MATERIALIZZATE
 REV8 dispatcher activation      = NO
@@ -873,7 +873,7 @@ il corpus/power plan reale o gate successivi.
 
 ## 11. Stop rule
 
-Fino a firma e post-signature recheck di O13F_03:
+Fino a un post-signature recheck `CLEAN` di O13F_03:
 
 ```text
 registry schema implementation  = NON AUTORIZZATA
@@ -888,15 +888,15 @@ runtime / training / push       = NON AUTORIZZATI
 ## 12. Ballot
 
 ```text
-Decisione O13F_03: NON FIRMATA
-Firma/nome:
-Data:
+Decisione O13F_03: APPROVO
+Firma/nome:          Marco
+Data:                2026-08-10
 
-SHA-256 ballot pre-firma:
-[DA MATERIALIZZARE SUL COMMIT IMMUTABILE]
+SHA-256 ballot pre-firma verificato:
+23a31daa99a78510c6b666a94749f590853faeb38064aee6cf06a40c99bddfa5
 
-Commit ballot pre-firma:
-[DA MATERIALIZZARE]
+Commit ballot pre-firma verificato:
+5120b5728c781e10a898335e0f0c9bbc72485944
 ```
 
 Opzioni ammesse:
