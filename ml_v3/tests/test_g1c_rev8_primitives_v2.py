@@ -21,11 +21,13 @@ the only place the shapes are asserted.
 """
 from __future__ import annotations
 
+import hashlib
 import itertools
 import random
 import struct
 import unittest
 from fractions import Fraction
+from pathlib import Path
 
 import ml_v3.contracts as contracts_pkg
 from ml_v3.contracts.canonical import canonical_bytes
@@ -66,10 +68,22 @@ from ml_v3.contracts.support_v2 import (
     AGGREGATION_AUTHORITY_STATUS,
     HierarchicalMetricAggregation,
     MetricUnitResult,
+    SupportAccounting,
     SupportError,
     UnitOutcome,
     aggregate_unit_metric_values,
     account_support,
+)
+from ml_v3.contracts.support_floor_v2 import (
+    O13F_AUTHORITY_STATUS,
+    POLICY_REVISION,
+    POLICY_SCHEMA,
+    SOURCE_CONTRACT_SHA256,
+    StratumPopulation,
+    SupportFloorError,
+    evaluate_support_floors,
+    stratum_population_plan_sha256,
+    support_floor_policy_sha256,
 )
 
 
@@ -831,6 +845,372 @@ class HierarchicalMetricAggregationTests(unittest.TestCase):
     def test_non_tuple_results_fail_closed(self):
         with self.assertRaisesRegex(SupportError, "must be a tuple"):
             aggregate_unit_metric_values((), [])
+
+
+class SupportFloorPolicyTests(unittest.TestCase):
+    """O13F_01 hash binding and support-floor blast radius."""
+
+    @staticmethod
+    def _groups(count, prefix="g"):
+        return tuple(f"{prefix}{index:03}" for index in range(count))
+
+    @classmethod
+    def _accounting(cls, eligible_count, defined_count):
+        groups = cls._groups(eligible_count)
+        eligible = tuple((group, ("unit", group)) for group in groups)
+        outcomes = tuple(
+            UnitOutcome(
+                group,
+                ("unit", group),
+                index < defined_count,
+                None if index < defined_count else "NO_SUPPORT",
+            )
+            for index, group in enumerate(groups)
+        )
+        return account_support(eligible, outcomes)
+
+    @staticmethod
+    def _stratum(
+        stratum_id,
+        population_kind,
+        contract_floor,
+        *,
+        parent=None,
+        power_required=False,
+        n_power=None,
+        numerator=None,
+        denominator=None,
+    ):
+        required = max(contract_floor, n_power) if power_required else contract_floor
+        return {
+            "stratum_id": stratum_id,
+            "population_kind": population_kind,
+            "parent_stratum_id": parent,
+            "contract_floor": contract_floor,
+            "power_required": power_required,
+            "n_power": n_power,
+            "n_required": required,
+            "max_parent_fraction_numerator": numerator,
+            "max_parent_fraction_denominator": denominator,
+        }
+
+    @classmethod
+    def _policy(cls, strata, populations, *, power_hash=None):
+        return {
+            "schema": POLICY_SCHEMA,
+            "contract_revision": POLICY_REVISION,
+            "source_contract_sha256": SOURCE_CONTRACT_SHA256,
+            "metric_id": "average_precision:Resonance",
+            "split_role": "final-test",
+            "mandatory": True,
+            "strata": sorted(strata, key=lambda item: item["stratum_id"].encode("utf-8")),
+            "population_plan_sha256": stratum_population_plan_sha256(
+                "average_precision:Resonance",
+                "final-test",
+                tuple(populations),
+            ),
+            "power_plan_sha256": power_hash,
+        }
+
+    @classmethod
+    def _evaluate(cls, policy, support, populations):
+        return evaluate_support_floors(
+            policy,
+            support_floor_policy_sha256(policy),
+            support,
+            tuple(populations),
+            metric_id="average_precision:Resonance",
+            split_role="final-test",
+            power_plan_sha256=policy["power_plan_sha256"],
+        )
+
+    def test_source_contract_digest_matches_repository_bytes(self):
+        contract = (
+            Path(__file__).resolve().parents[2]
+            / "docs"
+            / "MOTORE_V3_G1_CONTRACT_REV8_CANDIDATE.md"
+        )
+        self.assertEqual(
+            hashlib.sha256(contract.read_bytes()).hexdigest(),
+            SOURCE_CONTRACT_SHA256,
+        )
+
+    def test_contract_floor_under_on_over(self):
+        for count, sufficient in ((29, False), (30, True), (31, True)):
+            with self.subTest(count=count):
+                support = self._accounting(count, count)
+                populations = (
+                    StratumPopulation("overall", support.g_eligible),
+                )
+                policy = self._policy((
+                    self._stratum("overall", "all_eligible_groups", 30),
+                ), populations)
+                result = self._evaluate(
+                    policy,
+                    support,
+                    populations,
+                )
+                self.assertEqual(result.support_sufficient, sufficient)
+                self.assertEqual(
+                    result.status,
+                    "SUPPORT_SUFFICIENT" if sufficient else "SUPPORT_INSUFFICIENT",
+                )
+
+    def test_defined_floor_is_not_replaced_by_eligible_floor(self):
+        support = self._accounting(30, 29)
+        populations = (StratumPopulation("overall", support.g_eligible),)
+        policy = self._policy((
+            self._stratum("overall", "all_eligible_groups", 30),
+        ), populations)
+        result = self._evaluate(
+            policy,
+            support,
+            populations,
+        )
+        self.assertFalse(result.support_sufficient)
+        self.assertNotIn(
+            "SUPPORT_ELIGIBLE_FLOOR_NOT_MET", result.reason_codes
+        )
+        self.assertIn("SUPPORT_DEFINED_FLOOR_NOT_MET", result.reason_codes)
+
+    def test_power_floor_uses_the_maximum(self):
+        power_hash = "1" * 64
+        support = self._accounting(44, 44)
+        populations = (StratumPopulation("overall", support.g_eligible),)
+        policy = self._policy((
+            self._stratum(
+                "overall",
+                "all_eligible_groups",
+                30,
+                power_required=True,
+                n_power=45,
+            ),
+        ), populations, power_hash=power_hash)
+        self.assertEqual(policy["strata"][0]["n_required"], 45)
+        result = self._evaluate(
+            policy,
+            support,
+            populations,
+        )
+        self.assertFalse(result.support_sufficient)
+
+    def test_missing_policy_is_na_and_never_falls_back(self):
+        support = self._accounting(149, 149)
+        result = evaluate_support_floors(
+            None,
+            None,
+            support,
+            (),
+            metric_id="average_precision:Resonance",
+            split_role="final-test",
+        )
+        self.assertEqual(result.status, "SUPPORT_POLICY_UNAVAILABLE")
+        self.assertFalse(result.support_sufficient)
+        self.assertEqual(result.reason_codes, ("SUPPORT_POLICY_UNAVAILABLE",))
+
+    def test_hash_mismatch_and_extra_policy_key_are_fatal(self):
+        support = self._accounting(1, 1)
+        populations = (StratumPopulation("overall", support.g_eligible),)
+        policy = self._policy((
+            self._stratum("overall", "all_eligible_groups", 1),
+        ), populations)
+        with self.assertRaisesRegex(SupportFloorError, "HASH_MISMATCH"):
+            evaluate_support_floors(
+                policy,
+                "0" * 64,
+                support,
+                populations,
+                metric_id=policy["metric_id"],
+                split_role=policy["split_role"],
+            )
+        malformed = dict(policy)
+        malformed["candidate_override"] = 0
+        with self.assertRaisesRegex(SupportFloorError, "exact-key"):
+            support_floor_policy_sha256(malformed)
+
+    def test_power_binding_cannot_be_ignored_or_fabricated(self):
+        populations = (StratumPopulation("overall", ()),)
+        powered = self._policy((
+            self._stratum(
+                "overall", "all_eligible_groups", 30,
+                power_required=True, n_power=45,
+            ),
+        ), populations, power_hash="2" * 64)
+        powered["strata"][0]["n_required"] = 30
+        with self.assertRaisesRegex(SupportFloorError, "must equal max"):
+            support_floor_policy_sha256(powered)
+
+        unpowered = self._policy((
+            self._stratum("overall", "all_eligible_groups", 30),
+        ), populations)
+        unpowered["power_plan_sha256"] = "3" * 64
+        with self.assertRaisesRegex(SupportFloorError, "must be null"):
+            support_floor_policy_sha256(unpowered)
+
+    def test_required_power_plan_must_be_present_and_hash_identical(self):
+        power_hash = "4" * 64
+        support = self._accounting(45, 45)
+        populations = (StratumPopulation("overall", support.g_eligible),)
+        policy = self._policy((
+            self._stratum(
+                "overall", "all_eligible_groups", 30,
+                power_required=True, n_power=45,
+            ),
+        ), populations, power_hash=power_hash)
+        policy_hash = support_floor_policy_sha256(policy)
+
+        unavailable = evaluate_support_floors(
+            policy,
+            policy_hash,
+            support,
+            populations,
+            metric_id=policy["metric_id"],
+            split_role=policy["split_role"],
+        )
+        self.assertEqual(unavailable.status, "SUPPORT_POLICY_UNAVAILABLE")
+        self.assertFalse(unavailable.support_sufficient)
+
+        with self.assertRaisesRegex(
+            SupportFloorError, "POWER_PLAN_HASH_MISMATCH"
+        ):
+            evaluate_support_floors(
+                policy,
+                policy_hash,
+                support,
+                populations,
+                metric_id=policy["metric_id"],
+                split_role=policy["split_role"],
+                power_plan_sha256="5" * 64,
+            )
+
+    def test_profile_floor_is_not_hidden_by_sufficient_total(self):
+        overall = self._groups(149)
+        profile = overall[:9]
+        populations = (
+            StratumPopulation("overall", overall),
+            StratumPopulation("profile:bass", profile),
+        )
+        policy = self._policy((
+            self._stratum("overall", "all_eligible_groups", 149),
+            self._stratum(
+                "profile:bass", "profile_groups", 10, parent="overall"
+            ),
+        ), populations)
+        support = self._accounting(149, 149)
+        result = self._evaluate(policy, support, populations)
+        self.assertFalse(result.support_sufficient)
+        self.assertIn("SUPPORT_STRATUM_FLOOR_NOT_MET", result.reason_codes)
+
+    def test_source_family_ceiling_boundary_15_of_30_vs_16_of_30(self):
+        overall = self._groups(30)
+        support = self._accounting(30, 30)
+        for count, sufficient in ((15, True), (16, False)):
+            with self.subTest(count=count):
+                populations = (
+                    StratumPopulation("overall", overall),
+                    StratumPopulation("source:dominant", overall[:count]),
+                )
+                policy = self._policy((
+                    self._stratum("overall", "all_eligible_groups", 30),
+                    self._stratum(
+                        "source:dominant",
+                        "source_family_groups",
+                        5,
+                        parent="overall",
+                        numerator=1,
+                        denominator=2,
+                    ),
+                ), populations)
+                result = self._evaluate(policy, support, populations)
+                self.assertEqual(result.support_sufficient, sufficient)
+
+    def test_populations_must_match_policy_and_frozen_eligible_set(self):
+        support = self._accounting(1, 1)
+        strata = (
+            self._stratum("overall", "all_eligible_groups", 1),
+        )
+        populations = (StratumPopulation("overall", support.g_eligible),)
+        policy = self._policy(strata, populations)
+        with self.assertRaisesRegex(
+            SupportFloorError, "POPULATION_PLAN_HASH_MISMATCH"
+        ):
+            self._evaluate(policy, support, ())
+
+        missing_policy = self._policy(strata, ())
+        with self.assertRaisesRegex(SupportFloorError, "match policy"):
+            self._evaluate(missing_policy, support, ())
+
+        outside = (StratumPopulation("overall", ("outside",)),)
+        outside_policy = self._policy(strata, outside)
+        with self.assertRaisesRegex(SupportFloorError, "ineligible groups"):
+            self._evaluate(outside_policy, support, outside)
+
+    def test_population_and_policy_order_do_not_change_result(self):
+        overall = self._groups(30)
+        child = overall[:10]
+        strata = (
+            self._stratum("overall", "all_eligible_groups", 30),
+            self._stratum("profile:bass", "profile_groups", 10, parent="overall"),
+        )
+        support = self._accounting(30, 30)
+        populations = (
+            StratumPopulation("overall", overall),
+            StratumPopulation("profile:bass", child),
+        )
+        policy = self._policy(strata, populations)
+        expected = self._evaluate(policy, support, populations)
+        actual = self._evaluate(policy, support, (
+            StratumPopulation("profile:bass", tuple(reversed(child))),
+            StratumPopulation("overall", tuple(reversed(overall))),
+        ))
+        self.assertEqual(actual, expected)
+        self.assertEqual(actual.authority_status, O13F_AUTHORITY_STATUS)
+
+    def test_population_membership_is_hash_bound_before_predictions(self):
+        overall = self._groups(30)
+        frozen = (
+            StratumPopulation("overall", overall),
+            StratumPopulation("profile:bass", overall[:10]),
+        )
+        policy = self._policy((
+            self._stratum("overall", "all_eligible_groups", 30),
+            self._stratum("profile:bass", "profile_groups", 10, parent="overall"),
+        ), frozen)
+        support = self._accounting(30, 30)
+        altered = (
+            StratumPopulation("overall", overall),
+            StratumPopulation("profile:bass", overall[1:11]),
+        )
+        with self.assertRaisesRegex(
+            SupportFloorError, "POPULATION_PLAN_HASH_MISMATCH"
+        ):
+            self._evaluate(policy, support, altered)
+
+    def test_forged_support_accounting_is_rejected(self):
+        support = SupportAccounting(
+            g_eligible=("g000",),
+            g_defined=("g000",),
+            g_na=(),
+            na_reasons=(),
+            defined_unit_count=0,
+            na_unit_count=0,
+        )
+        populations = (StratumPopulation("overall", support.g_eligible),)
+        policy = self._policy((
+            self._stratum("overall", "all_eligible_groups", 1),
+        ), populations)
+        with self.assertRaisesRegex(SupportFloorError, "ACCOUNTING_INVALID"):
+            self._evaluate(policy, support, populations)
+
+    def test_module_is_unreachable_from_rev7_dispatcher(self):
+        for symbol in (
+            "evaluate_support_floors",
+            "support_floor_policy_sha256",
+            "stratum_population_plan_sha256",
+            "SupportFloorEvaluation",
+            "StratumPopulation",
+        ):
+            self.assertFalse(hasattr(contracts_pkg, symbol))
 
 
 if __name__ == "__main__":
