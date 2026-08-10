@@ -7,7 +7,7 @@ Tipo                             = micro-ballot normativo docs-only pre-firma
 Data preparazione                = 2026-08-10
 Branch                           = feature/motore-v3-rev8-spec-go
 Base commit                      = e7bae25e0fe17dc060d931d250473589664d6968
-Decisione O13F_04                = NON FIRMATA
+Decisione O13F_04                = APPROVO — PENDING POST-SIGNATURE RECHECK
 Static registry definition       = NON MATERIALIZZATA
 Official split registry instance = NON MATERIALIZZATA
 Registry implementation          = NON AUTORIZZATA
@@ -459,15 +459,15 @@ runtime / training / push         = NON AUTORIZZATI
 ## 11. Ballot
 
 ```text
-Decisione O13F_04: NON FIRMATA
-Firma/nome:
-Data:
+Decisione O13F_04: APPROVO
+Firma/nome: Marco
+Data: 2026-08-10
 
 SHA-256 ballot pre-firma:
-[DA MATERIALIZZARE SUL COMMIT IMMUTABILE]
+13764e519ef64d231732d5ad89bfb36727b1479382db8afac383d70010662f69
 
 Commit ballot pre-firma:
-[DA MATERIALIZZARE]
+019dcdadac0872331a8d885256673cb39ebb0bb0
 ```
 
 Opzioni ammesse:
