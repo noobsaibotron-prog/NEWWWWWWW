@@ -7,7 +7,7 @@ Tipo                                = package ballot docs/data pre-firma
 Data preparazione                   = 2026-08-10
 Branch                              = feature/motore-v3-rev8-spec-go
 Base commit                         = f201fa162752857c25fb5114e8ccc74a2798c85f
-Decisione O13F_06                   = NON FIRMATA
+Decisione O13F_06                   = APPROVO — PENDING POST-SIGNATURE RECHECK
 Package purpose                     = CONFORMANCE_ONLY_NOT_SCIENTIFIC_AUTHORITY
 Registry validator/expander code    = NON AUTORIZZATO
 Official registry instance/policies = NON MATERIALIZZATI
@@ -162,15 +162,15 @@ REV8 SPEC GO                       = NO
 ## 10. Ballot
 
 ```text
-Decisione O13F_06: NON FIRMATA
-Firma/nome:
-Data:
+Decisione O13F_06: APPROVO
+Firma/nome: Marco
+Data: 2026-08-10
 
 SHA-256 ballot pre-firma:
-PENDING FREEZE
+83af9343bf150aefb47010ffe5af64d9daa6a5cda61a004eeadc9f0618ccbf6d
 
 Commit ballot/package pre-firma:
-PENDING FREEZE
+56363b3e7cb8a1ead617bfeb8934568dd0638e09
 ```
 
 Opzioni ammesse:
