@@ -7,7 +7,7 @@ Tipo                                = micro-ballot normativo docs-only pre-firma
 Data preparazione                   = 2026-08-10
 Branch                              = feature/motore-v3-rev8-spec-go
 Base commit                         = 1275dbbd29a232dadad1729fa9e5605fba2402ce
-Decisione O13F_05                   = NON FIRMATA
+Decisione O13F_05                   = APPROVO — PENDING POST-SIGNATURE RECHECK
 Registry companion/data package     = NON MATERIALIZZATO
 Registry validator/expander code    = NON AUTORIZZATO
 Official registry instance/policies = NON MATERIALIZZABILI
@@ -1103,15 +1103,15 @@ runtime / training / push         = NON AUTORIZZATI
 ## 13. Ballot
 
 ```text
-Decisione O13F_05: NON FIRMATA
-Firma/nome:
-Data:
+Decisione O13F_05: APPROVO
+Firma/nome: Marco
+Data: 2026-08-10
 
 SHA-256 ballot pre-firma:
-PENDING FREEZE
+984a1824327e3b57842a937ac8edaf44436a92380ce1f206c01cbbb7c19c2cac
 
 Commit ballot pre-firma:
-PENDING FREEZE
+91da496fe7cad44c0c4bc604aa677fc1c9de7897
 ```
 
 Opzioni ammesse:
