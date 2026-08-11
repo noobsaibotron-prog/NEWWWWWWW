@@ -185,8 +185,10 @@ class BenchmarkTests(unittest.TestCase):
         not the model.
         """
         envelope = next(e for e in LAB_ENVELOPES if e.kind == "baseline")
+        previous_threads = torch.get_num_threads()
         result = benchmark_envelope(
-            envelope, iterations=20, warmup=5, instances=1)
+            envelope, iterations=20, warmup=5, instances=1, threads=1)
+        self.assertEqual(torch.get_num_threads(), previous_threads)
         self.assertEqual(result.warmup_iterations, 5)
         self.assertGreater(result.warmup_seconds, 0.0)
         self.assertEqual(result.iterations, 20)
@@ -196,7 +198,8 @@ class BenchmarkTests(unittest.TestCase):
 
     def test_benchmark_rejects_impossible_configurations(self):
         envelope = LAB_ENVELOPES[0]
-        for kwargs in ({"iterations": 0}, {"instances": 0}, {"warmup": -1}):
+        for kwargs in ({"iterations": 0}, {"instances": 0}, {"warmup": -1},
+                       {"threads": 0}, {"threads": 1.5}):
             with self.subTest(**kwargs):
                 with self.assertRaises(ValueError):
                     benchmark_envelope(envelope, **kwargs)
@@ -238,6 +241,21 @@ class IsolationTests(unittest.TestCase):
             with self.subTest(bad=bad):
                 with self.assertRaises(IsolationError):
                     consumer.offer(1, (bad,) + (0.0,) * 7)
+
+    def test_result_width_and_sequence_are_fail_closed(self):
+        consumer = AudioLikeConsumer(max_stale_frames=4)
+        with self.assertRaises(IsolationError):
+            consumer.offer(-1, (0.0,) * 8)
+        with self.assertRaises(IsolationError):
+            consumer.offer(1, (0.0,) * 7)
+        with self.assertRaises(IsolationError):
+            consumer.offer(1, ("bad",) + (0.0,) * 7)
+
+    def test_future_result_is_neutral_until_its_frame(self):
+        consumer = AudioLikeConsumer(max_stale_frames=4)
+        consumer.offer(10, (1.0,) * 8)
+        self.assertEqual(consumer.consume(9), NEUTRAL_RESULT)
+        self.assertEqual(consumer.consume(10), (1.0,) * 8)
 
     def test_out_of_order_result_is_rejected(self):
         consumer = AudioLikeConsumer(max_stale_frames=4)

@@ -18,6 +18,7 @@ from ml_v3.runtime_feasibility.envelope import LAB_ENVELOPES
 from ml_v3.runtime_feasibility.smoke_dataset import (
     SMOKE_CLASSES,
     SPARSE_CLASSES_EXCLUDED,
+    SmokeDataset,
     SmokeDatasetError,
     build_smoke_dataset,
     disjoint_split,
@@ -98,6 +99,12 @@ class DatasetTests(unittest.TestCase):
         with self.assertRaises(SmokeDatasetError):
             disjoint_split(context_frames=32, stride=1, holdout_fraction=0.35)
 
+    def test_disjoint_split_rejects_invalid_stride(self):
+        for stride in (0, -1, 1.5):
+            with self.subTest(stride=stride):
+                with self.assertRaises(SmokeDatasetError):
+                    disjoint_split(context_frames=CONTEXT, stride=stride)
+
     def test_rejects_malformed_requests(self):
         for kwargs in ({"context_frames": 0}, {"context_frames": 10_000}):
             with self.subTest(**kwargs):
@@ -142,12 +149,17 @@ class TrainingTests(unittest.TestCase):
             checkpoint = Path(directory) / "smoke.pt"
             report = train_smoke_model(
                 self.envelope, self.train_set,
-                epochs=30, batch_size=8, holdout=10, checkpoint_path=checkpoint)
+                holdout_set=self.holdout_set,
+                epochs=30, batch_size=8, checkpoint_path=checkpoint)
             self.assertLess(report.final_loss, report.initial_loss)
             self.assertTrue(report.checkpoint_reload_exact)
             self.assertGreaterEqual(report.beats_majority_by, 0.15)
 
-            restored = load_checkpoint(checkpoint, self.envelope)
+            restored = load_checkpoint(
+                checkpoint,
+                self.envelope,
+                expected_class_names=self.train_set.class_names,
+            )
             accuracy = evaluate_accuracy(restored, self.holdout_set)
             majority = majority_class_rate(self.holdout_set.labels)
             self.assertGreater(
@@ -158,8 +170,10 @@ class TrainingTests(unittest.TestCase):
         """An impossible margin must fail loudly, not return a nice report."""
         with self.assertRaises(SmokeTrainingError):
             train_smoke_model(
-                self.envelope, self.train_set, epochs=1, batch_size=8,
-                holdout=10, min_margin_over_majority=0.99)
+                self.envelope, self.train_set,
+                holdout_set=self.holdout_set,
+                epochs=1, batch_size=8,
+                min_margin_over_majority=0.99)
 
     def test_rejects_impossible_hyperparameters(self):
         for kwargs in ({"epochs": 0}, {"batch_size": 0},
@@ -167,21 +181,55 @@ class TrainingTests(unittest.TestCase):
             with self.subTest(**kwargs):
                 with self.assertRaises(SmokeTrainingError):
                     train_smoke_model(
-                        self.envelope, self.train_set, holdout=10, **kwargs)
+                        self.envelope, self.train_set,
+                        holdout_set=self.holdout_set, **kwargs)
 
     def test_checkpoint_refuses_a_graph_it_does_not_match(self):
         """strict=True: a partial load would run with random weights."""
         with tempfile.TemporaryDirectory() as directory:
             checkpoint = Path(directory) / "smoke.pt"
             train_smoke_model(
-                self.envelope, self.train_set, epochs=2, batch_size=8,
-                holdout=10, checkpoint_path=checkpoint,
+                self.envelope, self.train_set,
+                holdout_set=self.holdout_set,
+                epochs=2, batch_size=8, checkpoint_path=checkpoint,
                 min_margin_over_majority=-1.0)
             wider = envelope_for_dataset(
                 next(e for e in LAB_ENVELOPES if e.name == "tcn_worst"),
                 self.train_set)
-            with self.assertRaises(RuntimeError):
+            with self.assertRaises(SmokeTrainingError):
                 load_checkpoint(checkpoint, wider)
+
+    def test_checkpoint_binds_class_identity_not_only_tensor_shape(self):
+        with tempfile.TemporaryDirectory() as directory:
+            checkpoint = Path(directory) / "smoke.pt"
+            train_smoke_model(
+                self.envelope, self.train_set,
+                holdout_set=self.holdout_set,
+                epochs=2, batch_size=8, checkpoint_path=checkpoint,
+                min_margin_over_majority=-1.0)
+            reversed_classes = tuple(reversed(self.train_set.class_names))
+            with self.assertRaisesRegex(
+                    SmokeTrainingError, "class order mismatch"):
+                load_checkpoint(
+                    checkpoint,
+                    self.envelope,
+                    expected_class_names=reversed_classes,
+                )
+
+    def test_training_rejects_incompatible_holdout(self):
+        malformed = SmokeDataset(
+            features=self.holdout_set.features[..., :-1],
+            labels=self.holdout_set.labels,
+            class_names=self.holdout_set.class_names,
+            context_frames=self.holdout_set.context_frames - 1,
+        )
+        with self.assertRaisesRegex(SmokeTrainingError, "context differs"):
+            train_smoke_model(
+                self.envelope, self.train_set,
+                holdout_set=malformed,
+                epochs=1, batch_size=8,
+                min_margin_over_majority=-1.0,
+            )
 
 
 class PerimeterTests(unittest.TestCase):

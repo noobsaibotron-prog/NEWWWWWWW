@@ -173,7 +173,31 @@ def benchmark_envelope(
     """
     if iterations <= 0 or warmup < 0 or instances <= 0:
         raise ValueError("iterations>0, warmup>=0, instances>0 required")
+    if not isinstance(threads, int) or threads <= 0:
+        raise ValueError("threads must be a positive int")
+    previous_threads = torch.get_num_threads()
     torch.set_num_threads(threads)
+    try:
+        return _benchmark_envelope(
+            envelope,
+            iterations=iterations,
+            warmup=warmup,
+            instances=instances,
+            seed=seed,
+        )
+    finally:
+        torch.set_num_threads(previous_threads)
+
+
+def _benchmark_envelope(
+    envelope: RuntimeEnvelope,
+    *,
+    iterations: int,
+    warmup: int,
+    instances: int,
+    seed: int,
+) -> BenchmarkResult:
+    """Implementation run while the public wrapper owns Torch thread state."""
     load_before = load_average()
 
     models = [build_surrogate(envelope, seed=seed + i) for i in range(instances)]
@@ -191,11 +215,15 @@ def benchmark_envelope(
         collected[0] = _timed_loop(models[0], samples[0], iterations)
     else:
         barrier = threading.Barrier(instances)
+        errors: list[Exception | None] = [None] * instances
 
         def worker(index: int) -> None:
-            barrier.wait()
-            collected[index] = _timed_loop(
-                models[index], samples[index], iterations)
+            try:
+                barrier.wait()
+                collected[index] = _timed_loop(
+                    models[index], samples[index], iterations)
+            except Exception as error:  # surfaced after every worker joins
+                errors[index] = error
 
         workers = [
             threading.Thread(target=worker, args=(index,))
@@ -205,6 +233,9 @@ def benchmark_envelope(
             thread.start()
         for thread in workers:
             thread.join()
+        failures = [error for error in errors if error is not None]
+        if failures:
+            raise RuntimeError("benchmark worker failed") from failures[0]
 
     flat = [value for run in collected for value in run]
     stats = percentiles(flat)

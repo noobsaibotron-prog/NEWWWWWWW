@@ -148,6 +148,8 @@ def disjoint_split(
     """
     if not isinstance(context_frames, int) or context_frames <= 0:
         raise SmokeDatasetError("context_frames must be a positive int")
+    if not isinstance(stride, int) or stride <= 0:
+        raise SmokeDatasetError("stride must be a positive int")
     if not 0.0 < holdout_fraction < 1.0:
         raise SmokeDatasetError("holdout_fraction must be inside (0,1)")
 

@@ -19,7 +19,7 @@ runs without raising proves nothing — it could be optimizing nothing at all.
 from __future__ import annotations
 
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 import torch
@@ -97,45 +97,111 @@ def save_checkpoint(model: nn.Module, path: Path, *, meta: dict) -> None:
     torch.save({"state_dict": model.state_dict(), "meta": meta}, path)
 
 
-def load_checkpoint(path: Path, envelope: RuntimeEnvelope) -> nn.Module:
+def _checkpoint_meta(
+    envelope: RuntimeEnvelope,
+    class_names: tuple[str, ...],
+) -> dict:
+    return {
+        "schema": "aieq-v3-smoke-checkpoint-1",
+        "envelope": asdict(envelope),
+        "classes": list(class_names),
+    }
+
+
+def load_checkpoint(
+    path: Path,
+    envelope: RuntimeEnvelope,
+    *,
+    expected_class_names: tuple[str, ...] | None = None,
+) -> nn.Module:
     """Rebuild the graph from the envelope and load the saved tensors.
 
     ``strict=True`` on purpose: a checkpoint whose keys do not match the graph
     exactly is a mismatch, and letting torch fill the gap would produce a model
     that runs while carrying partly random weights.
     """
-    payload = torch.load(path, weights_only=False)
-    if "state_dict" not in payload:
-        raise SmokeTrainingError("checkpoint has no state_dict")
+    payload = torch.load(path, weights_only=True)
+    if not isinstance(payload, dict) or set(payload) != {"state_dict", "meta"}:
+        raise SmokeTrainingError("checkpoint must contain state_dict and meta")
+    meta = payload["meta"]
+    if not isinstance(meta, dict):
+        raise SmokeTrainingError("checkpoint meta must be an object")
+    if meta.get("schema") != "aieq-v3-smoke-checkpoint-1":
+        raise SmokeTrainingError("checkpoint schema mismatch")
+    if meta.get("envelope") != asdict(envelope):
+        raise SmokeTrainingError("checkpoint envelope mismatch")
+    classes = meta.get("classes")
+    if (not isinstance(classes, list)
+            or len(classes) != envelope.outputs
+            or any(not isinstance(name, str) or not name for name in classes)
+            or len(set(classes)) != len(classes)):
+        raise SmokeTrainingError("checkpoint class metadata is invalid")
+    if (expected_class_names is not None
+            and classes != list(expected_class_names)):
+        raise SmokeTrainingError("checkpoint class order mismatch")
     model = build_surrogate(envelope, seed=0)
     model.load_state_dict(payload["state_dict"], strict=True)
     model.eval()
     return model
 
 
+def _validate_training_pair(
+    envelope: RuntimeEnvelope,
+    train_set: SmokeDataset,
+    holdout_set: SmokeDataset,
+) -> None:
+    """Fail closed before a report can describe incompatible datasets."""
+    if len(train_set) == 0 or len(holdout_set) == 0:
+        raise SmokeTrainingError("train and holdout sets must be non-empty")
+    if train_set.class_names != holdout_set.class_names:
+        raise SmokeTrainingError("train and holdout class order differs")
+    if train_set.context_frames != holdout_set.context_frames:
+        raise SmokeTrainingError("train and holdout context differs")
+    if envelope.context_frames != train_set.context_frames:
+        raise SmokeTrainingError("envelope and dataset context differ")
+    if envelope.outputs != len(train_set.class_names):
+        raise SmokeTrainingError("envelope output width differs from classes")
+    expected_labels = set(range(len(train_set.class_names)))
+    for label, dataset in (("train", train_set), ("holdout", holdout_set)):
+        if dataset.labels.dtype != torch.long:
+            raise SmokeTrainingError(f"{label} labels must be torch.long")
+        if set(dataset.labels.tolist()) != expected_labels:
+            raise SmokeTrainingError(
+                f"{label} set must contain every class identity")
+        if not torch.isfinite(dataset.features).all():
+            raise SmokeTrainingError(f"{label} features must be finite")
+
+
 def train_smoke_model(
     envelope: RuntimeEnvelope,
-    dataset: SmokeDataset,
+    train_set: SmokeDataset,
     *,
+    holdout_set: SmokeDataset,
     epochs: int = 60,
     batch_size: int = 16,
     learning_rate: float = 1e-3,
-    holdout: int = 20,
     seed: int = 20260810,
     checkpoint_path: Path | None = None,
     min_margin_over_majority: float = 0.15,
 ) -> TrainingReport:
     """Run the loop and assert it actually optimized something.
 
-    ``min_margin_over_majority`` is the falsifiable part: if the held-out
-    accuracy does not beat the majority-class rate by this margin, the
+    ``holdout_set`` is mandatory: the canonical caller supplies the disjoint
+    split produced by :func:`smoke_dataset.disjoint_split`.  This function no
+    longer creates the deliberately leaky index split on :class:`SmokeDataset`.
+    It validates shape and class identity, but raw tensors do not retain source
+    frame provenance; callers outside the canonical harness remain responsible
+    for establishing that their sets are disjoint.
+
+    ``min_margin_over_majority`` is the falsifiable part: if accuracy on that
+    disjoint set does not beat its majority-class rate by this margin, the
     function raises rather than returning a report that reads like success.
     """
     if epochs <= 0 or batch_size <= 0 or learning_rate <= 0:
         raise SmokeTrainingError("epochs, batch_size, learning_rate must be > 0")
+    _validate_training_pair(envelope, train_set, holdout_set)
 
     torch.manual_seed(seed)
-    train_set, holdout_set = dataset.split(holdout=holdout)
 
     model = build_surrogate(envelope, seed=seed)
     model.train()
@@ -168,12 +234,16 @@ def train_smoke_model(
         model.eval()
         with torch.no_grad():
             before = model(holdout_set.features).clone()
-        save_checkpoint(model, checkpoint_path, meta={
-            "envelope": envelope.name,
-            "classes": list(dataset.class_names),
-            "context_frames": dataset.context_frames,
-        })
-        restored = load_checkpoint(checkpoint_path, envelope)
+        save_checkpoint(
+            model,
+            checkpoint_path,
+            meta=_checkpoint_meta(envelope, train_set.class_names),
+        )
+        restored = load_checkpoint(
+            checkpoint_path,
+            envelope,
+            expected_class_names=train_set.class_names,
+        )
         with torch.no_grad():
             after = restored(holdout_set.features)
         reload_exact = bool(torch.equal(before, after))
@@ -191,7 +261,7 @@ def train_smoke_model(
         parameters=sum(p.numel() for p in model.parameters()),
         checkpoint_reload_exact=reload_exact,
         seed=seed,
-        extra={"classes": list(dataset.class_names),
+        extra={"classes": list(train_set.class_names),
                "train_windows": len(train_set),
                "holdout_windows": len(holdout_set)},
     )

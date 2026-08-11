@@ -1,10 +1,10 @@
 """Control-flow prototype of the audio/worker split. Lab-only.
 
-    producer (audio-like, constant time)
+    producer (audio-like, bounded work)
       -> bounded preallocated queue
       -> analysis worker (frontend + inference)
       -> bounded result queue
-      -> consumer (audio-like, constant time)
+      -> consumer (audio-like, bounded work)
 
 **This is a control-flow prototype; C++/JUCE RT proof still pending.** Python
 cannot demonstrate real-time safety: it allocates, it has a GIL, and its
@@ -46,9 +46,10 @@ class BoundedQueue:
 
     An unbounded queue converts a slow worker into unbounded memory growth and
     unbounded staleness; a blocking queue converts it into an audio stall.
-    Both are worse than dropping, so this does neither: ``push`` never blocks
-    and never grows, and every drop is counted so the loss is visible instead
-    of silent.
+    Both are worse than dropping. Capacity never causes ``push`` to wait and
+    the queue never grows beyond its bound. The Python prototype still uses a
+    short mutex around deque access, so it is not a proof of lock-freedom or
+    real-time safety; that remains a requirement for the future C++ path.
     """
 
     def __init__(self, capacity: int) -> None:
@@ -68,10 +69,7 @@ class BoundedQueue:
             return len(self._items)
 
     def push(self, item: object) -> bool:
-        """Enqueue if there is room. Returns False and counts a drop if not.
-
-        Never blocks: the caller may be the audio-like path.
-        """
+        """Enqueue if there is room; capacity overflow is counted and dropped."""
         with self._lock:
             if len(self._items) >= self._capacity:
                 self.dropped += 1
@@ -97,10 +95,10 @@ class WorkerStats:
 class AudioLikeConsumer:
     """The audio-side half of the contract.
 
-    Constant time by construction: it looks at the newest available result,
-    applies a staleness rule, and returns. It never waits, never retries, and
-    never asks whether the worker is healthy — a consumer that inspects worker
-    state is a consumer that can be made to block by it.
+    Bounded work by construction: output width is fixed, it looks at the newest
+    available result, applies a staleness rule, and returns. It never waits,
+    retries, or asks whether the worker is healthy — a consumer that inspects
+    worker state is a consumer that can be made to block by it.
     """
 
     max_stale_frames: int
@@ -120,18 +118,31 @@ class AudioLikeConsumer:
         filter coefficient is an audible failure, and silently substituting a
         number would hide a broken model.
         """
-        if any(not math.isfinite(value) for value in values):
+        if not isinstance(sequence, int) or sequence < 0:
+            raise IsolationError("sequence must be a non-negative int")
+        if not isinstance(values, tuple) or len(values) != len(NEUTRAL_RESULT):
+            raise IsolationError("result must have the fixed output width")
+        try:
+            finite = all(math.isfinite(value) for value in values)
+        except TypeError as error:
+            raise IsolationError("result values must be numeric") from error
+        if not finite:
             raise IsolationError("non-finite result rejected")
         if self._latest is not None and sequence <= self._latest[0]:
             raise IsolationError("out-of-order result rejected")
         self._latest = (sequence, values)
 
     def consume(self, current_frame: int) -> tuple[float, ...]:
-        """Return what audio should apply at ``current_frame``. Constant time."""
+        """Return what audio should apply at ``current_frame``. Bounded work."""
+        if not isinstance(current_frame, int) or current_frame < 0:
+            raise IsolationError("current_frame must be a non-negative int")
         if self._latest is None:
             self.neutral_fallbacks += 1
             return NEUTRAL_RESULT
         sequence, values = self._latest
+        if current_frame < sequence:
+            self.neutral_fallbacks += 1
+            return NEUTRAL_RESULT
         if current_frame - sequence > self.max_stale_frames:
             self.neutral_fallbacks += 1
             return NEUTRAL_RESULT
