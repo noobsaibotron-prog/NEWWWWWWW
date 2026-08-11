@@ -79,6 +79,7 @@ AIEqualizerAudioProcessor::AIEqualizerAudioProcessor()
     apvts.addParameterListener("phaseMode", this);
     apvts.addParameterListener("msMode", this);
     apvts.addParameterListener("oversamplingFactor", this);
+    apvts.addParameterListener("qualityMode", this);
     // AI knobs that are applied to the engine ONLY inside updateEQFromParameters()
     // (setSensitivity/setStrength at ~3349/3354). Without listeners, moving these
     // knobs never set parametersNeedUpdate, so updateEQFromParameters() was not called
@@ -614,6 +615,7 @@ void AIEqualizerAudioProcessor::aiAnalysisThreadFunc()
 
 AIEqualizerAudioProcessor::~AIEqualizerAudioProcessor()
 {
+    cancelPendingUpdate();
     // Request threads to stop before member teardown
     if (irBuilderThread.joinable())
     {
@@ -639,6 +641,7 @@ AIEqualizerAudioProcessor::~AIEqualizerAudioProcessor()
     apvts.removeParameterListener("phaseMode", this);
     apvts.removeParameterListener("msMode", this);
     apvts.removeParameterListener("oversamplingFactor", this);
+    apvts.removeParameterListener("qualityMode", this);
     for (const auto& id : eqParameterIDs)
         apvts.removeParameterListener(id, this);
 
@@ -923,6 +926,8 @@ void AIEqualizerAudioProcessor::cacheParameterPointers()
 //==============================================================================
 void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
+    processorReady.store(false, std::memory_order_release);
+    cancelPendingUpdate();
     cacheParameterPointers();
 
     // FIX 3: Use atomic store
@@ -1245,6 +1250,9 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     int qualityMode = static_cast<int>(apvts.getRawParameterValue("qualityMode")->load());
     float lookaheadMs = (qualityMode == 1) ? 5.0f : 0.0f; // HQ: 5ms lookahead, Zero-latency: 0ms
     dynamicEQProcessor.setLookahead(lookaheadMs);
+    dynamicEQProcessorMid.setLookahead(lookaheadMs);
+    dynamicEQProcessorSide.setLookahead(lookaheadMs);
+    dynamicEQProcessorHQ.setLookahead(lookaheadMs);
     qualityModeCached = qualityMode;
     aiEngine.prepare(sampleRate, samplesPerBlock);
     referenceMatcher.prepare(sampleRate, samplesPerBlock);
@@ -1314,10 +1322,17 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
             oversamplingLatency = std::max(oversamplingLatency,
                                            static_cast<int>(oversampler2x->getLatencyInSamples()));
         worstCaseOversamplingLatency = oversamplingLatency;
-        worstCaseLatencySamples = std::max(lpLatency, oversamplingLatency);
+        const int maximumDynamicLookahead =
+            static_cast<int>(std::round(sampleRate * 0.005));
+        worstCaseLatencySamples = std::max(lpLatency, oversamplingLatency)
+                                  + maximumDynamicLookahead;
     }
-    setLatencySamples(worstCaseLatencySamples);
-    lastReportedLatency = worstCaseLatencySamples;
+    latencyPlan.maximumSamples = worstCaseLatencySamples;
+    const int initialLatency = requiresPaddedLatencyPlan() ? worstCaseLatencySamples : 0;
+    latencyPlan.activeSamples.store(initialLatency, std::memory_order_release);
+    latencyPlan.reductionDeferred.store(false, std::memory_order_relaxed);
+    setLatencySamples(initialLatency);
+    lastReportedLatency = initialLatency;
 
     // Bypass crossfade must outlast worstCaseLatencySamples so that fresh wet data
     // has fully propagated through the wet padding delay before the dry signal
@@ -1334,6 +1349,8 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
 
 void AIEqualizerAudioProcessor::releaseResources()
 {
+    processorReady.store(false, std::memory_order_release);
+    cancelPendingUpdate();
     spectrumAnalyzer.reset();
     postEQAnalyzer.reset();
     eqProcessor.reset();
@@ -1540,10 +1557,13 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
 
     // ALWAYS feed the dry delay ring buffer so it has valid data when bypass is engaged.
     {
-        dryDelayLength = worstCaseLatencySamples;
+        dryDelayLength = latencyPlan.activeSamples.load(std::memory_order_acquire);
         const int chs = juce::jmin(buffer.getNumChannels(), dryDelayBuffer.getNumChannels());
 
-        if (dryDelayLength > 0 && dryDelayBufferSize > 0)
+        // Keep history even in the zero-latency plan. If a latent module is
+        // enabled at runtime, the upgraded plan can immediately read valid dry
+        // samples instead of emitting a latency-sized hole.
+        if (dryDelayBufferSize > 0)
         {
             for (int ch = 0; ch < chs; ++ch)
             {
@@ -1560,7 +1580,8 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
                     float* dryOut = dryBuffer.getWritePointer(ch);
                     for (int s = 0; s < blockSamples; ++s)
                     {
-                        const int readPos = (dryDelayWritePos + s - dryDelayLength + dryDelayBufferSize) % dryDelayBufferSize;
+                        const int readPos = (dryDelayWritePos + s - dryDelayLength
+                                             + dryDelayBufferSize) % dryDelayBufferSize;
                         dryOut[s] = delayBuf[readPos];
                     }
                 }
@@ -1727,12 +1748,19 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         clearDynamicMeterCache();
 
     // Handle quality/latency mode (adjust lookahead dynamically)
-    int qualityMode = juce::jlimit(0, 1, qualityModeParam);
+    // Until a host-visible latency upgrade has been installed, a requested HQ
+    // detector remains in its genuinely zero-latency mode.
+    const bool paddedLatencyActive =
+        latencyPlan.activeSamples.load(std::memory_order_acquire) > 0;
+    int qualityMode = paddedLatencyActive ? juce::jlimit(0, 1, qualityModeParam) : 0;
     if (qualityMode != qualityModeCached)
     {
         qualityModeCached = qualityMode;
         float lookaheadMs = (qualityMode == 1) ? 5.0f : 0.0f; // HQ: 5ms, Zero-Latency: 0ms
         dynamicEQProcessor.setLookahead(lookaheadMs);
+        dynamicEQProcessorMid.setLookahead(lookaheadMs);
+        dynamicEQProcessorSide.setLookahead(lookaheadMs);
+        dynamicEQProcessorHQ.setLookahead(lookaheadMs);
     }
 
     auto toResolution = [](int idx) {
@@ -1938,7 +1966,11 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         aiEngine.setEnabled(false);
     }
 
-    const auto mode = phaseModeSnapshot;
+    // A latent phase path is held back until the message thread has installed
+    // the matching host-visible latency plan.
+    const auto mode = (!paddedLatencyActive && phaseModeSnapshot != PhaseMode::ZeroLatency)
+        ? PhaseMode::ZeroLatency
+        : phaseModeSnapshot;
 
     auto resolveNaturalOsEffective = [&]()
     {
@@ -2838,11 +2870,15 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         {
             actualWetLatency = worstCaseOversamplingLatency;
         }
-        // else ZL: actualWetLatency = 0
+        // else ZL: phase latency = 0
 
+        if (dynEqEnabledLocal && qualityMode == 1)
+            actualWetLatency += static_cast<int>(std::round(
+                currentSampleRate.load(std::memory_order_relaxed) * 0.005));
+
+        const int activeLatency = latencyPlan.activeSamples.load(std::memory_order_acquire);
         const int padSamples = juce::jmax(0,
-            juce::jmin(worstCaseLatencySamples - actualWetLatency,
-                       wetPaddingBufferSize - 1));
+            juce::jmin(activeLatency - actualWetLatency, wetPaddingBufferSize - 1));
 
         // Phase transition ramp detection (uses pre-crossfade snapshot so we
         // stay in sync with the EQ crossfade counter that was decremented earlier).
@@ -3098,9 +3134,7 @@ void AIEqualizerAudioProcessor::parameterChanged(const juce::String& parameterID
             triggerLinearPhaseIRUpdate();
         }
 
-        // Maximum Latency Padding: do NOT change reported latency on phase mode switch.
-        // worstCaseLatencySamples is set once in prepareToPlay and never changes.
-        // The wet padding delay compensates for the difference at runtime.
+        updateReportedLatency();
     }
     else if (parameterID == "msMode")
     {
@@ -3152,6 +3186,10 @@ void AIEqualizerAudioProcessor::parameterChanged(const juce::String& parameterID
                 pendingReset.store(true, std::memory_order_release);
             }
         }
+    }
+    else if (parameterID == "qualityMode" || parameterID == "dynEqEnabled")
+    {
+        updateReportedLatency();
     }
     else if (parameterID == "aiSensitivity" || parameterID == "aiStrength")
     {
@@ -3431,11 +3469,57 @@ void AIEqualizerAudioProcessor::updateDynamicMeterCacheFromMS(const DynamicEQPro
 }
 
 //==============================================================================
-// FIX 8: Report a fixed worst-case latency to avoid host reconfiguration
+bool AIEqualizerAudioProcessor::requiresPaddedLatencyPlan() const noexcept
+{
+    const auto read = [this](const char* id, float fallback) noexcept
+    {
+        if (auto* value = apvts.getRawParameterValue(id))
+            return value->load(std::memory_order_relaxed);
+        return fallback;
+    };
+
+    const int phase = juce::jlimit(0, 2,
+        static_cast<int>(std::round(read("phaseMode", 0.0f))));
+    const bool dynamicLookahead = read("dynEqEnabled", 1.0f) > 0.5f
+        && static_cast<int>(std::round(read("qualityMode", 0.0f))) == 1;
+    return phase != static_cast<int>(PhaseMode::ZeroLatency) || dynamicLookahead;
+}
+
+// Latency plans are monotonic within a prepareToPlay lifetime. Increases are
+// installed on the message thread before a latent path is allowed to run;
+// decreases are applied by the next prepareToPlay. This avoids live PDC
+// contraction, which cannot be sample-continuous across all wrappers and DAWs.
 void AIEqualizerAudioProcessor::updateReportedLatency()
 {
-    // Maximum Latency Padding: latency is fixed at worstCaseLatencySamples (set in prepareToPlay).
-    // This function is intentionally a no-op to prevent runtime latency changes that cause DAW PDC clicks.
+    if (!processorReady.load(std::memory_order_acquire))
+        return;
+
+    auto* messageManager = juce::MessageManager::getInstanceWithoutCreating();
+    if (messageManager == nullptr || !messageManager->isThisTheMessageThread())
+    {
+        triggerAsyncUpdate();
+        return;
+    }
+
+    const int requested = requiresPaddedLatencyPlan() ? latencyPlan.maximumSamples : 0;
+    const int active = latencyPlan.activeSamples.load(std::memory_order_acquire);
+    if (requested < active)
+    {
+        latencyPlan.reductionDeferred.store(true, std::memory_order_release);
+        return;
+    }
+    if (requested == active)
+        return;
+
+    latencyPlan.activeSamples.store(requested, std::memory_order_release);
+    latencyPlan.reductionDeferred.store(false, std::memory_order_relaxed);
+    setLatencySamples(requested);
+    lastReportedLatency = requested;
+}
+
+void AIEqualizerAudioProcessor::handleAsyncUpdate()
+{
+    updateReportedLatency();
 }
 
 void AIEqualizerAudioProcessor::primeBandSmoothers(double sampleRate)

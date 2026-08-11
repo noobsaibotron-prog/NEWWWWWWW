@@ -1192,6 +1192,7 @@ if(HAVE_JUCE)
     add_executable(AIEqualizerPro_IntegrationTests
         Source/Tests/TransitionContinuityTests.cpp
         Source/Tests/IntegrationStateTest.cpp
+        Source/Tests/LatencyPlanTest.cpp
         Source/Tests/LinearPhaseLatencyContractTest.cpp
         Source/Tests/BlockSizeRegressionTest.cpp
         Source/Tests/MSModeSwitchContinuityTest.cpp

@@ -88,7 +88,8 @@
  * - AI Analysis: Runs on message thread timer, results via command queue
  */
 class AIEqualizerAudioProcessor : public juce::AudioProcessor,
-                                  public juce::AudioProcessorValueTreeState::Listener
+                                  public juce::AudioProcessorValueTreeState::Listener,
+                                  private juce::AsyncUpdater
 {
 public:
     //==============================================================================
@@ -427,6 +428,8 @@ private:
     void loadStateFromSlot(ABState slot);
     bool applyBandStateDelta(int bandIndex, const BandState& targetState, bool useGestures);
     void updateReportedLatency();
+    void handleAsyncUpdate() override;
+    [[nodiscard]] bool requiresPaddedLatencyPlan() const noexcept;
     void cacheParameterPointers();
     bool runCapturedAudioAnalysis();
     void analyzeSpectrumSerialized(const std::vector<float>& spectrum, bool force = false);
@@ -720,6 +723,12 @@ private:
     int lastReportedLatency = 0;
     int worstCaseLatencySamples = 0;
     int worstCaseOversamplingLatency = 0;
+    struct LatencyPlan
+    {
+        int maximumSamples = 0;
+        std::atomic<int> activeSamples { 0 };
+        std::atomic<bool> reductionDeferred { false };
+    } latencyPlan;
     int preallocatedMaxSamples = 0;
     int aiAnalysisSamples = 0;
     int aiAnalysisIntervalSamples = 0;
