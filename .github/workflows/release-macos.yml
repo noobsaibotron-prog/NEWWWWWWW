@@ -1,0 +1,117 @@
+name: Release macOS
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-macos-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  signed-notarized-release:
+    runs-on: macos-14
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          submodules: recursive
+
+      - name: Require release credentials
+        env:
+          CERTIFICATE_B64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+          NOTARY_KEY_B64: ${{ secrets.APPLE_NOTARY_PRIVATE_KEY_BASE64 }}
+          NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+          KEYCHAIN_PASSWORD: ${{ secrets.MACOS_CI_KEYCHAIN_PASSWORD }}
+        run: |
+          test -n "$CERTIFICATE_B64"
+          test -n "$CERTIFICATE_PASSWORD"
+          test -n "$SIGNING_IDENTITY"
+          test -n "$NOTARY_KEY_B64"
+          test -n "$NOTARY_KEY_ID"
+          test -n "$NOTARY_ISSUER_ID"
+          test -n "$KEYCHAIN_PASSWORD"
+
+      - name: Install build tools
+        run: brew install cmake ninja
+
+      - name: Install pinned pluginval
+        env:
+          PLUGINVAL_SHA256: 3c4c533bda0c5059eea3ddaea752d757ee2025041f0f47e6bcb0e87f6082b29f
+        run: |
+          curl -fsSL \
+            https://github.com/Tracktion/pluginval/releases/download/v1.0.4/pluginval_macOS.zip \
+            -o "$RUNNER_TEMP/pluginval_macOS.zip"
+          echo "$PLUGINVAL_SHA256  $RUNNER_TEMP/pluginval_macOS.zip" | shasum -a 256 -c -
+          ditto -x -k "$RUNNER_TEMP/pluginval_macOS.zip" "$RUNNER_TEMP/pluginval"
+          chmod +x "$RUNNER_TEMP/pluginval/pluginval.app/Contents/MacOS/pluginval"
+
+      - name: Import Developer ID certificate
+        env:
+          CERTIFICATE_B64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.MACOS_CI_KEYCHAIN_PASSWORD }}
+        run: |
+          test -n "$KEYCHAIN_PASSWORD"
+          echo "$CERTIFICATE_B64" | base64 -D > "$RUNNER_TEMP/developer-id.p12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$RUNNER_TEMP/aieq-build.keychain-db"
+          security set-keychain-settings -lut 21600 "$RUNNER_TEMP/aieq-build.keychain-db"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$RUNNER_TEMP/aieq-build.keychain-db"
+          security import "$RUNNER_TEMP/developer-id.p12" \
+            -P "$CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 \
+            -k "$RUNNER_TEMP/aieq-build.keychain-db"
+          security set-key-partition-list -S apple-tool:,apple: -s \
+            -k "$KEYCHAIN_PASSWORD" "$RUNNER_TEMP/aieq-build.keychain-db"
+          security list-keychains -d user -s "$RUNNER_TEMP/aieq-build.keychain-db"
+
+      - name: Configure notarization credentials
+        env:
+          NOTARY_KEY_B64: ${{ secrets.APPLE_NOTARY_PRIVATE_KEY_BASE64 }}
+          NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+        run: |
+          echo "$NOTARY_KEY_B64" | base64 -D > "$RUNNER_TEMP/AuthKey.p8"
+          xcrun notarytool store-credentials aieq-notary \
+            --key "$RUNNER_TEMP/AuthKey.p8" \
+            --key-id "$NOTARY_KEY_ID" \
+            --issuer "$NOTARY_ISSUER_ID"
+
+      - name: Configure universal Release build
+        run: |
+          cmake -S . -B build-release -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64" \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET="11.0"
+
+      - name: Build and run blocking regression suite
+        run: |
+          cmake --build build-release --parallel
+          ctest --test-dir build-release --output-on-failure --timeout 180
+
+      - name: Sign, validate, notarize and package
+        env:
+          AIEQ_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+          AIEQ_NOTARY_PROFILE: aieq-notary
+          AIEQ_RELEASE_LABEL: ${{ github.ref_name }}
+          PLUGINVAL_BIN: ${{ runner.temp }}/pluginval/pluginval.app/Contents/MacOS/pluginval
+          PLUGINVAL_STRICTNESS: 10
+        run: scripts/release-macos.sh build-release Release
+
+      - name: Upload notarized release and validation evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: AI-Equalizer-Pro-${{ github.ref_name }}-signed-notarized
+          path: |
+            build-release/dist/
+            build-release/validation-reports/
+          if-no-files-found: error
