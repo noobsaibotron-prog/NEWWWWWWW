@@ -753,18 +753,35 @@ endif()
 # makes codesign treat it as executable/nested code and the JUCE VST3 artefact
 # copy can run before a later POST_BUILD copy, silently omitting the model.
 if(EXISTS "${CMAKE_SOURCE_DIR}/Resources/Models/ml_weights.bin")
-    foreach(_target AIEqualizerPro_VST3 AIEqualizerPro_AU AIEqualizerPro_Standalone)
-        if(TARGET ${_target})
-            add_custom_command(TARGET ${_target} POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E make_directory
-                        "$<TARGET_FILE_DIR:${_target}>/../Resources/models"
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                        "${CMAKE_SOURCE_DIR}/Resources/Models/ml_weights.bin"
-                        "$<TARGET_FILE_DIR:${_target}>/../Resources/models/ml_weights.bin"
-                COMMENT "Copying ml_weights.bin into ${_target} bundle"
-            )
-        endif()
-    endforeach()
+    if(APPLE)
+        # Make the model a first-class bundle resource so CMake/JUCE includes
+        # it before the bundle signature is checked or created.
+        set_source_files_properties(
+            "${CMAKE_SOURCE_DIR}/Resources/Models/ml_weights.bin"
+            PROPERTIES
+                HEADER_FILE_ONLY TRUE
+                MACOSX_PACKAGE_LOCATION "Resources/models"
+        )
+        foreach(_target AIEqualizerPro_VST3 AIEqualizerPro_AU AIEqualizerPro_Standalone)
+            if(TARGET ${_target})
+                target_sources(${_target} PRIVATE
+                    "${CMAKE_SOURCE_DIR}/Resources/Models/ml_weights.bin")
+            endif()
+        endforeach()
+    else()
+        foreach(_target AIEqualizerPro_VST3 AIEqualizerPro_Standalone)
+            if(TARGET ${_target})
+                add_custom_command(TARGET ${_target} POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E make_directory
+                            "$<TARGET_FILE_DIR:${_target}>/../Resources/models"
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                            "${CMAKE_SOURCE_DIR}/Resources/Models/ml_weights.bin"
+                            "$<TARGET_FILE_DIR:${_target}>/../Resources/models/ml_weights.bin"
+                    COMMENT "Copying ml_weights.bin into ${_target} bundle"
+                )
+            endif()
+        endforeach()
+    endif()
 endif()
 
 # Copy the selected Motore v2 candidate into EXP plugin bundles. The runtime
