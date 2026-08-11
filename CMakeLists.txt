@@ -1060,6 +1060,7 @@ if(HAVE_JUCE)
         Source/DSP/ParametricEQProcessor.cpp
         Source/DSP/DynamicEQProcessor.cpp
         Source/Tests/ParametricEQTest.cpp
+        Source/Tests/PremiumCutFilterTest.cpp
         Source/Tests/SpectrumCalibrationTest.cpp
         Source/Tests/LinearPhaseIRSmokeTest.cpp
         Source/Tests/LinearPhaseGainRegressionTest.cpp

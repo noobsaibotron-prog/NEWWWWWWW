@@ -201,20 +201,10 @@ void ParametricEQProcessor::process(juce::AudioBuffer<float>& buffer)
             const int type = params.type.load(std::memory_order_relaxed);
             const int slope = params.slope.load(std::memory_order_relaxed);
 
-            // Update coefficients (zero-allocation: BiquadCoeffs is POD on stack)
-            auto coeff = makeCoefficients(static_cast<FilterType>(type), freq, gain, q, sr);
-
-            // Determine number of stages based on slope (only for LowCut/HighCut)
-            int numStages = 1;
-            if ((type == static_cast<int>(LowCut) || type == static_cast<int>(HighCut)) && slope > 0)
-                numStages = (slope == 1) ? 2 : 4;  // 24dB=2 stages, 48dB=4 stages
-            state.numActiveStages = numStages;
-
-            for (int s = 0; s < numStages; ++s)
-                state.coefficients[s] = coeff;
-            // Clear unused stages
-            for (int s = numStages; s < BandProcessingState::maxFilterStages; ++s)
-                state.coefficients[s] = BiquadCoeffs{};
+            const auto design = makeFilterDesign(
+                static_cast<FilterType>(type), freq, gain, q, slope, sr);
+            state.numActiveStages = design.numStages;
+            state.coefficients = design.coefficients;
 
             state.lastVersion = currentVersion;
         }
@@ -525,11 +515,10 @@ int ParametricEQProcessor::addBand(float freq, float gainDb, float q, int type)
         state.numActiveStages = 1;
         state.prepared = true;
 
-        // Create coefficients (zero-allocation)
-        auto coeff = makeCoefficients(static_cast<FilterType>(type), freq, gainDb, q, sr);
-        state.coefficients[0] = coeff;
-        for (int s = 1; s < BandProcessingState::maxFilterStages; ++s)
-            state.coefficients[s] = BiquadCoeffs{};
+        const auto design = makeFilterDesign(
+            static_cast<FilterType>(type), freq, gainDb, q, 0, sr);
+        state.numActiveStages = design.numStages;
+        state.coefficients = design.coefficients;
         state.lastVersion = params.version.load(std::memory_order_acquire);
     }
     
@@ -889,19 +878,11 @@ float ParametricEQProcessor::getMagnitudeForFrequency(float freq, double sampleR
         const int   bType = bandParams[i].type.load(std::memory_order_relaxed);
         const int   bSlope = bandParams[i].slope.load(std::memory_order_relaxed);
 
-        auto coefs = makeCoefficients(static_cast<FilterType>(bType), bFreq, bGain, bQ, sampleRate);
-        if (!coefs.valid)
-            continue;
-
-        double singleMag = coefs.getMagnitudeForFrequency(static_cast<double>(freq), sampleRate);
-
-        // Apply cascaded stages for LowCut/HighCut with slope > 12dB/oct
-        int numStages = 1;
-        if ((bType == static_cast<int>(LowCut) || bType == static_cast<int>(HighCut)) && bSlope > 0)
-            numStages = (bSlope == 1) ? 2 : 4;
-
-        for (int s = 0; s < numStages; ++s)
-            magnitude *= singleMag;
+        const auto design = makeFilterDesign(
+            static_cast<FilterType>(bType), bFreq, bGain, bQ, bSlope, sampleRate);
+        for (int stage = 0; stage < design.numStages; ++stage)
+            magnitude *= design.coefficients[static_cast<size_t>(stage)]
+                .getMagnitudeForFrequency(static_cast<double>(freq), sampleRate);
     }
 
     return static_cast<float>(magnitude) * outputGain.load(std::memory_order_relaxed);
@@ -939,23 +920,15 @@ void ParametricEQProcessor::getMagnitudeForFrequencyArray(const float* frequenci
         const int   bType = bandParams[bandIdx].type.load(std::memory_order_relaxed);
         const int   bSlope = bandParams[bandIdx].slope.load(std::memory_order_relaxed);
 
-        auto coefs = makeCoefficients(static_cast<FilterType>(bType), bFreq, bGain, bQ, sampleRate);
-        if (!coefs.valid)
-            continue;
-
-        // Determine number of cascaded stages for LowCut/HighCut
-        int numStages = 1;
-        if ((bType == static_cast<int>(LowCut) || bType == static_cast<int>(HighCut)) && bSlope > 0)
-            numStages = (bSlope == 1) ? 2 : 4;
+        const auto design = makeFilterDesign(
+            static_cast<FilterType>(bType), bFreq, bGain, bQ, bSlope, sampleRate);
 
         for (size_t i = 0; i < numPoints; ++i)
         {
-            double mag = coefs.getMagnitudeForFrequency(
-                static_cast<double>(frequencies[i]), sampleRate);
-            // Apply cascaded stages
             double totalMag = 1.0;
-            for (int s = 0; s < numStages; ++s)
-                totalMag *= mag;
+            for (int stage = 0; stage < design.numStages; ++stage)
+                totalMag *= design.coefficients[static_cast<size_t>(stage)]
+                    .getMagnitudeForFrequency(static_cast<double>(frequencies[i]), sampleRate);
             magnitudes[i] *= static_cast<float>(totalMag);
         }
     }
@@ -1000,21 +973,15 @@ void ParametricEQProcessor::getMagnitudeForFrequencyArrayWithGainOffsets(
         const float offset = (gainOffsets && bandIdx < numOffsets) ? gainOffsets[bandIdx] : 0.0f;
         const float bGain  = bGainBase + offset;
 
-        auto coefs = makeCoefficients(static_cast<FilterType>(bType), bFreq, bGain, bQ, sampleRate);
-        if (!coefs.valid)
-            continue;
-
-        int numStages = 1;
-        if ((bType == static_cast<int>(LowCut) || bType == static_cast<int>(HighCut)) && bSlope > 0)
-            numStages = (bSlope == 1) ? 2 : 4;
+        const auto design = makeFilterDesign(
+            static_cast<FilterType>(bType), bFreq, bGain, bQ, bSlope, sampleRate);
 
         for (size_t i = 0; i < numPoints; ++i)
         {
-            double mag = coefs.getMagnitudeForFrequency(
-                static_cast<double>(frequencies[i]), sampleRate);
             double totalMag = 1.0;
-            for (int s = 0; s < numStages; ++s)
-                totalMag *= mag;
+            for (int stage = 0; stage < design.numStages; ++stage)
+                totalMag *= design.coefficients[static_cast<size_t>(stage)]
+                    .getMagnitudeForFrequency(static_cast<double>(frequencies[i]), sampleRate);
             magnitudes[i] *= static_cast<float>(totalMag);
         }
     }
@@ -1040,20 +1007,33 @@ void ParametricEQProcessor::updateCoefficientsForBand(int index)
     const int slope = params.slope.load(std::memory_order_relaxed);
     const double sr = currentSampleRate.load(std::memory_order_relaxed);
     
-    auto coeff = makeCoefficients(static_cast<FilterType>(type), freq, gain, q, sr);
-    
-    // Determine number of stages based on slope (only for LowCut/HighCut)
-    int numStages = 1;
-    if ((type == static_cast<int>(LowCut) || type == static_cast<int>(HighCut)) && slope > 0)
-        numStages = (slope == 1) ? 2 : 4;
-    state.numActiveStages = numStages;
-    
-    for (int s = 0; s < numStages; ++s)
-        state.coefficients[s] = coeff;
-    for (int s = numStages; s < BandProcessingState::maxFilterStages; ++s)
-        state.coefficients[s] = BiquadCoeffs{};
+    const auto design = makeFilterDesign(
+        static_cast<FilterType>(type), freq, gain, q, slope, sr);
+    state.numActiveStages = design.numStages;
+    state.coefficients = design.coefficients;
     
     state.lastVersion = params.version.load(std::memory_order_acquire);
+}
+
+ParametricEQProcessor::FilterDesign ParametricEQProcessor::makeFilterDesign(
+    FilterType type, float freq, float gain, float q, int slope,
+    double sampleRate) const
+{
+    FilterDesign result;
+
+    if (type == LowCut || type == HighCut)
+    {
+        const auto cut = CutFilterDesigner::design(
+            type == LowCut, slope, sampleRate, freq, q);
+        result.coefficients = cut.coefficients;
+        result.numStages = juce::jlimit(1,
+            BandProcessingState::maxFilterStages, cut.numStages);
+        return result;
+    }
+
+    result.coefficients[0] = makeCoefficients(type, freq, gain, q, sampleRate);
+    result.numStages = 1;
+    return result;
 }
 
 BiquadCoeffs ParametricEQProcessor::makeCoefficients(

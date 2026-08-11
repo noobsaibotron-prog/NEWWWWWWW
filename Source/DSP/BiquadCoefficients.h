@@ -227,16 +227,21 @@ private:
  */
 struct BiquadState
 {
-    float v1 = 0.0f, v2 = 0.0f;
+    // Double-precision state materially reduces accumulated round-off in long
+    // high-order cascades while keeping the public audio/coefficient surface
+    // float and allocation-free.
+    double v1 = 0.0, v2 = 0.0;
 
-    void reset() noexcept { v1 = v2 = 0.0f; }
+    void reset() noexcept { v1 = v2 = 0.0; }
 
     [[nodiscard]] float processSample(float input, const BiquadCoeffs& c) noexcept
     {
         // Direct Form II Transposed (matches JUCE's IIR::Filter implementation)
-        const float output = c.b0 * input + v1;
-        v1 = c.b1 * input - c.a1 * output + v2;
-        v2 = c.b2 * input - c.a2 * output;
-        return output;
+        const double output = static_cast<double>(c.b0) * input + v1;
+        v1 = static_cast<double>(c.b1) * input
+             - static_cast<double>(c.a1) * output + v2;
+        v2 = static_cast<double>(c.b2) * input
+             - static_cast<double>(c.a2) * output;
+        return static_cast<float>(output);
     }
 };

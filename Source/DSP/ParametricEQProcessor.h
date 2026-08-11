@@ -4,6 +4,7 @@
 #include <juce_audio_basics/juce_audio_basics.h>
 #include "../Core/LockFreeStructures.h"
 #include "BiquadCoefficients.h"
+#include "CutFilterDesigner.h"
 #include <array>
 #include <atomic>
 #include <cstdint>
@@ -216,6 +217,16 @@ private:
     
     [[nodiscard]] BiquadCoeffs makeCoefficients(
         FilterType type, float freq, float gain, float q, double sampleRate) const;
+
+    struct FilterDesign
+    {
+        std::array<BiquadCoeffs, BandProcessingState::maxFilterStages> coefficients {};
+        int numStages = 1;
+    };
+
+    [[nodiscard]] FilterDesign makeFilterDesign(
+        FilterType type, float freq, float gain, float q, int slope,
+        double sampleRate) const;
     
     //==============================================================================
     // LOCK-FREE ARCHITECTURE
