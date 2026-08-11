@@ -20,6 +20,9 @@ public:
         testPresetSchemaRoundTrip();
         testDynamicABStateRoundTrip();
         testHostParameterSurfaceGoldenList();
+        testUndoRedoCoversEntireHostSurface();
+        testCorruptStateIsRejectedTransactionally();
+        testDefaultFrequenciesStayInsideHostRange();
         testBypassPassThrough();
     }
 
@@ -383,6 +386,102 @@ private:
             expectWithinAbsoluteError(p->load(), 100.0f, 0.05f);
         if (auto* p = restoredAPVTS.getRawParameterValue("dynAutoMakeup"))
             expectWithinAbsoluteError(p->load(), 1.0f, 0.01f);
+    }
+
+    void testUndoRedoCoversEntireHostSurface()
+    {
+        beginTest("Undo/redo restores every host parameter, including globals and dynamic flags");
+
+        AIEqualizerAudioProcessor proc;
+        const auto& params = proc.getParameters();
+        std::vector<float> before;
+        std::vector<float> after;
+        before.reserve(static_cast<size_t>(params.size()));
+        after.reserve(static_cast<size_t>(params.size()));
+
+        for (int i = 0; i < params.size(); ++i)
+        {
+            const float requested = 0.11f + 0.67f
+                * static_cast<float>((i * 37) % 101) / 100.0f;
+            params[i]->setValueNotifyingHost(requested);
+            before.push_back(params[i]->getValue());
+        }
+
+        proc.pushUndoState("Complete host surface");
+        expect(proc.canUndo());
+
+        for (int i = 0; i < params.size(); ++i)
+        {
+            const float requested = 0.17f + 0.71f
+                * static_cast<float>((i * 53 + 19) % 101) / 100.0f;
+            params[i]->setValueNotifyingHost(requested);
+            after.push_back(params[i]->getValue());
+        }
+
+        proc.undo();
+        expect(proc.canRedo());
+        for (int i = 0; i < params.size(); ++i)
+            expectWithinAbsoluteError(params[i]->getValue(), before[static_cast<size_t>(i)],
+                                      1.0e-6f,
+                                      "Undo missed parameter index " + juce::String(i));
+
+        proc.redo();
+        for (int i = 0; i < params.size(); ++i)
+            expectWithinAbsoluteError(params[i]->getValue(), after[static_cast<size_t>(i)],
+                                      1.0e-6f,
+                                      "Redo missed parameter index " + juce::String(i));
+    }
+
+    void testCorruptStateIsRejectedTransactionally()
+    {
+        beginTest("Corrupt host state is a no-op");
+
+        AIEqualizerAudioProcessor proc;
+        auto& apvts = proc.getAPVTS();
+        setFloat(apvts, "outputGain", 5.0f);
+        setBool(apvts, "dynEqEnabled", true);
+        setChoice(apvts, "phaseMode", 1);
+
+        const float gainBefore = apvts.getParameter("outputGain")->getValue();
+        const float dynamicBefore = apvts.getParameter("dynEqEnabled")->getValue();
+        const float phaseBefore = apvts.getParameter("phaseMode")->getValue();
+
+        const std::array<unsigned char, 13> corrupt {
+            0x41, 0x49, 0x45, 0x51, 0xff, 0x00, 0x13,
+            0x37, 0xde, 0xad, 0xbe, 0xef, 0x7f
+        };
+        proc.setStateInformation(corrupt.data(), static_cast<int>(corrupt.size()));
+
+        expectWithinAbsoluteError(apvts.getParameter("outputGain")->getValue(), gainBefore, 0.0f);
+        expectWithinAbsoluteError(apvts.getParameter("dynEqEnabled")->getValue(), dynamicBefore, 0.0f);
+        expectWithinAbsoluteError(apvts.getParameter("phaseMode")->getValue(), phaseBefore, 0.0f);
+    }
+
+    void testDefaultFrequenciesStayInsideHostRange()
+    {
+        beginTest("All static and dynamic band defaults are within 20 Hz to 20 kHz");
+
+        AIEqualizerAudioProcessor proc;
+        auto& apvts = proc.getAPVTS();
+        DynamicEQProcessor dynamic;
+
+        float previous = 0.0f;
+        for (int i = 0; i < AIEqualizerAudioProcessor::maxBands; ++i)
+        {
+            const auto id = "band" + juce::String(i) + "Freq";
+            auto* value = apvts.getRawParameterValue(id);
+            expect(value != nullptr);
+            if (value == nullptr)
+                continue;
+
+            const float staticFrequency = value->load();
+            const float dynamicFrequency = dynamic.getBandParams(i).frequency;
+            expect(staticFrequency >= 20.0f && staticFrequency <= 20000.0f, id);
+            expect(dynamicFrequency >= 20.0f && dynamicFrequency <= 20000.0f, id + " dynamic");
+            expectWithinAbsoluteError(dynamicFrequency, staticFrequency, 1.0f, id + " mismatch");
+            expect(staticFrequency > previous, id + " must be strictly increasing");
+            previous = staticFrequency;
+        }
     }
 
     void testBypassPassThrough()

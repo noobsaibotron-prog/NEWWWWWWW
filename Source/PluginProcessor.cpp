@@ -1,5 +1,6 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "DSP/DefaultBandFrequencies.h"
 #include "Utils/Logger.h"
 #if defined(AIEQ_ENABLE_MOTORE_V2) && AIEQ_ENABLE_MOTORE_V2
 #include "AI/MotoreV2Features.h"   // EXP hybrid: rawDb -> 64 log-mel (gated)
@@ -12,13 +13,8 @@
 
 namespace
 {
-    // Default band centers for up to 24 bands (used when expanding band count)
-    constexpr float defaultBandFrequencies[AIEqualizerAudioProcessor::maxBands] = {
-        31.0f,   50.0f,   80.0f,   120.0f,  170.0f,  250.0f,
-        350.0f,  500.0f,  700.0f,  1000.0f, 1400.0f, 2000.0f,
-        2800.0f, 4000.0f, 5600.0f, 8000.0f, 11000.0f,15000.0f,
-        18000.0f,22000.0f,26000.0f,30000.0f,34000.0f,38000.0f
-    };
+    static_assert(AIEqualizerAudioProcessor::maxBands
+                  == static_cast<int>(AIEQDSP::defaultBandFrequencies.size()));
 
     // M/S encoding/decoding scale factor (1 / sqrt(2))
     // Used in both encodeStereoToMS() and decodeMSToStereo() to normalise
@@ -135,7 +131,8 @@ AIEqualizerAudioProcessor::AIEqualizerAudioProcessor()
         auto initSlot = [](EQSlot& slot, const char* name) {
             slot.bands.fill(BandState());
             for (int i = 0; i < maxBands; ++i)
-                slot.bands[static_cast<size_t>(i)].frequency = defaultBandFrequencies[i];
+                slot.bands[static_cast<size_t>(i)].frequency =
+                    AIEQDSP::defaultBandFrequencies[static_cast<size_t>(i)];
             slot.name = name;
         };
         initSlot(slotA, "A");
@@ -151,7 +148,7 @@ AIEqualizerAudioProcessor::AIEqualizerAudioProcessor()
     presetManager = std::make_unique<PresetManager>(apvts);
 
     // Initialize history manager with APVTS reference
-    historyManager.initialize(apvts);
+    historyManager.initialize(apvts, *this);
 
     // OSC parameter server created here but started in prepareToPlay
     // (starting in constructor crashes during VST3 plugin scan)
@@ -766,19 +763,14 @@ juce::AudioProcessorValueTreeState::ParameterLayout AIEqualizerAudioProcessor::c
         bandChoices, 7)); // default 8 (index 7)
 
     // EQ Bands (24 bands)
-    float defaultFreqs[AIEqualizerAudioProcessor::maxBands] = {
-        31.0f, 50.0f, 80.0f, 120.0f, 170.0f, 250.0f, 350.0f, 500.0f,
-        700.0f, 1000.0f, 1400.0f, 2000.0f, 2800.0f, 4000.0f, 5600.0f, 8000.0f,
-        11000.0f, 15000.0f, 18000.0f, 22000.0f, 26000.0f, 30000.0f, 34000.0f, 38000.0f
-    };
-
     for (int i = 0; i < AIEqualizerAudioProcessor::maxBands; ++i)
     {
         juce::String prefix = "band" + juce::String(i);
 
         params.push_back(std::make_unique<juce::AudioParameterFloat>(
             juce::ParameterID{prefix + "Freq", 1}, "Band " + juce::String(i + 1) + " Freq",
-            juce::NormalisableRange<float>(20.0f, 20000.0f, 1.0f, 0.25f), defaultFreqs[i]));
+            juce::NormalisableRange<float>(20.0f, 20000.0f, 1.0f, 0.25f),
+            AIEQDSP::defaultBandFrequencies[static_cast<size_t>(i)]));
 
         params.push_back(std::make_unique<juce::AudioParameterFloat>(
             juce::ParameterID{prefix + "Gain", 1}, "Band " + juce::String(i + 1) + " Gain",
@@ -1264,11 +1256,6 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     // Initialize bands if not already initialized
     if (eqProcessor.getNumBands() == 0)
     {
-        float defaultFreqs[AIEqualizerAudioProcessor::maxBands] = {
-            31.0f, 50.0f, 80.0f, 120.0f, 170.0f, 250.0f, 350.0f, 500.0f,
-            700.0f, 1000.0f, 1400.0f, 2000.0f, 2800.0f, 4000.0f, 5600.0f, 8000.0f,
-            11000.0f, 15000.0f, 18000.0f, 22000.0f, 26000.0f, 30000.0f, 34000.0f, 38000.0f
-        };
         int active = numActiveBands.load(std::memory_order_relaxed);
         for (int i = 0; i < active; ++i)
         {
@@ -1281,7 +1268,8 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
             else if (i == active - 1)
                 type = ParametricEQProcessor::HighShelf;
 
-            eqProcessor.addBand(defaultFreqs[i], 0.0f, 1.0f, type);
+            eqProcessor.addBand(AIEQDSP::defaultBandFrequencies[static_cast<size_t>(i)],
+                                0.0f, 1.0f, type);
         }
         // If fewer than active bands were added (max limit), adjust numActiveBands
         numActiveBands.store(std::min(active, eqProcessor.getNumBands()), std::memory_order_relaxed);
@@ -4207,7 +4195,7 @@ void AIEqualizerAudioProcessor::ensureBandCount(int count)
             else if (i == maxBands - 1)
                 type = ParametricEQProcessor::HighShelf;
 
-            float freq = defaultBandFrequencies[i];
+            float freq = AIEQDSP::defaultBandFrequencies[static_cast<size_t>(i)];
             proc.addBand(freq, 0.0f, 1.0f, type);
             proc.setBandEnabled(i, i < activeBands);
         }

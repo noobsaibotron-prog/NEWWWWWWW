@@ -1,4 +1,5 @@
 #include "DynamicEQProcessor.h"
+#include "DefaultBandFrequencies.h"
 #include <algorithm>
 #include <cmath>
 
@@ -94,18 +95,15 @@ std::complex<double> evaluateComplexResponse(const BiquadCoeffs& coeffs,
 DynamicEQProcessor::DynamicEQProcessor()
 {
     // Set default frequencies spread across spectrum
-    const float defaultFreqs[maxBands] = {
-        31.0f,   50.0f,   80.0f,   120.0f,  170.0f,  250.0f,
-        350.0f,  500.0f,  700.0f,  1000.0f, 1400.0f, 2000.0f,
-        2800.0f, 4000.0f, 5600.0f, 8000.0f, 11000.0f,15000.0f,
-        18000.0f,22000.0f,26000.0f,30000.0f,34000.0f,38000.0f
-    };
+    static_assert(maxBands == static_cast<int>(AIEQDSP::defaultBandFrequencies.size()));
     
     for (int i = 0; i < maxBands; ++i)
     {
-        bandParams[i].frequency.store(defaultFreqs[i], std::memory_order_relaxed);
-        bandParams[i].enabled.store(true, std::memory_order_relaxed);
-        bandParams[i].version.store(0, std::memory_order_relaxed);
+        const auto index = static_cast<size_t>(i);
+        bandParams[index].frequency.store(AIEQDSP::defaultBandFrequencies[index],
+                                          std::memory_order_relaxed);
+        bandParams[index].enabled.store(true, std::memory_order_relaxed);
+        bandParams[index].version.store(0, std::memory_order_relaxed);
     }
 }
 

@@ -14,36 +14,24 @@
 
 #include <juce_core/juce_core.h>
 #include <juce_audio_processors/juce_audio_processors.h>
-#include "LockFreeStructures.h"
 #include <deque>
 #include <vector>
-#include <functional>
+#include <cmath>
 
 namespace AIEQCore
 {
 
-// Note: kMaxBands is already defined in LockFreeStructures.h
 static constexpr int kMaxHistorySize = 20;
 
 /**
- * Immutable snapshot of EQ band state
+ * One normalized host parameter value. Keeping the stable parameter ID makes
+ * snapshots forward/backward tolerant: unknown parameters are ignored and new
+ * parameters are captured automatically without extending this class.
  */
-struct BandSnapshot
+struct ParameterValueSnapshot
 {
-    float frequency = 1000.0f;
-    float gain = 0.0f;
-    float q = 1.0f;
-    int filterType = 2;  // Peak
-    bool enabled = true;
-    
-    // Dynamic EQ parameters
-    int dynamicMode = 0;
-    float threshold = -20.0f;
-    float ratio = 2.0f;
-    float attackMs = 10.0f;
-    float releaseMs = 100.0f;
-    float range = 24.0f;
-    float knee = 6.0f;
+    juce::String parameterID;
+    float normalizedValue = 0.0f;
 };
 
 /**
@@ -51,9 +39,7 @@ struct BandSnapshot
  */
 struct EQStateSnapshot
 {
-    std::array<BandSnapshot, kMaxBands> bands;
-    int numActiveBands = 8;
-    float outputGain = 0.0f;
+    std::vector<ParameterValueSnapshot> parameters;
     juce::String description;
     juce::int64 timestamp = 0;
     
@@ -83,9 +69,11 @@ public:
     /**
      * Initialize with APVTS reference
      */
-    void initialize(juce::AudioProcessorValueTreeState& apvts)
+    void initialize(juce::AudioProcessorValueTreeState& stateIn,
+                    juce::AudioProcessor& processorIn)
     {
-        this->apvts = &apvts;
+        apvts = &stateIn;
+        processor = &processorIn;
     }
     
     /**
@@ -130,6 +118,8 @@ public:
         EQStateSnapshot currentSnapshot("Redo: " + undoStack.back().description);
         captureCurrentState(currentSnapshot);
         redoStack.push_back(currentSnapshot);
+        while (redoStack.size() > kMaxHistorySize)
+            redoStack.pop_front();
         
         // Restore previous state
         const auto& previousState = undoStack.back();
@@ -152,6 +142,8 @@ public:
         EQStateSnapshot currentSnapshot(redoStack.back().description);
         captureCurrentState(currentSnapshot);
         undoStack.push_back(currentSnapshot);
+        while (undoStack.size() > kMaxHistorySize)
+            undoStack.pop_front();
         
         // Restore redo state
         const auto& redoState = redoStack.back();
@@ -227,46 +219,26 @@ private:
      */
     void captureCurrentState(EQStateSnapshot& snapshot)
     {
-        if (apvts == nullptr)
+        if (apvts == nullptr || processor == nullptr)
             return;
-        
-        for (int i = 0; i < kMaxBands; ++i)
+
+        snapshot.parameters.clear();
+        const auto& hostParameters = processor->getParameters();
+        snapshot.parameters.reserve(static_cast<size_t>(hostParameters.size()));
+
+        for (auto* parameter : hostParameters)
         {
-            juce::String prefix = "band" + juce::String(i);
-            auto& band = snapshot.bands[static_cast<size_t>(i)];
-            
-            if (auto* freq = apvts->getRawParameterValue(prefix + "Freq"))
-                band.frequency = freq->load();
-            if (auto* gain = apvts->getRawParameterValue(prefix + "Gain"))
-                band.gain = gain->load();
-            if (auto* q = apvts->getRawParameterValue(prefix + "Q"))
-                band.q = q->load();
-            if (auto* type = apvts->getRawParameterValue(prefix + "Type"))
-                band.filterType = static_cast<int>(type->load());
-            if (auto* enabled = apvts->getRawParameterValue(prefix + "Enabled"))
-                band.enabled = enabled->load() > 0.5f;
-            
-            // Dynamic EQ
-            if (auto* dynMode = apvts->getRawParameterValue(prefix + "DynMode"))
-                band.dynamicMode = static_cast<int>(dynMode->load());
-            if (auto* thresh = apvts->getRawParameterValue(prefix + "Threshold"))
-                band.threshold = thresh->load();
-            if (auto* ratio = apvts->getRawParameterValue(prefix + "Ratio"))
-                band.ratio = ratio->load();
-            if (auto* attack = apvts->getRawParameterValue(prefix + "Attack"))
-                band.attackMs = attack->load();
-            if (auto* release = apvts->getRawParameterValue(prefix + "Release"))
-                band.releaseMs = release->load();
-            if (auto* range = apvts->getRawParameterValue(prefix + "Range"))
-                band.range = range->load();
-            if (auto* knee = apvts->getRawParameterValue(prefix + "Knee"))
-                band.knee = knee->load();
+            auto* withID = dynamic_cast<juce::AudioProcessorParameterWithID*>(parameter);
+            if (withID == nullptr)
+                continue;
+
+            const float normalized = parameter->getValue();
+            if (!std::isfinite(normalized))
+                continue;
+
+            snapshot.parameters.push_back({ withID->getParameterID(),
+                                            juce::jlimit(0.0f, 1.0f, normalized) });
         }
-        
-        if (auto* numBands = apvts->getRawParameterValue("numActiveBands"))
-            snapshot.numActiveBands = static_cast<int>(numBands->load()) + 1; // 0-indexed
-        if (auto* outputGain = apvts->getRawParameterValue("outputGain"))
-            snapshot.outputGain = outputGain->load();
     }
     
     /**
@@ -278,48 +250,25 @@ private:
         if (apvts == nullptr)
             return;
         
-        for (int i = 0; i < kMaxBands; ++i)
+        for (const auto& saved : snapshot.parameters)
         {
-            juce::String prefix = "band" + juce::String(i);
-            const auto& band = snapshot.bands[static_cast<size_t>(i)];
-            
-            setParameter(prefix + "Freq", band.frequency);
-            setParameter(prefix + "Gain", band.gain);
-            setParameter(prefix + "Q", band.q);
-            setParameter(prefix + "Type", static_cast<float>(band.filterType));
-            setParameter(prefix + "Enabled", band.enabled ? 1.0f : 0.0f);
-            
-            // Dynamic EQ
-            setParameter(prefix + "DynMode", static_cast<float>(band.dynamicMode));
-            setParameter(prefix + "Threshold", band.threshold);
-            setParameter(prefix + "Ratio", band.ratio);
-            setParameter(prefix + "Attack", band.attackMs);
-            setParameter(prefix + "Release", band.releaseMs);
-            setParameter(prefix + "Range", band.range);
-            setParameter(prefix + "Knee", band.knee);
-        }
-        
-        setParameter("numActiveBands", static_cast<float>(snapshot.numActiveBands - 1));
-        setParameter("outputGain", snapshot.outputGain);
-    }
-    
-    /**
-     * Helper to set a parameter with proper host notification
-     */
-    void setParameter(const juce::String& paramID, float value)
-    {
-        if (auto* param = apvts->getParameter(paramID))
-        {
-            param->beginChangeGesture();
-            param->setValueNotifyingHost(param->convertTo0to1(value));
-            param->endChangeGesture();
+            if (!std::isfinite(saved.normalizedValue))
+                continue;
+
+            if (auto* param = apvts->getParameter(saved.parameterID))
+            {
+                param->beginChangeGesture();
+                param->setValueNotifyingHost(
+                    juce::jlimit(0.0f, 1.0f, saved.normalizedValue));
+                param->endChangeGesture();
+            }
         }
     }
     
     juce::AudioProcessorValueTreeState* apvts = nullptr;
+    juce::AudioProcessor* processor = nullptr;
     std::deque<EQStateSnapshot> undoStack;
     std::deque<EQStateSnapshot> redoStack;
 };
 
 } // namespace AIEQCore
-
