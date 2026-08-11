@@ -749,16 +749,18 @@ else()
     add_library(AIEqualizerPro STATIC)
 endif()
 
-# Copy ML weights into each plugin bundle's MacOS/models/ directory
+# Package ML weights as bundle resources. Keeping data under Contents/MacOS
+# makes codesign treat it as executable/nested code and the JUCE VST3 artefact
+# copy can run before a later POST_BUILD copy, silently omitting the model.
 if(EXISTS "${CMAKE_SOURCE_DIR}/Resources/Models/ml_weights.bin")
     foreach(_target AIEqualizerPro_VST3 AIEqualizerPro_AU AIEqualizerPro_Standalone)
         if(TARGET ${_target})
             add_custom_command(TARGET ${_target} POST_BUILD
                 COMMAND ${CMAKE_COMMAND} -E make_directory
-                        "$<TARGET_FILE_DIR:${_target}>/models"
+                        "$<TARGET_FILE_DIR:${_target}>/../Resources/models"
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
                         "${CMAKE_SOURCE_DIR}/Resources/Models/ml_weights.bin"
-                        "$<TARGET_FILE_DIR:${_target}>/models/ml_weights.bin"
+                        "$<TARGET_FILE_DIR:${_target}>/../Resources/models/ml_weights.bin"
                 COMMENT "Copying ml_weights.bin into ${_target} bundle"
             )
         endif()

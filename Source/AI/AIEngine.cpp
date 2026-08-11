@@ -5,6 +5,31 @@
 #include <algorithm>
 #include "../Utils/Logger.h"
 
+namespace
+{
+juce::File findPackagedModel(const juce::String& fileName)
+{
+    const auto applicationFile = juce::File::getSpecialLocation(juce::File::currentApplicationFile);
+    const auto executableFile = juce::File::getSpecialLocation(juce::File::currentExecutableFile);
+    const std::array<juce::File, 8> candidates {{
+        applicationFile.getParentDirectory().getSiblingFile("Resources").getChildFile("models").getChildFile(fileName),
+        applicationFile.getChildFile("Contents").getChildFile("Resources").getChildFile("models").getChildFile(fileName),
+        executableFile.getParentDirectory().getSiblingFile("Resources").getChildFile("models").getChildFile(fileName),
+        executableFile.getChildFile("Contents").getChildFile("Resources").getChildFile("models").getChildFile(fileName),
+        applicationFile.getParentDirectory().getChildFile("models").getChildFile(fileName),
+        executableFile.getParentDirectory().getChildFile("models").getChildFile(fileName),
+        applicationFile.getSiblingFile(fileName),
+        executableFile.getSiblingFile(fileName)
+    }};
+
+    for (const auto& candidate : candidates)
+        if (candidate.existsAsFile())
+            return candidate;
+
+    return candidates.front();
+}
+}
+
 //==============================================================================
 /**
  * AIEngine Implementation - Optimized and Improved
@@ -108,10 +133,7 @@ void AIEngine::prepare(double sampleRate, int /*samplesPerBlock*/)
     // skip the runtime path search.
     if (!useMLDetection)
     {
-        auto mlModelPath = juce::File::getSpecialLocation(juce::File::currentExecutableFile)
-                               .getParentDirectory()
-                               .getChildFile("models")
-                               .getChildFile("ml_weights.bin");
+        const auto mlModelPath = findPackagedModel("ml_weights.bin");
         if (mlModelPath.existsAsFile())
         {
             if (mlEngine.loadWeights(mlModelPath))
@@ -138,7 +160,7 @@ void AIEngine::prepare(double sampleRate, int /*samplesPerBlock*/)
             mlBackendStatus.store(static_cast<int>(MLBackendStatus::WeightsMissing), std::memory_order_relaxed);
             AIEQ_LOG_WARNING("ML weights not found at " + mlModelPath.getFullPathName()
                              + " - ML/Hybrid backend modes will run the heuristic path. "
-                               "Ship models/ml_weights.bin next to the binary to enable ML detection.");
+                               "Ship Contents/Resources/models/ml_weights.bin to enable ML detection.");
         }
     }
     else
@@ -150,10 +172,7 @@ void AIEngine::prepare(double sampleRate, int /*samplesPerBlock*/)
     // Attempt to load TFLite model if enabled and not already loaded
     if (enableNeuralNetworks && neuralNetwork && !neuralNetwork->isModelLoaded())
     {
-        auto modelPath = juce::File::getSpecialLocation(juce::File::currentExecutableFile)
-                             .getParentDirectory()
-                             .getChildFile("models")
-                             .getChildFile("problem_detection.tflite");
+        const auto modelPath = findPackagedModel("problem_detection.tflite");
         if (modelPath.existsAsFile())
         {
             if (neuralNetwork->loadModel(modelPath, NeuralNetworkWrapper::ModelType::ProblemDetection))
