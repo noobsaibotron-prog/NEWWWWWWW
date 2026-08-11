@@ -1298,15 +1298,13 @@ if(HAVE_JUCE)
         LABELS "KnownDebt;Performance")
 
     # ---------------------------------------------------------------------------
-    # Thread-safety DETECTOR (quarantined) — in-process reproducer of pluginval's
+    # Thread-safety regression gate — in-process reproducer of pluginval's
     # "Parameter thread safety" crash (REPORTS/KNOWN_ISSUE_pluginval_s10_param_thread_safety.md).
-    # EXCLUDE_FROM_ALL + NO add_test: it is EXPECTED RED (crash / sanitizer report)
-    # while the underlying race is unfixed, so it must not enter default builds,
-    # CI, or ctest gates. Build & run it explicitly via build_sanitize.sh
-    # (SAN=thread, or RUN_THREADSAFETY=1 under ASan). Promote to a blocking gate
-    # (add_test) only after the fix lands.
+    # The deterministic overflow and publication-race fixes are now product
+    # invariants, so this target is part of the normal build and CTest gate.
+    # build_sanitize.sh additionally runs it under ASan/UBSan or TSan.
     # ---------------------------------------------------------------------------
-    add_executable(AIEqualizerPro_ThreadSafetyTests EXCLUDE_FROM_ALL
+    add_executable(AIEqualizerPro_ThreadSafetyTests
         # Deterministic repro FIRST: registration order = run order, so under ASan the
         # single-threaded test discriminates (spatial bug) before the storm test aborts.
         Source/Tests/MSTransitionOversamplingOverflowTest.cpp
@@ -1340,4 +1338,10 @@ if(HAVE_JUCE)
     )
     set_target_properties(AIEqualizerPro_ThreadSafetyTests PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/Tests)
+
+    add_test(NAME aieq_thread_safety_regression
+             COMMAND $<TARGET_FILE:AIEqualizerPro_ThreadSafetyTests> --category=ThreadSafety -v)
+    set_tests_properties(aieq_thread_safety_regression PROPERTIES
+        LABELS "ThreadSafety;Regression"
+        TIMEOUT 60)
 endif()

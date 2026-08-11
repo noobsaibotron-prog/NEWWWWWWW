@@ -242,6 +242,8 @@ public:
 
             double phase = 0.0;
             bool allFinite = true;
+            bool versionsMonotonic = true;
+            uint32_t previousVersion = 0;
             for (int b = 0; b < 400; ++b)
             {
                 juce::AudioBuffer<float> buf(2, kBlock);
@@ -255,10 +257,16 @@ public:
                 }
                 if (!allFinite)
                     break;
+
+                const auto consumedVersion = engine.getActiveSnapshotVersion();
+                if (consumedVersion < previousVersion)
+                    versionsMonotonic = false;
+                previousVersion = consumedVersion;
             }
             stop.store(true);
             publisher.join();
             expect(allFinite, "non-finite output under publish storm");
+            expect(versionsMonotonic, "audio thread consumed snapshot versions out of order");
             expect(engine.getActiveSnapshotVersion() > 0, "audio thread never consumed a snapshot");
         }
     }

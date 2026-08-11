@@ -17,19 +17,109 @@ void DynamicCorrectionEngine::reset()
         slot.gainDb = 0.0f;
         slot.appliedGainDb = 1.0e9f;
     }
-    lastSeenVersion = 0;
+    // Force the currently owned snapshot (if any) to rebuild the audio-owned
+    // filter state on the next block. The mailbox itself is deliberately not
+    // cleared: reset/prepare must not silently discard an already published
+    // correction set.
+    lastAppliedSnapshotSequence = 0;
     for (auto& g : currentGainDb)
         g.store(0.0f, std::memory_order_relaxed);
 }
 
 void DynamicCorrectionEngine::publishCorrections(const Snapshot& snapshot)
 {
-    // Single-writer double buffer: write the INACTIVE slot, then release-swap.
-    const int writeIndex = 1 - activeSnapshotIndex.load(std::memory_order_relaxed);
-    auto& dst = snapshots[static_cast<size_t>(writeIndex)];
-    dst = snapshot;   // fixed-size struct copy — no allocation
-    dst.numActive = juce::jlimit(0, kMaxCorrections, snapshot.numActive);
-    activeSnapshotIndex.store(writeIndex, std::memory_order_release);
+    int writeIndex = -1;
+
+    // Prefer a genuinely free slot. If the producer outruns the audio thread,
+    // reclaim an unconsumed READY slot. READY->WRITING races safely against
+    // the consumer's READY->READING CAS: exactly one side can own the slot.
+    for (const auto desired : { SnapshotSlotState::free, SnapshotSlotState::ready })
+    {
+        for (size_t i = 0; i < snapshotSlots.size(); ++i)
+        {
+            auto expected = desired;
+            if (snapshotSlots[i].state.compare_exchange_strong(
+                    expected, SnapshotSlotState::writing,
+                    std::memory_order_acquire, std::memory_order_relaxed))
+            {
+                writeIndex = static_cast<int>(i);
+                break;
+            }
+        }
+        if (writeIndex >= 0)
+            break;
+    }
+
+    // Under the documented single-writer contract this is unreachable: the
+    // audio thread can own only one of four slots, leaving at least one FREE or
+    // READY slot. Fail closed if the contract is violated by multiple writers.
+    if (writeIndex < 0)
+    {
+        jassertfalse;
+        return;
+    }
+
+    auto& slot = snapshotSlots[static_cast<size_t>(writeIndex)];
+    slot.snapshot = snapshot; // fixed-size struct copy — no allocation
+    slot.snapshot.numActive = juce::jlimit(0, kMaxCorrections, snapshot.numActive);
+    const auto sequence = nextPublicationSequence.fetch_add(1, std::memory_order_relaxed) + 1;
+    slot.sequence.store(sequence, std::memory_order_relaxed);
+    slot.state.store(SnapshotSlotState::ready, std::memory_order_release);
+}
+
+const DynamicCorrectionEngine::Snapshot*
+DynamicCorrectionEngine::acquireLatestSnapshot() noexcept
+{
+    int candidateIndex = -1;
+    uint64_t candidateSequence = currentSnapshotSequence;
+
+    for (size_t i = 0; i < snapshotSlots.size(); ++i)
+    {
+        auto& slot = snapshotSlots[i];
+        if (slot.state.load(std::memory_order_acquire) != SnapshotSlotState::ready)
+            continue;
+
+        const auto sequence = slot.sequence.load(std::memory_order_relaxed);
+        if (sequence > candidateSequence)
+        {
+            candidateSequence = sequence;
+            candidateIndex = static_cast<int>(i);
+        }
+    }
+
+    if (candidateIndex >= 0)
+    {
+        auto& candidate = snapshotSlots[static_cast<size_t>(candidateIndex)];
+        auto expected = SnapshotSlotState::ready;
+        if (candidate.state.compare_exchange_strong(
+                expected, SnapshotSlotState::reading,
+                std::memory_order_acquire, std::memory_order_relaxed))
+        {
+            // The producer may have reclaimed and republished this slot between
+            // our scan and CAS. Read the authoritative sequence only after we
+            // own it; any newer payload is still safe and preferable.
+            const auto acquiredSequence = candidate.sequence.load(std::memory_order_relaxed);
+            if (acquiredSequence > currentSnapshotSequence)
+            {
+                const int previousIndex = audioSnapshotIndex;
+                audioSnapshotIndex = candidateIndex;
+                currentSnapshotSequence = acquiredSequence;
+
+                if (previousIndex >= 0 && previousIndex != candidateIndex)
+                    snapshotSlots[static_cast<size_t>(previousIndex)].state.store(
+                        SnapshotSlotState::free, std::memory_order_release);
+            }
+            else
+            {
+                candidate.state.store(SnapshotSlotState::free, std::memory_order_release);
+            }
+        }
+    }
+
+    if (audioSnapshotIndex < 0)
+        return nullptr;
+
+    return &snapshotSlots[static_cast<size_t>(audioSnapshotIndex)].snapshot;
 }
 
 DynamicCorrectionEngine::BiquadCoeffs
@@ -98,15 +188,19 @@ void DynamicCorrectionEngine::process(juce::AudioBuffer<float>& buffer) noexcept
     if (numSamples <= 0 || numChannels <= 0)
         return;
 
-    // ONE acquire read of the published snapshot per block (frame-coherent).
-    const auto& snap = snapshots[static_cast<size_t>(
-        activeSnapshotIndex.load(std::memory_order_acquire))];
+    // Acquire ownership of at most one immutable snapshot for this block.
+    const auto* acquiredSnapshot = acquireLatestSnapshot();
+    if (acquiredSnapshot == nullptr)
+        return;
+    const auto& snap = *acquiredSnapshot;
 
-    if (snap.version != lastSeenVersion)
+    if (currentSnapshotSequence != lastAppliedSnapshotSequence)
     {
         for (int i = 0; i < snap.numActive; ++i)
             rebuildSlotFromParams(i, snap.corrections[static_cast<size_t>(i)]);
-        lastSeenVersion = snap.version;
+        for (int i = snap.numActive; i < kMaxCorrections; ++i)
+            currentGainDb[static_cast<size_t>(i)].store(0.0f, std::memory_order_relaxed);
+        lastAppliedSnapshotSequence = currentSnapshotSequence;
         activeVersion.store(snap.version, std::memory_order_relaxed);
     }
 

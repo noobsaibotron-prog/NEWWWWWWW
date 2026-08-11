@@ -4144,8 +4144,8 @@ void AIEqualizerAudioProcessor::ensureBandCount(int count)
 void AIEqualizerAudioProcessor::publishDynamicCorrectionsFromApplied(
     const std::vector<AIEngine::Correction>& appliedCorrections)
 {
-    // Message-thread publication (the engine's double buffer makes it safe
-    // against the audio thread). The caller passes the exact merged/limited
+    // Message-thread publication (the engine's ownership mailbox keeps the
+    // payload immutable while the audio thread reads it). The caller passes the exact merged/limited
     // correction list that was applied to static bands, so the dynamic snapshot
     // cannot diverge from the user-visible AI application.
 

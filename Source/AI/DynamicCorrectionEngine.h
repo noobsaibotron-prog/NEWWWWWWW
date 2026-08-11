@@ -17,11 +17,13 @@
  *    path and the REV-5 Timer machinery; audit findings designed OUT) ──────
  *  - The message thread PUBLISHES an immutable, FIXED-SIZE params snapshot
  *    (no vectors, no reallocation — the original race root cause) via a
- *    double buffer + release/acquire index swap (single writer).
- *  - The audio thread is a PURE READER of the snapshot: one acquire load per
- *    block (B2 lesson: one coherent frame per pass), then works exclusively
- *    on audio-thread-owned filter/envelope state. No CAS loops, no ABA, no
- *    shared mutable coefficients.
+ *    four-slot ownership mailbox (single writer). A slot is never writable
+ *    while the audio thread owns it, which removes the ABA/write-while-read
+ *    hole of the former two-slot index swap.
+ *  - The audio thread acquires at most one READY slot per block, keeps it in
+ *    READING state for the whole block, then works exclusively on
+ *    audio-thread-owned filter/envelope state. Publication is bounded,
+ *    allocation-free and lock-free; there are no shared mutable coefficients.
  *  - prepare()/reset() run under the host contract (never concurrent with
  *    processBlock) and touch only audio-owned state + defaults.
  *
@@ -73,8 +75,8 @@ public:
     void reset();
 
     /** Message-thread publication of the correction set (single writer).
-        Fixed-size copy into the inactive slot + release swap — never blocks
-        the audio thread, never reallocates. */
+        Fixed-size copy into a FREE/obsolete READY slot followed by release
+        publication — never blocks the audio thread, never reallocates. */
     void publishCorrections(const Snapshot& snapshot);
 
     /** Any thread. OFF by default; when off, process() is a guaranteed no-op. */
@@ -109,15 +111,41 @@ private:
     static BiquadCoeffs makeBandpass(float freq, float q, double sampleRate) noexcept;
     static BiquadCoeffs makePeak(float freq, float q, float gainDb, double sampleRate) noexcept;
 
-    // ── published params (message thread writes, audio thread reads) ──
-    std::array<Snapshot, 2> snapshots;
-    std::atomic<int> activeSnapshotIndex { 0 };
+    // ── published params (single producer, audio-thread consumer) ──
+    // A slot's payload is written only while WRITING and read only while
+    // READING. READY slots may be reclaimed by the producer because the
+    // consumer must win READY->READING before touching the payload.
+    enum class SnapshotSlotState : uint8_t
+    {
+        free = 0,
+        writing,
+        ready,
+        reading
+    };
+
+    static constexpr size_t kSnapshotSlotCount = 4;
+
+    struct PublishedSnapshotSlot
+    {
+        Snapshot snapshot {};
+        std::atomic<uint64_t> sequence { 0 };
+        std::atomic<SnapshotSlotState> state { SnapshotSlotState::free };
+    };
+
+    std::array<PublishedSnapshotSlot, kSnapshotSlotCount> snapshotSlots {};
+    std::atomic<uint64_t> nextPublicationSequence { 0 };
+    static_assert(std::atomic<uint64_t>::is_always_lock_free,
+                  "RT snapshot sequencing requires lock-free uint64 atomics");
+    static_assert(std::atomic<SnapshotSlotState>::is_always_lock_free,
+                  "RT snapshot ownership requires lock-free state atomics");
     std::atomic<bool> enabled { false };
 
     // ── audio-thread-owned state ──
     double sr = 44100.0;
     int channels = 2;
-    uint32_t lastSeenVersion = 0;
+    int audioSnapshotIndex = -1;
+    uint64_t currentSnapshotSequence = 0;
+    uint64_t lastAppliedSnapshotSequence = 0;
 
     struct SlotState
     {
@@ -137,6 +165,7 @@ private:
     std::array<std::atomic<float>, kMaxCorrections> currentGainDb {};
     std::atomic<uint32_t> activeVersion { 0 };
 
+    const Snapshot* acquireLatestSnapshot() noexcept;
     void rebuildSlotFromParams(int slotIndex, const CorrectionParams& params) noexcept;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(DynamicCorrectionEngine)
