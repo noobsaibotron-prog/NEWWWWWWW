@@ -789,9 +789,11 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
 
                 pushBandInputHistory(state, inL, inR);
                 
-                state.meterOutputLevel.store(
-                    juce::Decibels::gainToDecibels(std::max(std::abs(outL), std::abs(outR))),
-                    std::memory_order_relaxed);
+                const float outputMagnitude = std::max(std::abs(outL), std::abs(outR));
+                const float outputDb = std::isfinite(outputMagnitude) && outputMagnitude > 1.0e-10f
+                    ? juce::Decibels::gainToDecibels(outputMagnitude, -100.0f)
+                    : -100.0f;
+                state.meterOutputLevel.store(outputDb, std::memory_order_relaxed);
             }
 
             state.liveCurrentGainDb.store(state.currentGain, std::memory_order_relaxed);
@@ -1085,13 +1087,20 @@ float DynamicEQProcessor::computeAutoMakeupGainLinear() const noexcept
         if (bandParams[i].enabled.load(std::memory_order_relaxed)
             && bandParams[i].dynamicMode.load(std::memory_order_relaxed) != DynamicMode_Off)
         {
-            const float grDb = bandStates[i].meterGainReduction.load(std::memory_order_relaxed);
-            totalGainLinear *= juce::Decibels::decibelsToGain(grDb);
+            const float measuredGrDb =
+                bandStates[i].meterGainReduction.load(std::memory_order_relaxed);
+            const float safeGrDb = std::isfinite(measuredGrDb)
+                ? juce::jlimit(-120.0f, 0.0f, measuredGrDb)
+                : 0.0f;
+            totalGainLinear *= juce::Decibels::decibelsToGain(safeGrDb);
         }
     }
 
     if (totalGainLinear < 0.999f)
-        return juce::jlimit(0.25f, 4.0f, 1.0f / totalGainLinear);
+    {
+        const float safeGain = std::max(totalGainLinear, 1.0e-6f);
+        return juce::jlimit(0.25f, 4.0f, 1.0f / safeGain);
+    }
 
     return 1.0f;
 }

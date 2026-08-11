@@ -28,6 +28,7 @@ public:
         testDynamicDetectionNoSidechain();
         testDryWetOversizedBlock();
         testStaticProcessingClean();
+        testSilenceMetersAndAutoMakeupStayFinite();
     }
 
 private:
@@ -196,6 +197,38 @@ private:
 
         expect(isFinite(buf), "Non-finite samples in static EQ output");
         expect(rms(buf) > 0.0f, "Static EQ output is silent");
+    }
+
+    void testSilenceMetersAndAutoMakeupStayFinite()
+    {
+        beginTest("Silence keeps meters and auto-makeup finite");
+
+        DynamicEQProcessor proc;
+        proc.prepare(kSampleRate, kBlockSize, kChannels);
+        proc.setAutoMakeup(true);
+
+        DynamicEQProcessor::DynamicBandParams params;
+        params.frequency = 1000.0f;
+        params.gain = 12.0f;
+        params.q = 8.0f;
+        params.filterType = 2; // Peak
+        params.enabled = true;
+        params.dynamicMode = DynamicEQProcessor::DynamicMode_Compress;
+        params.threshold = -80.0f;
+        params.ratio = 20.0f;
+        params.range = 48.0f;
+        proc.setBandParams(0, params);
+
+        juce::AudioBuffer<float> silence(kChannels, kBlockSize);
+        silence.clear();
+        for (int block = 0; block < 16; ++block)
+            proc.process(silence);
+
+        const auto meter = proc.getBandMeter(0);
+        expect(isFinite(silence), "silence/auto-makeup path produced non-finite samples");
+        expect(std::isfinite(meter.inputLevel), "input meter became non-finite on silence");
+        expect(std::isfinite(meter.gainReduction), "GR meter became non-finite on silence");
+        expect(std::isfinite(meter.outputLevel), "output meter became non-finite on silence");
     }
 };
 
