@@ -1,6 +1,7 @@
 """Closing tests and reject-paths for G1 frontend Gates 5–7."""
 from __future__ import annotations
 
+import hashlib
 import math
 import unittest
 from unittest import mock
@@ -10,6 +11,12 @@ import numpy as np
 import ml_v3.benchmark as benchmark_package
 import ml_v3.contracts as contracts_package
 from ml_v3.benchmark.frontend_conformance import (
+    _BALLOT,
+    _BASE_ATTENUATION_DB,
+    _GAIN_VARIANTS_DB,
+    _MIN_PROMINENCE,
+    _MIN_PSD_SHAPE_DELTA,
+    _REPO_ROOT,
     FrontendConformanceError,
     _alias_threshold,
     _channel_equivalence,
@@ -395,6 +402,51 @@ class FrontendConformanceIntegrationTests(unittest.TestCase):
         self.assertNotIn("run_frontend_conformance", benchmark_package.__all__)
         self.assertNotIn("run_frontend_conformance", contracts_package.__all__)
         self.assertFalse(hasattr(contracts_package, "run_frontend_conformance"))
+
+
+class SignedAuthorityBindingTests(unittest.TestCase):
+    """Bind this harness to the decision that authorised it.
+
+    Gate 5 runs on values a signed ballot fixed: the preliminary attenuation,
+    the four gain variants, and the eligible-support floors. The module holds
+    them as constants and publishes the ballot path as metadata, but nothing
+    checked that either still matched the signed text — so an edit to a
+    constant, or to the ballot, would leave the gate reporting GREEN while
+    measuring something the authority never approved.
+
+    A gain variant of 0 dB is the sharpest case: the variant becomes the
+    reference, every comparison is trivially satisfied, and the gate stays
+    green without testing invariance at all. Measured: with the domain widened
+    to the full grid the gate correctly turns RED, so the verdict is earned —
+    what was missing is the guarantee that it stays earned.
+    """
+
+    #: SHA-256 of the ballot as signed in c400ac25 and unchanged since.
+    BALLOT_SHA256 = (
+        "1f371cd427d99a00a0abb0a6e2b63666dc19ca427b651f9bdf1b63a4cf56d705"
+    )
+
+    def test_authority_ballot_is_the_signed_document(self):
+        path = _REPO_ROOT / _BALLOT
+        self.assertTrue(path.is_file(), f"{_BALLOT} is missing")
+        self.assertEqual(
+            hashlib.sha256(path.read_bytes()).hexdigest(),
+            self.BALLOT_SHA256,
+            "the authority ballot changed; a signed document is immutable and "
+            "any correction belongs in an append-only erratum",
+        )
+
+    def test_gain_variants_match_the_signed_values(self):
+        """Ballot §2: `-12, -6, +6, +12 dB`. Zero would make the gate vacuous."""
+        self.assertEqual(_GAIN_VARIANTS_DB, (-12.0, -6.0, 6.0, 12.0))
+        for gain in _GAIN_VARIANTS_DB:
+            self.assertNotEqual(gain, 0.0)
+
+    def test_fixture_attenuation_and_support_floors_match_the_ballot(self):
+        """Ballot §2 and §7: -1.0 dB, and floors of 108 and 64 cells."""
+        self.assertEqual(_BASE_ATTENUATION_DB, -1.0)
+        self.assertEqual(_MIN_PSD_SHAPE_DELTA, 108)
+        self.assertEqual(_MIN_PROMINENCE, 64)
 
 
 if __name__ == "__main__":
