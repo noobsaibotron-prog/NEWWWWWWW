@@ -1193,6 +1193,29 @@ if(HAVE_JUCE)
     add_test(NAME aieq_ai_regression
              COMMAND $<TARGET_FILE:AIEqualizerPro_AI_Tests>)
 
+    # Lab guard tests (python, torch-free). Explicit ctest entries because
+    # plain unittest discovery finds zero tests in these packages, so a file
+    # that is present but unregistered would sit in the tree looking like
+    # coverage while never running once.
+    #   a4b_guards        cache fingerprint, fail-closed manifest loader,
+    #                     group-level calibration/metric split, cross-split
+    #                     sha and group leakage
+    #   corpus_admission  ledger validation, pre-decode re-hash, path
+    #                     traversal, source policy, rerun idempotence
+    #   boom_gate_probe   the measured Boominess injection gate
+    find_program(AIEQ_PYTHON3 python3)
+    if(AIEQ_PYTHON3)
+        foreach(aieq_lab_guard
+                ml_v2.tests.test_a4b_guards
+                ml_v2.tests.test_corpus_admission
+                ml_v2.tests.test_boom_gate_probe)
+            string(REPLACE "." "_" aieq_lab_guard_name "${aieq_lab_guard}")
+            add_test(NAME aieq_${aieq_lab_guard_name}
+                     COMMAND ${AIEQ_PYTHON3} -B -m ${aieq_lab_guard}
+                     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+        endforeach()
+    endif()
+
     # Motore v2 — RTNeural parity test, compiled ONLY when the flag is ON.
     # Adds the vendored header-only RTNeural (STL backend) + the fixture path.
     if(AIEQ_ENABLE_MOTORE_V2)
