@@ -1,0 +1,364 @@
+{
+  "artifact": "G1B_SPIKE_WS4_EVIDENCE",
+  "claim": "SPIKE_EVIDENCE_ONLY",
+  "elapsed_s": 60.67894101142883,
+  "gate4": {
+    "cells": [
+      {
+        "asset": "multitone",
+        "fs_ref": 48000,
+        "fs_sr": 44100,
+        "margin_db": -4.529563903808594,
+        "max_abs_db": 4.779563903808594,
+        "mode": "full",
+        "n_active_cells": 13586,
+        "n_pairs_compared": 77,
+        "n_skipped_empty_activity": 0,
+        "n_skipped_invalid_channel": 77,
+        "notes": [
+          "P2 watch-list HIT: max|\u0394| on MAIN single-bin band 35"
+        ],
+        "p2_watch_hit": true,
+        "peak": {
+          "abs_delta_db": 4.779563903808594,
+          "band": 35,
+          "field": "mid_shape_db",
+          "hz": 152.5397171804689,
+          "meta": {
+            "t": 1.664
+          },
+          "p2_lf_single_bin": false,
+          "p2_main_single_bin": true,
+          "psd_ref": -119.29441833496094,
+          "psd_sr": -114.52755737304688,
+          "t_ref": 1.664,
+          "t_sr": 1.6625487528344671
+        },
+        "verdict": "RED"
+      },
+      {
+        "asset": "multitone",
+        "fs_ref": 48000,
+        "fs_sr": 96000,
+        "margin_db": -4.237525939941406,
+        "max_abs_db": 4.487525939941406,
+        "mode": "full",
+        "n_active_cells": 13565,
+        "n_pairs_compared": 77,
+        "n_skipped_empty_activity": 0,
+        "n_skipped_invalid_channel": 77,
+        "notes": [
+          "P2 watch-list HIT: max|\u0394| on MAIN single-bin band 35"
+        ],
+        "p2_watch_hit": true,
+        "peak": {
+          "abs_delta_db": 4.487525939941406,
+          "band": 35,
+          "field": "mid_shape_db",
+          "hz": 152.5397171804689,
+          "meta": {
+            "t": 1.664
+          },
+          "p2_lf_single_bin": false,
+          "p2_main_single_bin": true,
+          "psd_ref": -119.29441833496094,
+          "psd_sr": -114.81859588623047,
+          "t_ref": 1.664,
+          "t_sr": 1.6626666666666667
+        },
+        "verdict": "RED"
+      },
+      {
+        "asset": "pseudo_noise",
+        "fs_ref": 48000,
+        "fs_sr": 44100,
+        "margin_db": -9.287364959716797,
+        "max_abs_db": 9.537364959716797,
+        "mode": "full",
+        "n_active_cells": 26411,
+        "n_pairs_compared": 77,
+        "n_skipped_empty_activity": 0,
+        "n_skipped_invalid_channel": 77,
+        "notes": [
+          "P2 watch-list HIT: max|\u0394| on MAIN+LF single-bin band 18"
+        ],
+        "p2_watch_hit": true,
+        "peak": {
+          "abs_delta_db": 9.537364959716797,
+          "band": 18,
+          "field": "mid_shape_db",
+          "hz": 56.860609186053274,
+          "meta": {
+            "t": 0.5333333333333333
+          },
+          "p2_lf_single_bin": true,
+          "p2_main_single_bin": true,
+          "psd_ref": -119.03687286376953,
+          "psd_sr": -109.50019073486328,
+          "t_ref": 0.5333333333333333,
+          "t_sr": 0.5318820861678004
+        },
+        "verdict": "RED"
+      },
+      {
+        "asset": "pseudo_noise",
+        "fs_ref": 48000,
+        "fs_sr": 96000,
+        "margin_db": -8.743476867675781,
+        "max_abs_db": 8.993476867675781,
+        "mode": "full",
+        "n_active_cells": 26411,
+        "n_pairs_compared": 77,
+        "n_skipped_empty_activity": 0,
+        "n_skipped_invalid_channel": 77,
+        "notes": [
+          "P2 watch-list HIT: max|\u0394| on MAIN+LF single-bin band 18"
+        ],
+        "p2_watch_hit": true,
+        "peak": {
+          "abs_delta_db": 8.993476867675781,
+          "band": 18,
+          "field": "mid_shape_db",
+          "hz": 56.860609186053274,
+          "meta": {
+            "t": 0.5333333333333333
+          },
+          "p2_lf_single_bin": true,
+          "p2_main_single_bin": true,
+          "psd_ref": -119.03687286376953,
+          "psd_sr": -110.04402923583984,
+          "t_ref": 0.5333333333333333,
+          "t_sr": 0.532
+        },
+        "verdict": "RED"
+      },
+      {
+        "asset": "log_sweep",
+        "fs_ref": 48000,
+        "fs_sr": 44100,
+        "margin_db": -6.1850128173828125,
+        "max_abs_db": 6.4350128173828125,
+        "mode": "sweep_checkpoints",
+        "n_active_cells": 618,
+        "n_pairs_compared": 9,
+        "n_skipped_empty_activity": 0,
+        "n_skipped_invalid_channel": 11,
+        "notes": [],
+        "p2_watch_hit": false,
+        "peak": {
+          "abs_delta_db": 6.4350128173828125,
+          "band": 106,
+          "field": "mid_psd_db",
+          "hz": 9403.702978599711,
+          "meta": {
+            "checkpoint_hz": 16000,
+            "t_cross": 1.7096208279133098
+          },
+          "p2_lf_single_bin": false,
+          "p2_main_single_bin": false,
+          "psd_ref": -120.0,
+          "psd_sr": -113.56498718261719,
+          "t_ref": 1.7066666666666668,
+          "t_sr": 1.7052154195011338
+        },
+        "verdict": "RED"
+      },
+      {
+        "asset": "log_sweep",
+        "fs_ref": 48000,
+        "fs_sr": 96000,
+        "margin_db": -5.588142395019531,
+        "max_abs_db": 5.838142395019531,
+        "mode": "sweep_checkpoints",
+        "n_active_cells": 618,
+        "n_pairs_compared": 9,
+        "n_skipped_empty_activity": 0,
+        "n_skipped_invalid_channel": 11,
+        "notes": [],
+        "p2_watch_hit": false,
+        "peak": {
+          "abs_delta_db": 5.838142395019531,
+          "band": 106,
+          "field": "mid_psd_db",
+          "hz": 9403.702978599711,
+          "meta": {
+            "checkpoint_hz": 16000,
+            "t_cross": 1.7096208279133098
+          },
+          "p2_lf_single_bin": false,
+          "p2_main_single_bin": false,
+          "psd_ref": -120.0,
+          "psd_sr": -114.16185760498047,
+          "t_ref": 1.7066666666666668,
+          "t_sr": 1.7053333333333334
+        },
+        "verdict": "RED"
+      }
+    ],
+    "margin_floor_db": 0.05,
+    "notes": [
+      "Spike adversarial subset only; transient/damped onset out of scope.",
+      "Full 7-schedule streaming product matrix deferred to official G1b.",
+      "Prominence unclamped (P3 reflect); no post-hoc prominence clamp.",
+      "Margin floor for GREEN packaging: 0.05 dB (threshold 0.25 dB)."
+    ],
+    "overall_max_abs_db": 9.537364959716797,
+    "overall_verdict": "RED",
+    "p2_support": {
+      "fs_c": 48000,
+      "lf_empty_count": 6,
+      "lf_empty_indices": [
+        0,
+        1,
+        4,
+        5,
+        8,
+        11
+      ],
+      "lf_single_bin_count": 17,
+      "lf_single_bin_indices": [
+        2,
+        3,
+        6,
+        7,
+        9,
+        10,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        22,
+        23
+      ],
+      "main_empty_count": 14,
+      "main_empty_indices": [
+        0,
+        1,
+        4,
+        5,
+        6,
+        7,
+        8,
+        11,
+        12,
+        13,
+        16,
+        17,
+        20,
+        23
+      ],
+      "main_single_bin_count": 21,
+      "main_single_bin_indices": [
+        2,
+        3,
+        9,
+        10,
+        14,
+        15,
+        18,
+        19,
+        21,
+        22,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31,
+        32,
+        35,
+        36
+      ],
+      "n_lf": 8192,
+      "n_main": 4096,
+      "note": "Counts are triangular-support geometry at fs_c; not silence. No v2 nearest-bin fallback (P2)."
+    },
+    "pin_necessity": {
+      "changed_to_pass": false,
+      "note": "P1\u2013P7 remain the a-priori pins from G1B_SPIKE_PLAN.md; this run did not rewrite pins to chase a pass. RED under pinned P* is a REV7 candidate, not silent pin mutation.",
+      "pins": [
+        "P1",
+        "P2",
+        "P3",
+        "P4",
+        "P5",
+        "P6",
+        "P7"
+      ]
+    },
+    "platform": {
+      "arch": "arm64",
+      "interpreter": "/Users/marco/aieq_data/motore_v3/env/venv/bin/python",
+      "numpy": "2.5.1",
+      "os": "darwin",
+      "python": "CPython 3.12.13"
+    },
+    "threshold_db": 0.25,
+    "useful_window": [
+      0.25745124716553286,
+      1.9146666666666667
+    ]
+  },
+  "phase": "G1b-SPIKE-WS4",
+  "proof_b": {
+    "detail": "ml_v3/tests/test_g1b_t2_streaming_features.py::InterleavedSilenceProofBTests \u2014 asset||silence||asset offline\u2261chunk on spike schedules {1,8193,geometric-32}; silence naturally clears delta history (also_required b). Proof (a) explicit reset remains in MultiAssetDeltaResetTests.",
+    "status": "COVERED_BY_TESTS"
+  },
+  "streaming": {
+    "deferral": "Full product matrix {1,63,1024,4095,8192,8193}+geometric deferred to official G1b. Spike covers {1,8193,geometric-32}. schedule=1 on full-length 44.1 kHz T6 assets remains harness-heavy (long FIR); covered on short emit slices + 48k/96k full paths in tests.",
+    "full_fixed_chunk_schedules_deferred": [
+      1,
+      63,
+      1024,
+      4095,
+      8192,
+      8193
+    ],
+    "geometric_chunks_host_samples": [
+      55,
+      2455,
+      1,
+      109,
+      81,
+      88,
+      7061,
+      22,
+      499,
+      5337,
+      22,
+      1467,
+      58,
+      1,
+      142,
+      233,
+      290,
+      20,
+      6,
+      18,
+      15955,
+      8039,
+      1,
+      2317,
+      727,
+      11131,
+      2927,
+      7,
+      1,
+      91,
+      2096,
+      7
+    ],
+    "spike_schedules": [
+      1,
+      8193,
+      "geometric-32"
+    ]
+  }
+}

@@ -1,0 +1,1543 @@
+"""Falsification tests for the isolated REV8 O-09 group candidate.
+
+These tests exercise only the candidate benchmark surface.  They do not
+activate REV8 and do not make the provisional group caps normative.
+"""
+from __future__ import annotations
+
+from dataclasses import replace
+from fractions import Fraction
+import itertools
+import unittest
+from unittest import mock
+
+from ml_v3.benchmark import rev8_o09_group_candidate as subject
+from ml_v3.benchmark import rev8_o09_candidate as per_subgraph
+from ml_v3.benchmark.rev8_o09_candidate import (
+    CandidateGraph,
+    CandidateGraphError,
+    ExactEdge,
+    a1_exhaustive,
+)
+from ml_v3.benchmark.rev8_o09_group_candidate import (
+    APPartition,
+    APValue,
+    CoveragePartition,
+    GroupCandidateError,
+    GroupReason,
+    GroupStatus,
+    RhoIdentity,
+    SpearmanAmbiguityWitness,
+    SpearmanPartition,
+    evaluate_group_ap,
+    evaluate_group_coverage,
+    evaluate_group_spearman,
+    reduce_macro_average_precision_math,
+    reduce_macro_coverage_math,
+    rho_equal,
+)
+from ml_v3.benchmark.rev8_o09_group_cap_fixtures import (
+    GROUP_CAP_SPECS,
+    build_group_cap_fixture,
+    evaluate_group_cap_fixture,
+    observed_group_cap_value,
+)
+from ml_v3.contracts.numeric_authority_v2 import exact_n64, mean64, rn64
+
+
+def edge(
+    gt: int,
+    prediction: int,
+    *,
+    k2: Fraction = Fraction(1),
+    k3: int = 0,
+    k4: Fraction = Fraction(0),
+    scientific: bytes | None = None,
+    diagnostic: bytes | None = None,
+) -> ExactEdge:
+    return ExactEdge(
+        gt=gt,
+        prediction=prediction,
+        k2_iou=k2,
+        k3_tick_error=k3,
+        k4_cost=k4,
+        scientific_key=scientific or f"s:{gt}:{prediction}".encode(),
+        diagnostic_key=diagnostic or f"d:{gt}:{prediction}".encode(),
+    )
+
+
+def graph(
+    gt_count: int,
+    prediction_count: int,
+    edges: tuple[ExactEdge, ...] | list[ExactEdge],
+) -> CandidateGraph:
+    return CandidateGraph(
+        gt_count,
+        prediction_count,
+        "additive",
+        tuple(edges),
+    )
+
+
+def diagonal_graph(size: int) -> CandidateGraph:
+    return graph(size, size, [edge(index, index) for index in range(size)])
+
+
+def confidence(value: Fraction) -> Fraction:
+    """Canonical exact rational represented by the rounded binary64 value."""
+    return exact_n64(rn64(value))
+
+
+class AveragePrecisionTests(unittest.TestCase):
+    def test_equal_confidence_predictions_enter_atomically(self):
+        result = evaluate_group_ap((
+            APPartition(
+                ("ap",),
+                diagonal_graph(2),
+                (Fraction(1, 2), Fraction(1, 2)),
+            ),
+        ))
+        self.assertEqual(result.status, GroupStatus.CERTIFIED)
+        self.assertEqual(result.value.ap, Fraction(1))
+        self.assertEqual(result.value.ap_group64, rn64(Fraction(1)))
+        self.assertEqual(len(result.value.prefixes), 1)
+        self.assertEqual(result.value.prefixes[0].true_positive, 2)
+
+    def test_interleaved_partition_thresholds_have_exact_ap(self):
+        result = evaluate_group_ap((
+            APPartition(
+                ("ap-a",),
+                graph(1, 2, [edge(0, 1)]),
+                (confidence(Fraction(9, 10)), Fraction(1, 2)),
+            ),
+            APPartition(
+                ("ap-b",),
+                graph(1, 1, [edge(0, 0)]),
+                (confidence(Fraction(7, 10)),),
+            ),
+        ))
+        self.assertEqual(result.status, GroupStatus.CERTIFIED)
+        self.assertEqual(result.value.ap, Fraction(7, 12))
+        self.assertEqual(
+            tuple(prefix.true_positive for prefix in result.value.prefixes),
+            (0, 1, 2),
+        )
+        self.assertEqual(result.preflight.distinct_thresholds, 3)
+        self.assertEqual(result.preflight.local_thresholds, 3)
+        self.assertEqual(
+            result.preflight.maximum_cardinality_solve_bound,
+            3,
+        )
+        self.assertEqual(result.preflight.profile_solve_bound, 0)
+
+    def test_no_gt_is_not_applicable(self):
+        result = evaluate_group_ap((
+            APPartition(("ap",), graph(0, 1, []), (Fraction(1, 2),)),
+        ))
+        self.assertEqual(result.status, GroupStatus.NOT_APPLICABLE)
+        self.assertEqual(result.reason, GroupReason.NO_GT)
+
+    def test_gt_with_no_predictions_has_zero_ap(self):
+        result = evaluate_group_ap((
+            APPartition(("ap",), graph(2, 0, []), ()),
+        ))
+        self.assertEqual(result.status, GroupStatus.CERTIFIED)
+        self.assertEqual(result.value.ap, Fraction(0))
+        self.assertEqual(result.value.prefixes, ())
+
+    def test_partition_cap_is_fail_closed(self):
+        partitions = tuple(
+            APPartition((f"ap-{index}",), graph(0, 0, []), ())
+            for index in range(subject.AP_MAX_PARTITIONS + 1)
+        )
+        result = evaluate_group_ap(partitions)
+        self.assertEqual(result.status, GroupStatus.REJECTED)
+        self.assertIn(
+            "GROUP_AP_PARTITIONS",
+            result.preflight.provisional_exceeded,
+        )
+
+    def test_sub_ulp_confidence_cannot_split_one_binary64_tie(self):
+        with self.assertRaisesRegex(
+            GroupCandidateError,
+            "already equal.*canonical binary64",
+        ):
+            APPartition(
+                ("ap",),
+                graph(1, 2, [edge(0, 0)]),
+                (
+                    Fraction(1, 2) + Fraction(1, 2**55),
+                    Fraction(1, 2),
+                ),
+            )
+
+    def test_small_graphs_match_exhaustive_ap_oracle(self):
+        pairs = tuple(itertools.product(range(2), repeat=2))
+        confidence_cases = tuple(itertools.product(
+            (Fraction(1, 2), Fraction(1)),
+            repeat=2,
+        ))
+        for edge_mask in range(1 << len(pairs)):
+            candidate = graph(2, 2, [
+                edge(gt, prediction)
+                for bit, (gt, prediction) in enumerate(pairs)
+                if edge_mask & (1 << bit)
+            ])
+            for confidences in confidence_cases:
+                thresholds = sorted(set(confidences), reverse=True)
+                oracle = Fraction(0)
+                previous_recall = Fraction(0)
+                for threshold in thresholds:
+                    active = {
+                        prediction
+                        for prediction, confidence in enumerate(confidences)
+                        if confidence >= threshold
+                    }
+                    prefix = graph(2, 2, [
+                        row for row in candidate.edges
+                        if row.prediction in active
+                    ])
+                    tp = a1_exhaustive(prefix).objective.k1
+                    precision = Fraction(tp, len(active))
+                    recall = Fraction(tp, 2)
+                    oracle += (recall - previous_recall) * precision
+                    previous_recall = recall
+                with self.subTest(
+                    edge_mask=edge_mask,
+                    confidences=confidences,
+                ):
+                    result = evaluate_group_ap((
+                        APPartition(("ap",), candidate, confidences),
+                    ))
+                    self.assertEqual(result.value.ap, oracle)
+
+    def test_macro_ap_uses_one_weight_per_unique_group(self):
+        first = evaluate_group_ap((
+            APPartition(("ap",), diagonal_graph(1), (Fraction(1),)),
+        )).value
+        second = evaluate_group_ap((
+            APPartition(("ap",), graph(1, 0, []), ()),
+        )).value
+        self.assertEqual(
+            reduce_macro_average_precision_math(
+                (("z", first), ("a", second)),
+            ).value64,
+            mean64(
+                (("z", first.ap_group64), ("a", second.ap_group64)),
+                key_domain="utf8",
+            ),
+        )
+        reduction = reduce_macro_average_precision_math((("only", first),))
+        self.assertEqual(reduction.defined_group_count, 1)
+        self.assertEqual(
+            reduction.authority_status,
+            "MATH_ONLY_SUPPORT_FLOOR_NOT_EVALUATED",
+        )
+        with self.assertRaisesRegex(GroupCandidateError, "unique"):
+            reduce_macro_average_precision_math(
+                (("same", first), ("same", first)),
+            )
+
+    def test_macro_ap_signed_compound_rounding_golden(self):
+        values = tuple(
+            APValue(value, rn64(value), 1, ())
+            for value in (Fraction(1, 5), Fraction(3, 10), Fraction(1))
+        )
+        result = reduce_macro_average_precision_math((
+            ("group-c", values[2]),
+            ("group-a", values[0]),
+            ("group-b", values[1]),
+        ))
+        self.assertEqual(result.value64, "f64:3fe0000000000000")
+        self.assertNotEqual(result.value64, "f64:3fdfffffffffffff")
+        self.assertNotEqual(result.value64, "f64:3ff8000000000000")
+
+
+class CoverageTests(unittest.TestCase):
+    def test_ambiguous_partition_produces_exact_zero_to_one_envelope(self):
+        all_edges = [
+            edge(gt, prediction)
+            for gt in range(2)
+            for prediction in range(2)
+        ]
+        result = evaluate_group_coverage((
+            CoveragePartition(
+                ("unit",),
+                ("part",),
+                graph(2, 2, all_edges),
+                (True, False),
+                (True, False),
+            ),
+        ))
+        self.assertEqual(result.status, GroupStatus.CERTIFIED)
+        unit = result.value.units[0]
+        self.assertEqual(unit.reason, GroupReason.OK)
+        self.assertEqual(unit.coverage_minus, Fraction(0))
+        self.assertEqual(unit.coverage_plus, Fraction(1))
+        self.assertEqual(unit.partition_numerator_bounds, ((0, 1),))
+
+    def test_group_is_equal_weight_mean_of_unit_values(self):
+        result = evaluate_group_coverage((
+            CoveragePartition(
+                ("unit-a",),
+                ("part-a",),
+                diagonal_graph(1),
+                (True,),
+                (False,),
+            ),
+            CoveragePartition(
+                ("unit-b",),
+                ("part-b",),
+                diagonal_graph(3),
+                (True, True, True),
+                (True, True, True),
+            ),
+        ))
+        self.assertEqual(result.status, GroupStatus.CERTIFIED)
+        self.assertEqual(
+            result.value.coverage_minus_group64,
+            rn64(Fraction(1, 2)),
+        )
+        self.assertEqual(
+            result.value.coverage_plus_group64,
+            rn64(Fraction(1, 2)),
+        )
+
+    def test_unit_without_actionable_gt_is_reported_and_omitted(self):
+        result = evaluate_group_coverage((
+            CoveragePartition(
+                ("empty",),
+                ("part-empty",),
+                diagonal_graph(1),
+                (False,),
+                (True,),
+            ),
+            CoveragePartition(
+                ("valid",),
+                ("part-valid",),
+                diagonal_graph(1),
+                (True,),
+                (True,),
+            ),
+        ))
+        self.assertEqual(result.status, GroupStatus.CERTIFIED)
+        by_key = {unit.unit_key: unit for unit in result.value.units}
+        self.assertEqual(
+            by_key[("empty",)].reason,
+            GroupReason.NO_ACTIONABLE_GT,
+        )
+        self.assertIsNone(by_key[("empty",)].coverage_minus)
+        self.assertEqual(result.value.defined_unit_count, 1)
+        self.assertEqual(result.value.na_unit_count, 1)
+        self.assertEqual(
+            result.value.coverage_minus_group64,
+            rn64(Fraction(1)),
+        )
+
+    def test_all_units_without_actionable_gt_are_not_applicable(self):
+        result = evaluate_group_coverage((
+            CoveragePartition(
+                ("empty",),
+                ("part",),
+                diagonal_graph(1),
+                (False,),
+                (True,),
+            ),
+        ))
+        self.assertEqual(result.status, GroupStatus.NOT_APPLICABLE)
+        self.assertEqual(result.reason, GroupReason.NO_ACTIONABLE_GT)
+        self.assertEqual(result.witness["defined_unit_count"], 0)
+        self.assertEqual(result.witness["na_unit_count"], 1)
+
+    def test_partitions_per_unit_cap_is_fail_closed(self):
+        partitions = tuple(
+            CoveragePartition(
+                ("same",),
+                (f"part-{index}",),
+                graph(0, 0, []),
+                (),
+                (),
+            )
+            for index in range(
+                subject.COVERAGE_MAX_PARTITIONS_PER_UNIT + 1
+            )
+        )
+        result = evaluate_group_coverage(partitions)
+        self.assertEqual(result.status, GroupStatus.REJECTED)
+        self.assertEqual(
+            result.reason,
+            GroupReason.SOLVER_STRUCTURAL_LIMIT_EXCEEDED,
+        )
+        self.assertIn(
+            "GROUP_COVERAGE_PARTITIONS_PER_UNIT",
+            result.preflight.provisional_exceeded,
+        )
+
+    def test_macro_coverage_rejects_duplicate_group_id(self):
+        value = evaluate_group_coverage((
+            CoveragePartition(
+                ("unit",),
+                ("part",),
+                diagonal_graph(1),
+                (True,),
+                (True,),
+            ),
+        )).value
+        self.assertEqual(
+            (
+                reduce_macro_coverage_math(
+                    (("g", value),),
+                ).coverage_minus64,
+                reduce_macro_coverage_math(
+                    (("g", value),),
+                ).coverage_plus64,
+            ),
+            (
+                value.coverage_minus_group64,
+                value.coverage_plus_group64,
+            ),
+        )
+        with self.assertRaisesRegex(GroupCandidateError, "unique"):
+            reduce_macro_coverage_math((("g", value), ("g", value)))
+
+    def test_published_binary64_is_included_in_exact_bit_bound(self):
+        result = evaluate_group_coverage((
+            CoveragePartition(
+                ("unit",),
+                ("part",),
+                diagonal_graph(3),
+                (True, True, True),
+                (True, False, False),
+            ),
+        ))
+        output = exact_n64(result.value.coverage_minus_group64)
+        self.assertEqual(result.value.units[0].coverage_minus, Fraction(1, 3))
+        self.assertGreaterEqual(
+            result.preflight.exact_scalar_bit_bound,
+            subject.rational_bit_length(output),
+        )
+
+    def test_small_graphs_match_exhaustive_coverage_oracle(self):
+        pairs = tuple(itertools.product(range(2), repeat=2))
+        actions = tuple(itertools.product((False, True), repeat=2))
+        for edge_mask in range(1 << len(pairs)):
+            candidate = graph(2, 2, [
+                edge(gt, prediction)
+                for bit, (gt, prediction) in enumerate(pairs)
+                if edge_mask & (1 << bit)
+            ])
+            optimum = a1_exhaustive(candidate).m_star
+            self.assertIsNotNone(optimum)
+            for actionable_gt in actions:
+                denominator = sum(actionable_gt)
+                for actionable_prediction in actions:
+                    with self.subTest(
+                        edge_mask=edge_mask,
+                        actionable_gt=actionable_gt,
+                        actionable_prediction=actionable_prediction,
+                    ):
+                        result = evaluate_group_coverage((
+                            CoveragePartition(
+                                ("unit",),
+                                ("part",),
+                                candidate,
+                                actionable_gt,
+                                actionable_prediction,
+                            ),
+                        ))
+                        if denominator == 0:
+                            self.assertEqual(
+                                result.reason,
+                                GroupReason.NO_ACTIONABLE_GT,
+                            )
+                            continue
+                        counts = tuple(
+                            sum(
+                                actionable_gt[gt]
+                                and actionable_prediction[prediction]
+                                for gt, prediction in matching
+                            )
+                            for matching in optimum
+                        )
+                        unit = result.value.units[0]
+                        self.assertEqual(
+                            unit.coverage_minus,
+                            Fraction(min(counts), denominator),
+                        )
+                        self.assertEqual(
+                            unit.coverage_plus,
+                            Fraction(max(counts), denominator),
+                        )
+
+    def test_partition_permutation_is_fully_invariant(self):
+        rows = (
+            CoveragePartition(
+                ("unit",),
+                ("part-b",),
+                diagonal_graph(1),
+                (True,),
+                (False,),
+            ),
+            CoveragePartition(
+                ("unit",),
+                ("part-a",),
+                diagonal_graph(1),
+                (True,),
+                (True,),
+            ),
+        )
+        forward = evaluate_group_coverage(rows)
+        reverse = evaluate_group_coverage(tuple(reversed(rows)))
+        self.assertEqual(forward, reverse)
+
+    def test_thirty_group_replica_preserves_lower_envelope(self):
+        value = evaluate_group_coverage((
+            CoveragePartition(
+                ("unit",),
+                ("part",),
+                diagonal_graph(1),
+                (True,),
+                (True,),
+            ),
+        )).value
+        reduction = reduce_macro_coverage_math(tuple(
+            (f"group-{index:02d}", value)
+            for index in range(30)
+        ))
+        self.assertEqual(reduction.defined_group_count, 30)
+        self.assertEqual(reduction.coverage_minus64, rn64(Fraction(1)))
+        self.assertEqual(reduction.groups_with_na_units, ())
+
+
+class SpearmanTests(unittest.TestCase):
+    def test_unique_optimum_certifies_positive_rho(self):
+        values = tuple(Fraction(index) for index in range(10))
+        result = evaluate_group_spearman((
+            SpearmanPartition(
+                ("part",), diagonal_graph(10), values, values),
+        ))
+        self.assertEqual(result.status, GroupStatus.CERTIFIED)
+        self.assertEqual(result.value.rho.sign, 1)
+        self.assertEqual(result.value.support, 10)
+        self.assertEqual(result.value.certificate, "UNIQUE_OPTIMUM")
+
+    def test_support_below_ten_is_not_applicable(self):
+        values = tuple(Fraction(index) for index in range(9))
+        result = evaluate_group_spearman((
+            SpearmanPartition(
+                ("part",), diagonal_graph(9), values, values),
+        ))
+        self.assertEqual(result.status, GroupStatus.NOT_APPLICABLE)
+        self.assertEqual(
+            result.reason,
+            GroupReason.INSUFFICIENT_MATCHED_SUPPORT,
+        )
+        with self.assertRaises(TypeError):
+            evaluate_group_spearman(  # type: ignore[call-arg]
+                (
+                    SpearmanPartition(
+                        ("part",),
+                        diagonal_graph(2),
+                        values[:2],
+                        values[:2],
+                    ),
+                ),
+                minimum_support=1,
+            )
+
+    def test_zero_variance_is_not_applicable(self):
+        result = evaluate_group_spearman((
+            SpearmanPartition(
+                ("part",),
+                diagonal_graph(10),
+                (Fraction(1),) * 10,
+                tuple(Fraction(index) for index in range(10)),
+            ),
+        ))
+        self.assertEqual(result.status, GroupStatus.NOT_APPLICABLE)
+        self.assertEqual(result.reason, GroupReason.SPEARMAN_UNDEFINED)
+
+    def test_perfect_ambiguous_matching_can_change_rho(self):
+        all_edges = [
+            edge(gt, prediction)
+            for gt in range(10)
+            for prediction in range(10)
+        ]
+        ascending = tuple(Fraction(index) for index in range(10))
+        result = evaluate_group_spearman((
+            SpearmanPartition(
+                ("part",),
+                graph(10, 10, all_edges),
+                ascending,
+                ascending,
+            ),
+        ))
+        self.assertEqual(result.status, GroupStatus.NOT_APPLICABLE)
+        self.assertEqual(result.reason, GroupReason.PAIRING_AMBIGUOUS)
+        self.assertIsInstance(result.witness, SpearmanAmbiguityWitness)
+        self.assertEqual(result.witness.lower.rho.sign, -1)
+        self.assertEqual(result.witness.upper.rho.sign, 1)
+
+    def test_fixed_marginal_tie_can_certify_singleton_rho(self):
+        tied_edges = [edge(index, index) for index in range(10)]
+        tied_edges.extend((edge(0, 1), edge(1, 0)))
+        gt_values = tuple(Fraction(index) for index in range(10))
+        prediction_values = (
+            Fraction(0),
+            Fraction(0),
+            *(Fraction(index) for index in range(2, 10)),
+        )
+        result = evaluate_group_spearman((
+            SpearmanPartition(
+                ("part",),
+                graph(10, 10, tied_edges),
+                gt_values,
+                prediction_values,
+            ),
+        ))
+        self.assertEqual(result.status, GroupStatus.CERTIFIED)
+        self.assertEqual(
+            result.value.certificate,
+            "FIXED_MARGINAL_RHO_SINGLETON",
+        )
+
+    def test_rectangular_equal_value_marginal_certifies_singleton(self):
+        rectangular_edges = (
+            edge(0, 0),
+            edge(1, 1),
+            edge(0, 1),
+            edge(1, 0),
+        )
+        partitions = [
+            SpearmanPartition(
+                ("rectangular",),
+                graph(2, 3, rectangular_edges),
+                (Fraction(0), Fraction(1)),
+                (Fraction(0), Fraction(0), Fraction(100)),
+            ),
+        ]
+        for value in range(2, 10):
+            partitions.append(SpearmanPartition(
+                (f"unique-{value}",),
+                diagonal_graph(1),
+                (Fraction(value),),
+                (Fraction(value),),
+            ))
+        result = evaluate_group_spearman(tuple(partitions))
+        self.assertEqual(result.status, GroupStatus.CERTIFIED)
+        self.assertEqual(
+            result.value.certificate,
+            "FIXED_MARGINAL_RHO_SINGLETON",
+        )
+
+    def test_variable_vertex_same_value_can_still_certify_singleton(self):
+        edges = [edge(index, index) for index in range(10)]
+        edges.append(edge(0, 10))
+        values = tuple(Fraction(index) for index in range(10))
+        prediction_values = (*values, Fraction(0))
+        result = evaluate_group_spearman((
+            SpearmanPartition(
+                ("part",),
+                graph(10, 11, edges),
+                values,
+                prediction_values,
+            ),
+        ))
+        self.assertEqual(result.status, GroupStatus.CERTIFIED)
+        self.assertEqual(
+            result.value.certificate,
+            "FIXED_MARGINAL_RHO_SINGLETON",
+        )
+
+    def test_variable_marginal_certificate_unavailable_is_explicit_na(self):
+        edges = [edge(index, index) for index in range(10)]
+        edges.append(edge(0, 10))
+        values = tuple(Fraction(index) for index in range(10))
+        prediction_values = (*values, Fraction(100))
+        result = evaluate_group_spearman((
+            SpearmanPartition(
+                ("part",),
+                graph(10, 11, edges),
+                values,
+                prediction_values,
+            ),
+        ))
+        self.assertEqual(result.status, GroupStatus.NOT_APPLICABLE)
+        self.assertEqual(
+            result.reason,
+            GroupReason.SPEARMAN_CERTIFICATE_UNAVAILABLE,
+        )
+        self.assertEqual(
+            result.witness["diagnostic"],
+            "VARIABLE_MARGINAL_CERTIFICATE_UNAVAILABLE",
+        )
+        self.assertFalse(result.witness["ballot_ready"])
+
+    def test_external_exact_scalar_over_cap_is_rejected(self):
+        huge = Fraction(1 << subject.PROVISIONAL_MAX_EXACT_SCALAR_BITS)
+        result = evaluate_group_spearman((
+            SpearmanPartition(
+                ("part",),
+                diagonal_graph(1),
+                (huge,),
+                (Fraction(0),),
+            ),
+        ))
+        self.assertEqual(result.status, GroupStatus.REJECTED)
+        self.assertIn(
+            "GROUP_EXACT_SCALAR_BIT_LENGTH",
+            result.preflight.provisional_exceeded,
+        )
+
+    def test_partition_cap_is_fail_closed(self):
+        partitions = tuple(
+            SpearmanPartition(
+                (f"part-{index}",), graph(0, 0, []), (), ())
+            for index in range(subject.SPEARMAN_MAX_PARTITIONS + 1)
+        )
+        result = evaluate_group_spearman(partitions)
+        self.assertEqual(result.status, GroupStatus.REJECTED)
+        self.assertIn(
+            "GROUP_SPEARMAN_PARTITIONS",
+            result.preflight.provisional_exceeded,
+        )
+
+    def test_rho_identity_equality_avoids_square_root(self):
+        left = RhoIdentity(1, Fraction(1), Fraction(2), Fraction(8))
+        same = RhoIdentity(1, Fraction(4), Fraction(8), Fraction(8))
+        opposite = RhoIdentity(-1, Fraction(4), Fraction(8), Fraction(8))
+        self.assertTrue(rho_equal(left, same))
+        self.assertFalse(rho_equal(left, opposite))
+
+
+class ValidationTests(unittest.TestCase):
+    def test_candidate_declares_activation_blockers(self):
+        self.assertFalse(subject.GROUP_CANDIDATE_BALLOT_READY)
+        self.assertIn(
+            "GENERAL_VARIABLE_VALUE_MARGINAL_SPEARMAN_NOT_CERTIFIED",
+            subject.GROUP_CANDIDATE_LIMITATIONS,
+        )
+
+    def test_partition_wrappers_are_fail_closed(self):
+        with self.assertRaisesRegex(GroupCandidateError, "length"):
+            APPartition(("part",), diagonal_graph(1), ())
+        with self.assertRaisesRegex(GroupCandidateError, "non-empty"):
+            CoveragePartition(
+                (), ("part",), diagonal_graph(1), (True,), (True,))
+        with self.assertRaisesRegex(GroupCandidateError, "length"):
+            SpearmanPartition(
+                ("part",), diagonal_graph(1), (), (Fraction(1),))
+
+    def test_duplicate_partition_keys_do_not_inflate_support(self):
+        values = tuple(Fraction(index) for index in range(5))
+        duplicate = SpearmanPartition(
+            ("same",), diagonal_graph(5), values, values)
+        with self.assertRaisesRegex(GroupCandidateError, "unique"):
+            evaluate_group_spearman((duplicate, duplicate))
+
+    def test_empty_or_nul_keys_are_rejected(self):
+        with self.assertRaisesRegex(GroupCandidateError, "NUL-free"):
+            CoveragePartition(
+                ("",), ("part",), diagonal_graph(1), (True,), (True,))
+        with self.assertRaisesRegex(GroupCandidateError, "NUL-free"):
+            APPartition(
+                ("bad\x00key",), diagonal_graph(1), (Fraction(1),))
+
+    def test_failure_provenance_is_key_addressed_and_order_invariant(self):
+        rows = (
+            CoveragePartition(
+                ("unit",),
+                ("part-b",),
+                graph(129, 0, []),
+                (False,) * 129,
+                (),
+            ),
+            CoveragePartition(
+                ("unit",),
+                ("part-a",),
+                graph(0, 0, []),
+                (),
+                (),
+            ),
+        )
+        forward = evaluate_group_coverage(rows)
+        reverse = evaluate_group_coverage(tuple(reversed(rows)))
+        self.assertEqual(forward, reverse)
+        self.assertEqual(
+            forward.preflight.subgraph_provisional_exceeded,
+            ((("part-b",), ("GT",)),),
+        )
+        self.assertEqual(
+            forward.preflight.authority_status,
+            subject._GROUP_A1_EVIDENCE_AUTHORITY_STATUS,
+        )
+
+    def test_macro_input_shape_is_fail_closed(self):
+        with self.assertRaisesRegex(GroupCandidateError, "contain"):
+            reduce_macro_average_precision_math(
+                (("bad",),),  # type: ignore[arg-type]
+            )
+        with self.assertRaisesRegex(GroupCandidateError, "contain"):
+            reduce_macro_coverage_math(
+                (("bad",),),  # type: ignore[arg-type]
+            )
+
+
+class ActiveA1CompositionTests(unittest.TestCase):
+    def test_every_subgraph_consumes_active_a1_in_canonical_order(self):
+        graph_a = diagonal_graph(1)
+        graph_z = diagonal_graph(2)
+        values_a = (Fraction(0),)
+        values_z = (Fraction(0), Fraction(1))
+        surfaces = (
+            (
+                "ap",
+                lambda: evaluate_group_ap((
+                    APPartition(("z",), graph_z, (Fraction(1),) * 2),
+                    APPartition(("a",), graph_a, (Fraction(1),)),
+                )),
+            ),
+            (
+                "coverage",
+                lambda: evaluate_group_coverage((
+                    CoveragePartition(
+                        ("unit",), ("z",), graph_z,
+                        (False, False), (False, False),
+                    ),
+                    CoveragePartition(
+                        ("unit",), ("a",), graph_a, (False,), (False,),
+                    ),
+                )),
+            ),
+            (
+                "spearman",
+                lambda: evaluate_group_spearman((
+                    SpearmanPartition(
+                        ("z",), graph_z, values_z, values_z,
+                    ),
+                    SpearmanPartition(
+                        ("a",), graph_a, values_a, values_a,
+                    ),
+                )),
+            ),
+        )
+        active = subject.evaluate_a1_preflight_fail_closed
+        for label, call in surfaces:
+            with self.subTest(surface=label):
+                with mock.patch.object(
+                    subject,
+                    "evaluate_a1_preflight_fail_closed",
+                    wraps=active,
+                ) as evaluate:
+                    result = call()
+                self.assertEqual(
+                    [row.args[0] for row in evaluate.call_args_list],
+                    [graph_a, graph_z],
+                )
+                self.assertIsNotNone(result.preflight)
+                self.assertEqual(
+                    result.preflight.authority_status,
+                    subject._GROUP_A1_EVIDENCE_AUTHORITY_STATUS,
+                )
+        self.assertNotIn("provisional_preflight_probe", subject.__dict__)
+
+    def test_active_a1_structural_exceed_rejects_before_any_group_solve(self):
+        oversized = graph(129, 0, [])
+        with mock.patch.object(
+            subject,
+            "exact_maximum_cardinality",
+        ) as solve:
+            result = evaluate_group_ap((
+                APPartition(("oversized",), oversized, ()),
+            ))
+        solve.assert_not_called()
+        self.assertEqual(result.status, GroupStatus.REJECTED)
+        self.assertEqual(
+            result.reason,
+            GroupReason.SOLVER_STRUCTURAL_LIMIT_EXCEEDED,
+        )
+        self.assertIsNotNone(result.preflight)
+        self.assertEqual(
+            result.preflight.subgraph_provisional_exceeded,
+            ((("oversized",), ("GT",)),),
+        )
+        self.assertEqual(
+            result.preflight.authority_status,
+            subject._GROUP_A1_EVIDENCE_AUTHORITY_STATUS,
+        )
+
+    def test_non_active_subgraph_probe_is_rejected_as_invalid_authority(self):
+        active = per_subgraph.evaluate_a1_preflight_fail_closed(
+            diagonal_graph(1))
+        self.assertIsNotNone(active.preflight)
+        invalid = replace(
+            active,
+            preflight=replace(
+                active.preflight,
+                authority_status="PROVISIONAL_DIAGNOSTIC_ONLY",
+            ),
+        )
+        with mock.patch.object(
+            subject,
+            "evaluate_a1_preflight_fail_closed",
+            return_value=invalid,
+        ):
+            result = evaluate_group_ap((
+                APPartition(("part",), diagonal_graph(1), (Fraction(1),)),
+            ))
+        self.assertEqual(result.status, GroupStatus.REJECTED)
+        self.assertEqual(
+            result.reason,
+            GroupReason.SOLVER_CONSTRAINT_MODEL_INVALID,
+        )
+        self.assertIsNone(result.value)
+        self.assertIsNone(result.preflight)
+        self.assertIn("active A1 authority", result.witness)
+
+    def test_inconsistent_active_a1_outcomes_fail_closed(self):
+        clean_graph = diagonal_graph(1)
+        clean = per_subgraph.evaluate_a1_preflight_fail_closed(clean_graph)
+        dirty = per_subgraph.evaluate_a1_preflight_fail_closed(
+            graph(129, 0, []))
+        self.assertIsNotNone(clean.preflight)
+        self.assertIsNotNone(dirty.preflight)
+        cases = (
+            replace(
+                clean,
+                status=per_subgraph.CandidateEvaluationStatus.REJECTED,
+                reason=per_subgraph.CandidateEvaluationReason.SOLVER_STRUCTURAL_LIMIT_EXCEEDED,
+                witness=("GT",),
+            ),
+            replace(dirty, witness=("PREDICTION",)),
+            replace(
+                dirty,
+                status=per_subgraph.CandidateEvaluationStatus.EVALUATED,
+                reason=per_subgraph.CandidateEvaluationReason.OK,
+                witness=None,
+            ),
+            replace(clean, witness="unexpected"),
+            replace(
+                clean,
+                status=per_subgraph.CandidateEvaluationStatus.REJECTED,
+                reason=per_subgraph.CandidateEvaluationReason.SOLVER_RUNTIME_FAILURE,
+                witness="RuntimeError",
+            ),
+            replace(
+                clean,
+                preflight=per_subgraph.evaluate_a1_preflight_fail_closed(
+                    diagonal_graph(2)).preflight,
+            ),
+        )
+        for index, inconsistent in enumerate(cases):
+            with self.subTest(case=index):
+                with mock.patch.object(
+                    subject,
+                    "evaluate_a1_preflight_fail_closed",
+                    return_value=inconsistent,
+                ), mock.patch.object(
+                    subject,
+                    "exact_maximum_cardinality",
+                ) as solve:
+                    result = evaluate_group_ap((
+                        APPartition(
+                            ("part",), clean_graph, (Fraction(1),),
+                        ),
+                    ))
+                solve.assert_not_called()
+                self.assertEqual(result.status, GroupStatus.REJECTED)
+                self.assertEqual(
+                    result.reason,
+                    GroupReason.SOLVER_CONSTRAINT_MODEL_INVALID,
+                )
+                self.assertIsNone(result.value)
+                self.assertIsNone(result.preflight)
+
+    def test_fatal_a1_rejection_overrides_prior_structural_on_all_surfaces(self):
+        oversized = graph(129, 0, [])
+        clean = diagonal_graph(1)
+        structural = per_subgraph.evaluate_a1_preflight_fail_closed(oversized)
+        fatal = per_subgraph.CandidatePreflightEvaluation(
+            per_subgraph.CandidateEvaluationStatus.REJECTED,
+            per_subgraph.CandidateEvaluationReason.SOLVER_RUNTIME_FAILURE,
+            None,
+            witness="TimeoutError",
+        )
+        gt_values = tuple(Fraction(index) for index in range(129))
+        surfaces = (
+            (
+                "ap",
+                (
+                    APPartition(("a-structural",), oversized, ()),
+                    APPartition(("z-fatal",), clean, (Fraction(1),)),
+                ),
+                evaluate_group_ap,
+            ),
+            (
+                "coverage",
+                (
+                    CoveragePartition(
+                        ("unit",), ("a-structural",), oversized,
+                        (False,) * 129, (),
+                    ),
+                    CoveragePartition(
+                        ("unit",), ("z-fatal",), clean, (False,), (False,),
+                    ),
+                ),
+                evaluate_group_coverage,
+            ),
+            (
+                "spearman",
+                (
+                    SpearmanPartition(
+                        ("a-structural",), oversized, gt_values, (),
+                    ),
+                    SpearmanPartition(
+                        ("z-fatal",), clean, (Fraction(0),), (Fraction(0),),
+                    ),
+                ),
+                evaluate_group_spearman,
+            ),
+        )
+        for label, partitions, evaluate_group in surfaces:
+            for reverse in (False, True):
+                ordered = tuple(reversed(partitions)) if reverse else partitions
+                with self.subTest(surface=label, reversed=reverse):
+                    with mock.patch.object(
+                        subject,
+                        "evaluate_a1_preflight_fail_closed",
+                        side_effect=(structural, fatal),
+                    ) as active, mock.patch.object(
+                        subject,
+                        "exact_maximum_cardinality",
+                    ) as solve:
+                        result = evaluate_group(ordered)
+                    self.assertEqual(
+                        [row.args[0] for row in active.call_args_list],
+                        [oversized, clean],
+                    )
+                    solve.assert_not_called()
+                    self.assertEqual(result.status, GroupStatus.REJECTED)
+                    self.assertEqual(
+                        result.reason,
+                        GroupReason.SOLVER_RUNTIME_FAILURE,
+                    )
+                    self.assertIsNone(result.preflight)
+                    self.assertEqual(result.witness, {
+                        "partition_key": ("z-fatal",),
+                        "a1_reason": "SOLVER_RUNTIME_FAILURE",
+                        "a1_witness": "TimeoutError",
+                    })
+
+
+class PreflightBoundaryTests(unittest.TestCase):
+    def assert_cap_boundary_result(
+        self,
+        fixture,
+        expected_offset: int,
+    ) -> None:
+        spec = fixture.spec
+        relation = fixture.relation
+        with mock.patch.object(
+            subject,
+            "exact_maximum_cardinality",
+            return_value=0,
+        ) as cardinality, mock.patch.object(
+            subject,
+            "_solve_profile",
+            return_value=(),
+        ) as profile, mock.patch.object(
+            subject,
+            "_solve_profile_details",
+            return_value=((), False),
+        ) as profile_details:
+            result = evaluate_group_cap_fixture(fixture)
+
+        self.assertIsNotNone(result.preflight)
+        self.assertEqual(
+            observed_group_cap_value(fixture, result.preflight),
+            spec.cap + expected_offset,
+        )
+        target_exceeded = (
+            spec.exceed_tag in result.preflight.provisional_exceeded
+        )
+        self.assertEqual(target_exceeded, relation == "over")
+        if relation == "over":
+            self.assertEqual(result.status, GroupStatus.REJECTED)
+            self.assertEqual(
+                result.reason,
+                GroupReason.SOLVER_STRUCTURAL_LIMIT_EXCEEDED,
+            )
+            self.assertIsNone(result.value)
+            self.assertEqual(
+                result.witness,
+                result.preflight.provisional_exceeded,
+            )
+            cardinality.assert_not_called()
+            profile.assert_not_called()
+            profile_details.assert_not_called()
+
+    def test_all_17_group_caps_have_public_under_on_over_and_no_solve(self):
+        self.assertEqual(len(GROUP_CAP_SPECS), 17)
+        self.assertEqual(
+            len({spec.fixture_id for spec in GROUP_CAP_SPECS}), 17)
+        for spec in GROUP_CAP_SPECS:
+            for relation, expected_offset in (
+                ("under", -1),
+                ("on", 0),
+                ("over", 1),
+            ):
+                fixture = build_group_cap_fixture(
+                    spec.fixture_id, relation)  # type: ignore[arg-type]
+                with self.subTest(
+                    fixture_id=spec.fixture_id,
+                    relation=relation,
+                ):
+                    self.assert_cap_boundary_result(
+                        fixture, expected_offset)
+
+    def test_boundary_oracle_kills_representative_mutations(self):
+        on = build_group_cap_fixture("AP-01", "on")
+        with mock.patch.object(
+            subject,
+            "AP_MAX_PARTITIONS",
+            subject.AP_MAX_PARTITIONS - 1,
+        ), self.assertRaises(AssertionError):
+            self.assert_cap_boundary_result(on, 0)
+
+        over = build_group_cap_fixture("AP-01", "over")
+        with mock.patch.object(
+            subject,
+            "AP_MAX_PARTITIONS",
+            subject.AP_MAX_PARTITIONS + 1,
+        ), self.assertRaises(AssertionError):
+            self.assert_cap_boundary_result(over, 1)
+
+        reject = subject._preflight_rejection  # type: ignore[attr-defined]
+
+        def solve_before_rejection(probe):
+            subject.exact_maximum_cardinality(graph(0, 0, []))
+            return reject(probe)
+
+        with mock.patch.object(
+            subject,
+            "_preflight_rejection",
+            side_effect=solve_before_rejection,
+        ), self.assertRaises(AssertionError):
+            self.assert_cap_boundary_result(over, 1)
+
+    def test_combined_over_caps_are_ordered_and_still_pre_solve(self):
+        fixture = build_group_cap_fixture("AP-06", "over")
+        with mock.patch.object(
+            subject,
+            "exact_maximum_cardinality",
+        ) as cardinality, mock.patch.object(
+            subject,
+            "_solve_profile",
+        ) as profile, mock.patch.object(
+            subject,
+            "_solve_profile_details",
+        ) as profile_details:
+            result = evaluate_group_cap_fixture(fixture)
+        self.assertEqual(result.status, GroupStatus.REJECTED)
+        self.assertEqual(
+            result.preflight.provisional_exceeded,
+            (
+                "GROUP_AP_PREDICTIONS",
+                "GROUP_AP_LOCAL_THRESHOLDS",
+            ),
+        )
+        cardinality.assert_not_called()
+        profile.assert_not_called()
+        profile_details.assert_not_called()
+
+    def test_empty_groups_and_zero_support_remain_explicit_na(self):
+        cases = (
+            (evaluate_group_ap(()), GroupReason.NO_GT),
+            (
+                evaluate_group_coverage(()),
+                GroupReason.NO_ACTIONABLE_GT,
+            ),
+            (
+                evaluate_group_spearman(()),
+                GroupReason.INSUFFICIENT_MATCHED_SUPPORT,
+            ),
+        )
+        for result, reason in cases:
+            with self.subTest(reason=reason.value):
+                self.assertEqual(result.status, GroupStatus.NOT_APPLICABLE)
+                self.assertEqual(result.reason, reason)
+                self.assertIsNone(result.value)
+                self.assertIsNotNone(result.preflight)
+                self.assertFalse(result.preflight.provisional_exceeded)
+
+    def test_exact_scalar_bit_boundary(self):
+        on = subject._group_preflight(  # type: ignore[attr-defined]
+            "SPEARMAN",
+            (),
+            external_exact_values=(
+                Fraction(1 << (
+                    subject.PROVISIONAL_MAX_EXACT_SCALAR_BITS - 2
+                )),
+            ),
+        )
+        self.assertEqual(
+            on.exact_scalar_bit_bound,
+            subject.PROVISIONAL_MAX_EXACT_SCALAR_BITS,
+        )
+        self.assertNotIn(
+            "GROUP_EXACT_SCALAR_BIT_LENGTH",
+            on.provisional_exceeded,
+        )
+        over = subject._group_preflight(  # type: ignore[attr-defined]
+            "SPEARMAN",
+            (),
+            external_exact_values=(
+                Fraction(1 << (
+                    subject.PROVISIONAL_MAX_EXACT_SCALAR_BITS - 1
+                )),
+            ),
+        )
+        self.assertIn(
+            "GROUP_EXACT_SCALAR_BIT_LENGTH",
+            over.provisional_exceeded,
+        )
+
+
+class RuntimeFailureTests(unittest.TestCase):
+    def test_ap_runtime_failure_is_fail_closed(self):
+        with mock.patch.object(
+            subject,
+            "exact_maximum_cardinality",
+            side_effect=RuntimeError("injected"),
+        ):
+            result = evaluate_group_ap((
+                APPartition(
+                    ("part",),
+                    diagonal_graph(1),
+                    (Fraction(1),),
+                ),
+            ))
+        self.assertEqual(result.status, GroupStatus.REJECTED)
+        self.assertEqual(result.reason, GroupReason.SOLVER_RUNTIME_FAILURE)
+
+    def test_coverage_runtime_failure_is_fail_closed(self):
+        with mock.patch.object(
+            subject,
+            "exact_maximum_cardinality",
+            side_effect=RuntimeError("injected"),
+        ):
+            result = evaluate_group_coverage((
+                CoveragePartition(
+                    ("unit",),
+                    ("part",),
+                    diagonal_graph(1),
+                    (True,),
+                    (True,),
+                ),
+            ))
+        self.assertEqual(result.status, GroupStatus.REJECTED)
+        self.assertEqual(result.reason, GroupReason.SOLVER_RUNTIME_FAILURE)
+
+    def test_spearman_runtime_failure_is_fail_closed(self):
+        values = tuple(Fraction(index) for index in range(10))
+        with mock.patch.object(
+            subject,
+            "exact_maximum_cardinality",
+            side_effect=RuntimeError("injected"),
+        ):
+            result = evaluate_group_spearman((
+                SpearmanPartition(
+                    ("part",),
+                    diagonal_graph(10),
+                    values,
+                    values,
+                ),
+            ))
+        self.assertEqual(result.status, GroupStatus.REJECTED)
+        self.assertEqual(result.reason, GroupReason.SOLVER_RUNTIME_FAILURE)
+
+    def _group_surfaces(self):
+        """The three group entry points, each with a minimal valid input."""
+        values = tuple(Fraction(index) for index in range(10))
+        return (
+            (
+                "ap",
+                lambda: evaluate_group_ap((
+                    APPartition(("part",), diagonal_graph(1), (Fraction(1),)),
+                )),
+            ),
+            (
+                "coverage",
+                lambda: evaluate_group_coverage((
+                    CoveragePartition(
+                        ("unit",), ("part",), diagonal_graph(1),
+                        (True,), (True,),
+                    ),
+                )),
+            ),
+            (
+                "spearman",
+                lambda: evaluate_group_spearman((
+                    SpearmanPartition(
+                        ("part",), diagonal_graph(10), values, values,
+                    ),
+                )),
+            ),
+        )
+
+    def test_every_declared_runtime_failure_is_fail_closed_on_every_surface(self):
+        """No member of the taxonomy may escape as a bare exception.
+
+        The named tests above pin RuntimeError only.  TimeoutError was absent
+        from the group taxonomy while the A1 enforcement tranche added it to
+        the per-subgraph one, so a timeout escaped uncaught on this path —
+        exactly how the expensive Spearman variable-marginal case would fail.
+        This sweeps the whole declared taxonomy across all three surfaces so a
+        future addition cannot be covered on one surface and missed on another.
+        """
+        surfaces = self._group_surfaces()
+        baseline_probes = {
+            label: call().preflight for label, call in surfaces
+        }
+        for failure in subject._RUNTIME_FAILURES:
+            for label, call in surfaces:
+                with self.subTest(failure=failure.__name__, surface=label):
+                    with mock.patch.object(
+                        subject,
+                        "exact_maximum_cardinality",
+                        side_effect=failure("injected"),
+                    ):
+                        result = call()
+                    self.assertEqual(result.status, GroupStatus.REJECTED)
+                    self.assertEqual(
+                        result.reason, GroupReason.SOLVER_RUNTIME_FAILURE)
+                    self.assertIsNone(result.value)
+                    self.assertEqual(
+                        result.preflight,
+                        baseline_probes[label],
+                        "solve failure must preserve the exact completed probe",
+                    )
+                    self.assertEqual(result.witness, failure.__name__)
+
+    def test_preflight_failure_is_fail_closed_on_every_surface(self):
+        """Unexpected failure invoking active A1 remains fail-closed."""
+        cases = (
+            (MemoryError, GroupReason.SOLVER_RUNTIME_FAILURE),
+            (TimeoutError, GroupReason.SOLVER_RUNTIME_FAILURE),
+            (OverflowError, GroupReason.SOLVER_RUNTIME_FAILURE),
+            (CandidateGraphError, GroupReason.SOLVER_CONSTRAINT_MODEL_INVALID),
+        )
+        for failure, expected_reason in cases:
+            for label, call in self._group_surfaces():
+                with self.subTest(failure=failure.__name__, surface=label):
+                    with mock.patch.object(
+                        subject,
+                        "evaluate_a1_preflight_fail_closed",
+                        side_effect=failure("injected"),
+                    ):
+                        result = call()
+                    self.assertEqual(result.status, GroupStatus.REJECTED)
+                    self.assertEqual(result.reason, expected_reason)
+                    self.assertIsNone(
+                        result.preflight,
+                        "no probe exists when the preflight itself failed",
+                    )
+
+    def test_active_a1_returned_failure_is_consumed_on_every_surface(self):
+        """Group reason and key-addressed witness come from signed A1."""
+        cases = (
+            (
+                per_subgraph.CandidateEvaluationReason.SOLVER_RUNTIME_FAILURE,
+                GroupReason.SOLVER_RUNTIME_FAILURE,
+                "MemoryError",
+            ),
+            (
+                per_subgraph.CandidateEvaluationReason.SOLVER_CONSTRAINT_MODEL_INVALID,
+                GroupReason.SOLVER_CONSTRAINT_MODEL_INVALID,
+                "invalid preflight model",
+            ),
+        )
+        for candidate_reason, group_reason, witness in cases:
+            rejection = per_subgraph.CandidatePreflightEvaluation(
+                per_subgraph.CandidateEvaluationStatus.REJECTED,
+                candidate_reason,
+                None,
+                witness=witness,
+            )
+            for label, call in self._group_surfaces():
+                with self.subTest(reason=candidate_reason.value, surface=label):
+                    with mock.patch.object(
+                        subject,
+                        "evaluate_a1_preflight_fail_closed",
+                        return_value=rejection,
+                    ):
+                        result = call()
+                    self.assertEqual(result.status, GroupStatus.REJECTED)
+                    self.assertEqual(result.reason, group_reason)
+                    self.assertIsNone(result.value)
+                    self.assertIsNone(result.preflight)
+                    self.assertEqual(result.witness, {
+                        "partition_key": ("part",),
+                        "a1_reason": candidate_reason.value,
+                        "a1_witness": witness,
+                    })
+
+    def test_pre_solve_preparation_is_fail_closed_on_every_surface(self):
+        """Preparation before `_group_preflight` uses the same fail policy."""
+        cases = (
+            (MemoryError, GroupReason.SOLVER_RUNTIME_FAILURE),
+            (TimeoutError, GroupReason.SOLVER_RUNTIME_FAILURE),
+            (RuntimeError, GroupReason.SOLVER_RUNTIME_FAILURE),
+            (OverflowError, GroupReason.SOLVER_RUNTIME_FAILURE),
+            (CandidateGraphError, GroupReason.SOLVER_CONSTRAINT_MODEL_INVALID),
+        )
+        for failure, expected_reason in cases:
+            for label, call in self._group_surfaces():
+                with self.subTest(failure=failure.__name__, surface=label):
+                    with mock.patch.object(
+                        subject,
+                        "normalized_canonical_bytes",
+                        side_effect=failure("injected"),
+                    ):
+                        result = call()
+                    self.assertEqual(result.status, GroupStatus.REJECTED)
+                    self.assertEqual(result.reason, expected_reason)
+                    self.assertIsNone(result.value)
+                    self.assertIsNone(
+                        result.preflight,
+                        "preflight cannot exist when preparation failed",
+                    )
+
+    def test_wrapper_state_initialization_is_fail_closed_on_every_surface(self):
+        """Even failure before evaluator entry follows the pre-probe policy."""
+        cases = (
+            (MemoryError, GroupReason.SOLVER_RUNTIME_FAILURE, "MemoryError"),
+            (TimeoutError, GroupReason.SOLVER_RUNTIME_FAILURE, "TimeoutError"),
+            (RuntimeError, GroupReason.SOLVER_RUNTIME_FAILURE, "RuntimeError"),
+            (OverflowError, GroupReason.SOLVER_RUNTIME_FAILURE, "OverflowError"),
+            (
+                CandidateGraphError,
+                GroupReason.SOLVER_CONSTRAINT_MODEL_INVALID,
+                "injected",
+            ),
+        )
+        for failure, expected_reason, expected_witness in cases:
+            for label, call in self._group_surfaces():
+                with self.subTest(failure=failure.__name__, surface=label):
+                    with mock.patch.object(
+                        subject,
+                        "_GroupEvaluationState",
+                        side_effect=failure("injected"),
+                    ):
+                        result = call()
+                    self.assertEqual(result.status, GroupStatus.REJECTED)
+                    self.assertEqual(result.reason, expected_reason)
+                    self.assertIsNone(result.value)
+                    self.assertIsNone(result.preflight)
+                    self.assertEqual(result.witness, expected_witness)
+
+    def test_post_preflight_failures_preserve_completed_probe(self):
+        """The outer fail boundary must not erase acquired provenance."""
+        values = tuple(Fraction(index) for index in range(10))
+        ap_partitions = (
+            APPartition(("part",), diagonal_graph(1), (Fraction(1),)),
+        )
+        coverage_partitions = (
+            CoveragePartition(
+                ("unit",), ("part",), diagonal_graph(1), (True,), (True,),
+            ),
+        )
+        spearman_partitions = (
+            SpearmanPartition(
+                ("part",), diagonal_graph(10), values, values,
+            ),
+        )
+        surfaces = (
+            ("ap", "rn64", lambda: evaluate_group_ap(ap_partitions)),
+            (
+                "coverage",
+                "mean64",
+                lambda: evaluate_group_coverage(coverage_partitions),
+            ),
+            (
+                "spearman",
+                "_rho_identity",
+                lambda: evaluate_group_spearman(spearman_partitions),
+            ),
+        )
+        baseline_probes = {
+            label: call().preflight for label, _target, call in surfaces
+        }
+        cases = (
+            (
+                RuntimeError,
+                GroupReason.SOLVER_RUNTIME_FAILURE,
+                "RuntimeError",
+            ),
+            (
+                CandidateGraphError,
+                GroupReason.SOLVER_CONSTRAINT_MODEL_INVALID,
+                "injected",
+            ),
+        )
+        for failure, expected_reason, expected_witness in cases:
+            for label, target, call in surfaces:
+                with self.subTest(failure=failure.__name__, surface=label):
+                    with mock.patch.object(
+                        subject,
+                        target,
+                        side_effect=failure("injected"),
+                    ):
+                        result = call()
+                    self.assertEqual(result.status, GroupStatus.REJECTED)
+                    self.assertEqual(result.reason, expected_reason)
+                    self.assertIsNone(result.value)
+                    self.assertEqual(
+                        result.preflight,
+                        baseline_probes[label],
+                        "the exact completed preflight probe must be preserved",
+                    )
+                    self.assertEqual(result.witness, expected_witness)
+
+    def test_group_boundary_does_not_swallow_unclassified_type_error(self):
+        """Programmer errors inside the guarded phase remain visible."""
+        for label, call in self._group_surfaces():
+            with self.subTest(surface=label):
+                with mock.patch.object(
+                    subject,
+                    "normalized_canonical_bytes",
+                    side_effect=TypeError("injected"),
+                ):
+                    with self.assertRaisesRegex(TypeError, "injected"):
+                        call()
+
+    def test_preflight_guard_does_not_swallow_malformed_input(self):
+        """GroupCandidateError must still reach the caller.
+
+        Malformed abstract input is a caller defect, not a solver failure;
+        translating it into a REJECTED result would hide a programming error
+        behind a scientific-looking reason code.
+        """
+        with self.assertRaises(GroupCandidateError):
+            evaluate_group_ap("not-a-tuple")
+        with self.assertRaises(GroupCandidateError):
+            evaluate_group_coverage("not-a-tuple")
+        with self.assertRaises(GroupCandidateError):
+            evaluate_group_spearman("not-a-tuple")
+
+    def test_group_runtime_taxonomy_matches_the_per_subgraph_authority(self):
+        """Structural guard against the two kernels drifting apart again.
+
+        The fail policy names one set of fatal runtime reasons; two kernels
+        implementing different sets means one of them is wrong.  Equality is
+        asserted as a set so ordering is irrelevant.
+        """
+        self.assertEqual(
+            set(subject._RUNTIME_FAILURES),
+            set(per_subgraph._A1_RUNTIME_FAILURES),
+        )
+        self.assertIn(TimeoutError, subject._RUNTIME_FAILURES)
+
+
+if __name__ == "__main__":
+    unittest.main()

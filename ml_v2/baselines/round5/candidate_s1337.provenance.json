@@ -1,0 +1,99 @@
+{
+ "schema": "motore-v2-a4",
+ "seed": 1337,
+ "class_order": [
+  "Resonance",
+  "Harshness",
+  "Muddiness",
+  "Sibilance",
+  "Boominess",
+  "Thinness",
+  "BoxyMidrange",
+  "DullSound"
+ ],
+ "class_thresholds": [
+  0.46220171451568604,
+  0.3,
+  0.3,
+  0.6288220286369324,
+  0.32185837626457214,
+  0.4501507878303528,
+  0.3206668794155121,
+  0.3
+ ],
+ "presence_threshold": 0.6326383352279663,
+ "target_fp": 0.05,
+ "best": {
+  "macro_f1": 0.2982681580350836,
+  "clean_fp": 0.1260053619302949,
+  "selection": 0.1462574341744938,
+  "per_class_f1": [
+   0.278,
+   0.294,
+   0.523,
+   0.105,
+   0.0,
+   0.382,
+   0.422,
+   0.189
+  ],
+  "active": [
+   0,
+   1,
+   2,
+   4,
+   5,
+   6,
+   7
+  ],
+  "thresholds": [
+   0.46220171451568604,
+   0.3,
+   0.3,
+   0.6288220286369324,
+   0.32185837626457214,
+   0.4501507878303528,
+   0.3206668794155121,
+   0.3
+  ],
+  "presence_threshold": 0.6326383352279663,
+  "epoch": 45,
+  "export_metric_f1": 0.2982681580350836,
+  "export_metric_clean_fp": 0.1260053619302949
+ },
+ "export_selfcheck_delta": 4.5299530029296875e-06,
+ "epochs": 150,
+ "batch_size": 32,
+ "lr": 0.001,
+ "min_lr": 5e-05,
+ "train_windows": 7810,
+ "val_windows": 1340,
+ "real_resonance_train": 389,
+ "real_resonance_heldout": 77,
+ "heldout_source_groups": 159,
+ "heldout_calib_windows": 730,
+ "heldout_metric_windows": 610,
+ "dataset_train_key": "2454b80454d1",
+ "dataset_val_key": "aa9cb254a855",
+ "loss_weights": {
+  "class": 1.0,
+  "presence": 0.3,
+  "freq": 0.5
+ },
+ "masked_classes": [
+  3
+ ],
+ "masked_class_names": [
+  "Sibilance"
+ ],
+ "active_classes": [
+  0,
+  1,
+  2,
+  4,
+  5,
+  6,
+  7
+ ],
+ "hybrid_routing": "masked-class CNN outputs must be IGNORED at inference and routed to the heuristic excess detector (Sibilance -> AIEngine::detectSibilance with the M4 HF-local reference)"
+}

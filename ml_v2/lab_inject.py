@@ -22,6 +22,13 @@ NUM_PROBLEMS = 8
 MEL_NUM_BANDS = 64
 SYNTH_HF_MIN_DB = -60.0  # A2 rawDb is FFT-scaled; this is audible HF content.
 
+# F2b measured Boom gate. These values are frozen by
+# ml_v2/reports/BOOM_GATE_PROBE.md and remain opt-in at the dataset level.
+BOOM_CONTENT_MIN_DB = 9.0
+BOOM_PRE_EXCESS_MAX_DB = 9.0
+BOOM_POST_EXCESS_MIN_DB = 6.0
+BOOM_DELTA_EXCESS_MIN_DB = 4.0
+
 # ---- ml/dataset.py: class bands (product-v2 order: Res, Harsh, Mud, Sib,
 # Boom, Thin, Boxy, Dull) --------------------------------------------------
 PROBLEM_FREQ_RANGES = [
@@ -191,6 +198,53 @@ def band_series(win_db: np.ndarray, sr: float, lo: float, hi: float) -> np.ndarr
     if b <= a:
         return np.full(win_db.shape[0], -100.0)
     return win_db[:, a:b + 1].mean(axis=1)
+
+
+@dataclass(frozen=True)
+class BoomInjectionMeasurement:
+    content_relative_db: float
+    pre_excess_db: float
+    post_excess_db: float
+    delta_excess_db: float
+
+
+def measure_boom_injection(raw_db: np.ndarray, boosted_db: np.ndarray,
+                           sample_rate: float) -> BoomInjectionMeasurement:
+    """Measure low-end content and local excess without an absolute level gate."""
+    raw = np.asarray(raw_db, dtype=np.float64)
+    boosted = np.asarray(boosted_db, dtype=np.float64)
+    if raw.ndim != 2 or raw.shape != boosted.shape or raw.shape[1] < 3:
+        raise ValueError("raw_db and boosted_db must be matching [frames, bins] arrays")
+    if not np.isfinite(raw).all() or not np.isfinite(boosted).all():
+        raise ValueError("Boom measurement received non-finite values")
+    if sample_rate <= 0.0 or not np.isfinite(sample_rate):
+        raise ValueError("sample_rate must be finite and positive")
+    wide_hi = min(10000.0, sample_rate * 0.45)
+    if wide_hi <= 150.0:
+        raise ValueError("sample_rate is too low for the Boom measurement")
+
+    raw_low = float(band_series(raw, sample_rate, 40.0, 150.0).mean())
+    raw_ref = float(band_series(raw, sample_rate, 150.0, 400.0).mean())
+    raw_wide = float(band_series(raw, sample_rate, 100.0, wide_hi).mean())
+    post_low = float(band_series(boosted, sample_rate, 40.0, 150.0).mean())
+    post_ref = float(band_series(boosted, sample_rate, 150.0, 400.0).mean())
+    pre_excess = raw_low - raw_ref
+    post_excess = post_low - post_ref
+    return BoomInjectionMeasurement(
+        content_relative_db=raw_low - raw_wide,
+        pre_excess_db=pre_excess,
+        post_excess_db=post_excess,
+        delta_excess_db=post_excess - pre_excess,
+    )
+
+
+def boom_injection_qualifies(measurement: BoomInjectionMeasurement) -> bool:
+    return (
+        measurement.content_relative_db >= BOOM_CONTENT_MIN_DB
+        and measurement.pre_excess_db <= BOOM_PRE_EXCESS_MAX_DB
+        and measurement.post_excess_db >= BOOM_POST_EXCESS_MIN_DB
+        and measurement.delta_excess_db >= BOOM_DELTA_EXCESS_MIN_DB
+    )
 
 
 # ---- ml/features.py: legacy mel in RAW dB (for the resonance residual) ----
@@ -461,7 +515,8 @@ def ring_window_db(win_db: np.ndarray, sr: float, rng: np.random.Generator,
 
 
 def inject_window_db(win_db: np.ndarray, sr: float, rng: np.random.Generator,
-                     inj: InjectionSpec) -> tuple[np.ndarray, float] | None:
+                     inj: InjectionSpec, measured_boom_gate: bool = False
+                     ) -> tuple[np.ndarray, float] | None:
     """ml/temporal.py _inject_window, dB-domain half: ONE injection applied to
     EVERY frame (persistent signature). Returns (boosted_db, target_freq)."""
     if inj.problem == 0:
@@ -480,6 +535,10 @@ def inject_window_db(win_db: np.ndarray, sr: float, rng: np.random.Generator,
     sign = -1.0 if inj.subtractive else 1.0
     boosted = np.stack([scale_band_db(f, sr, inj.lo_hz, inj.hi_hz, sign * delta)
                         for f in win_db])
+    if (measured_boom_gate and inj.problem == 4
+            and not boom_injection_qualifies(
+                measure_boom_injection(win_db, boosted, sr))):
+        return None
     return boosted, target
 
 

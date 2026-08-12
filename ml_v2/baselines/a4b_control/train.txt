@@ -1,0 +1,156 @@
+HYBRID-CORE: masked (heuristic-routed) classes = 1:Harshness, 3:Sibilance
+device=mps  torch=2.13.0
+A4b corpus preflight (committed contract + deep hashes):
+  verify_manifest_files('train', deep=True): OK
+  verify_manifest_files('heldout', deep=True): OK
+  verify_manifest_files('test', deep=True): OK
+  verified rows: {'train': 3062, 'heldout': 493, 'test': 834}
+train set:
+  building train windows (seed 42)…
+  vocal windows: 2660
+  tier2 windows: 5150
+  colored-clean negatives: 652 / 1304 raw-clean
+  synth harsh/sib axis positives: 4 from 8/125 clean_synth HF-rich files
+  real resonance positives: 389
+  built X(7810, 32, 64) -> windows_train_2454b80454d1_0bde94446967270c.npz
+val/calib set:
+  building heldout windows (seed 43)…
+  vocal windows: 256
+  tier2 windows: 1084
+  colored-clean negatives: 108 / 216 raw-clean
+  synth harsh/sib axis positives: 2 from 1/24 clean_synth HF-rich files
+  real resonance positives: 77
+  built X(1340, 32, 64) -> windows_heldout_aa9cb254a855_0bde94446967270c.npz
+train class positive counts: {"Boominess": 344, "BoxyMidrange": 370, "DullSound": 261, "Harshness": 259, "Muddiness": 464, "Resonance": 658, "Sibilance": 501, "Thinness": 353}
+train A4b counts: colored-clean=652, synth-triplets=2 (4 synth-axis positives), real-resonance=389 across 82 files
+train real-resonance by file: {"fsld%3A101121/fsld_101121.wav": 7, "fsld%3A102011/fsld_102011.wav": 4, "fsld%3A102016/fsld_102016.wav": 9, "fsld%3A102342/fsld_102342.wav": 8, "fsld%3A102346/fsld_102346.wav": 3, "fsld%3A102365/fsld_102365.wav": 8, "fsld%3A102373/fsld_102373.wav": 3, "fsld%3A102375/fsld_102375.wav": 3, "fsld%3A102376/fsld_102376.wav": 1, "fsld%3A102386/fsld_102386.wav": 3, "fsld%3A102399/fsld_102399.wav": 3, "fsld%3A102486/fsld_102486.wav": 3, "fsld%3A102499/fsld_102499.wav": 3, "fsld%3A104502/fsld_104502.wav": 4, "fsld%3A106857/fsld_106857.wav": 3, "fsld%3A107170/fsld_107170.wav": 1, "fsld%3A107171/fsld_107171.wav": 3, "fsld%3A107172/fsld_107172.wav": 3, "fsld%3A107173/fsld_107173.wav": 3, "fsld%3A111072/fsld_111072.wav": 7, "fsld%3A115601/fsld_115601.wav": 10, "fsld%3A122701/fsld_122701.wav": 8, "fsld%3A126054/fsld_126054.wav": 2, "fsld%3A126055/fsld_126055.wav": 2, "fsld%3A132860/fsld_132860.wav": 3, "fsld%3A133437/fsld_133437.wav": 10, "fsld%3A13494/fsld_13494.wav": 1, "fsld%3A13554/fsld_13554.wav": 2, "fsld%3A137031/fsld_137031.wav": 3, "fsld%3A137054/fsld_137054.wav": 2, "fsld%3A139824/fsld_139824.wav": 1, "fsld%3A146687/fsld_146687.wav": 10, "fsld%3A146688/fsld_146688.wav": 1, "fsld%3A146689/fsld_146689.wav": 10, "fsld%3A148105/fsld_148105.wav": 1, "fsld%3A148857/fsld_148857.wav": 2, "fsld%3A150302/fsld_150302.wav": 8, "fsld%3A151313/fsld_151313.wav": 4, "fsld%3A151350/fsld_151350.wav": 10, "fsld%3A151351/fsld_151351.wav": 1, "fsld%3A151538/fsld_151538.wav": 9, "fsld%3A151762/fsld_151762.wav": 6, "fsld%3A151841/fsld_151841.wav": 9, "fsld%3A152650/fsld_152650.wav": 1, "fsld%3A154911/fsld_154911.wav": 10, "fsld%3A154913/fsld_154913.wav": 4, "fsld%3A160372/fsld_160372.wav": 7, "fsld%3A160376/fsld_160376.wav": 3, "fsld%3A160430/fsld_160430.wav": 9, "fsld%3A161244/fsld_161244.wav": 2, "fsld%3A163661/fsld_163661.wav": 1, "fsld%3A163662/fsld_163662.wav": 2, "fsld%3A163665/fsld_163665.wav": 3, "fsld%3A165440/fsld_165440.wav": 2, "fsld%3A166029/fsld_166029.wav": 4, "fsld%3A167175/fsld_167175.wav": 3, "fsld%3A169870/fsld_169870.wav": 4, "fsld%3A169871/fsld_169871.wav": 4, "fsld%3A170451/fsld_170451.wav": 10, "fsld%3A172959/fsld_172959.wav": 6, "fsld%3A174005/fsld_174005.wav": 2, "fsld%3A174452/fsld_174452.wav": 10, "fsld%3A177795/fsld_177795.wav": 1, "fsld%3A177797/fsld_177797.wav": 1, "fsld%3A178176/fsld_178176.wav": 10, "fsld%3A178616/fsld_178616.wav": 2, "slakh%3ATrack00001/babyslakh_Track00001_S01_drums.wav": 6, "slakh%3ATrack00002/babyslakh_Track00002_S09_drums.wav": 2, "slakh%3ATrack00004/babyslakh_Track00004_S08_drums.wav": 1, "slakh%3ATrack00008/babyslakh_Track00008_S01_drums.wav": 8, "slakh%3ATrack00009/babyslakh_Track00009_S07_drums.wav": 10, "slakh%3ATrack00010/babyslakh_Track00010_S06_drums.wav": 3, "slakh%3ATrack00011/babyslakh_Track00011_S08_drums.wav": 8, "slakh%3ATrack00012/babyslakh_Track00012_S00_drums.wav": 7, "slakh%3ATrack00013/babyslakh_Track00013_S08_drums.wav": 3, "slakh%3ATrack00014/babyslakh_Track00014_S08_drums.wav": 7, "slakh%3ATrack00015/babyslakh_Track00015_S05_drums.wav": 10, "slakh%3ATrack00016/babyslakh_Track00016_S09_drums.wav": 9, "slakh%3ATrack00017/babyslakh_Track00017_S00_drums.wav": 8, "slakh%3ATrack00018/babyslakh_Track00018_S17_drums.wav": 3, "slakh%3ATrack00019/babyslakh_Track00019_S02_drums.wav": 2, "slakh%3ATrack00020/babyslakh_Track00020_S00_drums.wav": 4}
+heldout class positive counts: {"Boominess": 77, "BoxyMidrange": 80, "DullSound": 40, "Harshness": 51, "Muddiness": 98, "Resonance": 131, "Sibilance": 56, "Thinness": 73}
+heldout A4b counts: colored-clean=108, synth-triplets=1 (2 synth-axis positives), real-resonance=77 across 20 files
+heldout real-resonance by file: {"fsld%3A101895/fsld_101895.wav": 3, "fsld%3A102378/fsld_102378.wav": 1, "fsld%3A102474/fsld_102474.wav": 1, "fsld%3A102485/fsld_102485.wav": 3, "fsld%3A102518/fsld_102518.wav": 3, "fsld%3A106858/fsld_106858.wav": 1, "fsld%3A123889/fsld_123889.wav": 5, "fsld%3A124542/fsld_124542.wav": 7, "fsld%3A140835/fsld_140835.wav": 1, "fsld%3A141690/fsld_141690.wav": 1, "fsld%3A143638/fsld_143638.wav": 8, "fsld%3A143639/fsld_143639.wav": 3, "fsld%3A152643/fsld_152643.wav": 1, "fsld%3A160377/fsld_160377.wav": 2, "fsld%3A167068/fsld_167068.wav": 7, "fsld%3A168672/fsld_168672.wav": 7, "fsld%3A171604/fsld_171604.wav": 1, "fsld%3A174451/fsld_174451.wav": 7, "slakh%3ATrack00003/babyslakh_Track00003_S06_drums.wav": 6, "slakh%3ATrack00006/babyslakh_Track00006_S00_drums.wav": 9}
+real resonance positives: train 389, heldout 77
+train (7810, 32, 64), val (1340, 32, 64)
+heldout split: calib 806 win / metric 534 win from 120 source groups
+A6 external benchmark remains the final gate; training selection only chooses checkpoints.
+train pos fraction per class: {'Reso': 0.084, 'Hars': 0.033, 'Mudd': 0.059, 'Sibi': 0.064, 'Boom': 0.044, 'Thin': 0.045, 'Boxy': 0.047, 'Dull': 0.033}
+
+== seed 42 ==
+  pos_weight: Reso=3.30, Hars=5.40, Mudd=3.98, Sibi=3.82, Boom=4.66, Thin=4.60, Boxy=4.48, Dull=5.38
+  ep   0  loss 0.6527  calF1 0.000  calCleanFP 0.000  sel 0.000  <-- best
+  ep   3  loss 0.6355  calF1 0.042  calCleanFP 0.053  sel 0.036  <-- best
+  ep   4  loss 0.6321  calF1 0.075  calCleanFP 0.065  sel 0.045  <-- best
+  ep   5  loss 0.6303  calF1 0.068  calCleanFP 0.080  sel 0.009
+  ep  10  loss 0.6250  calF1 0.052  calCleanFP 0.094  sel -0.037
+  ep  15  loss 0.6238  calF1 0.041  calCleanFP 0.100  sel -0.060
+  ep  20  loss 0.6186  calF1 0.077  calCleanFP 0.180  sel -0.183
+  ep  25  loss 0.5946  calF1 0.219  calCleanFP 0.248  sel -0.177
+  ep  30  loss 0.5710  calF1 0.219  calCleanFP 0.130  sel 0.060  <-- best
+  ep  35  loss 0.5614  calF1 0.246  calCleanFP 0.239  sel -0.132
+  ep  40  loss 0.5505  calF1 0.224  calCleanFP 0.310  sel -0.295
+  ep  45  loss 0.5550  calF1 0.244  calCleanFP 0.292  sel -0.240
+  ep  50  loss 0.5345  calF1 0.298  calCleanFP 0.277  sel -0.157
+  ep  55  loss 0.5324  calF1 0.287  calCleanFP 0.274  sel -0.162
+  ep  60  loss 0.5248  calF1 0.260  calCleanFP 0.342  sel -0.324
+  ep  65  loss 0.5169  calF1 0.317  calCleanFP 0.280  sel -0.143
+  ep  70  loss 0.5129  calF1 0.308  calCleanFP 0.277  sel -0.147
+  ep  75  loss 0.5137  calF1 0.272  calCleanFP 0.392  sel -0.413
+  ep  80  loss 0.5020  calF1 0.273  calCleanFP 0.342  sel -0.311
+  ep  85  loss 0.4993  calF1 0.283  calCleanFP 0.366  sel -0.348
+  ep  90  loss 0.4941  calF1 0.276  calCleanFP 0.333  sel -0.291
+  ep  95  loss 0.4875  calF1 0.269  calCleanFP 0.333  sel -0.297
+  ep 100  loss 0.4854  calF1 0.280  calCleanFP 0.339  sel -0.299
+  ep 105  loss 0.4817  calF1 0.277  calCleanFP 0.316  sel -0.254
+  ep 110  loss 0.4780  calF1 0.285  calCleanFP 0.354  sel -0.323
+  ep 115  loss 0.4750  calF1 0.276  calCleanFP 0.395  sel -0.415
+  ep 120  loss 0.4727  calF1 0.278  calCleanFP 0.313  sel -0.247
+  ep 125  loss 0.4704  calF1 0.271  calCleanFP 0.333  sel -0.295
+  ep 130  loss 0.4689  calF1 0.286  calCleanFP 0.348  sel -0.310
+  ep 135  loss 0.4666  calF1 0.273  calCleanFP 0.339  sel -0.305
+  ep 140  loss 0.4661  calF1 0.279  calCleanFP 0.342  sel -0.305
+  ep 145  loss 0.4649  calF1 0.279  calCleanFP 0.322  sel -0.264
+  seed 42: best ep 30 sel 0.060 (358s)
+  export self-check (trained weights): max|delta| = 1.67e-06
+  thresholds: ['Reso=0.45', 'Hars=0.51', 'Mudd=0.55', 'Sibi=0.47', 'Boom=0.49', 'Thin=0.30', 'Boxy=0.30', 'Dull=0.36']
+  exported -> /tmp/aieq_v2/a4b_control_20260717/candidate_s42.json
+
+== seed 1337 ==
+  pos_weight: Reso=3.30, Hars=5.40, Mudd=3.98, Sibi=3.82, Boom=4.66, Thin=4.60, Boxy=4.48, Dull=5.38
+  ep   0  loss 0.6521  calF1 0.000  calCleanFP 0.000  sel 0.000  <-- best
+  ep   2  loss 0.6361  calF1 0.060  calCleanFP 0.053  sel 0.054  <-- best
+  ep   3  loss 0.6333  calF1 0.086  calCleanFP 0.065  sel 0.056  <-- best
+  ep   4  loss 0.6303  calF1 0.091  calCleanFP 0.065  sel 0.061  <-- best
+  ep   5  loss 0.6290  calF1 0.026  calCleanFP 0.053  sel 0.020
+  ep  10  loss 0.6276  calF1 0.057  calCleanFP 0.047  sel 0.057
+  ep  15  loss 0.6204  calF1 0.067  calCleanFP 0.115  sel -0.063
+  ep  20  loss 0.6093  calF1 0.087  calCleanFP 0.174  sel -0.161
+  ep  25  loss 0.5954  calF1 0.150  calCleanFP 0.180  sel -0.110
+  ep  30  loss 0.5843  calF1 0.109  calCleanFP 0.156  sel -0.103
+  ep  35  loss 0.5736  calF1 0.193  calCleanFP 0.198  sel -0.102
+  ep  40  loss 0.5689  calF1 0.229  calCleanFP 0.265  sel -0.202
+  ep  45  loss 0.5591  calF1 0.213  calCleanFP 0.206  sel -0.099
+  ep  50  loss 0.5525  calF1 0.269  calCleanFP 0.245  sel -0.121
+  ep  55  loss 0.5460  calF1 0.273  calCleanFP 0.242  sel -0.111
+  ep  60  loss 0.5411  calF1 0.278  calCleanFP 0.242  sel -0.105
+  ep  65  loss 0.5259  calF1 0.258  calCleanFP 0.248  sel -0.138
+  ep  70  loss 0.5224  calF1 0.288  calCleanFP 0.254  sel -0.119
+  ep  75  loss 0.5108  calF1 0.300  calCleanFP 0.236  sel -0.072
+  ep  80  loss 0.5018  calF1 0.302  calCleanFP 0.233  sel -0.064
+  ep  85  loss 0.4967  calF1 0.296  calCleanFP 0.242  sel -0.088
+  ep  90  loss 0.4896  calF1 0.308  calCleanFP 0.209  sel -0.011
+  ep  95  loss 0.4840  calF1 0.341  calCleanFP 0.251  sel -0.061
+  ep 100  loss 0.4757  calF1 0.336  calCleanFP 0.198  sel 0.040
+  ep 105  loss 0.4694  calF1 0.325  calCleanFP 0.227  sel -0.029
+  ep 110  loss 0.4657  calF1 0.336  calCleanFP 0.239  sel -0.042
+  ep 115  loss 0.4624  calF1 0.318  calCleanFP 0.215  sel -0.012
+  ep 120  loss 0.4585  calF1 0.336  calCleanFP 0.224  sel -0.013
+  ep 125  loss 0.4560  calF1 0.363  calCleanFP 0.209  sel 0.044
+  ep 130  loss 0.4526  calF1 0.329  calCleanFP 0.224  sel -0.019
+  ep 135  loss 0.4510  calF1 0.338  calCleanFP 0.224  sel -0.011
+  ep 140  loss 0.4482  calF1 0.334  calCleanFP 0.221  sel -0.009
+  ep 145  loss 0.4479  calF1 0.341  calCleanFP 0.242  sel -0.043
+  seed 1337: best ep 4 sel 0.061 (283s)
+  export self-check (trained weights): max|delta| = 2.38e-07
+  thresholds: ['Reso=0.33', 'Hars=0.60', 'Mudd=0.32', 'Sibi=0.65', 'Boom=0.31', 'Thin=0.30', 'Boxy=0.33', 'Dull=0.30']
+  exported -> /tmp/aieq_v2/a4b_control_20260717/candidate_s1337.json
+
+== seed 2026 ==
+  pos_weight: Reso=3.30, Hars=5.40, Mudd=3.98, Sibi=3.82, Boom=4.66, Thin=4.60, Boxy=4.48, Dull=5.38
+  ep   0  loss 0.6491  calF1 0.037  calCleanFP 0.056  sel 0.025  <-- best
+  ep   2  loss 0.6341  calF1 0.084  calCleanFP 0.065  sel 0.054  <-- best
+  ep   5  loss 0.6296  calF1 0.049  calCleanFP 0.091  sel -0.034
+  ep  10  loss 0.6253  calF1 0.070  calCleanFP 0.153  sel -0.137
+  ep  15  loss 0.6147  calF1 0.102  calCleanFP 0.121  sel -0.040
+  ep  20  loss 0.6038  calF1 0.180  calCleanFP 0.242  sel -0.204
+  ep  25  loss 0.5945  calF1 0.155  calCleanFP 0.177  sel -0.099
+  ep  30  loss 0.5833  calF1 0.214  calCleanFP 0.195  sel -0.075
+  ep  35  loss 0.5747  calF1 0.228  calCleanFP 0.201  sel -0.073
+  ep  40  loss 0.5707  calF1 0.239  calCleanFP 0.224  sel -0.109
+  ep  45  loss 0.5633  calF1 0.233  calCleanFP 0.239  sel -0.144
+  ep  50  loss 0.5553  calF1 0.254  calCleanFP 0.251  sel -0.147
+  ep  55  loss 0.5512  calF1 0.265  calCleanFP 0.307  sel -0.248
+  ep  60  loss 0.5458  calF1 0.226  calCleanFP 0.236  sel -0.146
+  ep  65  loss 0.5414  calF1 0.263  calCleanFP 0.280  sel -0.197
+  ep  70  loss 0.5720  calF1 0.211  calCleanFP 0.242  sel -0.172
+  ep  75  loss 0.5628  calF1 0.199  calCleanFP 0.215  sel -0.131
+  ep  80  loss 0.5562  calF1 0.224  calCleanFP 0.224  sel -0.125
+  ep  85  loss 0.5572  calF1 0.202  calCleanFP 0.224  sel -0.147
+  ep  90  loss 0.5497  calF1 0.203  calCleanFP 0.230  sel -0.157
+  ep  95  loss 0.5389  calF1 0.249  calCleanFP 0.233  sel -0.117
+  ep 100  loss 0.5347  calF1 0.227  calCleanFP 0.265  sel -0.204
+  ep 105  loss 0.5295  calF1 0.216  calCleanFP 0.271  sel -0.226
+  ep 110  loss 0.5284  calF1 0.243  calCleanFP 0.257  sel -0.170
+  ep 115  loss 0.5233  calF1 0.253  calCleanFP 0.236  sel -0.119
+  ep 120  loss 0.5195  calF1 0.240  calCleanFP 0.295  sel -0.250
+  ep 125  loss 0.5185  calF1 0.246  calCleanFP 0.248  sel -0.150
+  ep 130  loss 0.5164  calF1 0.259  calCleanFP 0.263  sel -0.166
+  ep 135  loss 0.5149  calF1 0.248  calCleanFP 0.286  sel -0.224
+  ep 140  loss 0.5138  calF1 0.248  calCleanFP 0.280  sel -0.212
+  ep 145  loss 0.5133  calF1 0.264  calCleanFP 0.251  sel -0.137
+  seed 2026: best ep 2 sel 0.054 (326s)
+  export self-check (trained weights): max|delta| = 1.19e-07
+  thresholds: ['Reso=0.36', 'Hars=0.53', 'Mudd=0.33', 'Sibi=0.48', 'Boom=0.33', 'Thin=0.35', 'Boxy=0.33', 'Dull=0.31']
+  exported -> /tmp/aieq_v2/a4b_control_20260717/candidate_s2026.json
+
+== SUMMARY ==
+  seed 42: sel 0.060  f1 0.219  cleanFP 0.130  ep 30
+  seed 1337: sel 0.061  f1 0.091  cleanFP 0.065  ep 4
+  seed 2026: sel 0.054  f1 0.084  cleanFP 0.065  ep 2
