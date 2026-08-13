@@ -122,3 +122,49 @@ jobs:
           name: AI-Equalizer-Pro-macOS-validation
           path: build-mac/validation-reports/
           if-no-files-found: error
+
+  ml-v3-regression:
+    # The complete 738-test suite takes about eight minutes on the frozen local
+    # arm64 environment.  Keep that cost explicit and parallel to the plug-in
+    # build instead of silently extending its build/validator critical path.
+    runs-on: macos-15
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          submodules: recursive
+
+      - name: Install CMake and Ninja
+        run: brew install cmake ninja
+
+      - name: Install pinned uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.11.2"
+          enable-cache: true
+
+      - name: Materialize the frozen Motore v3 environment
+        run: |
+          uv python install 3.12.13
+          uv venv --python 3.12.13 "$RUNNER_TEMP/motore-v3-venv"
+          uv pip sync --require-hashes \
+            --python "$RUNNER_TEMP/motore-v3-venv/bin/python" \
+            ml_v3/environment/requirements.lock
+
+      - name: Register the complete suite in CTest
+        run: |
+          cmake -S ml_v3 -B build-ml-v3 -G Ninja \
+            -DAIEQ_ML_V3_PYTHON="$RUNNER_TEMP/motore-v3-venv/bin/python"
+          test "$(ctest --test-dir build-ml-v3 -N -R '^aieq_ml_v3_regression$' \
+            | grep -c 'Test #[0-9][0-9]*: aieq_ml_v3_regression')" -eq 1
+
+      - name: Run the blocking Motore v3 regression gate
+        run: |
+          PYTHONDONTWRITEBYTECODE=1 ctest --test-dir build-ml-v3 \
+            -R '^aieq_ml_v3_regression$' \
+            --output-on-failure \
+            --timeout 900
+          test -z "$(find ml_v3 -type d -name __pycache__ -print -quit)"
+          test -z "$(find ml_v3 -type f -name '*.pyc' -print -quit)"
