@@ -168,3 +168,26 @@ jobs:
             --timeout 900
           test -z "$(find ml_v3 -type d -name __pycache__ -print -quit)"
           test -z "$(find ml_v3 -type f -name '*.pyc' -print -quit)"
+
+  thread-sanitizer:
+    # A separate instrumented build is required: TSan cannot be mixed into the
+    # universal Release artifacts and is mutually exclusive with ASan.
+    # Local measurement: clean target build ~4 minutes, test ~6 seconds.
+    runs-on: macos-15
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          submodules: recursive
+
+      - name: Install CMake and Ninja
+        run: brew install cmake ninja
+
+      - name: Run blocking ThreadSanitizer gate
+        env:
+          JOBS: 8
+          BUILD_DIR: ${{ runner.temp }}/aieq-tsan
+          TSAN_OPTIONS: halt_on_error=1:abort_on_error=1
+        run: scripts/build_sanitize.sh thread
