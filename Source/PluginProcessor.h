@@ -844,7 +844,10 @@ public:
         cleared. */
     void setDynamicCorrectionsEnabled(bool on) noexcept { dynamicCorrectionEngine.setEnabled(on); }
     [[nodiscard]] bool areDynamicCorrectionsEnabled() const noexcept { return dynamicCorrectionEngine.isEnabled(); }
-    [[nodiscard]] DynamicCorrectionEngine& getDynamicCorrectionEngine() noexcept { return dynamicCorrectionEngine; }
+    [[nodiscard]] const DynamicCorrectionEngine& getDynamicCorrectionEngine() const noexcept
+    {
+        return dynamicCorrectionEngine;
+    }
     void publishDynamicCorrectionsFromApplied(const std::vector<AIEngine::Correction>& appliedCorrections);
 private:
 
