@@ -34,10 +34,8 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 #: keeps this list honest by failing if any entry disappears.
 _PRODUCT_SURFACE = ("CMakeLists.txt", "Source", "Resources")
 
-_SUFFIXES = {".cpp", ".h", ".hpp", ".mm", ".txt", ".cmake", ".plist", ".in"}
-
-
 def _product_files() -> list[Path]:
+    """Return every regular product-surface file, including binary assets."""
     files: list[Path] = []
     for entry in _PRODUCT_SURFACE:
         path = _REPO_ROOT / entry
@@ -46,7 +44,7 @@ def _product_files() -> list[Path]:
         elif path.is_dir():
             files.extend(
                 child for child in path.rglob("*")
-                if child.is_file() and child.suffix in _SUFFIXES
+                if child.is_file()
             )
     return files
 
@@ -59,15 +57,26 @@ class UnificationPerimeterTests(unittest.TestCase):
                 (_REPO_ROOT / entry).exists(), f"{entry} not found")
         self.assertGreater(len(_product_files()), 100)
 
+    def test_every_resource_file_is_inside_the_scanned_surface(self):
+        """A new binary/model asset must not silently fall outside the guard."""
+        resources = {
+            path.resolve()
+            for path in (_REPO_ROOT / "Resources").rglob("*")
+            if path.is_file()
+        }
+        scanned = {path.resolve() for path in _product_files()}
+        self.assertTrue(resources, "Resources exists but contains no files")
+        self.assertEqual(resources - scanned, set())
+
     def test_the_plugin_build_does_not_reference_the_lab(self):
         """No product file may name ml_v3 — the shipping path cannot reach it."""
         offenders: list[str] = []
         for path in _product_files():
             try:
-                text = path.read_text(encoding="utf-8", errors="ignore")
+                payload = path.read_bytes()
             except OSError:
                 continue
-            if "ml_v3" in text:
+            if b"ml_v3" in payload:
                 offenders.append(str(path.relative_to(_REPO_ROOT)))
         self.assertEqual(
             offenders, [],
