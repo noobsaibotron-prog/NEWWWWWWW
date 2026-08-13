@@ -395,6 +395,19 @@ def _evaluate_gain_case(
 
         closing = _frame_key(reference) in closing_keys
 
+        if bool(reference["valid"]) != bool(variant["valid"]):
+            if closing:
+                failures.append(
+                    {
+                        "reason": "VALIDITY_MISMATCH",
+                        "frame_index": int(reference["frame_index"]),
+                        "channel": "global",
+                    }
+                )
+            previous_masks["mid"] = None
+            previous_masks["side"] = None
+            continue
+
         for channel in ("mid", "side"):
             ref_valid = _channel_valid(reference, channel)
             var_valid = _channel_valid(variant, channel)

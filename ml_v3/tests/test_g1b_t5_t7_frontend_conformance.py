@@ -237,6 +237,53 @@ class Gate5RejectPathTests(unittest.TestCase):
             )
         )
 
+    def test_reference_variant_frame_end_sample_mismatch_fails(self):
+        """Equal frame indices cannot hide a different source-time endpoint."""
+        result = _evaluate_gain_case(
+            fixture_id="synthetic",
+            reference_frames=[
+                _synthetic_frame(frame_index=0, frame_end_sample=8192)
+            ],
+            variant_frames=[
+                _synthetic_frame(
+                    frame_index=0,
+                    frame_end_sample=8193,
+                    gain_db=6.0,
+                )
+            ],
+            gain_db=6.0,
+            transformed_peak=0.5,
+        )
+        self.assertEqual(result["verdict"], "RED")
+        self.assertTrue(
+            any(
+                item["reason"] == "FRAME_ALIGNMENT_MISMATCH"
+                for item in result["failures"]
+            )
+        )
+
+    def test_reference_variant_validity_flag_mismatch_fails(self):
+        """Per-channel eligibility must not mask a global validity mismatch."""
+        reference = _synthetic_frame()
+        variant = _synthetic_frame(gain_db=6.0)
+        variant["valid"] = False
+        variant["reason"] = "synthetic-global-invalid"
+        result = _evaluate_gain_case(
+            fixture_id="synthetic",
+            reference_frames=[reference],
+            variant_frames=[variant],
+            gain_db=6.0,
+            transformed_peak=0.5,
+        )
+        self.assertEqual(result["verdict"], "RED")
+        self.assertTrue(
+            any(
+                item["reason"] == "VALIDITY_MISMATCH"
+                and item.get("channel") == "global"
+                for item in result["failures"]
+            )
+        )
+
     def test_nan_and_inf_fail_instead_of_becoming_exclusions(self):
         for nonfinite in (math.nan, math.inf):
             with self.subTest(nonfinite=nonfinite):
