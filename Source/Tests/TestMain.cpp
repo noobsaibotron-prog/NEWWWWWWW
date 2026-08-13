@@ -67,6 +67,7 @@ public:
             "AI-Front",
             "AI-Integration",
             "AI-Knobs",
+            "AI-RT",
             "AI-Sweep",
             "ClickTests",
             "Core",
