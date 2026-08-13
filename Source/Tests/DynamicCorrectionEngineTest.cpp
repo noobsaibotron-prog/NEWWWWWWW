@@ -269,6 +269,114 @@ public:
             expect(versionsMonotonic, "audio thread consumed snapshot versions out of order");
             expect(engine.getActiveSnapshotVersion() > 0, "audio thread never consumed a snapshot");
         }
+
+        beginTest("mailbox stays live: the reader reaches the final publication");
+        {
+            // The storm test above proves the audio path does not crash or emit
+            // garbage. It cannot see the failure this one is for. The four-slot
+            // mailbox may legitimately skip intermediate publications — the
+            // producer reclaims unconsumed READY slots on purpose — but it must
+            // never wedge. A leaked slot, a lost release, or a producer that
+            // stops finding a writable slot all present the same way: the
+            // reader silently stops advancing while output stays perfectly
+            // finite and versions stay perfectly monotonic. Both existing
+            // assertions would still pass.
+            //
+            // So the invariant asserted here is liveness, not content: once the
+            // producer stops, a reader that keeps calling process() must arrive
+            // at the LAST published version. That is observable, needs no
+            // test-only accessor, and is independent of the block-rate gain
+            // slew, which never settles while the storm is running.
+            constexpr double kSr = 48000.0;
+            constexpr int kBlock = 64;
+            constexpr uint32_t kPublications = 4000;
+
+            DynamicCorrectionEngine engine;
+            engine.prepare(kSr, kBlock, 2);
+            engine.setEnabled(true);
+
+            std::atomic<bool> producerDone { false };
+            std::atomic<int> maxPublishMicros { 0 };
+
+            std::thread publisher([&]
+            {
+                for (uint32_t v = 1; v <= kPublications; ++v)
+                {
+                    DynamicCorrectionEngine::Snapshot snap;
+                    snap.version = v;
+                    snap.numActive = 1 + static_cast<int>(v % DynamicCorrectionEngine::kMaxCorrections);
+                    for (int i = 0; i < snap.numActive; ++i)
+                    {
+                        auto& cc = snap.corrections[static_cast<size_t>(i)];
+                        cc.frequencyHz = 200.0f + static_cast<float>((v + static_cast<uint32_t>(i)) % 8000u);
+                        cc.q = 2.0f;
+                        cc.maxCutDb = 6.0f;
+                        cc.thresholdDb = -80.0f;
+                        cc.ratio = 3.0f;
+                        cc.attackMs = 3.0f;
+                        cc.releaseMs = 60.0f;
+                        cc.dynamic = false;
+                        cc.enabled = true;
+                    }
+
+                    // The producer is the message thread, but it must never be
+                    // made to wait by the audio thread: a bounded publish is
+                    // the property that keeps the design lock-free in practice.
+                    const auto before = juce::Time::getHighResolutionTicks();
+                    engine.publishCorrections(snap);
+                    const auto elapsedMs = juce::Time::highResolutionTicksToSeconds(
+                        juce::Time::getHighResolutionTicks() - before) * 1000.0;
+                    const int micros = static_cast<int>(elapsedMs * 1000.0);
+                    int previousMax = maxPublishMicros.load(std::memory_order_relaxed);
+                    while (micros > previousMax
+                           && !maxPublishMicros.compare_exchange_weak(previousMax, micros))
+                    {
+                    }
+                }
+                producerDone.store(true, std::memory_order_release);
+            });
+
+            double phase = 0.0;
+            bool monotonic = true;
+            uint32_t previousVersion = 0;
+            juce::AudioBuffer<float> buf(2, kBlock);
+
+            // Drain until the producer has finished AND the reader has caught
+            // up, with a hard bound so a wedged mailbox fails instead of
+            // hanging the suite.
+            constexpr int kMaxBlocks = 200000;
+            int blocks = 0;
+            for (; blocks < kMaxBlocks; ++blocks)
+            {
+                fillSine(buf, kSr, 1000.0f, 0.4f, phase);
+                engine.process(buf);
+
+                const auto consumed = engine.getActiveSnapshotVersion();
+                if (consumed < previousVersion)
+                    monotonic = false;
+                previousVersion = consumed;
+
+                if (producerDone.load(std::memory_order_acquire) && consumed == kPublications)
+                    break;
+            }
+            publisher.join();
+
+            // One more pass in the quiet: if the reader was merely behind, this
+            // settles it; if the mailbox is wedged, it changes nothing.
+            for (int i = 0; i < 16 && engine.getActiveSnapshotVersion() != kPublications; ++i)
+            {
+                fillSine(buf, kSr, 1000.0f, 0.4f, phase);
+                engine.process(buf);
+            }
+
+            expect(monotonic, "consumed versions regressed");
+            expect(blocks < kMaxBlocks, "reader never caught up: mailbox wedged");
+            expectEquals(static_cast<int>(engine.getActiveSnapshotVersion()),
+                         static_cast<int>(kPublications),
+                         "reader did not reach the final publication");
+            expect(maxPublishMicros.load() < 50000,
+                   "a single publish blocked for over 50 ms: producer is not bounded");
+        }
     }
 };
 
