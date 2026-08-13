@@ -124,7 +124,7 @@ jobs:
           if-no-files-found: error
 
   ml-v3-regression:
-    # The complete 738-test suite takes about eight minutes on the frozen local
+    # The complete suite takes about eight minutes on the frozen local
     # arm64 environment.  Keep that cost explicit and parallel to the plug-in
     # build instead of silently extending its build/validator critical path.
     runs-on: macos-15
