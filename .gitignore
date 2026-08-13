@@ -223,3 +223,4 @@ test_*.bat
 build-aitest/
 build-san/
 build-tsan/
+/build-verify/
