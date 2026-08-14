@@ -18,6 +18,7 @@ public:
 
         testStateRoundTrip();
         testPresetSchemaRoundTrip();
+        testFactoryPresetUtf8RoundTrip();
         testDynamicABStateRoundTrip();
         testHostParameterSurfaceGoldenList();
         testUndoRedoCoversEntireHostSurface();
@@ -297,6 +298,45 @@ private:
         badPreset.state = juce::ValueTree("State");
         expect(!presets.loadPreset(badPreset));
 
+        expect(tempDir.deleteRecursively());
+    }
+
+    void testFactoryPresetUtf8RoundTrip()
+    {
+        beginTest("Factory preset descriptions use explicit UTF-8 and round-trip exactly");
+
+        AIEqualizerAudioProcessor proc;
+        auto& manager = proc.getPresetManager();
+        const auto presets = manager.getFactoryPresets();
+        expectEquals(static_cast<int>(presets.size()), 22, "Factory preset count changed");
+
+        auto tempDir = juce::File::getSpecialLocation(juce::File::tempDirectory)
+            .getNonexistentChildFile("aieq-factory-preset-utf8", "", false);
+        expect(tempDir.createDirectory());
+
+        constexpr juce::juce_wchar emDash = 0x2014;
+        constexpr juce::juce_wchar replacementCharacter = 0xfffd;
+        int descriptionsWithEmDash = 0;
+
+        for (size_t index = 0; index < presets.size(); ++index)
+        {
+            const auto& preset = presets[index];
+            expect(!preset.description.containsChar(replacementCharacter),
+                   "Factory preset description contains U+FFFD: " + preset.name);
+
+            if (!preset.description.containsChar(emDash))
+                continue;
+
+            ++descriptionsWithEmDash;
+            const auto file = tempDir.getChildFile("preset-" + juce::String(static_cast<int>(index)) + ".xml");
+            expect(manager.exportPreset(preset, file), "Failed to export UTF-8 preset: " + preset.name);
+            const auto imported = manager.importPreset(file);
+            expect(imported.description == preset.description,
+                   "UTF-8 description changed during XML round-trip: " + preset.name);
+        }
+
+        expectEquals(descriptionsWithEmDash, 8,
+                     "Expected exactly the eight signed factory descriptions with an em dash");
         expect(tempDir.deleteRecursively());
     }
 

@@ -1393,6 +1393,7 @@ if(HAVE_JUCE)
              COMMAND $<TARGET_FILE:AIEqualizerPro_ThreadSafetyTests> --category=ThreadSafety -v)
     set_tests_properties(aieq_thread_safety_regression PROPERTIES
         LABELS "ThreadSafety;Regression"
+        FAIL_REGULAR_EXPRESSION "JUCE Assertion failure"
         TIMEOUT 60)
 
     # Separate named gate because the shared runner's default filtering is not
@@ -1403,5 +1404,6 @@ if(HAVE_JUCE)
              COMMAND $<TARGET_FILE:AIEqualizerPro_ThreadSafetyTests> --category=AI-RT -v)
     set_tests_properties(aieq_dynamic_correction_mailbox_regression PROPERTIES
         LABELS "ThreadSafety;AI-RT;Regression"
+        FAIL_REGULAR_EXPRESSION "JUCE Assertion failure"
         TIMEOUT 60)
 endif()

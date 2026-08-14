@@ -21,7 +21,16 @@ case "$SANITIZER" in
     ;;
   address,undefined)
     DEFAULT_BUILD_DIR="$ROOT/build-san"
-    export ASAN_OPTIONS="${ASAN_OPTIONS:-halt_on_error=1:abort_on_error=1:detect_leaks=1}"
+    # Apple's ASan runtime aborts before main when detect_leaks=1 because
+    # LeakSanitizer is not supported on this platform. Keep leak detection on
+    # platforms that implement it, while preserving the blocking ASan/UBSan
+    # memory-safety gate on macOS.
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+      DEFAULT_ASAN_OPTIONS="halt_on_error=1:abort_on_error=1:detect_leaks=0"
+    else
+      DEFAULT_ASAN_OPTIONS="halt_on_error=1:abort_on_error=1:detect_leaks=1"
+    fi
+    export ASAN_OPTIONS="${ASAN_OPTIONS:-$DEFAULT_ASAN_OPTIONS}"
     export UBSAN_OPTIONS="${UBSAN_OPTIONS:-halt_on_error=1:abort_on_error=1:print_stacktrace=1}"
     ;;
   *)

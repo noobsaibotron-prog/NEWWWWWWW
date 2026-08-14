@@ -108,7 +108,7 @@ void PresetManager::createDefaultFactoryPresets()
     //  INIT
     //==========================================================================
     factoryPresets.push_back(createPreset("Init (Flat)", "Utility",
-        "All bands at 0 dB — clean starting point",
+        juce::String::fromUTF8("All bands at 0 dB \xe2\x80\x94 clean starting point"),
         [&](juce::ValueTree& a) {
             setProfile(a, 0.0f);
             setNumBands(a, 8);
@@ -150,7 +150,7 @@ void PresetManager::createDefaultFactoryPresets()
         }));
 
     factoryPresets.push_back(createPreset("Broadcast Voice", "Vocals",
-        "Radio/podcast voice — proximity control, clarity, air",
+        juce::String::fromUTF8("Radio/podcast voice \xe2\x80\x94 proximity control, clarity, air"),
         [&](juce::ValueTree& a) {
             setProfile(a, 1.0f); setNumBands(a, 5);
             setBand(a, 0,  0,   100, 0.0f, 1.0f);    // HPF 100 Hz
@@ -164,7 +164,7 @@ void PresetManager::createDefaultFactoryPresets()
     //  DRUMS
     //==========================================================================
     factoryPresets.push_back(createPreset("Drum Punch", "Drums",
-        "Punchy drums — tight low-end, reduced mud, snappy attack",
+        juce::String::fromUTF8("Punchy drums \xe2\x80\x94 tight low-end, reduced mud, snappy attack"),
         [&](juce::ValueTree& a) {
             setProfile(a, 2.0f); setNumBands(a, 5);
             setBand(a, 0,  1,    60, 3.0f, 0.7f);    // Low shelf boost
@@ -266,7 +266,7 @@ void PresetManager::createDefaultFactoryPresets()
     //  MASTER BUS
     //==========================================================================
     factoryPresets.push_back(createPreset("Master Gentle", "Master",
-        "Subtle master polish — low-end weight, air, slight mid scoop",
+        juce::String::fromUTF8("Subtle master polish \xe2\x80\x94 low-end weight, air, slight mid scoop"),
         [&](juce::ValueTree& a) {
             setProfile(a, 5.0f); setNumBands(a, 3);
             setBand(a, 0,  1,    40, 1.0f, 0.7f);    // Low shelf +1
@@ -275,7 +275,7 @@ void PresetManager::createDefaultFactoryPresets()
         }));
 
     factoryPresets.push_back(createPreset("Master Loud", "Master",
-        "Aggressive master — punchy low-end, forward mids, bright top",
+        juce::String::fromUTF8("Aggressive master \xe2\x80\x94 punchy low-end, forward mids, bright top"),
         [&](juce::ValueTree& a) {
             setProfile(a, 5.0f); setNumBands(a, 5);
             setBand(a, 0,  0,    25, 0.0f, 1.0f);    // HPF sub-rumble
@@ -286,7 +286,7 @@ void PresetManager::createDefaultFactoryPresets()
         }));
 
     factoryPresets.push_back(createPreset("Master Clean", "Master",
-        "Transparent mastering polish — very subtle corrections",
+        juce::String::fromUTF8("Transparent mastering polish \xe2\x80\x94 very subtle corrections"),
         [&](juce::ValueTree& a) {
             setProfile(a, 5.0f); setNumBands(a, 3);
             setBand(a, 0,  1,    30, 0.5f, 0.7f);    // Hint of sub weight
@@ -298,7 +298,7 @@ void PresetManager::createDefaultFactoryPresets()
     //  EDM / ELECTRONIC
     //==========================================================================
     factoryPresets.push_back(createPreset("EDM Sizzle", "EDM",
-        "Sizzling electronic — sub weight, scooped mids, bright top",
+        juce::String::fromUTF8("Sizzling electronic \xe2\x80\x94 sub weight, scooped mids, bright top"),
         [&](juce::ValueTree& a) {
             setProfile(a, 6.0f); setNumBands(a, 5);
             setBand(a, 0,  0,    25, 0.0f, 1.0f);    // HPF sub-sub
@@ -330,7 +330,7 @@ void PresetManager::createDefaultFactoryPresets()
         }));
 
     factoryPresets.push_back(createPreset("De-Mud", "Utility",
-        "General-purpose mud removal — cleans 200-500 Hz range",
+        juce::String::fromUTF8("General-purpose mud removal \xe2\x80\x94 cleans 200-500 Hz range"),
         [&](juce::ValueTree& a) {
             setProfile(a, 0.0f); setNumBands(a, 3);
             setBand(a, 0,  2,   250,-2.5f, 0.8f);    // Wide mud cut
@@ -603,4 +603,3 @@ PresetManager::Preset PresetManager::importPreset(const juce::File& file) const
     }
     return preset;
 }
-

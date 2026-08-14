@@ -2,6 +2,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <atomic>
 #include <cmath>
+#include <latch>
 #include <thread>
 #include <vector>
 #include "../PluginProcessor.h"
@@ -28,7 +29,9 @@
  * the VST3 wrapper layer itself is not exercised here — the end-to-end judge remains
  * pluginval with the pinned seed.
  *
- * AIEQ_STORM_MS overrides the storm duration (default 2000 ms) for longer hunts.
+ * The workload is progress-based rather than wall-clock based. This matters under
+ * sanitizers, where a fixed sleep can expire before the audio worker receives enough
+ * CPU time and turn a clean product run into a false RED.
  */
 class ParameterStormThreadSafetyTest : public juce::UnitTest
 {
@@ -55,16 +58,29 @@ public:
             if (auto* p = proc.getAPVTS().getParameter(id))
                 modeParams.push_back(p);
 
+        constexpr int minAudioBlocks = 64;
+        constexpr int minOverlappingWrites = 128;
+        constexpr int maxAudioBlocks = 512;
+
+        std::latch workersReady { 4 };
+        std::latch startStorm { 1 };
         std::atomic<bool> stop { false };
+        std::atomic<bool> audioInCallback { false };
         std::atomic<bool> nonFinite { false };
         std::atomic<int>  blocksProcessed { 0 };
+        std::atomic<int>  overlappingWrites { 0 };
+        std::atomic<int>  parameterWrites { 0 };
+        std::atomic<int>  modeWrites { 0 };
 
         std::thread audioThread([&]
         {
             juce::AudioBuffer<float> buffer(2, blockSize);
             juce::MidiBuffer midi;
             juce::Random rng(0x51027A0D); // fixed seed: deterministic input signal
-            while (!stop.load(std::memory_order_relaxed))
+            workersReady.count_down();
+            startStorm.wait();
+
+            while (blocksProcessed.load(std::memory_order_relaxed) < maxAudioBlocks)
             {
                 for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
                 {
@@ -73,7 +89,9 @@ public:
                         d[i] = rng.nextFloat() * 0.5f - 0.25f;
                 }
 
+                audioInCallback.store(true, std::memory_order_release);
                 proc.processBlock(buffer, midi);
+                audioInCallback.store(false, std::memory_order_release);
                 blocksProcessed.fetch_add(1, std::memory_order_relaxed);
 
                 for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
@@ -86,16 +104,29 @@ public:
                             break;
                         }
                 }
+
+                if (blocksProcessed.load(std::memory_order_relaxed) >= minAudioBlocks
+                    && overlappingWrites.load(std::memory_order_relaxed) >= minOverlappingWrites)
+                    break;
+
+                std::this_thread::yield();
             }
+
+            stop.store(true, std::memory_order_release);
         });
 
         auto writerFn = [&](juce::int64 seed)
         {
             juce::Random rng(seed);
-            while (!stop.load(std::memory_order_relaxed))
+            workersReady.count_down();
+            startStorm.wait();
+            while (!stop.load(std::memory_order_acquire))
             {
                 auto* p = params[rng.nextInt(params.size())];
                 p->setValueNotifyingHost(rng.nextFloat());
+                parameterWrites.fetch_add(1, std::memory_order_relaxed);
+                if (audioInCallback.load(std::memory_order_acquire))
+                    overlappingWrites.fetch_add(1, std::memory_order_relaxed);
             }
         };
         std::thread writer1(writerFn, (juce::int64) 0xA1EC0FFEE);
@@ -104,18 +135,21 @@ public:
         std::thread modeWriter([&]
         {
             juce::Random rng(0xC3A11D0);
-            while (!stop.load(std::memory_order_relaxed) && !modeParams.empty())
+            workersReady.count_down();
+            startStorm.wait();
+            while (!stop.load(std::memory_order_acquire) && !modeParams.empty())
             {
                 auto* p = modeParams[(size_t) rng.nextInt((int) modeParams.size())];
                 p->setValueNotifyingHost(rng.nextFloat());
+                modeWrites.fetch_add(1, std::memory_order_relaxed);
+                if (audioInCallback.load(std::memory_order_acquire))
+                    overlappingWrites.fetch_add(1, std::memory_order_relaxed);
                 std::this_thread::yield();
             }
         });
 
-        const int stormMs = juce::SystemStats::getEnvironmentVariable("AIEQ_STORM_MS", "2000").getIntValue();
-        juce::Thread::sleep(juce::jmax(100, stormMs));
-        stop.store(true, std::memory_order_relaxed);
-
+        workersReady.wait();
+        startStorm.count_down();
         audioThread.join();
         writer1.join();
         writer2.join();
@@ -123,8 +157,16 @@ public:
 
         proc.releaseResources();
 
-        logMessage("blocks processed during storm: " + juce::String(blocksProcessed.load()));
-        expect(blocksProcessed.load() > 10, "audio thread actually ran during the storm");
+        logMessage("blocks processed during storm: " + juce::String(blocksProcessed.load())
+                   + ", overlapping writes: " + juce::String(overlappingWrites.load())
+                   + ", parameter writes: " + juce::String(parameterWrites.load())
+                   + ", mode writes: " + juce::String(modeWrites.load()));
+        expect(blocksProcessed.load() >= minAudioBlocks,
+               "audio thread completed the fixed minimum workload");
+        expect(overlappingWrites.load() >= minOverlappingWrites,
+               "parameter writers actually overlapped processBlock");
+        expect(parameterWrites.load() > 0 && modeWrites.load() > 0,
+               "all parameter-storm writers actually ran");
         expect(!nonFinite.load(), "storm produced non-finite output samples");
     }
 
