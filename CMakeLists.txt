@@ -1353,6 +1353,12 @@ if(HAVE_JUCE)
         # single-threaded test discriminates (spatial bug) before the storm test aborts.
         Source/Tests/MSTransitionOversamplingOverflowTest.cpp
         Source/Tests/ParameterStormThreadSafetyTest.cpp
+        # The DynamicCorrectionEngine mailbox is the protocol whose historical
+        # write/read race motivated the dedicated sanitizer gate.  Keep its
+        # concurrent publication and newest-wins regressions inside the
+        # instrumented binary instead of exercising them only in the normal AI
+        # suite.
+        Source/Tests/DynamicCorrectionEngineTest.cpp
         Source/Tests/TestMain.cpp
     )
     target_compile_features(AIEqualizerPro_ThreadSafetyTests PRIVATE cxx_std_20)
@@ -1387,5 +1393,15 @@ if(HAVE_JUCE)
              COMMAND $<TARGET_FILE:AIEqualizerPro_ThreadSafetyTests> --category=ThreadSafety -v)
     set_tests_properties(aieq_thread_safety_regression PROPERTIES
         LABELS "ThreadSafety;Regression"
+        TIMEOUT 60)
+
+    # Separate named gate because the shared runner's default filtering is not
+    # an adequate proof that both categories executed.  The sanitizer script
+    # selects both exact CTest names and therefore cannot silently omit the
+    # mailbox protocol while keeping the host parameter storm green.
+    add_test(NAME aieq_dynamic_correction_mailbox_regression
+             COMMAND $<TARGET_FILE:AIEqualizerPro_ThreadSafetyTests> --category=AI-RT -v)
+    set_tests_properties(aieq_dynamic_correction_mailbox_regression PROPERTIES
+        LABELS "ThreadSafety;AI-RT;Regression"
         TIMEOUT 60)
 endif()

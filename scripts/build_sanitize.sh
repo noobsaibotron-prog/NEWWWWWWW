@@ -42,6 +42,6 @@ cmake --build "$BUILD_DIR" \
   --parallel "$JOBS"
 
 ctest --test-dir "$BUILD_DIR" \
-  -R '^aieq_thread_safety_regression$' \
+  -R '^(aieq_thread_safety_regression|aieq_dynamic_correction_mailbox_regression)$' \
   --output-on-failure \
   --timeout 180

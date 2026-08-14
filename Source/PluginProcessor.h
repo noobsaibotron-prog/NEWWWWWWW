@@ -848,8 +848,14 @@ public:
     {
         return dynamicCorrectionEngine;
     }
-    void publishDynamicCorrectionsFromApplied(const std::vector<AIEngine::Correction>& appliedCorrections);
 private:
+
+    /** Sole DynamicCorrectionEngine publisher.  Kept private so external UI,
+        test and integration code cannot accidentally introduce a second
+        producer into the single-writer mailbox.  applyAICorrections() is the
+        public message-thread entry point. */
+    void publishDynamicCorrectionsFromApplied(
+        const std::vector<AIEngine::Correction>& appliedCorrections);
 
     // IR builder thread function (runs in background)
     void irBuilderThreadFunc();

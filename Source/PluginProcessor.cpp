@@ -4216,6 +4216,11 @@ void AIEqualizerAudioProcessor::ensureBandCount(int count)
 void AIEqualizerAudioProcessor::publishDynamicCorrectionsFromApplied(
     const std::vector<AIEngine::Correction>& appliedCorrections)
 {
+    auto* const messageManager = juce::MessageManager::getInstanceWithoutCreating();
+    jassert(messageManager != nullptr && messageManager->isThisTheMessageThread());
+    if (messageManager == nullptr || !messageManager->isThisTheMessageThread())
+        return; // Fail closed: the mailbox contract permits exactly one producer.
+
     // Message-thread publication (the engine's ownership mailbox keeps the
     // payload immutable while the audio thread reads it). The caller passes the exact merged/limited
     // correction list that was applied to static bands, so the dynamic snapshot
@@ -4427,6 +4432,11 @@ static ParametricEQProcessor::FilterType aiFilterTypeToProcessorType(AIEngine::C
 
 void AIEqualizerAudioProcessor::applyAICorrections()
 {
+    auto* const messageManager = juce::MessageManager::getInstanceWithoutCreating();
+    jassert(messageManager != nullptr && messageManager->isThisTheMessageThread());
+    if (messageManager == nullptr || !messageManager->isThisTheMessageThread())
+        return; // Do not mutate state or publish from a second producer thread.
+
     // FIX: Get ONLY approved corrections (user-approved, not all pending)
     // This ensures that when user clicks to fix a single problem, only that one is applied
     auto approved = aiEngine.getApprovedCorrections();
