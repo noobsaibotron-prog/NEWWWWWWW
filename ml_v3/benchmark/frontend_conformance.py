@@ -396,14 +396,18 @@ def _evaluate_gain_case(
         closing = _frame_key(reference) in closing_keys
 
         if bool(reference["valid"]) != bool(variant["valid"]):
-            if closing:
-                failures.append(
-                    {
-                        "reason": "VALIDITY_MISMATCH",
-                        "frame_index": int(reference["frame_index"]),
-                        "channel": "global",
-                    }
-                )
+            # Frame validity is part of the paired-frame identity contract, not
+            # a scientific-cell metric.  A mismatch anywhere in the emitted
+            # sequence is therefore fatal even when that frame lies outside the
+            # warm-up/coda closing window; limiting this check to `closing`
+            # allowed a structurally different render to report GREEN.
+            failures.append(
+                {
+                    "reason": "VALIDITY_MISMATCH",
+                    "frame_index": int(reference["frame_index"]),
+                    "channel": "global",
+                }
+            )
             previous_masks["mid"] = None
             previous_masks["side"] = None
             continue
@@ -412,9 +416,6 @@ def _evaluate_gain_case(
             ref_valid = _channel_valid(reference, channel)
             var_valid = _channel_valid(variant, channel)
             if ref_valid != var_valid:
-                if not closing:
-                    previous_masks[channel] = None
-                    continue
                 failures.append(
                     {
                         "reason": "VALIDITY_MISMATCH",

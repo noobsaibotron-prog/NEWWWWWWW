@@ -284,6 +284,75 @@ class Gate5RejectPathTests(unittest.TestCase):
             )
         )
 
+    def test_validity_mismatch_outside_closing_window_still_fails(self):
+        """Warm-up/coda exclusion cannot hide paired-frame structural drift."""
+        reference_0 = _synthetic_frame(frame_index=0, frame_end_sample=8192)
+        variant_0 = _synthetic_frame(
+            frame_index=0,
+            frame_end_sample=8192,
+            gain_db=6.0,
+        )
+        variant_0["valid"] = False
+        variant_0["reason"] = "synthetic-global-invalid"
+
+        reference_1 = _synthetic_frame(frame_index=1, frame_end_sample=9216)
+        variant_1 = _synthetic_frame(
+            frame_index=1,
+            frame_end_sample=9216,
+            gain_db=6.0,
+        )
+        result = _evaluate_gain_case(
+            fixture_id="synthetic",
+            reference_frames=[reference_0, reference_1],
+            variant_frames=[variant_0, variant_1],
+            gain_db=6.0,
+            transformed_peak=0.5,
+            closing_frame_keys={(1, 9216)},
+        )
+        self.assertEqual(result["verdict"], "RED")
+        self.assertTrue(
+            any(
+                item["reason"] == "VALIDITY_MISMATCH"
+                and item.get("frame_index") == 0
+                and item.get("channel") == "global"
+                for item in result["failures"]
+            )
+        )
+
+    def test_channel_validity_mismatch_outside_closing_window_still_fails(self):
+        """Logical-channel validity has the same full-sequence contract."""
+        reference_0 = _synthetic_frame(frame_index=0, frame_end_sample=8192)
+        variant_0 = _synthetic_frame(
+            frame_index=0,
+            frame_end_sample=8192,
+            gain_db=6.0,
+        )
+        variant_0["side_valid"] = True
+
+        reference_1 = _synthetic_frame(frame_index=1, frame_end_sample=9216)
+        variant_1 = _synthetic_frame(
+            frame_index=1,
+            frame_end_sample=9216,
+            gain_db=6.0,
+        )
+        result = _evaluate_gain_case(
+            fixture_id="synthetic",
+            reference_frames=[reference_0, reference_1],
+            variant_frames=[variant_0, variant_1],
+            gain_db=6.0,
+            transformed_peak=0.5,
+            closing_frame_keys={(1, 9216)},
+        )
+        self.assertEqual(result["verdict"], "RED")
+        self.assertTrue(
+            any(
+                item["reason"] == "VALIDITY_MISMATCH"
+                and item.get("frame_index") == 0
+                and item.get("channel") == "side"
+                for item in result["failures"]
+            )
+        )
+
     def test_nan_and_inf_fail_instead_of_becoming_exclusions(self):
         for nonfinite in (math.nan, math.inf):
             with self.subTest(nonfinite=nonfinite):
