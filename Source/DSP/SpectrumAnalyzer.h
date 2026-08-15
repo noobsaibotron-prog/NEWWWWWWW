@@ -6,6 +6,8 @@
 #include <array>
 #include <atomic>
 #include <memory>
+#include <mutex>
+#include "../Core/LatestValueMailbox.h"
 
 //==============================================================================
 class SpectrumAnalyzer
@@ -56,11 +58,11 @@ public:
     const std::vector<float>& getPeakHoldSpectrum() const { return getPeakHold(); }
 
     // Audio-thread-safe snapshot of the published smoothed dB spectrum.
-    // Copies into `dst` (pre-sized by the caller) using a seqlock retry so a
-    // concurrent GUI processFFT() buffer flip cannot produce a torn read — unlike
-    // the by-reference getters above, which are not safe to hold across an audio
-    // read while the editor is open. Returns the number of bins copied. RT-safe:
-    // bounded retries, no allocation when `dst` is already sized.
+    // GUI processFFT() publishes immutable fixed-size frames through a multi-slot
+    // ownership mailbox; the audio consumer never reads a slot the GUI can write.
+    // Returns the number of bins copied. RT-safe: bounded CAS, no allocation when
+    // `dst` is already sized. This legacy AI bridge is removed by the headless-AI
+    // migration; by-reference getters remain GUI-thread-only.
     int copySmoothedSpectrumInto(std::vector<float>& dst) const noexcept;
     
     float getMagnitudeForFrequency(float frequency) const;
@@ -69,12 +71,15 @@ public:
     int getFFTSize() const { return fftSize; }
     int getNumBins() const { return numBins; }
     
-    double getSampleRate() const { return currentSampleRate; }
+    double getSampleRate() const { return currentSampleRate.load(std::memory_order_relaxed); }
     
     //==============================================================================
     void setAttackTime(float ms) { attackTimeMs = ms; updateSmoothingCoeffs(); }
     void setReleaseTime(float ms) { releaseTimeMs = ms; updateSmoothingCoeffs(); }
-    void setSpeed(Speed s);
+    // Thread-safe request. The actual GUI-owned analyzer state is applied at
+    // the start of processFFT() (or synchronously by prepare() while audio is
+    // quiescent). No FIFO/config mutation occurs on the audio thread.
+    void setSpeed(Speed s) noexcept;
     Speed getSpeed() const { return speedMode; }
     
     // Peak Hold
@@ -83,8 +88,9 @@ public:
     void setPeakHoldDecayTime(float seconds);
     void resetPeakHold();
 
-    // Resolution
-    void setFFTResolution(Resolution res);
+    // Resolution. setFFTResolution() is a lock-free request only; the GUI
+    // consumer applies it before the next FFT pass.
+    void setFFTResolution(Resolution res) noexcept;
     Resolution getFFTResolution() const { return resolution; }
 
     bool hasNewData() const { return newDataAvailable.load(); }
@@ -97,6 +103,9 @@ private:
     void updateSmoothingCoeffs();
     void rebuildFFT(int newOrder);
     void updateDecayFactor(float guiUpdateHz);
+    void applyRequestedConfiguration(); // GUI/lifecycle thread, processingMutex held
+    void resetUnlocked();               // lifecycle thread, processingMutex held
+    void applyPendingVisualReset();      // GUI thread, processingMutex held
     
     //==============================================================================
     // FIX RT-SAFETY: Pre-allocated FFT states for all resolutions
@@ -112,14 +121,38 @@ private:
         int fftSize = 4096;
         int numBins = 2048;
     };
-    
+
+    static constexpr int maxSnapshotBins = 4096; // Max-resolution fftSize / 2
+    struct RTSpectrumSnapshot
+    {
+        std::array<float, maxSnapshotBins> db {};
+        int numBins = 0;
+    };
+
+    void publishRTSnapshot(const FFTState& state, int bufferIndex) noexcept;
+
     std::array<FFTState, 4> fftStates; // Low, Medium, High, Max
     std::atomic<int> activeStateIndex { 2 }; // Default: High (index 2)
-    
-    double currentSampleRate = 44100.0;
+    std::atomic<int> requestedStateIndex { 2 };
+    std::atomic<int> requestedSpeedIndex { 1 }; // Fast=0, Medium=1, Slow=2
+
+    // processFFT()/prepare()/reset() are never called by the audio thread.
+    // Serializing those lifecycle/GUI operations prevents prepare/reset from
+    // racing a message-thread FFT pass while the audio FIFO remains SPSC.
+    mutable std::mutex processingMutex;
+
+    // GUI -> audio snapshot mailbox used only by the legacy AI feed until the
+    // headless PerceptualFrontEnd migration removes that dependency. Four slots
+    // prevent the old 0->1->0 double-buffer ABA/torn-copy failure.
+    mutable LatestValueMailbox<RTSpectrumSnapshot, 4> rtSnapshotMailbox;
+    mutable RTSpectrumSnapshot rtLastConsumedSnapshot {}; // audio-consumer thread only
+    mutable bool rtHasLastConsumedSnapshot = false;        // audio-consumer thread only
+
+    std::atomic<double> currentSampleRate { 44100.0 };
     Resolution resolution = Resolution::High;
     Speed speedMode = Speed::Medium;
     double lastProcessMs = 0.0; // per-instance throttle for Max resolution
+    bool visualResetPending = false; // guarded by processingMutex; consumed on GUI thread
     int fftOrder = static_cast<int>(Resolution::High);
     int fftSize = 1 << fftOrder;
     int numBins = fftSize / 2;
@@ -147,7 +180,6 @@ private:
     
     // State
     std::atomic<bool> newDataAvailable { false };
-    std::atomic<bool> reconfiguring { false }; // blocks push while swapping resolution/FIFO
     bool peakHoldEnabled = true;
     float peakHoldDecayTime = 2.0f;  // seconds
 

@@ -1365,6 +1365,9 @@ if(HAVE_JUCE)
         # suite.
         Source/Tests/DynamicCorrectionEngineTest.cpp
         Source/Tests/PackedIRMailboxOwnershipTest.cpp
+        # Category "ThreadSafety", so this target is its only home — listing it
+        # in Integration as well would compile a copy that never runs.
+        Source/Tests/SpectrumAnalyzerOwnershipTest.cpp
         Source/Tests/TestMain.cpp
     )
     target_compile_features(AIEqualizerPro_ThreadSafetyTests PRIVATE cxx_std_20)

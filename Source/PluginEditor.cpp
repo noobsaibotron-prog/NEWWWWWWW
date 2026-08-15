@@ -160,13 +160,13 @@ AIEqualizerAudioProcessorEditor::AIEqualizerAudioProcessorEditor(AIEqualizerAudi
     // previously stuck at "empty spectrum + 44100" so adjustForContext() never
     // saw actual program material.
     semanticPanel->spectrumProvider = [this]() -> std::vector<float> {
-        auto& analyzer = processor.getSpectrumAnalyzer();
-        // copySmoothedSpectrumInto copies min(dst.size(), src.size()) — dst
-        // must be pre-sized or nothing is copied.
-        std::vector<float> spectrumDB(static_cast<size_t>(juce::jmax(0, analyzer.getNumBins())),
-                                      -100.0f);
-        analyzer.copySmoothedSpectrumInto(spectrumDB);
-        return spectrumDB;
+        // This callback runs on the message thread, the same owner that executes
+        // SpectrumAnalyzer::processFFT(). Use the GUI-owned published buffer
+        // directly; copySmoothedSpectrumInto() is intentionally single-consumer
+        // and reserved for the legacy audio-thread AI bridge until EC-001 moves
+        // detection to PerceptualFrontEnd.
+        const auto& spectrumDB = processor.getSpectrumAnalyzer().getSmoothedSpectrum();
+        return { spectrumDB.begin(), spectrumDB.end() };
     };
     semanticPanel->setSampleRate(processor.getSampleRate());
     

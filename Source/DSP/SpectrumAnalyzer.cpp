@@ -53,27 +53,59 @@ SpectrumAnalyzer::SpectrumAnalyzer()
 
 void SpectrumAnalyzer::prepare(double sampleRate, int /*samplesPerBlock*/)
 {
-    currentSampleRate = sampleRate;
-    reset();
+    // Lifecycle-only path. The processor has already stopped audio callbacks,
+    // while this mutex excludes a GUI processFFT() that may have started just
+    // before processorReady was lowered.
+    std::lock_guard<std::mutex> lock(processingMutex);
+    currentSampleRate.store(sampleRate, std::memory_order_relaxed);
+    resetUnlocked();
 }
 
 void SpectrumAnalyzer::reset()
 {
+    std::lock_guard<std::mutex> lock(processingMutex);
+    resetUnlocked();
+}
+
+void SpectrumAnalyzer::resetUnlocked()
+{
     fifo.reset();
     std::fill(fifoBuffer.begin(), fifoBuffer.end(), 0.0f);
     overlapBuffer.clear();
-    
-    auto& state = getActiveState();
-    std::fill(state.fftData.begin(), state.fftData.end(), 0.0f);
-    
-    for (int i = 0; i < 2; ++i)
+    lastProcessMs = 0.0;
+
+    // Do not write GUI-visible FFT vectors from a host lifecycle thread. A
+    // message-thread timer may have passed its processorReady guard immediately
+    // before the lifecycle transition. Defer visual-buffer clearing until the
+    // next GUI-owned processFFT() pass.
+    visualResetPending = true;
+
+    // The legacy RT snapshot consumer is quiescent because processorReady is
+    // already false under the B1 lifecycle contract.
+    rtSnapshotMailbox.reset();
+    rtLastConsumedSnapshot = {};
+    rtHasLastConsumedSnapshot = false;
+    newDataAvailable.store(false, std::memory_order_release);
+}
+
+void SpectrumAnalyzer::applyPendingVisualReset()
+{
+    if (!visualResetPending)
+        return;
+
+    for (auto& state : fftStates)
     {
-        std::fill(state.spectrumBuffers[i].begin(), state.spectrumBuffers[i].end(), 0.0f);
-        std::fill(state.spectrumDBBuffers[i].begin(), state.spectrumDBBuffers[i].end(), minDecibels);
-        std::fill(state.peakHoldBuffers[i].begin(), state.peakHoldBuffers[i].end(), minDecibels);
+        std::fill(state.fftData.begin(), state.fftData.end(), 0.0f);
+        for (int i = 0; i < 2; ++i)
+        {
+            std::fill(state.spectrumBuffers[i].begin(), state.spectrumBuffers[i].end(), 0.0f);
+            std::fill(state.spectrumDBBuffers[i].begin(), state.spectrumDBBuffers[i].end(), minDecibels);
+            std::fill(state.peakHoldBuffers[i].begin(), state.peakHoldBuffers[i].end(), minDecibels);
+        }
     }
-    
-    newDataAvailable.store(false);
+    activeBufferIndex.store(0, std::memory_order_relaxed);
+    overlapBuffer.clear();
+    visualResetPending = false;
 }
 
 void SpectrumAnalyzer::resetPeakHold()
@@ -88,10 +120,6 @@ void SpectrumAnalyzer::resetPeakHold()
 //==============================================================================
 void SpectrumAnalyzer::pushSamples(const juce::AudioBuffer<float>& buffer)
 {
-    // If we are reconfiguring resolution/FIFO, drop incoming audio block to avoid races
-    if (reconfiguring.load(std::memory_order_acquire))
-        return;
-
     const int numSamples = buffer.getNumSamples();
     const int numChannels = buffer.getNumChannels();
     
@@ -138,6 +166,12 @@ void SpectrumAnalyzer::processFFT()
     static double fftDebugLastReport = 0.0;
     auto fftDebugStart = juce::Time::getMillisecondCounterHiRes();
 #endif
+
+    // GUI/lifecycle serialization only. The audio thread never takes this lock;
+    // its sole analyzer operation is the SPSC FIFO producer in pushSamples().
+    std::lock_guard<std::mutex> lock(processingMutex);
+    applyRequestedConfiguration();
+    applyPendingVisualReset();
 
     if (resolution == Resolution::Max)
     {
@@ -237,11 +271,16 @@ void SpectrumAnalyzer::processFFT()
         ++framesProcessed;
     }
 
-    newDataAvailable.store(false);
+    newDataAvailable.store(false, std::memory_order_release);
 
-    // FIX 2: Bump version so GUI knows spectrum paths need rebuild
     if (framesProcessed > 0)
+    {
+        const int publishedBuffer = activeBufferIndex.load(std::memory_order_acquire);
+        publishRTSnapshot(state, publishedBuffer);
+
+        // FIX 2: Bump version so GUI knows spectrum paths need rebuild
         spectrumVersion.fetch_add(1, std::memory_order_release);
+    }
 
 #if AIEQ_GUI_DEBUG
     double fftDebugMs = juce::Time::getMillisecondCounterHiRes() - fftDebugStart;
@@ -269,33 +308,17 @@ void SpectrumAnalyzer::updateSmoothingCoeffs()
     // Actual FFT update rate: with 50% overlap, hopSize = fftSize/2
     // At 48kHz with 4096 FFT: hop = 2048, rate = 48000/2048 = ~23Hz
     // Use a realistic estimate based on current FFT size and expected sample rate
-    const float sr = static_cast<float>(std::max(44100.0, currentSampleRate));
+    const float sr = static_cast<float>(std::max(44100.0, currentSampleRate.load(std::memory_order_relaxed)));
     const float hopSize = static_cast<float>(fftSize) / 2.0f;
     const float actualUpdateRate = std::max(10.0f, sr / hopSize);
     attackCoeff = 1.0f - std::exp(-1.0f / (attackTimeMs * 0.001f * actualUpdateRate));
     releaseCoeff = 1.0f - std::exp(-1.0f / (releaseTimeMs * 0.001f * actualUpdateRate));
 }
 
-void SpectrumAnalyzer::setSpeed(Speed s)
+void SpectrumAnalyzer::setSpeed(Speed s) noexcept
 {
-    speedMode = s;
-    switch (s)
-    {
-        case Speed::Fast:
-            attackTimeMs = 1.5f;
-            releaseTimeMs = 30.0f;
-            break;
-        case Speed::Slow:
-            attackTimeMs = 8.0f;
-            releaseTimeMs = 120.0f;
-            break;
-        case Speed::Medium:
-        default:
-            attackTimeMs = 2.0f;
-            releaseTimeMs = 50.0f;
-            break;
-    }
-    updateSmoothingCoeffs();
+    const int idx = (s == Speed::Fast) ? 0 : (s == Speed::Slow ? 2 : 1);
+    requestedSpeedIndex.store(idx, std::memory_order_release);
 }
 
 void SpectrumAnalyzer::setPeakHoldDecayTime(float seconds)
@@ -306,36 +329,65 @@ void SpectrumAnalyzer::setPeakHoldDecayTime(float seconds)
     updateDecayFactor(30.0f); // assume ~30 Hz GUI updates
 }
 
-void SpectrumAnalyzer::setFFTResolution(Resolution res)
+void SpectrumAnalyzer::setFFTResolution(Resolution res) noexcept
 {
-    int newOrder = static_cast<int>(res);
-    if (newOrder == fftOrder)
-        return;
-    
-    // FIX RT-SAFETY: No more rebuildFFT! Just atomic swap to pre-allocated state
-    int newIndex = newOrder - 10; // Map: 10→0(Low), 11→1(Medium), 12→2(High), 13→3(Max)
-    newIndex = juce::jlimit(0, 3, newIndex);
-    
-    // Block audio writes while we swap state/reset FIFO
-    reconfiguring.store(true, std::memory_order_release);
+    const int idx = juce::jlimit(0, 3, static_cast<int>(res) - 10);
+    requestedStateIndex.store(idx, std::memory_order_release);
+}
 
-    activeStateIndex.store(newIndex, std::memory_order_release);
-    
-    // Update cached values from new state
-    const auto& newState = fftStates[newIndex];
-    fftOrder = newState.fftOrder;
-    fftSize = newState.fftSize;
-    numBins = newState.numBins;
-    resolution = res;
-    
-    // Clear FIFO and overlap buffer (safe on GUI thread)
-    fifo.reset();
-    std::fill(fifoBuffer.begin(), fifoBuffer.end(), 0.0f);
-    overlapBuffer.clear(); // Force full-frame read on next processFFT
-    newDataAvailable.store(false, std::memory_order_release);
-    updateSmoothingCoeffs(); // Recalc for new FFT size
+void SpectrumAnalyzer::applyRequestedConfiguration()
+{
+    const int newIndex = juce::jlimit(0, 3, requestedStateIndex.load(std::memory_order_acquire));
+    const int currentIndex = activeStateIndex.load(std::memory_order_relaxed);
 
-    reconfiguring.store(false, std::memory_order_release);
+    if (newIndex != currentIndex)
+    {
+        auto& newState = fftStates[static_cast<size_t>(newIndex)];
+        activeStateIndex.store(newIndex, std::memory_order_release);
+        fftOrder = newState.fftOrder;
+        fftSize = newState.fftSize;
+        numBins = newState.numBins;
+        resolution = static_cast<Resolution>(newState.fftOrder);
+
+        // Resolution changes are GUI-owned. Do NOT reset the shared SPSC FIFO:
+        // a producer may be inside pushSamples(). Keeping queued time-domain
+        // samples is safe; clearing overlap forces a clean full-size first frame.
+        overlapBuffer.clear();
+        std::fill(newState.fftData.begin(), newState.fftData.end(), 0.0f);
+        for (int i = 0; i < 2; ++i)
+        {
+            std::fill(newState.spectrumBuffers[i].begin(), newState.spectrumBuffers[i].end(), 0.0f);
+            std::fill(newState.spectrumDBBuffers[i].begin(), newState.spectrumDBBuffers[i].end(), minDecibels);
+            std::fill(newState.peakHoldBuffers[i].begin(), newState.peakHoldBuffers[i].end(), minDecibels);
+        }
+        activeBufferIndex.store(0, std::memory_order_relaxed);
+        newDataAvailable.store(false, std::memory_order_release);
+        updateSmoothingCoeffs();
+    }
+
+    const int requestedSpeed = juce::jlimit(0, 2, requestedSpeedIndex.load(std::memory_order_acquire));
+    const int currentSpeed = (speedMode == Speed::Fast) ? 0 : (speedMode == Speed::Slow ? 2 : 1);
+    if (requestedSpeed != currentSpeed)
+    {
+        speedMode = requestedSpeed == 0 ? Speed::Fast : (requestedSpeed == 2 ? Speed::Slow : Speed::Medium);
+        switch (speedMode)
+        {
+            case Speed::Fast:
+                attackTimeMs = 1.5f;
+                releaseTimeMs = 30.0f;
+                break;
+            case Speed::Slow:
+                attackTimeMs = 8.0f;
+                releaseTimeMs = 120.0f;
+                break;
+            case Speed::Medium:
+            default:
+                attackTimeMs = 2.0f;
+                releaseTimeMs = 50.0f;
+                break;
+        }
+        updateSmoothingCoeffs();
+    }
 }
 
 void SpectrumAnalyzer::rebuildFFT(int newOrder)
@@ -377,29 +429,40 @@ const std::vector<float>& SpectrumAnalyzer::getSpectrumDB() const
     return state.spectrumDBBuffers[activeBufferIndex.load()];
 }
 
+void SpectrumAnalyzer::publishRTSnapshot(const FFTState& state, int bufferIndex) noexcept
+{
+    RTSpectrumSnapshot snapshot {};
+    snapshot.numBins = juce::jlimit(0, maxSnapshotBins, state.numBins);
+    if (snapshot.numBins > 0)
+    {
+        const auto& src = state.spectrumDBBuffers[bufferIndex];
+        std::copy_n(src.begin(), snapshot.numBins, snapshot.db.begin());
+    }
+    (void) rtSnapshotMailbox.publish(snapshot);
+}
+
 int SpectrumAnalyzer::copySmoothedSpectrumInto(std::vector<float>& dst) const noexcept
 {
-    // Seqlock-style snapshot. processFFT() (GUI thread) writes the inactive
-    // dB buffer then publishes it via activeBufferIndex; activeStateIndex changes
-    // only on a resolution switch. Copy the currently-active buffer, then re-read
-    // BOTH indices: if neither moved during the copy, the snapshot is coherent.
-    int n = 0;
-    for (int attempt = 0; attempt < 8; ++attempt)
+    // Single legacy RT consumer (the audio-thread AI feed). The GUI publishes
+    // immutable snapshots through an ownership mailbox; unlike the historical
+    // two-buffer index seqlock, a writer can never reclaim a READING slot, so
+    // 0->1->0 buffer flips cannot create a torn copy.
+    auto view = rtSnapshotMailbox.acquireLatest();
+    if (view)
     {
-        const int s  = activeStateIndex.load(std::memory_order_acquire);
-        const int b1 = activeBufferIndex.load(std::memory_order_acquire);
-        const auto& src = fftStates[s].spectrumDBBuffers[b1];
-
-        n = static_cast<int>(std::min(dst.size(), src.size()));
-        if (n > 0)
-            std::copy_n(src.begin(), n, dst.begin());
-
-        const int b2 = activeBufferIndex.load(std::memory_order_acquire);
-        const int s2 = activeStateIndex.load(std::memory_order_acquire);
-        if (b1 == b2 && s == s2)
-            break; // no concurrent flip → coherent copy
+        rtLastConsumedSnapshot = *view.payload;
+        rtHasLastConsumedSnapshot = true;
+        rtSnapshotMailbox.release(view);
     }
-    return n; // bounded retries: worst case (pathologically fast writer) returns last copy
+
+    if (!rtHasLastConsumedSnapshot)
+        return 0;
+
+    const int n = static_cast<int>(std::min(dst.size(),
+        static_cast<size_t>(juce::jmax(0, rtLastConsumedSnapshot.numBins))));
+    if (n > 0)
+        std::copy_n(rtLastConsumedSnapshot.db.begin(), n, dst.begin());
+    return n;
 }
 
 const std::vector<float>& SpectrumAnalyzer::getPeakHold() const
@@ -421,11 +484,11 @@ float SpectrumAnalyzer::getMagnitudeForFrequency(float frequency) const
 
 int SpectrumAnalyzer::getBinForFrequency(float frequency) const
 {
-    int bin = static_cast<int>(frequency * static_cast<float>(fftSize) / static_cast<float>(currentSampleRate));
+    int bin = static_cast<int>(frequency * static_cast<float>(fftSize) / static_cast<float>(currentSampleRate.load(std::memory_order_relaxed)));
     return juce::jlimit(0, numBins - 1, bin);
 }
 
 float SpectrumAnalyzer::getFrequencyForBin(int bin) const
 {
-    return static_cast<float>(bin) * static_cast<float>(currentSampleRate) / static_cast<float>(fftSize);
+    return static_cast<float>(bin) * static_cast<float>(currentSampleRate.load(std::memory_order_relaxed)) / static_cast<float>(fftSize);
 }
