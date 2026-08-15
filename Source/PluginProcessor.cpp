@@ -610,29 +610,70 @@ void AIEqualizerAudioProcessor::aiAnalysisThreadFunc()
     }
 }
 
+void AIEqualizerAudioProcessor::quiesceBackgroundWorkersForLifecycle()
+{
+    // Cold path only: prevent the AI worker from entering/re-entering the
+    // perceptual front-end while lifecycle-owned storage is being rebuilt.
+    aiFrontEndReady.store(false, std::memory_order_seq_cst);
+
+    // Stop the continuously running workers and wake any wait. The AI test
+    // barrier also observes stopAIAnalysis, so a test-held analysis cannot
+    // deadlock prepare/release.
+    stopAIAnalysis.store(true, std::memory_order_release);
+    aiSpectrumEvent.signal();
+    stopIRBuilder.store(true, std::memory_order_release);
+    irBuildEvent.signal();
+
+    if (aiAnalysisThread.joinable())
+        aiAnalysisThread.join();
+    if (irBuilderThread.joinable())
+        irBuilderThread.join();
+
+    // Capture analysis is a bounded one-shot rather than a persistent worker.
+    // Join the owned thread, then also cover the synchronous/non-message-thread
+    // path by waiting for its in-flight flag to clear.
+    if (captureAnalysisThread.joinable())
+        captureAnalysisThread.join();
+    while (captureAnalysisInFlight.load(std::memory_order_acquire))
+        juce::Thread::yield();
+
+    // With the sole AI consumer stopped it is legal to clear the SPSC queue.
+    // This prevents spectra/reanalysis requests from the previous prepare
+    // lifetime leaking into the next one.
+    aiSpectrumQueue.clear();
+    aiPendingReanalysis.store(false, std::memory_order_relaxed);
+    aiFrontEndDrainBusy.store(false, std::memory_order_seq_cst);
+}
+
+void AIEqualizerAudioProcessor::restartBackgroundWorkersAfterLifecycle()
+{
+    // All DSP/front-end/AI state must already be fully prepared before this
+    // function is called. Start workers while processorReady is still false;
+    // processBlock is opened only after both workers exist.
+    if (!irBuilderThread.joinable())
+    {
+        stopIRBuilder.store(false, std::memory_order_release);
+        irBuilderThread = std::thread([this]() { irBuilderThreadFunc(); });
+    }
+
+    aiFrontEndReady.store(true, std::memory_order_seq_cst);
+    if (!aiAnalysisThread.joinable())
+    {
+        stopAIAnalysis.store(false, std::memory_order_release);
+        aiAnalysisThread = std::thread([this]() { aiAnalysisThreadFunc(); });
+    }
+
+    // A request may have been armed while the IR builder was intentionally
+    // stopped. Wake the restarted worker after its thread exists.
+    if (eqCurveNeedsUpdate.load(std::memory_order_acquire))
+        irBuildEvent.signal();
+}
+
 AIEqualizerAudioProcessor::~AIEqualizerAudioProcessor()
 {
     cancelPendingUpdate();
-    // Request threads to stop before member teardown
-    if (irBuilderThread.joinable())
-    {
-        stopIRBuilder.store(true);
-        irBuildEvent.signal();
-        irBuilderThread.join();
-    }
-    if (aiAnalysisThread.joinable())
-    {
-        stopAIAnalysis.store(true);
-        aiSpectrumEvent.signal();
-        aiAnalysisThread.join();
-    }
-
-    // captureAnalysisThread has no stop flag (the capture analysis is a bounded
-    // one-shot). It must still be joined: a joinable std::thread destroyed at
-    // member teardown calls std::terminate. The thread's callAsync is weakThis-
-    // guarded, so a late completion after teardown is safe.
-    if (captureAnalysisThread.joinable())
-        captureAnalysisThread.join();
+    // Request complete background quiescence before member teardown.
+    quiesceBackgroundWorkersForLifecycle();
 
     // Remove parameter listeners
     apvts.removeParameterListener("phaseMode", this);
@@ -920,6 +961,12 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
 {
     processorReady.store(false, std::memory_order_release);
     cancelPendingUpdate();
+
+    // EC-005: lifecycle transition owns all mutable DSP/AI storage from here
+    // until restartBackgroundWorkersAfterLifecycle(). No background worker may
+    // observe partially re-prepared state.
+    quiesceBackgroundWorkersForLifecycle();
+
     cacheParameterPointers();
 
     // FIX 3: Use atomic store
@@ -1050,16 +1097,9 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     spectrumAnalyzer.prepare(sampleRate, samplesPerBlock);
     postEQAnalyzer.prepare(sampleRate, samplesPerBlock);
 
-    // Metrological pipeline FIFOs: 32768 samples (~680ms at 48kHz)
-    // P2 front-end (diagnostics-only): close the gate, then WAIT for any drain
-    // pass already in flight on the AI thread before reallocating (the flag
-    // alone cannot interrupt a running pullAudioBlock/pushMono). Bounded wait:
-    // a drain pass is microseconds; 200 ms is a generous ceiling.
-    aiFrontEndReady.store(false);
-    for (int i = 0; i < 200 && aiFrontEndDrainBusy.load(); ++i)
-        juce::Thread::sleep(1);
-    jassert(!aiFrontEndDrainBusy.load());
-
+    // Metrological pipeline FIFOs: 32768 samples (~680ms at 48kHz).
+    // The AI worker is joined by the lifecycle barrier above, so reallocating
+    // aiFrontEndFifo/front-end storage here cannot race a drain pass.
     preEqSpectrumFifo.prepare(32768);
     postEqSpectrumFifo.prepare(32768);
     aiFrontEndFifo.prepare(32768);   // dedicated SPSC: audio producer, AI consumer
@@ -1088,7 +1128,6 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     aiFrontEndFrames.store(0, std::memory_order_relaxed);
     aiFrontEndMeanNs.store(0.0, std::memory_order_relaxed);
     aiFrontEndMaxNs.store(0, std::memory_order_relaxed);
-    aiFrontEndReady.store(true);
     eqProcessor.prepare(sampleRate, samplesPerBlock, getTotalNumInputChannels());
     dynamicEQProcessor.prepare(sampleRate, samplesPerBlock, getTotalNumInputChannels());
 
@@ -1181,20 +1220,10 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     crossfadeBuffer.clear();
     crossfadeSamplesRemaining.store(0, std::memory_order_relaxed);
 
-    // Pre-allocate double buffers for lock-free IR handoff (builder thread -> audio thread).
-    // IMPORTANT: The builder thread reads/writes pendingFreqIR.buffers concurrently.
-    // We must pause it before reallocating the vectors, otherwise .assign() can
-    // invalidate pointers the builder is using → use-after-free / segfault.
+    // Pre-allocate double buffers for IR handoff. EC-005 lifecycle quiescence
+    // guarantees the builder thread is joined for the entire prepare window, so
+    // these vector reallocations cannot invalidate storage in active use.
     {
-        const bool builderWasRunning = irBuilderThread.joinable()
-                                       && !stopIRBuilder.load(std::memory_order_relaxed);
-        if (builderWasRunning)
-        {
-            stopIRBuilder.store(true, std::memory_order_release);
-            irBuildEvent.signal();
-            irBuilderThread.join();
-        }
-
         // Buffer size: numParts * fftPartSize * 2 = 32 * 512 = 16384 floats
         // (holds pre-partitioned freq-domain IR data from builder thread)
         const size_t partBufSize = PartitionedConvolver::numParts * PartitionedConvolver::fftPartSize * 2;
@@ -1203,13 +1232,6 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
         pendingFreqIR.readyIndex.store(-1, std::memory_order_relaxed);
         pendingFreqIR.writeIndex.store(0, std::memory_order_relaxed);
         pendingFreqIR.readingIndex.store(-1, std::memory_order_relaxed);
-
-        // Restart the builder thread after safe reallocation
-        if (builderWasRunning)
-        {
-            stopIRBuilder.store(false, std::memory_order_release);
-            irBuilderThread = std::thread([this]() { irBuilderThreadFunc(); });
-        }
     }
 
     // Pre-allocate silent spectrum buffer for processBlock fallback
@@ -1246,7 +1268,13 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     dynamicEQProcessorSide.setLookahead(lookaheadMs);
     dynamicEQProcessorHQ.setLookahead(lookaheadMs);
     qualityModeCached = qualityMode;
-    aiEngine.prepare(sampleRate, samplesPerBlock);
+    {
+        // Covers even a synchronous/non-owned capture-analysis caller. The
+        // persistent AI worker and owned capture thread are already joined, so
+        // this lock is normally uncontended on the cold lifecycle path.
+        std::lock_guard<std::mutex> lock(aiAnalysisMutex);
+        aiEngine.prepare(sampleRate, samplesPerBlock);
+    }
     referenceMatcher.prepare(sampleRate, samplesPerBlock);
     dynamicCorrectionEngine.prepare(sampleRate, samplesPerBlock, getTotalNumOutputChannels());
 
@@ -1331,7 +1359,11 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     //     deliver blocks slightly larger than expected.
     bypassCrossfadeSamples = worstCaseLatencySamples * 2 + 512;
 
-    // Signal that processor is ready for GUI access
+    // Workers are reopened only after every object they may observe has been
+    // fully prepared. processBlock remains closed until the final store below.
+    restartBackgroundWorkersAfterLifecycle();
+
+    // Signal that processor is ready for GUI/audio access
     processorReady.store(true, std::memory_order_release);
 }
 
@@ -1339,6 +1371,12 @@ void AIEqualizerAudioProcessor::releaseResources()
 {
     processorReady.store(false, std::memory_order_release);
     cancelPendingUpdate();
+
+    // EC-005: release has the same quiescence contract as prepare. Do not reset
+    // worker-visible state while a background operation can still be in flight.
+    quiesceBackgroundWorkersForLifecycle();
+
+    captureService.release();
     spectrumAnalyzer.reset();
     postEQAnalyzer.reset();
     eqProcessor.reset();
@@ -4343,6 +4381,13 @@ bool AIEqualizerAudioProcessor::runCapturedAudioAnalysis()
 bool AIEqualizerAudioProcessor::analyzeCapturedAudioSnapshot()
 {
     captureAnalysisCompleted.store(false, std::memory_order_release);
+
+    // A lifecycle transition owns CaptureService/AIEngine state while
+    // processorReady is false. A caller that passed this check immediately
+    // before prepare closes the gate is still covered by captureAnalysisInFlight
+    // and aiAnalysisMutex in quiesce/prepare.
+    if (!processorReady.load(std::memory_order_acquire))
+        return false;
 
     if (!captureBufferReady.load(std::memory_order_acquire))
         return false;

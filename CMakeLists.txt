@@ -1258,6 +1258,10 @@ if(HAVE_JUCE)
         Source/Tests/AISensitivityTransportStopTest.cpp
         Source/Tests/AIAnalysisSerializationTest.cpp
         Source/Tests/AIFrontEndWiringTest.cpp
+        # LifecycleQuiescenceTest is deliberately NOT here. Its category is
+        # "ThreadSafety", so the Integration runner would compile it and then
+        # skip it — a second copy that never executes. One home, one authority:
+        # it lives in AIEqualizerPro_ThreadSafetyTests and runs under TSan there.
         Source/Tests/TestMain.cpp
     )
     target_compile_features(AIEqualizerPro_IntegrationTests PRIVATE cxx_std_20)
@@ -1353,6 +1357,7 @@ if(HAVE_JUCE)
         # single-threaded test discriminates (spatial bug) before the storm test aborts.
         Source/Tests/MSTransitionOversamplingOverflowTest.cpp
         Source/Tests/ParameterStormThreadSafetyTest.cpp
+        Source/Tests/LifecycleQuiescenceTest.cpp
         # The DynamicCorrectionEngine mailbox is the protocol whose historical
         # write/read race motivated the dedicated sanitizer gate.  Keep its
         # concurrent publication and newest-wins regressions inside the

@@ -434,6 +434,11 @@ private:
     bool runCapturedAudioAnalysis();
     void analyzeSpectrumSerialized(const std::vector<float>& spectrum, bool force = false);
     void aiAnalysisThreadFunc();
+    // Cold-path lifecycle barrier. These methods are never called from processBlock().
+    // quiesceBackgroundWorkersForLifecycle() must complete before prepare/release
+    // mutates state observed by IR/AI/capture workers.
+    void quiesceBackgroundWorkersForLifecycle();
+    void restartBackgroundWorkersAfterLifecycle();
     void enqueueAISpectrum(const std::vector<float>& spectrum);
     void clearDynamicMeterCache() noexcept;
     void updateDynamicMeterCacheFrom(const DynamicEQProcessor& src) noexcept;
