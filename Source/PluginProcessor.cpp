@@ -231,9 +231,8 @@ void AIEqualizerAudioProcessor::irBuilderThreadFunc()
         if (sr <= 0.0)
             continue;
 
-        // SAFETY: Skip if prepareToPlay() hasn't allocated the double-buffer yet
-        if (pendingFreqIR.buffers[0].empty() || pendingFreqIR.buffers[1].empty())
-            continue;
+        // The mailbox slots are fixed-size members, so there is no allocation
+        // to wait for here any more.
 
         // Dynamic EQ magnitude is intentionally EXCLUDED from the IR.
         // Reason: dynamicEQProcessor.process() runs AFTER the convolver in LP mode,
@@ -451,22 +450,18 @@ void AIEqualizerAudioProcessor::irBuilderThreadFunc()
             std::vector<float> freqBuf(PartitionedConvolver::numParts * PartitionedConvolver::fftPartSize * 2, 0.0f);
             PartitionedConvolver::buildPackedPartitions(scaledIR.data(), scaledIR.size(), freqBuf.data());
 
-            // Lock-free double-buffer write.
-            // ABA guard: spin until the audio thread is not reading our target buffer.
-            // storeFreqIRDirect is a fast memcpy, so this wait is bounded and negligible
-            // compared to the IR build time (tens of ms). Not in the audio thread — safe to spin.
-            int wi = pendingFreqIR.writeIndex.load(std::memory_order_relaxed);
-            while (wi == pendingFreqIR.readingIndex.load(std::memory_order_acquire))
-                wi = 1 - wi;
+            // Publish into the ownership mailbox. The producer can only claim a
+            // slot that is FREE, or reclaim one still READY (an IR the audio
+            // thread never got to) — never one in READING. That is the whole
+            // point: the old protocol picked a write index by testing
+            // readingIndex, which the consumer had not set yet.
+            PackedIRPayload packedIR {};
+            jassert(freqBuf.size() == packedIR.size());
+            std::copy(freqBuf.begin(), freqBuf.end(), packedIR.begin());
 
-            // std::copy preserves pre-allocated capacity of buffers[wi] (resize in prepareToPlay).
-            // Do NOT use std::move here: it would transfer ownership and lose the pre-allocation.
-            jassert(freqBuf.size() == pendingFreqIR.buffers[wi].size());
-            std::copy(freqBuf.begin(), freqBuf.end(), pendingFreqIR.buffers[wi].begin());
-
-            pendingFreqIR.readyIndex.store(wi, std::memory_order_release);
-            // Release ordering on writeIndex ensures the flip is visible after the data write.
-            pendingFreqIR.writeIndex.store(1 - wi, std::memory_order_release);
+            const bool published = pendingFreqIR.publish(packedIR);
+            jassert(published); // four slots vs one reader and one writer
+            juce::ignoreUnused(published);
         }
     }
     }
@@ -1220,19 +1215,12 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     crossfadeBuffer.clear();
     crossfadeSamplesRemaining.store(0, std::memory_order_relaxed);
 
-    // Pre-allocate double buffers for IR handoff. EC-005 lifecycle quiescence
-    // guarantees the builder thread is joined for the entire prepare window, so
-    // these vector reallocations cannot invalidate storage in active use.
-    {
-        // Buffer size: numParts * fftPartSize * 2 = 32 * 512 = 16384 floats
-        // (holds pre-partitioned freq-domain IR data from builder thread)
-        const size_t partBufSize = PartitionedConvolver::numParts * PartitionedConvolver::fftPartSize * 2;
-        pendingFreqIR.buffers[0].assign(partBufSize, 0.0f);
-        pendingFreqIR.buffers[1].assign(partBufSize, 0.0f);
-        pendingFreqIR.readyIndex.store(-1, std::memory_order_relaxed);
-        pendingFreqIR.writeIndex.store(0, std::memory_order_relaxed);
-        pendingFreqIR.readingIndex.store(-1, std::memory_order_relaxed);
-    }
+    // Mailbox slots are fixed-size members, so nothing is allocated here; this
+    // only returns every slot to FREE and restarts the sequence. Safe because
+    // the EC-005 lifecycle barrier keeps the IR builder joined for the whole
+    // prepare window, so reset cannot race a publish, and the host contract
+    // keeps processBlock out during prepareToPlay.
+    pendingFreqIR.reset();
 
     // Pre-allocate silent spectrum buffer for processBlock fallback
     silentSpectrumBuffer.assign(aiSpectrumBins, -80.0f);
@@ -3272,24 +3260,24 @@ void AIEqualizerAudioProcessor::triggerLinearPhaseIRUpdate()
 
 void AIEqualizerAudioProcessor::updateLinearPhaseIRIfNeeded()
 {
-    // Lock-free: atomically claim the ready buffer index.
-    int ri = pendingFreqIR.readyIndex.exchange(-1, std::memory_order_acquire);
-    if (ri < 0)
-        return;  // No new IR data available
-
-    // ABA guard: mark the buffer we are about to read so the builder won't overwrite it.
-    // Must be set before we dereference buffers[ri].data().
-    pendingFreqIR.readingIndex.store(ri, std::memory_order_release);
+    // Claim and pin are one compare-exchange: while this view is held the slot
+    // is READING and the builder cannot reclaim or overwrite it. Bounded
+    // retries inside acquireLatest() keep this audio-thread call free of any
+    // unbounded loop; an empty view simply means "no newer IR yet", and the
+    // next block will pick it up.
+    auto view = pendingFreqIR.acquireLatest();
+    if (!view)
+        return;
 
     // Feed pre-partitioned IR data to LinearPhaseProcessor.
     // The builder thread already did the heavy IFFT + partition FFTs;
     // this only copies the partitions and arms the crossfade (no FFT work).
     auto* lp = linearPhaseProcessors[0].get();
     if (lp != nullptr)
-        lp->storePrePartitionedIRDirect(pendingFreqIR.buffers[ri].data());
+        lp->storePrePartitionedIRDirect(view.payload->data());
 
-    // Signal that the read is complete so the builder may reuse this buffer.
-    pendingFreqIR.readingIndex.store(-1, std::memory_order_release);
+    // Hand the slot back so the builder may reuse it.
+    pendingFreqIR.release(view);
 
     linearIRLoaded[0].store(true, std::memory_order_release);
     activeIRIndex.store(0, std::memory_order_relaxed);

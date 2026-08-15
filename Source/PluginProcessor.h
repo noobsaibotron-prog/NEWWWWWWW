@@ -44,6 +44,7 @@
 
 #include "Core/LockFreeStructures.h"
 #include "Core/LockFreeAudioFIFO.h"
+#include "Core/LatestValueMailbox.h"
 #include "Core/CaptureService.h"
 #include "Core/HistoryManager.h"
 #include "DSP/SpectrumAnalyzer.h"
@@ -662,17 +663,25 @@ private:
     std::atomic<int> previousIRIndex { 0 };
     alignas(64) juce::AudioBuffer<float> crossfadeBuffer;
 
-    // Lock-free double-buffer for freq-domain IR handoff (builder thread -> audio thread)
-    // Protocol: builder writes to buffers[writeIndex], publishes via readyIndex (release).
-    // Audio thread claims with readyIndex.exchange(-1, acquire), guards the read via
-    // readingIndex so the builder never overwrites an in-progress read (ABA guard).
-    struct PendingFreqIR {
-        std::vector<float> buffers[2];   // Double buffer, pre-allocated in prepareToPlay
-        std::atomic<int> readyIndex { -1 };   // Index of buffer with fresh data (-1 = none)
-        std::atomic<int> writeIndex { 0 };    // Index builder will write to next
-        std::atomic<int> readingIndex { -1 }; // Index audio thread is reading (-1 = none)
-    };
-    PendingFreqIR pendingFreqIR;
+    // Builder -> audio latest-value handoff for the freq-domain IR (EC-004).
+    //
+    // The previous protocol claimed a buffer with readyIndex.exchange(-1) and
+    // only then pinned it with readingIndex.store(ri). Between those two atomics
+    // the slot was claimed but not yet marked, so the builder's
+    // "while (wi == readingIndex)" guard still saw it as reusable and could
+    // overwrite the IR the audio thread was copying. The comment called it an
+    // ABA guard, but claim and pin were not one transition.
+    //
+    // Ownership states make the claim atomic: the consumer must win
+    // READY->READING before it dereferences anything, and a READING slot is
+    // never writable. Four slots (~64 KiB each, ~256 KiB total) keep the
+    // producer able to publish while one slot is being read and one is in
+    // flight. Latest wins: a lagging consumer drops intermediate IRs, which is
+    // correct here — only the newest EQ curve matters.
+    static constexpr size_t packedIRFloatCount =
+        PartitionedConvolver::numParts * PartitionedConvolver::fftPartSize * 2;
+    using PackedIRPayload = std::array<float, packedIRFloatCount>;
+    LatestValueMailbox<PackedIRPayload, 4> pendingFreqIR;
     
     //==============================================================================
     // AI Components

@@ -1364,6 +1364,7 @@ if(HAVE_JUCE)
         # instrumented binary instead of exercising them only in the normal AI
         # suite.
         Source/Tests/DynamicCorrectionEngineTest.cpp
+        Source/Tests/PackedIRMailboxOwnershipTest.cpp
         Source/Tests/TestMain.cpp
     )
     target_compile_features(AIEqualizerPro_ThreadSafetyTests PRIVATE cxx_std_20)
