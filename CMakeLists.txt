@@ -1130,6 +1130,11 @@ if(HAVE_JUCE)
     # profile switching without requiring any ML framework to be installed.
     # ---------------------------------------------------------------------------
     add_executable(AIEqualizerPro_AI_Tests
+        # Category "AI", so this runner is its only home. A runner executes
+        # every linked test whose category is in isDefaultBlockingCategory()
+        # and whose name matches a project prefix, so listing it twice would
+        # run identical code twice rather than skip it.
+        Source/Tests/AIEngineSilenceReferenceDecayTest.cpp
         # AI module sources — self-contained, no DSP/plugin-processor deps
         Source/AI/AIEngine.cpp
         Source/AI/AIEngine_Advanced.cpp

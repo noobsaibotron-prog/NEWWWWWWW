@@ -387,6 +387,13 @@ public:
         frames, not zeros. Calling this itself swaps the buffer — use only to characterize. */
     auto probeSnapshotVersionForTests() { return readSpectrumSnapshot().version; }
 
+    /** TEST-ONLY: the detector's level reference. Exposed so the silence-decay
+        regression can assert the reference itself and not merely its downstream
+        effect on detections. Unlike probeSnapshotVersionForTests() these do NOT
+        consume a snapshot. Single-threaded test use only. */
+    [[nodiscard]] float probeCurrentRmsForTests() const noexcept { return currentRMS; }
+    [[nodiscard]] float probeAverageRmsForTests() const noexcept { return averageRMS; }
+
     /** B2 frame-coherence contract (TEST-ONLY): count of consuming
         readSpectrumSnapshot() calls. On a clean frame (zero detections, so the
         documented out-of-scope FASE-2 modifiers never run) one heuristic
@@ -611,6 +618,11 @@ private:
     float currentRMS = -60.0f;
     float averageRMS = -40.0f;
     static constexpr float rmsSmoothing = 0.95f;
+    // Level the RMS reference decays toward when no bin clears the -100 dB
+    // measurement gate. Matches the dB floor the spectrum itself is clamped to,
+    // so the reference converges to the same value a genuinely silent frame
+    // would report if it could be measured at all.
+    static constexpr float kSilenceReferenceFloorDb = -120.0f;
     
     // Enhanced peak detection data
     struct PeakCandidate

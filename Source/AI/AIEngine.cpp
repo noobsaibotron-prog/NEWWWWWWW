@@ -268,6 +268,25 @@ void AIEngine::analyzeSpectrum(const std::vector<float>& spectrum, bool force)
         currentRMS = rmsSum / static_cast<float>(rmsCount);
         averageRMS = averageRMS * rmsSmoothing + currentRMS * (1.0f - rmsSmoothing);
     }
+    else
+    {
+        // No bin cleared the -100 dB gate, so there is nothing to measure. This
+        // used to leave the reference untouched, which meant it stayed frozen at
+        // the last audible value for as long as the input remained quiet, and
+        // relative-prominence detection kept scoring quiet input against a level
+        // that was no longer there. Decay toward the floor instead: absence of
+        // measurable content is evidence of a quiet input, not a reason to keep
+        // believing the old one.
+        //
+        // Deliberately a decay and not a reset. A hard jump to the floor would
+        // make the reference discontinuous across a single quiet frame, and the
+        // detector reads it every frame. The rmsSmoothing already used above is
+        // reused so the reference moves on one time constant rather than
+        // acquiring a second, independently tunable one.
+        currentRMS = kSilenceReferenceFloorDb;
+        averageRMS = averageRMS * rmsSmoothing
+                   + kSilenceReferenceFloorDb * (1.0f - rmsSmoothing);
+    }
     const float localRMS = currentRMS;
     const float localAvgRMS = averageRMS;
     
