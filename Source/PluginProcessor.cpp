@@ -1791,10 +1791,21 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     for (auto i = totalNumInputChannels; i < totalNumOutputChannels; ++i)
         buffer.clear(i, 0, buffer.getNumSamples());
 
-    // Capture audio for analysis using lock-free CaptureService (even if bypassed)
-    // This replaces the old mutex-based pushToCaptureRing - fully RT-safe
-    const int captureDropped = captureService.pushSamples(buffer);
-    juce::ignoreUnused(captureDropped);
+    // FA-001 containment: with capture disabled for shipping there is no reader,
+    // so feeding the retroactive ring would copy every block for nothing. The
+    // check is runtime rather than `if constexpr` on purpose: PluginProcessor.cpp
+    // is compiled once into SharedCode, which does NOT define JUCE_UNIT_TESTS,
+    // so a compile-time constant would strip the ring feed from the test builds
+    // too and silently break the CaptureService coverage this containment was
+    // designed to preserve. What actually costs anything here is the per-block
+    // copy, and that is gone either way; what remains in the shipping build is
+    // one relaxed load of a static that is always false.
+    if (isCaptureAllowed())
+    {
+        // Lock-free CaptureService push (even if bypassed) — fully RT-safe.
+        const int captureDropped = captureService.pushSamples(buffer);
+        juce::ignoreUnused(captureDropped);
+    }
 
     // Process any pending AI commands from the lock-free queue
     processAICommands();

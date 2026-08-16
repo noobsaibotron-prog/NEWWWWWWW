@@ -84,7 +84,16 @@ public:
         captureStripBtn.setDescription(tr("Start or stop an audio capture, then freeze the analysis results",
                                           "Start or stop an audio capture, then freeze the analysis results"));
         captureStripBtn.onClick = [this]() { onCaptureStripClicked(); };
-        addAndMakeVisible(captureStripBtn);
+
+        // FA-001: capture is contained for the first beta, so the control is
+        // absent rather than present-and-inert. A visible button that swallows
+        // the click reads as a bug; a greyed one or a "coming soon" makes a
+        // promise we have not decided to keep. When the finding is fixed and
+        // kCaptureEnabledForShipping goes true, the strip returns on its own.
+        if constexpr (AIEqualizerAudioProcessor::kCaptureEnabledForShipping)
+        {
+            addAndMakeVisible(captureStripBtn);
+        }
 
         captureStripLabel.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
         captureStripLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textSecondary);
@@ -92,7 +101,10 @@ public:
         captureStripLabel.setTitle(tr("Capture status", "Capture status"));
         captureStripLabel.setDescription(tr("Shows the current capture and freeze state",
                                             "Shows the current capture and freeze state"));
-        addAndMakeVisible(captureStripLabel);
+        if constexpr (AIEqualizerAudioProcessor::kCaptureEnabledForShipping)
+        {
+            addAndMakeVisible(captureStripLabel);
+        }
         
         // Action buttons
         autoFixBtn.setButtonText(tr("FIX ALL", "FIX ALL"));
@@ -226,7 +238,13 @@ public:
             genreLabel.setJustificationType(juce::Justification::centredLeft);
         }
 
-        // UX "Diagnosi Stabile": capture strip (22px) below the title row
+        // UX "Diagnosi Stabile": capture strip (22px) below the title row.
+        // Contained for FA-001: when the strip is not built, its row is not
+        // reserved either, so the list below reclaims the space instead of
+        // leaving a gap where a control used to be. Same treatment the
+        // MultiTrack control already gets above.
+        if constexpr (AIEqualizerAudioProcessor::kCaptureEnabledForShipping)
+        {
         bounds.removeFromTop(2);
         auto captureRow = bounds.removeFromTop(22);
         if (rtl)
@@ -242,6 +260,7 @@ public:
             captureRow.removeFromLeft(6);
             captureStripLabel.setBounds(captureRow);
             captureStripLabel.setJustificationType(juce::Justification::centredLeft);
+        }
         }
 
         bounds.removeFromTop(1); // tiny gap before list

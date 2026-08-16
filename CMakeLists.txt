@@ -752,6 +752,44 @@ endif()
 # Package ML weights as bundle resources. Keeping data under Contents/MacOS
 # makes codesign treat it as executable/nested code and the JUCE VST3 artefact
 # copy can run before a later POST_BUILD copy, silently omitting the model.
+# --------------------------------------------------------------------------
+# FA-001 guard: setCaptureAllowedForTests() re-exposes the contained capture
+# surface, so it must not be CALLED outside Source/Tests. Checked at configure
+# time rather than left to review, because the failure mode is silent — the
+# product would simply start arming CaptureService again and every suite would
+# stay green.
+#
+# The owning files legitimately name the symbol once each (declaration in
+# PluginProcessor.h, definition in PluginProcessor.cpp), so they are checked by
+# COUNT rather than excluded: a second occurrence in either is a call, which is
+# precisely what must not appear there.
+# --------------------------------------------------------------------------
+file(GLOB_RECURSE _aieq_non_test_sources
+     "${CMAKE_SOURCE_DIR}/Source/*.cpp"
+     "${CMAKE_SOURCE_DIR}/Source/*.h")
+set(_aieq_capture_override_leaks "")
+foreach(_src IN LISTS _aieq_non_test_sources)
+    if(NOT _src MATCHES "/Source/Tests/")
+        file(READ "${_src}" _aieq_contents)
+        string(REGEX MATCHALL "setCaptureAllowedForTests" _aieq_hits "${_aieq_contents}")
+        list(LENGTH _aieq_hits _aieq_n)
+        set(_aieq_allowed 0)
+        if(_src MATCHES "Source/PluginProcessor\\.(h|cpp)$")
+            set(_aieq_allowed 1)
+        endif()
+        if(_aieq_n GREATER _aieq_allowed)
+            list(APPEND _aieq_capture_override_leaks
+                 "${_src} (${_aieq_n} occurrences, ${_aieq_allowed} allowed)")
+        endif()
+    endif()
+endforeach()
+if(_aieq_capture_override_leaks)
+    message(FATAL_ERROR
+        "FA-001: setCaptureAllowedForTests() appears outside Source/Tests beyond its "
+        "declaration/definition, which re-enables the contained capture path in the "
+        "product:\n  ${_aieq_capture_override_leaks}")
+endif()
+
 if(EXISTS "${CMAKE_SOURCE_DIR}/Resources/Models/ml_weights.bin")
     if(APPLE)
         # Make the model a first-class bundle resource so CMake/JUCE includes
