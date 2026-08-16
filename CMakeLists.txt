@@ -1263,10 +1263,19 @@ if(HAVE_JUCE)
         Source/Tests/AISensitivityTransportStopTest.cpp
         Source/Tests/AIAnalysisSerializationTest.cpp
         Source/Tests/AIFrontEndWiringTest.cpp
-        # LifecycleQuiescenceTest is deliberately NOT here. Its category is
-        # "ThreadSafety", so the Integration runner would compile it and then
-        # skip it — a second copy that never executes. One home, one authority:
-        # it lives in AIEqualizerPro_ThreadSafetyTests and runs under TSan there.
+        Source/Tests/AIHeadlessDetectionParityTest.cpp
+        Source/Tests/AIHeadlessPositiveBackendWitnessTest.cpp
+        # Registration policy, verified against TestMain.cpp: a runner executes
+        # every linked test whose CATEGORY is in isDefaultBlockingCategory() and
+        # whose NAME matches a project prefix. The per-binary category list is
+        # derived from what is linked, not fixed per target, so a "ThreadSafety"
+        # test linked here would RUN here as well as in the ThreadSafety binary.
+        # Duplicate execution of identical code adds no evidence and creates two
+        # places to keep in step, so each test gets exactly one home.
+        # LifecycleQuiescenceTest, SpectrumAnalyzerOwnershipTest,
+        # AIFrontEndOverrunRecoveryTest and AIHeadlessSourceThreadSafetyTest are
+        # "ThreadSafety" and live in AIEqualizerPro_ThreadSafetyTests, where they
+        # also run under TSan.
         Source/Tests/TestMain.cpp
     )
     target_compile_features(AIEqualizerPro_IntegrationTests PRIVATE cxx_std_20)
@@ -1370,6 +1379,8 @@ if(HAVE_JUCE)
         # suite.
         Source/Tests/DynamicCorrectionEngineTest.cpp
         Source/Tests/PackedIRMailboxOwnershipTest.cpp
+        Source/Tests/AIFrontEndOverrunRecoveryTest.cpp
+        Source/Tests/AIHeadlessSourceThreadSafetyTest.cpp
         # Category "ThreadSafety", so this target is its only home — listing it
         # in Integration as well would compile a copy that never runs.
         Source/Tests/SpectrumAnalyzerOwnershipTest.cpp

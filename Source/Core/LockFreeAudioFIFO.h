@@ -80,6 +80,53 @@ public:
         }
     }
 
+    /** Push a complete multi-channel block as mono or write nothing.
+     *  RT-safe, SPSC producer-side operation. This is intended for consumers
+     *  whose FFT overlap must never concatenate the prefix of a partially
+     *  accepted block with later audio after an overflow.
+     *  Returns numSamples on success, 0 when there is insufficient capacity. */
+    int pushStereoMixAllOrNothing (const juce::AudioBuffer<T>& audioBuffer) noexcept
+    {
+        const int numSamples = audioBuffer.getNumSamples();
+        const int numCh      = audioBuffer.getNumChannels();
+        if (numSamples == 0 || numCh == 0)
+            return 0;
+
+        // The consumer can only increase free space. With a single producer,
+        // once this check succeeds the subsequent write(numSamples) cannot be
+        // reduced by another writer.
+        if (fifo.getFreeSpace() < numSamples)
+            return 0;
+
+        const auto scope = fifo.write (numSamples);
+        const int accepted = scope.blockSize1 + scope.blockSize2;
+        if (accepted != numSamples)
+        {
+            // Defensive only: the SPSC ownership argument above should make
+            // this impossible. Never expose a partial block to this API.
+            jassertfalse;
+            return 0;
+        }
+
+        for (int i = 0; i < scope.blockSize1; ++i)
+        {
+            T mono = T {};
+            for (int c = 0; c < numCh; ++c)
+                mono += audioBuffer.getSample (c, i);
+            buffer[static_cast<size_t> (scope.startIndex1 + i)] = mono / static_cast<T> (numCh);
+        }
+
+        for (int i = 0; i < scope.blockSize2; ++i)
+        {
+            T mono = T {};
+            for (int c = 0; c < numCh; ++c)
+                mono += audioBuffer.getSample (c, scope.blockSize1 + i);
+            buffer[static_cast<size_t> (scope.startIndex2 + i)] = mono / static_cast<T> (numCh);
+        }
+
+        return numSamples;
+    }
+
     /** Pull exactly numSamples into dest.
      *  Returns the actual number of samples pulled (< numSamples if FIFO starved).
      *  Called from GUI/timer thread only. */

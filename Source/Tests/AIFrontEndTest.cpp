@@ -1,8 +1,8 @@
 /**
  * AIFrontEndTest — Roadmap v1, P2 Commit 1 (category "AI-Front").
  *
- * Diagnostics-only witnesses for the AI-owned PerceptualFrontEnd. The module is
- * NOT wired into production yet; these tests pin its math before any wiring:
+ * Mathematical witnesses for the AI-owned PerceptualFrontEnd. EC-001/B4 wires
+ * rawDb into production detection; these tests continue to pin the frontend math:
  *   1. first-frame equivalence with the legacy mirror (rising attack ~= raw);
  *   2. rawness: later frames legitimately DIFFER from the legacy smoothed path
  *      (no release ballistics) — this difference is the point of P2;

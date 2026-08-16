@@ -3,14 +3,16 @@
 /**
  * PerceptualFrontEnd — Roadmap v1, P2: the AI-owned analysis front-end.
  *
- * Status (P2C3.1): WIRED into the AI thread since P2C2 (the thread drains the
- * dedicated aiFrontEndFifo and feeds this module), still DIAGNOSTICS-ONLY:
- * no detector consumes rawDb/bandDb/bandDbFused/salienceDb/fluxDb — only the
- * diagnostic counters are published. bandDbFused uses the LATEST LF (8192)
- * frame, which is NOT time-aligned with the current main frame (it can lead or
- * lag by up to one LF hop depending on chunking): the alignment contract must
- * be formalized before any real detector consumer. Any consumer migration is a
- * separate, gated commit — see docs/AI_SCORECARD.md.
+ * Status (EC-001/B4): WIRED as the production continuous-detection source.
+ * The AI worker drains the dedicated aiFrontEndFifo and feeds rawDb from the
+ * 4096-point path into AIEngine at the preserved processor cadence. The GUI
+ * SpectrumAnalyzer is display-only and no longer participates in detection.
+ *
+ * Only rawDb is a production detector input in B4. bandDb/bandDbFused/
+ * salienceDb/fluxDb remain future-facing perceptual diagnostics. In particular,
+ * bandDbFused uses the LATEST LF (8192) frame, which is not time-aligned with
+ * the current main frame and must not become a detector input until that
+ * alignment contract is formalized.
  *
  * What it produces per hop (fftSize/2 = 2048 samples):
  *   - rawDb:  2049 UNSMOOTHED dB bins. Same FFT/window/normalization/clamp as
@@ -55,7 +57,7 @@ public:
     {
         std::vector<float> rawDb;       // kNumBins, unsmoothed dB (4096 path)
         std::vector<float> bandDb;      // numBands(), log-band energies (4096 path)
-        // P2C3 — perceptual extensions (diagnostics-only, no detector consumes them):
+        // P2C3 — perceptual extensions (still non-production detector inputs):
         std::vector<float> bandDbFused; // bandDb, but LF bands (< kLfCutoverHz) come
                                         // from the LATEST 8192-point spectrum (better
                                         // LF resolution: ~5.86 Hz/bin vs 11.7). Equals

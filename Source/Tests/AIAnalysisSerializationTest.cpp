@@ -113,6 +113,12 @@ private:
         }
 
         proc.processBlock(buffer, midi);
+        // Paced: this test is about serialization of the AI section, not about
+        // FIFO overrun. An unpaced producer outruns the AI consumer and the
+        // fail-closed overrun policy then resets the frontend on every
+        // overflow, so the worker never primes. Only
+        // AIFrontEndOverrunRecoveryTest is deliberately unpaced.
+        juce::Thread::sleep(2);
     }
 
     static bool pollUntil(std::function<bool()> predicate, int timeoutMs)

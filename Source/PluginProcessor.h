@@ -39,6 +39,7 @@
 #include <juce_dsp/juce_dsp.h>
 #include <array>
 #include <atomic>
+#include <functional>
 #include <mutex>
 #include <thread>  // std::thread and std::stop flags are in <thread> in C++20
 
@@ -440,7 +441,6 @@ private:
     // mutates state observed by IR/AI/capture workers.
     void quiesceBackgroundWorkersForLifecycle();
     void restartBackgroundWorkersAfterLifecycle();
-    void enqueueAISpectrum(const std::vector<float>& spectrum);
     void clearDynamicMeterCache() noexcept;
     void updateDynamicMeterCacheFrom(const DynamicEQProcessor& src) noexcept;
     void updateDynamicMeterCacheFromMS(const DynamicEQProcessor& mid,
@@ -744,7 +744,6 @@ private:
         std::atomic<bool> reductionDeferred { false };
     } latencyPlan;
     int preallocatedMaxSamples = 0;
-    int aiAnalysisSamples = 0;
     int aiAnalysisIntervalSamples = 0;
     int autoGainBlockCounter = 0;
     static constexpr int autoGainUpdateStride = 4;
@@ -791,13 +790,11 @@ private:
     std::thread irBuilderThread;
     std::atomic<bool> stopIRBuilder { false };
     
-    // AI analysis offloaded from audio thread
-    static constexpr size_t aiSpectrumBins = 2049; // 4096 FFT -> 2049 bins
-    static constexpr size_t aiSpectrumQueueCapacity = 8;
-    using AISpectrumFrame = std::array<float, aiSpectrumBins>;
-    std::vector<float> silentSpectrumBuffer;  // Pre-allocated silent spectrum for processBlock fallback
-    std::vector<float> aiSpectrumScratch;     // Pre-allocated audio-thread target for the seqlock spectrum copy (C2 race fix)
-    AIEQCore::SPSCQueue<AISpectrumFrame, aiSpectrumQueueCapacity> aiSpectrumQueue;
+    // AI analysis offloaded from audio thread.
+    // EC-001/B4: continuous detection is sourced exclusively from the headless
+    // PerceptualFrontEnd (fixed 4096 FFT -> 2049 raw dB bins). SpectrumAnalyzer
+    // is GUI-only and no longer participates in AI detection.
+    static constexpr size_t aiSpectrumBins = 2049;
     juce::WaitableEvent aiSpectrumEvent;
     std::thread aiAnalysisThread;
     std::atomic<bool> stopAIAnalysis { false };
@@ -807,22 +804,33 @@ private:
     // last spectrum. Declared after the thread members above is irrelevant: the
     // thread is always explicitly joined in the destructor before teardown.
     std::atomic<bool> aiPendingReanalysis { false };
+    // True while the host is performing non-realtime/offline rendering.
+    // The audio producer does not feed aiFrontEndFifo in this mode and the AI
+    // worker suppresses forced re-analysis until realtime resumes.
+    std::atomic<bool> aiOfflineRenderActive { false };
 
-    // P2 (Roadmap v1): AI-owned perceptual front-end — DIAGNOSTICS-ONLY wiring.
-    // The AI thread drains aiFrontEndFifo — a DEDICATED SPSC fifo (audio thread
-    // producer, AI thread the ONLY consumer). It must NOT read
-    // preEqSpectrumFifo/postEqSpectrumFifo: those are owned by the GUI
-    // NewSpectrumPipeline (PluginEditor), and LockFreeAudioFIFO is strictly
-    // one-writer/one-reader (P2C2 originally read preEq and broke that contract
-    // whenever the editor was open — fixed in P2C2.1).
-    // NO detector consumes rawDb/bandDb yet; only diagnostic counters publish.
+    // Sticky stream-integrity marker. The audio producer sets this whenever it
+    // intentionally skips AI samples (offline/disabled) or the SPSC FIFO drops
+    // samples. The worker clears it only after discarding queued history and
+    // resetting frontend overlap, so even a very short offline pulse cannot be
+    // missed between worker polls.
+    std::atomic<bool> aiFrontEndDiscontinuityPending { false };
+    std::atomic<juce::int64> aiFrontEndDroppedSamples { 0 };
+    std::atomic<juce::int64> aiFrontEndDiscontinuities { 0 };
+
+    // EC-001 observability: counts productive headless analyses executed from
+    // PerceptualFrontEnd frames. Used by parity/regression tests.
+    std::atomic<juce::int64> aiHeadlessAnalyses { 0 };
+
+    // AI-owned perceptual front-end — PRODUCTION detection source (EC-001/B4).
+    // The AI thread drains aiFrontEndFifo, a dedicated SPSC fifo (audio thread
+    // producer, AI thread the only consumer), and feeds rawDb frames into
+    // AIEngine at the preserved ~10 Hz input cadence. GUI SpectrumAnalyzer and
+    // its pre/post FIFOs are display-only and physically isolated from detection.
     //
-    // Re-preparation handshake: prepareToPlay sets aiFrontEndReady=false, then
-    // WAITS for aiFrontEndDrainBusy to clear before reallocating (an atomic flag
-    // alone cannot stop a drain already in flight). Both flags use seq_cst (the
-    // ready/busy pair needs a Dekker-style total order; cold path, cost moot).
-    // The audio-thread push side is safe by the JUCE host contract
-    // (prepareToPlay is never concurrent with processBlock).
+    // Lifecycle ownership is provided by B1/EC-005: prepare/release stop+join
+    // the AI worker before rebuilding this storage, and reopen aiFrontEndReady
+    // only after AIEngine/front-end/cadence state is fully prepared.
     PerceptualFrontEnd aiFrontEnd;
     LockFreeAudioFIFO<float> aiFrontEndFifo;         // dedicated: audio -> AI thread
     std::vector<float> aiFrontEndScratch;            // AI-thread pull buffer
@@ -838,8 +846,10 @@ public:
         juce::int64 frames = 0;
         double meanMs = 0.0;
         double maxMs = 0.0;
+        juce::int64 droppedSamples = 0;
+        juce::int64 discontinuities = 0;
     };
-    /** Observability of the diagnostics-only front-end (no detection impact).
+    /** Observability of the production AI-owned perceptual front-end.
         DELIBERATELY out-of-line (defined in PluginProcessor.cpp): test targets
         compile this header with JUCE_UNIT_TESTS=1 while the plugin SharedCode
         does not, and AIEngine/MLEngine contain test-gated DATA members — so the
@@ -849,6 +859,31 @@ public:
         compiled once in SharedCode with the true layout. The underlying
         macro-gated-data landmine is tracked as a separate ticket. */
     [[nodiscard]] FrontEndDiagnostics getAIFrontEndDiagnostics() const noexcept;
+    [[nodiscard]] juce::int64 getAIHeadlessAnalysisCountForTests() const noexcept;
+
+    /** TEST-ONLY observer of every productive AI analysis, invoked on the AI
+        worker thread right after the detector has consumed a frame.
+
+        EC-001 is a claim about where the detector's input comes from, so the
+        witness has to compare the inputs themselves and not merely count them:
+        the sequence number, the end-sample position of the frontend frame the
+        spectrum represents, and the 2049 dB bins actually handed over.
+
+        Declared unconditionally and defined OUT-OF-LINE, for exactly the reason
+        spelled out above getAIFrontEndDiagnostics(). A first attempt put the
+        std::function and its mutex behind #if JUCE_UNIT_TESTS as DATA MEMBERS;
+        that shifts the layout of everything after them between test TUs and
+        SharedCode, and the setter — inlined into a test TU — wrote at the wrong
+        offset. It failed as "mutex lock failed: Invalid argument". The observer
+        now lives in a file-static inside PluginProcessor.cpp, so the class
+        layout is identical in both worlds and the body is compiled once. */
+    using AIAnalysisObserverForTests =
+        std::function<void(juce::int64 sequence,
+                           juce::int64 sourceEndSample,
+                           const std::vector<float>& spectrum)>;
+
+    void setAIAnalysisObserverForTests(AIAnalysisObserverForTests observer) noexcept;
+
 
     /** D1 (AI-evolution): opt-in per-band dynamic correction engine.
         Default OFF; with no published snapshot the engine is a strict no-op.

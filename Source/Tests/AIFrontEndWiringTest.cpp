@@ -1,9 +1,10 @@
 /**
- * AIFrontEndWiringTest — Roadmap v1, P2 Commit 2 (category "Integration").
+ * AIFrontEndWiringTest — AI-owned PerceptualFrontEnd wiring regression.
  *
- * Witnesses for the DIAGNOSTICS-ONLY wiring of the AI-owned PerceptualFrontEnd:
- * the AI thread drains preEqSpectrumFifo and runs the front-end, no detector
- * consumes its output.
+ * EC-001/B4 promotes this path from diagnostics-only to the production
+ * continuous-detection source. The test remains focused on SPSC isolation and
+ * in-vivo frontend CPU; detector/editor parity is covered separately by
+ * AIHeadlessDetectionParityTest.
  *
  *  1. EDITOR-CLOSED witness: frames flow with ZERO GUI involvement — this test
  *     never creates an editor and never calls SpectrumAnalyzer::processFFT().
@@ -22,11 +23,53 @@
 #include <cmath>
 #include <functional>
 
+namespace
+{
+/** Resolve the shipped ML weights from the source tree and force them into the
+    engine. The test binary has no models/ folder beside it, so prepare() leaves
+    the ML path unavailable and AIEngine silently falls back to the heuristic
+    detector — a backend the product does not ship. The same __FILE__-relative
+    idiom is already used by AIBackendSweepTest, AICorpusTest and the other AI
+    tests that need the real network.
+
+    Returns false if the ML path could not be made live, so the caller fails the
+    test instead of quietly measuring the wrong detector. */
+[[nodiscard]] inline bool forceShippedMLWeights(AIEqualizerAudioProcessor& proc,
+                                                juce::String& detail)
+{
+    const juce::File weights =
+        juce::File(__FILE__).getParentDirectory().getParentDirectory().getParentDirectory()
+            .getChildFile("Resources/Models/ml_weights.bin");
+
+    if (! weights.existsAsFile())
+    {
+        detail = "Resources/Models/ml_weights.bin is missing from the source tree ("
+               + weights.getFullPathName() + ")";
+        return false;
+    }
+
+    proc.getAIEngine().setCustomMLWeightsPathForTests(weights);
+
+    const auto status = proc.getAIEngine().getMLBackendStatus();
+    if (status != AIEngine::MLBackendStatus::Active)
+    {
+        detail = "ML backend is " + AIEngine::getMLBackendStatusName(status)
+               + " after loading the shipped weights. This test asserts the shipping "
+                 "detection path, so it must fail here rather than exercise the "
+                 "heuristic fallback.";
+        return false;
+    }
+
+    detail = "ML backend Active (shipped ml_weights.bin)";
+    return true;
+}
+} // namespace
+
 class AIFrontEndWiringTest : public juce::UnitTest
 {
 public:
     AIFrontEndWiringTest()
-        : juce::UnitTest("AI Front-End Wiring (diagnostics-only)", "Integration") {}
+        : juce::UnitTest("AI Front-End Wiring (production headless)", "Integration") {}
 
     void runTest() override
     {
@@ -40,8 +83,17 @@ public:
 
         AIEqualizerAudioProcessor proc;
         proc.prepareToPlay(kSr, kBlock);
+        {
+            juce::String mlDetail;
+            const bool mlLive = forceShippedMLWeights(proc, mlDetail);
+            logMessage("  " + mlDetail);
+            expect(mlLive, mlDetail);
+            if (! mlLive) return;
+        }
 
         // Deterministic playback: 200 blocks (~2.1 s) of sine+noise.
+        // Keep the synthetic producer bounded relative to the async consumer so
+        // this test measures wiring rather than deliberate FIFO overrun.
         juce::Random rng(9090);
         double phase = 0.0;
         const int numBlocks = 200;
@@ -58,6 +110,19 @@ public:
                 buf.setSample(1, i, s * 0.7f);
             }
             proc.processBlock(buf, midi);
+
+            if ((b + 1) % 8 == 0)
+            {
+                const juce::int64 samplesFed = static_cast<juce::int64>(b + 1) * kBlock;
+                const juce::int64 wanted = samplesFed < PerceptualFrontEnd::kFftSize
+                    ? 0
+                    : 1 + (samplesFed - PerceptualFrontEnd::kFftSize)
+                          / PerceptualFrontEnd::kHopSize;
+                const auto catchupDeadline = juce::Time::getMillisecondCounter() + 1000u;
+                while (juce::Time::getMillisecondCounter() < catchupDeadline
+                       && proc.getAIFrontEndDiagnostics().frames < wanted)
+                    juce::Thread::yield();
+            }
         }
 
         // The drain runs on the AI thread (async): poll with a bounded timeout.
@@ -98,6 +163,13 @@ public:
         {
             AIEqualizerAudioProcessor proc2;
             proc2.prepareToPlay(kSr, kBlock);
+            {
+                juce::String mlDetail;
+                const bool mlLive = forceShippedMLWeights(proc2, mlDetail);
+                logMessage("  " + mlDetail);
+                expect(mlLive, mlDetail);
+                if (! mlLive) return;
+            }
             const auto base = proc2.getAIFrontEndDiagnostics().frames;
             std::vector<float> guiScratch(4096, 0.0f);
             juce::int64 guiPulled = 0;
@@ -116,6 +188,19 @@ public:
                 // "GUI" drains preEq concurrently with the AI thread's own drain.
                 guiPulled += static_cast<juce::int64>(
                     proc2.getPreEqFifo().pullAudioBlock(guiScratch.data(), guiScratch.size()));
+
+                if ((b + 1) % 8 == 0)
+                {
+                    const juce::int64 samplesFed = static_cast<juce::int64>(b + 1) * kBlock;
+                    const juce::int64 wanted = samplesFed < PerceptualFrontEnd::kFftSize
+                        ? 0
+                        : 1 + (samplesFed - PerceptualFrontEnd::kFftSize)
+                              / PerceptualFrontEnd::kHopSize;
+                    const auto catchupDeadline = juce::Time::getMillisecondCounter() + 1000u;
+                    while (juce::Time::getMillisecondCounter() < catchupDeadline
+                           && proc2.getAIFrontEndDiagnostics().frames < wanted)
+                        juce::Thread::yield();
+                }
             }
             const auto dl2 = juce::Time::getMillisecondCounter() + 3000u;
             AIEqualizerAudioProcessor::FrontEndDiagnostics d2;
@@ -136,16 +221,29 @@ public:
                    + " (dedicated FIFO not isolating the readers?).");
         }
 
-        beginTest("Wiring did not disturb the AI pipeline (no detections on near-silence)");
-        // The blocks above are a clean 440 Hz tone + tiny noise: the engine may
-        // legitimately detect or not depending on profile, so instead feed pure
-        // near-silence and require zero pending corrections afterwards.
-        for (int b = 0; b < 50; ++b)
+        beginTest("Production headless path clears detections on sustained silence");
+        // The AIEngine persistence layer is effectively slower than the old
+        // 0.8 s comment because its internal every-third-frame throttle remains
+        // in place. Feed >3 s of digital zero so this is a real detect->clear
+        // witness rather than a stale-history timing accident.
+        const auto silenceBaseFrames = proc.getAIFrontEndDiagnostics().frames;
+        for (int b = 0; b < 320; ++b)
         {
             juce::AudioBuffer<float> silent(2, kBlock);
             silent.clear();
             proc.processBlock(silent, midi);
+            if ((b + 1) % 8 == 0)
+            {
+                const auto wanted = silenceBaseFrames
+                    + (static_cast<juce::int64>(b + 1) * kBlock) / PerceptualFrontEnd::kHopSize;
+                const auto deadline = juce::Time::getMillisecondCounter() + 1000u;
+                while (juce::Time::getMillisecondCounter() < deadline
+                       && proc.getAIFrontEndDiagnostics().frames < wanted)
+                    juce::Thread::yield();
+            }
         }
+        expectEquals(proc.getAIFrontEndDiagnostics().droppedSamples, static_cast<juce::int64>(0),
+                     "Bounded realtime-style witness overflowed the AI frontend FIFO.");
         // Give the AI thread a moment to settle (bounded).
         const auto settleDeadline = juce::Time::getMillisecondCounter() + 1000u;
         while (juce::Time::getMillisecondCounter() < settleDeadline)

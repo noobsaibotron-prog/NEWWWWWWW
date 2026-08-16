@@ -486,7 +486,38 @@ AIEqualizerAudioProcessor::getAIFrontEndDiagnostics() const noexcept
     d.frames = aiFrontEndFrames.load(std::memory_order_relaxed);
     d.meanMs = aiFrontEndMeanNs.load(std::memory_order_relaxed) / 1.0e6;
     d.maxMs  = static_cast<double>(aiFrontEndMaxNs.load(std::memory_order_relaxed)) / 1.0e6;
+    d.droppedSamples = aiFrontEndDroppedSamples.load(std::memory_order_relaxed);
+    d.discontinuities = aiFrontEndDiscontinuities.load(std::memory_order_relaxed);
     return d;
+}
+
+namespace
+{
+// File-static so no data member is added to AIEqualizerAudioProcessor: see the
+// layout note above getAIFrontEndDiagnostics() in the header. The target
+// pointer is compared, never dereferenced, so a stale value from a destroyed
+// processor is harmless — it simply never matches the live one.
+std::mutex& aiAnalysisObserverMutex()
+{
+    static std::mutex m;
+    return m;
+}
+AIEqualizerAudioProcessor::AIAnalysisObserverForTests gAIAnalysisObserver;
+const AIEqualizerAudioProcessor* gAIAnalysisObserverTarget = nullptr;
+} // namespace
+
+void AIEqualizerAudioProcessor::setAIAnalysisObserverForTests(
+    AIAnalysisObserverForTests observer) noexcept
+{
+    std::lock_guard<std::mutex> lock(aiAnalysisObserverMutex());
+    gAIAnalysisObserver = std::move(observer);
+    gAIAnalysisObserverTarget = gAIAnalysisObserver ? this : nullptr;
+}
+
+juce::int64 AIEqualizerAudioProcessor::getAIHeadlessAnalysisCountForTests() const noexcept
+{
+    // Same out-of-line layout rule as getAIFrontEndDiagnostics().
+    return aiHeadlessAnalyses.load(std::memory_order_relaxed);
 }
 
 void AIEqualizerAudioProcessor::analyzeSpectrumSerialized(const std::vector<float>& spectrum,
@@ -517,83 +548,200 @@ void AIEqualizerAudioProcessor::aiAnalysisThreadFunc()
 {
     try
     {
-    AISpectrumFrame frame;
-    std::vector<float> spectrum;
-    spectrum.reserve(aiSpectrumBins);
+        // Persistent last spectrum: used both for normal headless analysis and
+        // transport-stop forced re-analysis. Sized once on the worker thread.
+        std::vector<float> spectrum(aiSpectrumBins, PerceptualFrontEnd::kMinDb);
+        bool haveLastSpectrum = false;
 
-    while (!stopAIAnalysis.load())
-    {
-        // P2 (diagnostics-only): drain the DEDICATED front-end FIFO (never the
-        // GUI-owned preEq/postEq fifos — SPSC, one reader each). NO detector
-        // consumes the produced frames yet. Bounded: cap 32768 / scratch 4096
-        // -> <=8 pulls per pass.
-        // Handshake with prepareToPlay: announce busy, RE-check ready (prepare
-        // may have closed the gate between our first check and the announce);
-        // prepare waits on busy before reallocating. seq_cst on both flags.
-        if (aiFrontEndReady.load())
+        // Cadence is scheduled on the actual end-sample position represented by
+        // each frontend frame. The first 4096-point frame ends at sample 4096;
+        // later frames advance by the 2048-sample hop. This preserves the legacy
+        // ~10 Hz input cadence as closely as the frontend frame grid allows.
+        juce::int64 frontEndFrameEndSample = 0;
+        juce::int64 nextAnalysisSample = 0;
+        bool timelinePrimed = false;
+        bool frontEndSuspended = false;
+
+        using FixedSpectrum = std::array<float, aiSpectrumBins>;
+        std::array<FixedSpectrum, 4> selectedFrames {};
+        // End-sample position of each selected frame, carried alongside the
+        // payload so the test observer can prove input provenance and not just
+        // input count.
+        std::array<juce::int64, 4> selectedEndSamples {};
+
+        auto resetHeadlessStream = [&]()
         {
-            aiFrontEndDrainBusy.store(true);
-            if (aiFrontEndReady.load())
+            aiFrontEnd.reset();
+            aiEngine.resetLiveDetectionState();
+            aiProblemsChanged.store(true, std::memory_order_release);
+            haveLastSpectrum = false;
+            frontEndFrameEndSample = 0;
+            nextAnalysisSample = 0;
+            timelinePrimed = false;
+            aiPendingReanalysis.store(false, std::memory_order_release);
+            aiFrontEndDiscontinuities.fetch_add(1, std::memory_order_relaxed);
+        };
+
+        auto discardQueuedAudio = [&]()
+        {
+            bool discarded = false;
+            while (aiFrontEndFifo.pullAudioBlock(aiFrontEndScratch.data(),
+                                                  aiFrontEndScratch.size()) > 0)
             {
-                size_t pulled = 0;
-                while ((pulled = aiFrontEndFifo.pullAudioBlock(aiFrontEndScratch.data(),
-                                                               aiFrontEndScratch.size())) > 0)
-                {
-#if defined(AIEQ_ENABLE_MOTORE_V2) && AIEQ_ENABLE_MOTORE_V2
-                    // EXP hybrid: feed each rawDb frame as 64 log-mel bands into
-                    // the CNN ring (A2 parity-locked feature). Analysis thread.
-                    const double v2sr = getSampleRate();
-                    aiFrontEnd.pushMono(aiFrontEndScratch.data(), static_cast<int>(pulled),
-                        [this, v2sr](const PerceptualFrontEnd::Frame& f)
-                        {
-                            const auto mel = aieq::melBandsFromDb(
-                                f.rawDb.data(), static_cast<int>(f.rawDb.size()), v2sr, 64);
-                            aiEngine.pushMotoreV2Frame(mel.data());
-                        });
-#else
-                    aiFrontEnd.pushMono(aiFrontEndScratch.data(), static_cast<int>(pulled), nullptr);
-#endif
-                    if (stopAIAnalysis.load())
-                        break;
-                }
-                aiFrontEndFrames.store(aiFrontEnd.framesProcessed(), std::memory_order_relaxed);
-                aiFrontEndMeanNs.store(aiFrontEnd.meanFrameNs(), std::memory_order_relaxed);
-                aiFrontEndMaxNs.store(aiFrontEnd.maxFrameNs(), std::memory_order_relaxed);
+                discarded = true;
+                if (stopAIAnalysis.load(std::memory_order_acquire))
+                    break;
             }
-            aiFrontEndDrainBusy.store(false);
-        }
+            return discarded;
+        };
 
-        // Try to pop without blocking
-        if (!aiSpectrumQueue.tryPop(frame))
+        while (!stopAIAnalysis.load(std::memory_order_acquire))
         {
-            // (A) Transport-stop re-analysis: an AI knob (sensitivity/strength)
-            // moved while no frames are arriving. Force ONE re-detection of the
-            // LAST spectrum we analyzed. force=true bypasses the every-3rd-frame
-            // rate limiter AND the temporal-persistence hysteresis (which would
-            // otherwise swallow the change) and resets detection history so the
-            // full new result surfaces immediately. `spectrum` persists across
-            // iterations and holds the last popped frame.
+            bool didWork = false;
+
+            const bool suspendFrontEnd =
+                aiOfflineRenderActive.load(std::memory_order_acquire)
+                || !aiEngine.isEnabled();
+            const bool discontinuity =
+                aiFrontEndDiscontinuityPending.exchange(false, std::memory_order_acq_rel);
+
+            // Offline/disabled periods intentionally stop the producer. Reset
+            // once when entering suspension and keep draining residual audio.
+            // Repeated skipped blocks may re-arm the sticky marker, but while
+            // already suspended there is no new continuity to invalidate.
+            if (suspendFrontEnd)
+            {
+                didWork |= discardQueuedAudio();
+                if (!frontEndSuspended)
+                    resetHeadlessStream();
+                frontEndSuspended = true;
+                if (!didWork)
+                    aiSpectrumEvent.wait(5);
+                continue;
+            }
+
+            // Active-stream FIFO overflow is fail-closed: throw away all queued
+            // audio and reset overlap/history before accepting another detector
+            // frame. If another overflow happens while draining, the producer
+            // re-arms the sticky marker and the next loop repeats the reset.
+            if (discontinuity)
+            {
+                didWork |= discardQueuedAudio();
+                resetHeadlessStream();
+                frontEndSuspended = false;
+                if (!didWork)
+                    aiSpectrumEvent.wait(1);
+                continue;
+            }
+
+            frontEndSuspended = false;
+
+            // EC-001/B4: the AI-owned PerceptualFrontEnd is the only continuous
+            // detector source. The lifecycle busy region contains frontend work
+            // and fixed-size copies only; AIEngine runs after busy is cleared.
+            if (aiFrontEndReady.load(std::memory_order_seq_cst))
+            {
+                const size_t pulled = aiFrontEndFifo.pullAudioBlock(aiFrontEndScratch.data(),
+                                                                    aiFrontEndScratch.size());
+                if (pulled > 0)
+                {
+                    didWork = true;
+                    size_t selectedCount = 0;
+
+                    aiFrontEndDrainBusy.store(true, std::memory_order_seq_cst);
+                    if (aiFrontEndReady.load(std::memory_order_seq_cst))
+                    {
+                        aiFrontEnd.pushMono(
+                            aiFrontEndScratch.data(),
+                            static_cast<int>(pulled),
+                            [this, &frontEndFrameEndSample, &nextAnalysisSample,
+                             &timelinePrimed, &selectedFrames, &selectedEndSamples,
+                             &selectedCount]
+                            (const PerceptualFrontEnd::Frame& f)
+                            {
+#if defined(AIEQ_ENABLE_MOTORE_V2) && AIEQ_ENABLE_MOTORE_V2
+                                const double v2sr = getSampleRate();
+                                const auto mel = aieq::melBandsFromDb(
+                                    f.rawDb.data(), static_cast<int>(f.rawDb.size()), v2sr, 64);
+                                aiEngine.pushMotoreV2Frame(mel.data());
+#endif
+                                const int interval = aiAnalysisIntervalSamples;
+                                if (interval <= 0)
+                                    return;
+
+                                if (!timelinePrimed)
+                                {
+                                    frontEndFrameEndSample = PerceptualFrontEnd::kFftSize;
+                                    nextAnalysisSample = interval;
+                                    timelinePrimed = true;
+                                }
+                                else
+                                {
+                                    frontEndFrameEndSample += PerceptualFrontEnd::kHopSize;
+                                }
+
+                                if (frontEndFrameEndSample < nextAnalysisSample)
+                                    return;
+
+                                // Advance the schedule to the first target after
+                                // this frame. At supported rates this is normally
+                                // one tick; the loop is robust to unusual rates.
+                                do
+                                    nextAnalysisSample += interval;
+                                while (nextAnalysisSample <= frontEndFrameEndSample);
+
+                                if (selectedCount >= selectedFrames.size())
+                                    return;
+
+                                selectedEndSamples[selectedCount] = frontEndFrameEndSample;
+                                auto& dst = selectedFrames[selectedCount++];
+                                std::copy(f.rawDb.begin(), f.rawDb.end(), dst.begin());
+                            });
+                    }
+                    aiFrontEndDrainBusy.store(false, std::memory_order_seq_cst);
+
+                    aiFrontEndFrames.store(aiFrontEnd.framesProcessed(), std::memory_order_relaxed);
+                    aiFrontEndMeanNs.store(aiFrontEnd.meanFrameNs(), std::memory_order_relaxed);
+                    aiFrontEndMaxNs.store(aiFrontEnd.maxFrameNs(), std::memory_order_relaxed);
+
+                    for (size_t i = 0; i < selectedCount; ++i)
+                    {
+                        std::copy(selectedFrames[i].begin(), selectedFrames[i].end(), spectrum.begin());
+                        haveLastSpectrum = true;
+                        analyzeSpectrumSerialized(spectrum, /*force=*/false);
+                        const auto seq =
+                            aiHeadlessAnalyses.fetch_add(1, std::memory_order_relaxed) + 1;
+                        {
+                            std::lock_guard<std::mutex> obsLock(aiAnalysisObserverMutex());
+                            if (gAIAnalysisObserver && gAIAnalysisObserverTarget == this)
+                                gAIAnalysisObserver(seq, selectedEndSamples[i], spectrum);
+                        }
+                        aiProblemsChanged.store(true, std::memory_order_release);
+
+                        if (stopAIAnalysis.load(std::memory_order_acquire))
+                            break;
+                    }
+                }
+            }
+
+            // Transport-stop re-analysis: sensitivity/strength changes force one
+            // evaluation of the last headless spectrum. Never bridge through the
+            // GUI analyzer or a legacy spectrum queue.
             if (aiPendingReanalysis.exchange(false, std::memory_order_acq_rel))
             {
-                if (!spectrum.empty())
+                if (haveLastSpectrum
+                    && !aiOfflineRenderActive.load(std::memory_order_acquire)
+                    && aiEngine.isEnabled())
                 {
                     analyzeSpectrumSerialized(spectrum, /*force=*/true);
                     aiProblemsChanged.store(true, std::memory_order_release);
+                    didWork = true;
                 }
-                continue; // re-check the queue immediately
             }
 
-            // Wait briefly to avoid busy-wait; wake on signal
-            aiSpectrumEvent.wait(5);
-            continue;
+            if (!didWork)
+                aiSpectrumEvent.wait(5);
         }
-
-        // Convert fixed-size frame to vector for AIEngine API
-        spectrum.assign(frame.begin(), frame.end());
-
-        analyzeSpectrumSerialized(spectrum);
-        aiProblemsChanged.store(true, std::memory_order_release);
-    }
     }
     catch (const std::exception& e)
     {
@@ -632,11 +780,15 @@ void AIEqualizerAudioProcessor::quiesceBackgroundWorkersForLifecycle()
     while (captureAnalysisInFlight.load(std::memory_order_acquire))
         juce::Thread::yield();
 
-    // With the sole AI consumer stopped it is legal to clear the SPSC queue.
-    // This prevents spectra/reanalysis requests from the previous prepare
-    // lifetime leaking into the next one.
-    aiSpectrumQueue.clear();
+    // Prevent forced re-analysis requests from the previous prepare lifetime
+    // leaking into the next one. aiFrontEndFifo is re-prepared later while the
+    // sole consumer is joined.
     aiPendingReanalysis.store(false, std::memory_order_relaxed);
+    aiOfflineRenderActive.store(false, std::memory_order_relaxed);
+    aiFrontEndDiscontinuityPending.store(false, std::memory_order_relaxed);
+    aiFrontEndDroppedSamples.store(0, std::memory_order_relaxed);
+    aiFrontEndDiscontinuities.store(0, std::memory_order_relaxed);
+    aiHeadlessAnalyses.store(0, std::memory_order_relaxed);
     aiFrontEndDrainBusy.store(false, std::memory_order_seq_cst);
 }
 
@@ -1222,9 +1374,8 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     // keeps processBlock out during prepareToPlay.
     pendingFreqIR.reset();
 
-    // Pre-allocate silent spectrum buffer for processBlock fallback
-    silentSpectrumBuffer.assign(aiSpectrumBins, -80.0f);
-    aiSpectrumScratch.assign(aiSpectrumBins, -80.0f); // pre-allocated target for the legacy GUI->audio spectrum mailbox
+    // EC-001/B4: no GUI-spectrum scratch/queue is needed. The AI worker owns
+    // its persistent 2049-bin spectrum and sources it from PerceptualFrontEnd.
     previousIRIndex.store(0, std::memory_order_relaxed);
 
     // Start OSC parameter server (deferred from constructor to avoid crash during plugin scan)
@@ -1306,7 +1457,11 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
 
     // Pre-compute AI analysis cadence (~10 Hz)
     aiAnalysisIntervalSamples = juce::jmax(static_cast<int>(std::round(sampleRate * 0.1)), samplesPerBlock);
-    aiAnalysisSamples = 0;
+    aiOfflineRenderActive.store(false, std::memory_order_relaxed);
+    aiFrontEndDiscontinuityPending.store(false, std::memory_order_relaxed);
+    aiFrontEndDroppedSamples.store(0, std::memory_order_relaxed);
+    aiFrontEndDiscontinuities.store(0, std::memory_order_relaxed);
+    aiHeadlessAnalyses.store(0, std::memory_order_relaxed);
 
     // === MAXIMUM LATENCY PADDING ===
     // Always report worst-case latency to DAW. Compensate internally with delay lines.
@@ -1937,49 +2092,42 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     }
 #endif
 
-    // Feed pre-EQ spectrum analyzer (lock-free, FFT deferred to GUI)
+    // GUI analyzer is display-only. Continuous AI detection has its own
+    // dedicated headless producer/consumer path.
     spectrumAnalyzer.pushSamples(buffer);
     preEqSpectrumFifo.pushStereoMix(buffer);  // metrological pipeline FIFO (GUI consumer)
-    aiFrontEndFifo.pushStereoMix(buffer);     // P2 front-end FIFO (AI-thread consumer)
+
+    const bool isOffline = isNonRealtime();
+    aiOfflineRenderActive.store(isOffline, std::memory_order_release);
+
+    // These setters are atomic/RT-safe. Keep parameter propagation separate
+    // from analysis scheduling so the worker is the sole detector owner.
+    aiEngine.setEnabled(aiEnabledLocal);
+    aiEngine.setSourceProfile(
+        static_cast<AIEngine::SourceProfile>(juce::jlimit(0, 6, sourceProfileIndex)));
+
+    // Never feed the production AI frontend across offline/disabled gaps. The
+    // discontinuity marker is sticky until the worker has discarded queued
+    // history and reset overlap, so even a very short gap cannot be missed.
+    if (aiEnabledLocal && !isOffline)
+    {
+        const int accepted = aiFrontEndFifo.pushStereoMixAllOrNothing(buffer);
+        if (accepted != blockSamples)
+        {
+            aiFrontEndDroppedSamples.fetch_add(blockSamples - accepted,
+                                               std::memory_order_relaxed);
+            aiFrontEndDiscontinuityPending.store(true, std::memory_order_release);
+        }
+    }
+    else
+    {
+        aiFrontEndDiscontinuityPending.store(true, std::memory_order_release);
+    }
+
     spectrumDataReady.store(true, std::memory_order_release);
 
     // Checkpoint 1 — pre-EQ (after param update / spectrum capture, before EQ processing)
     checkClicks(1);
-
-    // Skip AI analysis during offline rendering for performance
-    bool isOffline = isNonRealtime();
-    aiAnalysisSamples = std::min(aiAnalysisSamples + blockSamples, aiAnalysisIntervalSamples);
-    const bool shouldRunAI = aiEnabledLocal && !isOffline && aiAnalysisSamples >= aiAnalysisIntervalSamples && aiAnalysisIntervalSamples > 0;
-
-    if (shouldRunAI)
-    {
-        aiAnalysisSamples = 0;
-        // FORCE: Always ensure AI engine is enabled
-        aiEngine.setEnabled(true);
-
-        // Update source profile
-        aiEngine.setSourceProfile(static_cast<AIEngine::SourceProfile>(juce::jlimit(0, 6, sourceProfileIndex)));
-
-        // Legacy bridge until EC-001 moves continuous AI detection to the
-        // headless PerceptualFrontEnd. SpectrumAnalyzer publishes immutable
-        // ownership-mailbox snapshots, so GUI multi-frame FFT flips cannot tear
-        // this audio-thread copy.
-        const int copiedBins = spectrumAnalyzer.copySmoothedSpectrumInto(aiSpectrumScratch);
-        if (copiedBins > 0)
-        {
-            enqueueAISpectrum(aiSpectrumScratch);
-        }
-        else
-        {
-            const auto& dummySpectrum = silentSpectrumBuffer;
-            enqueueAISpectrum(dummySpectrum);
-        }
-    }
-    else if (!aiEnabledLocal)
-    {
-        // AI disabled - but still create test problem to verify system
-        aiEngine.setEnabled(false);
-    }
 
     // A latent phase path is held back until the message thread has installed
     // the matching host-visible latency plan.
@@ -3315,21 +3463,6 @@ void AIEqualizerAudioProcessor::requestIRBuild()
     irBuildEvent.signal();
 }
 
-void AIEqualizerAudioProcessor::enqueueAISpectrum(const std::vector<float>& spectrum)
-{
-    AISpectrumFrame frame;
-    frame.fill(-100.0f);
-
-    if (!spectrum.empty())
-    {
-        const size_t copyCount = std::min(frame.size(), spectrum.size());
-        std::memcpy(frame.data(), spectrum.data(), copyCount * sizeof(float));
-    }
-
-    const bool pushed = aiSpectrumQueue.tryPush(frame);
-    if (pushed)
-        aiSpectrumEvent.signal();
-}
 
 //==============================================================================
 void AIEqualizerAudioProcessor::calculateAutoGain()

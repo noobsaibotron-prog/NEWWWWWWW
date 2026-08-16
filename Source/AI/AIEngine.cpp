@@ -193,6 +193,15 @@ void AIEngine::prepare(double sampleRate, int /*samplesPerBlock*/)
     }
 }
 
+void AIEngine::resetLiveDetectionState()
+{
+    std::lock_guard<std::mutex> lock(correctionsWriteMutex);
+    pendingCorrections.clear();
+    detectionHistory.clear();
+    analysisCounter = 0;
+    newAnalysisAvailable.store(false, std::memory_order_relaxed);
+}
+
 void AIEngine::analyzeSpectrum(const std::vector<float>& spectrum, bool force)
 {
     // Lazy-apply profile thresholds on the AI thread (avoids data race with audio thread).

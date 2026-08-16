@@ -2,9 +2,9 @@
  * AICorpusTest — Roadmap v1, P1 (category "AI-Corpus").
  *
  * BASELINE-EMITTING harness over real rendered audio — not a final quality gate:
- *   1. proves the OfflineAnalysisPipeline mirror matches the REAL
- *      SpectrumAnalyzer within ±0.1 dB (so corpus results predict in-plugin
- *      behavior at the representation level);
+ *   1. proves the test-only LiveAIAnalysisPipeline matches the shipped
+ *      PerceptualFrontEnd::rawDb representation exactly (so corpus results
+ *      predict in-plugin behavior at the representation level);
  *   2. emits the corpus baseline scorecard (clip × backend × sensitivity, with
  *      LIVE semantics). Clips marked known_fail in the manifest are MEASURED
  *      gaps of the current detector (logged as KNOWN_FAIL, never asserted);
@@ -27,8 +27,8 @@
 #include <vector>
 
 #include "../AI/AIEngine.h"
-#include "../DSP/SpectrumAnalyzer.h"
-#include "Support/OfflineAnalysisPipeline.h"
+#include "../AI/PerceptualFrontEnd.h"
+#include "Support/LiveAIAnalysisPipeline.h"
 
 namespace
 {
@@ -133,7 +133,7 @@ public:
         // ============================================================
         // GATE 1 — mirror equivalence vs the REAL SpectrumAnalyzer
         // ============================================================
-        beginTest("Mirror equivalence vs SpectrumAnalyzer (max |diff| <= 0.1 dB)");
+        beginTest("Corpus frontend equivalence vs PerceptualFrontEnd rawDb");
 
         // Deterministic stereo test signal: three sines + seeded noise,
         // different channel gains so the mono-sum is genuinely exercised.
@@ -153,60 +153,36 @@ public:
             }
         }
 
-        // Real path: drive in hop-sized chunks so each processFFT() emits exactly
-        // one frame (first call needs a full FFT; scheduling quirks like
-        // maxFramesPerCall never engage).
-        SpectrumAnalyzer real;
-        real.prepare(kCorpusSampleRate, 512);
-        std::vector<std::vector<float>> realFrames;
-        {
-            constexpr int fftSize = aieq_test::OfflineAnalysisPipeline::kFftSize;
-            constexpr int hop = fftSize / 2;
-            int pos = 0;
-            auto pushChunk = [&](int len)
-            {
-                juce::AudioBuffer<float> chunk(2, len);
-                for (int c = 0; c < 2; ++c)
-                    chunk.copyFrom(c, 0, sig, c, pos, len);
-                real.pushSamples(chunk);
-                pos += len;
-            };
-            pushChunk(fftSize);
-            real.processFFT();
-            realFrames.push_back(std::vector<float>(real.getSpectrumDB().begin(),
-                                                    real.getSpectrumDB().end()));
-            while (pos + hop <= n)
-            {
-                pushChunk(hop);
-                real.processFFT();
-                realFrames.push_back(std::vector<float>(real.getSpectrumDB().begin(),
-                                                        real.getSpectrumDB().end()));
-            }
-        }
+        // Production representation, directly through PerceptualFrontEnd.
+        std::vector<float> mono(static_cast<size_t>(n), 0.0f);
+        for (int i = 0; i < n; ++i)
+            mono[static_cast<size_t>(i)] = 0.5f * (sig.getSample(0, i) + sig.getSample(1, i));
 
-        // Mirror path: one shot over the same buffer.
-        aieq_test::OfflineAnalysisPipeline mirror(kCorpusSampleRate);
-        const auto mirrorFrames = mirror.analyze(sig);
+        PerceptualFrontEnd directFrontEnd;
+        directFrontEnd.prepare(kCorpusSampleRate);
+        const auto directFrames = directFrontEnd.analyzeAll(mono.data(), n);
 
-        expect(!realFrames.empty(), "Real analyzer produced no frames.");
-        expectEquals(static_cast<int>(mirrorFrames.size()), static_cast<int>(realFrames.size()),
-                     "Mirror produced a different number of frames than the real analyzer.");
+        // Corpus wrapper path over the same stereo signal.
+        aieq_test::LiveAIAnalysisPipeline mirror(kCorpusSampleRate);
+        const auto mirrorFrames = mirror.analyzeRawFrames(sig);
+
+        expect(!directFrames.empty(), "PerceptualFrontEnd produced no frames.");
+        expectEquals(static_cast<int>(mirrorFrames.size()), static_cast<int>(directFrames.size()),
+                     "Corpus frontend produced a different number of frames than PerceptualFrontEnd.");
 
         float maxDiff = 0.0f;
-        const size_t framesToCompare = std::min(mirrorFrames.size(), realFrames.size());
+        const size_t framesToCompare = std::min(mirrorFrames.size(), directFrames.size());
         for (size_t f = 0; f < framesToCompare; ++f)
         {
-            // The real analyzer publishes numBins = fftSize/2 = 2048 bins; the AI
-            // frame is 2049. Compare the 2048 shared bins.
-            const size_t bins = std::min(mirrorFrames[f].size(), realFrames[f].size());
+            const size_t bins = std::min(mirrorFrames[f].size(), directFrames[f].rawDb.size());
             for (size_t i = 0; i < bins; ++i)
-                maxDiff = std::max(maxDiff, std::abs(mirrorFrames[f][i] - realFrames[f][i]));
+                maxDiff = std::max(maxDiff,
+                                   std::abs(mirrorFrames[f][i] - directFrames[f].rawDb[i]));
         }
         logMessage("  frames=" + juce::String(static_cast<int>(framesToCompare))
-                   + "  max |mirror - real| = " + juce::String(maxDiff, 5) + " dB");
-        expect(maxDiff <= 0.1f,
-               "Mirror deviates from SpectrumAnalyzer by more than 0.1 dB - the corpus "
-               "harness would not predict in-plugin behavior.");
+                   + "  max |corpus - live frontend| = " + juce::String(maxDiff, 7) + " dB");
+        expect(maxDiff <= 1.0e-6f,
+               "Corpus frontend diverges from the shipped PerceptualFrontEnd rawDb representation.");
 
         // ============================================================
         // GATE 2 — corpus BASELINE scorecard (emits status per clip×backend×sens)
@@ -248,7 +224,7 @@ public:
             if (audio.getNumSamples() == 0)
                 continue;
 
-            aieq_test::OfflineAnalysisPipeline pipe(kCorpusSampleRate);
+            aieq_test::LiveAIAnalysisPipeline pipe(kCorpusSampleRate);
             auto frames = pipe.analyze(audio);
             expect(!frames.empty(), "No analysis frames for clip: " + file.getFileName());
 

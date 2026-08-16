@@ -132,7 +132,9 @@ private:
         }
 
         proc.processBlock(buffer, midi);
-        juce::Thread::yield();
+        // Paced for the same reason as AIHeadlessSourceThreadSafetyTest: this
+        // test is about lifecycle quiescence, not about FIFO overrun policy.
+        juce::Thread::sleep(2);
     }
 
     static bool pollUntil(const std::function<bool()>& predicate, int timeoutMs)

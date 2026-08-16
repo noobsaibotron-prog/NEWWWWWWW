@@ -166,6 +166,11 @@ public:
 
     void prepare(double sampleRate, int samplesPerBlock);
     void analyzeSpectrum(const std::vector<float>& spectrum, bool force = false);
+
+    /** Clear only live detector output + temporal persistence. Approved/user-applied
+        corrections remain untouched. Call from the serialized AI worker/lifecycle
+        path, never concurrently with analyzeSpectrum(). */
+    void resetLiveDetectionState();
     
     /** 
      * Process corrections by applying dynamic EQ filtering to the buffer.

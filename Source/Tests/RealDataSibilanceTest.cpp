@@ -12,7 +12,7 @@
  *   3. FEATURE-DELTA log before training: if pos/neg mel features don't separate in the band,
  *      training cannot resolve anything — surfaced explicitly, not assumed.
  *
- * Representation: WAV → OfflineAnalysisPipeline (validated SpectrumAnalyzer mirror, dB) →
+ * Representation: WAV → LiveAIAnalysisPipeline (shipped PerceptualFrontEnd rawDb + live cadence, dB) →
  * decibelsToGain → linear — exactly what AIEngine feeds MLEngine. Measurement at the MODEL
  * level (detectProblems / forwardRawProbabilities). Report-only; held-out singers; no
  * ml_weights.bin / runtime change. Self-skips when AIEQ_REALDATA_DIR is unset.
@@ -28,7 +28,7 @@
 
 #include "../AI/MLEngine.h"
 #include "../AI/AIEngine.h"
-#include "Support/OfflineAnalysisPipeline.h"
+#include "Support/LiveAIAnalysisPipeline.h"
 
 namespace
 {
@@ -82,7 +82,7 @@ float hfEnergy(const std::vector<float>& lin, double sr)
 // The most-sibilant linear frames of a clip (top kFramesPerClip by 5–9 kHz energy).
 std::vector<std::vector<float>> sibilantFrames(const juce::AudioBuffer<float>& audio, double sr, int maxFrames)
 {
-    aieq_test::OfflineAnalysisPipeline pipe(sr);
+    aieq_test::LiveAIAnalysisPipeline pipe(sr);
     auto framesDb = pipe.analyze(audio);
     std::vector<std::vector<float>> lin;
     lin.reserve(framesDb.size());

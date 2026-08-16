@@ -2,7 +2,7 @@
  * ManualClipProbeTest — env-gated offline probe for ad-hoc Ableton clip matrices.
  *
  * This is intentionally report-only. It runs the real test mirror
- * (OfflineAnalysisPipeline) into the real AIEngine with the shipped weights, then
+ * (LiveAIAnalysisPipeline) into the real AIEngine with the shipped weights, then
  * prints per-file detections. It is a practical replacement for repeatedly
  * loading the same diagnostic WAVs in Ableton, not a scientific acceptance gate.
  *
@@ -26,7 +26,7 @@
 #include <vector>
 
 #include "../AI/AIEngine.h"
-#include "Support/OfflineAnalysisPipeline.h"
+#include "Support/LiveAIAnalysisPipeline.h"
 
 namespace
 {
@@ -144,7 +144,7 @@ ProbeResult runProbe(const juce::File& file,
     if (! loadAudioFile(file, audio, sr))
         return result;
 
-    aieq_test::OfflineAnalysisPipeline pipe(sr);
+    aieq_test::LiveAIAnalysisPipeline pipe(sr);
     const auto frames = pipe.analyze(audio);
     result.frames = static_cast<int>(frames.size());
 
@@ -240,7 +240,7 @@ public:
 
     void runTest() override
     {
-        beginTest("Probe WAV folder through OfflineAnalysisPipeline + AIEngine MLOnly");
+        beginTest("Probe WAV folder through LiveAIAnalysisPipeline + AIEngine MLOnly");
 
         const auto probeDirEnv = juce::SystemStats::getEnvironmentVariable("AIEQ_PROBE_DIR", {});
         if (probeDirEnv.isEmpty())
