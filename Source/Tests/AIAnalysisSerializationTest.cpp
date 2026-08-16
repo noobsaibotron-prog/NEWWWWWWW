@@ -15,6 +15,16 @@ public:
 
     void runTest() override
     {
+        // This test is about CaptureService's serialization against live AI
+        // analysis, so it opts in explicitly: capture is contained by default
+        // for FA-001 (see AICaptureDisabledWitnessTest). Keeping this coverage
+        // alive is the point of containing the feature rather than compiling it
+        // out — it is the harness whoever fixes FA-001 will need.
+        AIEqualizerAudioProcessor::setCaptureAllowedForTests(true);
+        const struct Restore {
+            ~Restore() { AIEqualizerAudioProcessor::setCaptureAllowedForTests(false); }
+        } restoreCaptureContainment;
+
         juce::MessageManager::getInstance();
         beginTest("Capture and live AI analysis cannot overlap");
 

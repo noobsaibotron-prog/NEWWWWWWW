@@ -1265,6 +1265,7 @@ if(HAVE_JUCE)
         Source/Tests/AIFrontEndWiringTest.cpp
         Source/Tests/AIHeadlessDetectionParityTest.cpp
         Source/Tests/AIHeadlessPositiveBackendWitnessTest.cpp
+        Source/Tests/AICaptureDisabledWitnessTest.cpp
         # Registration policy, verified against TestMain.cpp: a runner executes
         # every linked test whose CATEGORY is in isDefaultBlockingCategory() and
         # whose NAME matches a project prefix. The per-binary category list is

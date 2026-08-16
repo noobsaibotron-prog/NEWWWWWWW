@@ -4424,6 +4424,11 @@ void AIEqualizerAudioProcessor::publishDynamicCorrectionsFromApplied(
 
 void AIEqualizerAudioProcessor::captureAudioSnapshotMs(int lengthMs)
 {
+    // FA-001: the retroactive path arms the service just as the manual button
+    // does, so it has to be closed here too or the gate would only be partial.
+    if (! isCaptureAllowed())
+        return;
+
     // Delegate to lock-free CaptureService
     captureBufferReady.store(false, std::memory_order_release);
     captureService.captureSnapshotMs(lengthMs);
@@ -4502,6 +4507,12 @@ bool AIEqualizerAudioProcessor::runCapturedAudioAnalysis()
 
 bool AIEqualizerAudioProcessor::analyzeCapturedAudioSnapshot()
 {
+    // FA-001: refuse before any capture-analysis thread is created. Gating the
+    // two arming points alone would still leave this reachable by a caller that
+    // already holds a buffer.
+    if (! isCaptureAllowed())
+        return false;
+
     captureAnalysisCompleted.store(false, std::memory_order_release);
 
     // A lifecycle transition owns CaptureService/AIEngine state while
@@ -4558,8 +4569,31 @@ bool AIEqualizerAudioProcessor::analyzeCapturedAudioSnapshot()
     return ok;
 }
 
+namespace
+{
+// File-static rather than a member: adding data to AIEqualizerAudioProcessor
+// shifts the layout between test TUs and SharedCode. Defaults to the product
+// answer, so nothing has to opt out.
+std::atomic<bool> gCaptureAllowedOverride { false };
+} // namespace
+
+bool AIEqualizerAudioProcessor::isCaptureAllowed() noexcept
+{
+    return kCaptureEnabledForShipping
+        || gCaptureAllowedOverride.load(std::memory_order_acquire);
+}
+
+void AIEqualizerAudioProcessor::setCaptureAllowedForTests(bool allowed) noexcept
+{
+    gCaptureAllowedOverride.store(allowed, std::memory_order_release);
+}
+
 bool AIEqualizerAudioProcessor::startManualCapture()
 {
+    // FA-001: never arm the service while capture is disabled for shipping.
+    if (! isCaptureAllowed())
+        return false;
+
     // Delegate to lock-free CaptureService
     captureBufferReady.store(false, std::memory_order_release);
     return captureService.startManualCapture();

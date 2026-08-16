@@ -355,6 +355,32 @@ public:
     // Audio Capture (using lock-free CaptureService)
     //==============================================================================
     void captureAudioSnapshotMs(int lengthMs);
+    /** FA-001: capture is disabled for the first beta.
+
+        CaptureService has an open ownership/concurrency finding from the full
+        audit, and capture is an accessory feature — shipping it would mean
+        carrying a known P0 for something the core EQ does not need. Rather than
+        opening a fifth concurrent redesign, the service is never armed: the two
+        arming entry points and the analysis-thread starter all refuse while
+        this is false, so the reported race has no way to occur in the product.
+
+        The code is left compiled and its tests keep running, so re-enabling is
+        one flag once FA-001 is genuinely fixed rather than a build revert.
+        AICaptureDisabledWitnessTest holds the contract. */
+    static constexpr bool kCaptureEnabledForShipping = false;
+
+    /** Whether any arming path may proceed. The product answer is fixed by
+        kCaptureEnabledForShipping; tests that genuinely exercise CaptureService
+        opt in explicitly, so the component keeps its coverage and stays ready
+        for whoever fixes FA-001. Out-of-line and backed by a file-static, so no
+        data member is added — see the layout note above
+        getAIFrontEndDiagnostics(). */
+    [[nodiscard]] static bool isCaptureAllowed() noexcept;
+
+    /** TEST-ONLY. Enabling this deliberately re-exposes the FA-001 surface, so
+        it belongs only in tests that are about CaptureService itself. */
+    static void setCaptureAllowedForTests(bool allowed) noexcept;
+
     [[nodiscard]] bool startManualCapture();
     void stopManualCapture();
     [[nodiscard]] bool isCapturing() const noexcept { return captureService.isCapturing(); }
