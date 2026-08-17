@@ -9,8 +9,14 @@
 # Scope note: only the JUCE SIMD-test paths are listed (the vptr downcast in juce_ReferenceCountedArray's
 # self-test is NOT listed — our gate categories never run it). accumulate.h is a libc++ header, listed
 # reluctantly because JUCE's SIMD test overflows THROUGH std::accumulate; product code performs no integer
-# std::accumulate that could overflow, so this masks no product bug today. The truly clean fix — not
-# compiling JUCE's own bundled unit tests — has no simple JUCE flag and is tracked as a follow-up.
+# std::accumulate that could overflow, so this masks no product bug today.
+#
+# STATUS UPDATE (FA-002): the collision described above is gone. Our DSP tests moved to the
+# category "AIEQ-DSP", so no Ember gate selects UnitTestCategories::dsp any more and JUCE's SIMD
+# test is not executed by the default runs or by --category=AIEQ-DSP. These entries are therefore
+# believed to be dead weight now rather than load-bearing. They are deliberately NOT removed in
+# the FA-002 commit: dropping a suppression changes what the sanitizer reports, so it needs its
+# own run to prove nothing surfaces, and FA-002 was kept surgical. Removing them is the follow-up.
 signed-integer-overflow:juce_SIMDRegister_test.cpp
 signed-integer-overflow:juce_SIMDNativeOps_fallback.h
 signed-integer-overflow:accumulate.h

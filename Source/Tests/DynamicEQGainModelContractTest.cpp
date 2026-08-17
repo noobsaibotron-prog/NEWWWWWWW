@@ -17,7 +17,7 @@ class DynamicEQGainModelContractTest : public juce::UnitTest
 {
 public:
     DynamicEQGainModelContractTest()
-        : juce::UnitTest("DynamicEQ Gain Model Contract", "DSP") {}
+        : juce::UnitTest("DynamicEQ Gain Model Contract", "AIEQ-DSP") {}
 
     void runTest() override
     {

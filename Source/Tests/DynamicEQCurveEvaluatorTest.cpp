@@ -10,7 +10,7 @@ class DynamicEQCurveEvaluatorTest : public juce::UnitTest
 {
 public:
     DynamicEQCurveEvaluatorTest()
-        : juce::UnitTest("DynamicEQCurveEvaluator", "DSP") {}
+        : juce::UnitTest("DynamicEQCurveEvaluator", "AIEQ-DSP") {}
 
     void runTest() override
     {

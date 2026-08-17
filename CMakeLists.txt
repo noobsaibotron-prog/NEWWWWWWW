@@ -1113,6 +1113,12 @@ if(HAVE_JUCE)
     enable_testing()
 
     add_executable(AIEqualizerPro_Tests
+        # FA-002: this file registers a juce::UnitTest but had never been added
+        # to any target, so it could not run at any invocation. It guards a real
+        # assumption — juce::SmoothedValue is used in 16 places across
+        # ParametricEQProcessor, DynamicEQProcessor and PluginProcessor — and
+        # nothing else covered it.
+        Source/Tests/SmoothedValueZipperTest.cpp
         Source/DSP/LinearPhaseProcessor.cpp
         Source/DSP/ParametricEQProcessor.cpp
         Source/DSP/DynamicEQProcessor.cpp
@@ -1466,6 +1472,65 @@ if(HAVE_JUCE)
     # mailbox protocol while keeping the host parameter storm green.
     add_test(NAME aieq_dynamic_correction_mailbox_regression
              COMMAND $<TARGET_FILE:AIEqualizerPro_ThreadSafetyTests> --category=AI-RT -v)
+
+    # ----------------------------------------------------------------------
+    # FA-002 orphan guard: a Source/Tests/*.cpp that registers a juce::UnitTest
+    # but belongs to no test target cannot run at any invocation, and nothing
+    # about the suite looks wrong — SmoothedValueZipperTest sat like that with
+    # real coverage value and a prefix already reserved for it in the runner.
+    #
+    # Deliberately checked against each target's actual SOURCES property rather
+    # than by grepping this file: a text search would pass on a filename that
+    # appears in a comment, or in a block guarded by an option that is OFF, and
+    # we would have built a second gate that can lie.
+    # ----------------------------------------------------------------------
+    set(_aieq_test_targets
+        AIEqualizerPro_Tests
+        AIEqualizerPro_AI_Tests
+        AIEqualizerPro_IntegrationTests
+        AIEqualizerPro_PerformanceTests
+        AIEqualizerPro_ThreadSafetyTests)
+
+    set(_aieq_compiled_test_sources "")
+    foreach(_t IN LISTS _aieq_test_targets)
+        if(TARGET ${_t})
+            get_target_property(_srcs ${_t} SOURCES)
+            foreach(_s IN LISTS _srcs)
+                get_filename_component(_abs "${_s}" ABSOLUTE)
+                list(APPEND _aieq_compiled_test_sources "${_abs}")
+            endforeach()
+        endif()
+    endforeach()
+
+    # Sources compiled only when a feature option is ON. They are not orphans
+    # while that option is OFF, but they ARE orphans if it is ON and they still
+    # reach no target — so the exemption is conditional, not a blanket skip. The
+    # list is explicit on purpose: a silent hole here would defeat the guard.
+    set(_aieq_conditional_test_sources "")
+    if(NOT AIEQ_ENABLE_MOTORE_V2)
+        list(APPEND _aieq_conditional_test_sources
+             "${CMAKE_SOURCE_DIR}/Source/Tests/MotoreV2ParityTest.cpp"
+             "${CMAKE_SOURCE_DIR}/Source/Tests/MotoreV2FeatureParityTest.cpp")
+    endif()
+
+    file(GLOB _aieq_all_test_sources "${CMAKE_SOURCE_DIR}/Source/Tests/*.cpp")
+    set(_aieq_orphan_tests "")
+    foreach(_src IN LISTS _aieq_all_test_sources)
+        file(READ "${_src}" _aieq_body)
+        if(_aieq_body MATCHES "juce::UnitTest[ \t]*\\(")
+            get_filename_component(_abs "${_src}" ABSOLUTE)
+            if(NOT "${_abs}" IN_LIST _aieq_compiled_test_sources
+               AND NOT "${_abs}" IN_LIST _aieq_conditional_test_sources)
+                list(APPEND _aieq_orphan_tests "${_src}")
+            endif()
+        endif()
+    endforeach()
+
+    if(_aieq_orphan_tests)
+        message(FATAL_ERROR
+            "FA-002: these sources register a juce::UnitTest but belong to no test "
+            "target, so they can never run:\n  ${_aieq_orphan_tests}")
+    endif()
     set_tests_properties(aieq_dynamic_correction_mailbox_regression PROPERTIES
         LABELS "ThreadSafety;AI-RT;Regression"
         FAIL_REGULAR_EXPRESSION "JUCE Assertion failure"

@@ -12,7 +12,7 @@
 class ParametricEQTest : public juce::UnitTest
 {
 public:
-    ParametricEQTest() : juce::UnitTest("ParametricEQProcessor", "DSP") {}
+    ParametricEQTest() : juce::UnitTest("ParametricEQProcessor", "AIEQ-DSP") {}
 
     void runTest() override
     {

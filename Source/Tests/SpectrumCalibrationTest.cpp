@@ -17,7 +17,7 @@
 class SpectrumCalibrationTest : public juce::UnitTest
 {
 public:
-    SpectrumCalibrationTest() : juce::UnitTest("Spectrum Calibration", "DSP") {}
+    SpectrumCalibrationTest() : juce::UnitTest("Spectrum Calibration", "AIEQ-DSP") {}
 
     // Drives a bin-centered sine of the given amplitude through the full
     // PSD→dB chain and returns the settled peak-bin dB.

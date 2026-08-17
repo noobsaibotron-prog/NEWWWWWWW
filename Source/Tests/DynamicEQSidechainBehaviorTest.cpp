@@ -9,7 +9,7 @@ class DynamicEQSidechainBehaviorTest : public juce::UnitTest
 {
 public:
     DynamicEQSidechainBehaviorTest()
-        : juce::UnitTest("DynamicEQSidechainBehavior", "DSP") {}
+        : juce::UnitTest("DynamicEQSidechainBehavior", "AIEQ-DSP") {}
 
     void runTest() override
     {

@@ -21,7 +21,7 @@ class DynamicEQBehavioralTest : public juce::UnitTest
 {
 public:
     DynamicEQBehavioralTest()
-        : juce::UnitTest("DynamicEQBehavioral", "DSP") {}
+        : juce::UnitTest("DynamicEQBehavioral", "AIEQ-DSP") {}
 
     void runTest() override
     {

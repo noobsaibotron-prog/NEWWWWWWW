@@ -21,7 +21,7 @@ class LinearPhaseBehavioralTest : public juce::UnitTest
 {
 public:
     LinearPhaseBehavioralTest()
-        : juce::UnitTest("LinearPhaseBehavioral", "DSP") {}
+        : juce::UnitTest("LinearPhaseBehavioral", "AIEQ-DSP") {}
 
     void runTest() override
     {

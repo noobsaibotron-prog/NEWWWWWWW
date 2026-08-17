@@ -6,7 +6,7 @@ class HQReconfigureNoAllocationTest : public juce::UnitTest
 {
 public:
     HQReconfigureNoAllocationTest()
-        : juce::UnitTest("HQ Reconfigure No Allocation", "DSP") {}
+        : juce::UnitTest("HQ Reconfigure No Allocation", "AIEQ-DSP") {}
 
     void runTest() override
     {

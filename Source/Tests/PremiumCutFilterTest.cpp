@@ -6,7 +6,7 @@
 class PremiumCutFilterTest final : public juce::UnitTest
 {
 public:
-    PremiumCutFilterTest() : juce::UnitTest("Premium Cut Filter", "DSP") {}
+    PremiumCutFilterTest() : juce::UnitTest("Premium Cut Filter", "AIEQ-DSP") {}
 
     void runTest() override
     {

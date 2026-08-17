@@ -9,7 +9,7 @@
 class SmoothedValueZipperTest : public juce::UnitTest
 {
 public:
-    SmoothedValueZipperTest() : juce::UnitTest("SmoothedValueZipperTest", "DSP") {}
+    SmoothedValueZipperTest() : juce::UnitTest("SmoothedValueZipperTest", "AIEQ-DSP") {}
 
     void runTest() override
     {

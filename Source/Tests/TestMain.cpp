@@ -71,7 +71,16 @@ public:
             "AI-Sweep",
             "ClickTests",
             "Core",
-            "DSP",
+            // Renamed from "DSP" for FA-002. juce_dsp registers its own unit tests
+            // under UnitTestCategories::dsp, which is the string "DSP" — the same
+            // category ours used. While both shared it, a category could not be the
+            // authority for selection, and the gate fell back to matching the test
+            // NAME against a prefix list. That made the name a scheduling mechanism:
+            // four blocking tests had no gate that ran them at all, and a test was
+            // once silently skipped for want of a prefix while the suite read green.
+            // "DSP" must NOT be added back here: doing so pulls the nine juce_dsp
+            // tests into every Ember gate.
+            "AIEQ-DSP",
             "Integration",
             "Perceptual",
             "Performance",
@@ -87,48 +96,12 @@ public:
         return false;
     }
 
-    static bool isAieqProjectTestName(const juce::String& name)
-    {
-        static constexpr const char* prefixes[] = {
-            "AI",
-            "AIEqualizer",
-            "Anti-Pop",
-            "Band Drag",
-            "BiquadCoeffs",
-            "BlockSize",
-            "Bypass",
-            "CaptureService",
-            "D1 ",
-            "DynEQ",
-            "Dynamic",
-            "EQ Graph",
-            "Frame coherence",
-            "Freq Drag",
-            "Fuzz BlockSize",
-            "Host Session",
-            "Integration",
-            "LinearPhase",
-            "ML ",
-            "Motore",
-            "MS ",
-            "Oversampling",
-            "ParametricEQProcessor",
-            "Perceptual",
-            "Phase Mode",
-            "RB",
-            "Real ",
-            "Real-data",
-            "SmoothedValue",
-            "Solo Mode",
-            "Spectrum",
-        };
+    // isAieqProjectTestName() lived here and gated the default run on the test's
+    // NAME. It is gone: with the category collision removed above, membership of
+    // a test executable plus a declared blocking category is a complete and
+    // honest authority, and a test's name is free to describe the test.
+    // MetaTestSelectionIntegrityTest keeps this from regressing.
 
-        for (const auto* prefix : prefixes)
-            if (name.startsWith(prefix))
-                return true;
-
-        return false;
-    }
 
     static int run(const Options& opts)
     {
@@ -182,7 +155,7 @@ public:
                 if (t == nullptr)
                     continue;
 
-                if (isDefaultBlockingCategory(t->getCategory()) && isAieqProjectTestName(t->getName()))
+                if (isDefaultBlockingCategory(t->getCategory()))
                 {
                     tests.add(t);
                     categories.addIfNotAlreadyThere(t->getCategory());
@@ -190,6 +163,29 @@ public:
             }
 
             categories.sort(true);
+
+            // FA-002 tripwire. Selection is now purely categorical, so this holds
+            // by construction — which is exactly why it is worth asserting: if a
+            // name filter or any other extra predicate is ever reintroduced here,
+            // this fails immediately and names what it dropped, instead of the
+            // suite going quietly green over a test nobody runs.
+            {
+                juce::StringArray dropped;
+                for (auto* t : juce::UnitTest::getAllTests())
+                    if (t != nullptr
+                        && isDefaultBlockingCategory(t->getCategory())
+                        && ! tests.contains(t))
+                        dropped.add(t->getName() + " [" + t->getCategory() + "]");
+
+                if (! dropped.isEmpty())
+                {
+                    std::cout << "FAILED: blocking tests registered but not selected:"
+                              << std::endl;
+                    for (const auto& d : dropped)
+                        std::cout << "  - " << d << std::endl;
+                    return 1;
+                }
+            }
 
             std::cout << "Running blocking AIEQ project tests in categories: "
                       << categories.joinIntoString(", ") << std::endl;

@@ -22,7 +22,7 @@ class LinearPhaseGainRegressionTest : public juce::UnitTest
 {
 public:
     LinearPhaseGainRegressionTest()
-        : juce::UnitTest("LinearPhaseGainRegression", "DSP") {}
+        : juce::UnitTest("LinearPhaseGainRegression", "AIEQ-DSP") {}
 
     void runTest() override
     {

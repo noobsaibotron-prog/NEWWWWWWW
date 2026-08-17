@@ -226,7 +226,7 @@ class LinearPhaseResetContinuityTest : public juce::UnitTest
 {
 public:
     LinearPhaseResetContinuityTest()
-        : juce::UnitTest("LinearPhase Reset Continuity", "DSP") {}
+        : juce::UnitTest("LinearPhase Reset Continuity", "AIEQ-DSP") {}
 
     void runTest() override
     {

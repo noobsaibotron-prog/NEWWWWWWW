@@ -13,7 +13,7 @@ class DynamicEQSpectralArtifactTest : public juce::UnitTest
 {
 public:
     DynamicEQSpectralArtifactTest()
-        : juce::UnitTest("DynamicEQ Spectral Artifact", "DSP") {}
+        : juce::UnitTest("DynamicEQ Spectral Artifact", "AIEQ-DSP") {}
 
     void runTest() override
     {

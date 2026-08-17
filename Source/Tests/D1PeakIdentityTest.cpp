@@ -22,7 +22,7 @@ class D1PeakIdentityTest : public juce::UnitTest
 {
 public:
     D1PeakIdentityTest()
-        : juce::UnitTest("D1 Peak Identity", "DSP") {}
+        : juce::UnitTest("D1 Peak Identity", "AIEQ-DSP") {}
 
     void runTest() override
     {

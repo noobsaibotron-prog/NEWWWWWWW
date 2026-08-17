@@ -9,7 +9,7 @@ class DynamicEQGlobalMixBehaviorTest : public juce::UnitTest
 {
 public:
     DynamicEQGlobalMixBehaviorTest()
-        : juce::UnitTest("DynamicEQGlobalMixBehavior", "DSP") {}
+        : juce::UnitTest("DynamicEQGlobalMixBehavior", "AIEQ-DSP") {}
 
     void runTest() override
     {

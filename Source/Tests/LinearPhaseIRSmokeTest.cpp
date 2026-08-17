@@ -11,7 +11,7 @@
 class LinearPhaseIRSmokeTest : public juce::UnitTest
 {
 public:
-    LinearPhaseIRSmokeTest() : juce::UnitTest("LinearPhaseIRSmokeTest", "DSP") {}
+    LinearPhaseIRSmokeTest() : juce::UnitTest("LinearPhaseIRSmokeTest", "AIEQ-DSP") {}
 
     void runTest() override
     {

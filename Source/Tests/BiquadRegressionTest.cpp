@@ -12,7 +12,7 @@
 class BiquadRegressionTest : public juce::UnitTest
 {
 public:
-    BiquadRegressionTest() : juce::UnitTest("BiquadCoeffs vs JUCE IIR Regression", "DSP") {}
+    BiquadRegressionTest() : juce::UnitTest("BiquadCoeffs vs JUCE IIR Regression", "AIEQ-DSP") {}
 
     void runTest() override
     {
