@@ -314,11 +314,9 @@ void AIEqualizerAudioProcessor::irBuilderThreadFunc()
         //   - Standard normalization: 1/N where N = FFT size
         //   - Reference: Smith, "Mathematics of the DFT", Chapter 7
         //
-        // STAGE 2: Global Attenuation Compensation (globalCompensation)
-        //   - Problem: EQ curves with all-negative gains produce very small IR
-        //   - Solution: Scale up by 1/avgMag to preserve relative shape
-        //   - Example: -6dB across all bands → avgMag ≈ 0.5 → compensation = 2.0
-        //   - Capped at 1.0 for boost curves (no attenuation of boosted EQs)
+        // STAGE 2: REMOVED — see the note at the removal site below. It applied a
+        //   hidden, unconditional level makeup that Linear Phase had and the other
+        //   phase modes did not.
         //
         // STAGE 3: Final Safety Scaling (irScale, applied later)
         //   - Rescues IRs that are still too small after stages 1-2
@@ -335,23 +333,24 @@ void AIEqualizerAudioProcessor::irBuilderThreadFunc()
         // NOTE: JUCE's fft.perform(inverse=true) already applies 1/N scaling internally.
         // Do NOT apply an additional 1/N here - that was causing the IR to be ~N times too quiet.
 
-        // STAGE 2: Global attenuation compensation
-        // Calculate average linear magnitude across all bins
-        float avgMag = 0.0f;
-        for (const auto& mag : magDB)
-            avgMag += juce::Decibels::decibelsToGain(mag);
-        avgMag /= static_cast<float>(magDB.size());
-
-        // Compensate for globally attenuated EQ curves (all cuts)
-        // Only apply when average is below unity (0.99 threshold avoids floating-point noise)
-        // Cap compensation at 100x (+40dB) to prevent extreme scaling from very quiet curves
-        const float globalCompensation = (avgMag < 0.99f && avgMag > 1e-6f)
-                                         ? std::min(1.0f / avgMag, 100.0f)
-                                         : 1.0f;
-
-        // Apply STAGE 2 scaling only (STAGE 1 already handled by JUCE IFFT)
+        // STAGE 2 removed. It scaled the IR by 1/(mean linear magnitude over the
+        // FFT bins), meaning to rescue curves that cut everywhere. FFT bins are
+        // linearly spaced, so half of them sit above a quarter of the sample
+        // rate: a high cut silences most of the bins, the mean collapses, and the
+        // "compensation" made the filter LOUDER the more it cut. Measured through
+        // the real builder, the boost tracked the compensation exactly — +2.05 dB
+        // at a 20 kHz cut, +4.43 at 15 kHz, +7.23 at 10 kHz — so switching to
+        // Linear Phase acted as a volume control.
+        //
+        // The measure could not be repaired, only removed: a mean over bins
+        // cannot distinguish "the whole curve is quieter" from "this part of the
+        // spectrum is gone", and those need opposite treatment. Level makeup
+        // already exists where the user can see and disable it, as the Auto Gain
+        // parameter, which measures pre/post RMS and is bounded to +/-12 dB.
+        // STAGE 3 below stays: it is a numerical guard for degenerate near-silent
+        // IRs (peak under -40 dBFS), not a musical level decision.
         for (size_t n = 0; n < LinearPhaseProcessor::fftSize; ++n)
-            irBuf[n] = timeDomain[n].real() * globalCompensation;
+            irBuf[n] = timeDomain[n].real();
 
         // Center (circular shift to create zero-phase / linear-phase IR)
         //
