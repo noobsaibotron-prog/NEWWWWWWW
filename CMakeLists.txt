@@ -1342,6 +1342,7 @@ if(HAVE_JUCE)
         Source/Tests/RB2EquivalenceTest.cpp
         Source/Tests/SpectrumPipelineTest.cpp
         Source/Tests/RB4OfflineRenderTest.cpp
+        Source/Tests/SemanticPerceptualGateTest.cpp
         Source/Tests/PerceptualSimulationTest.cpp
         Source/Tests/AIAccuracyTest.cpp
         Source/Tests/AIEngineIntegrationAuditTest.cpp
@@ -1394,6 +1395,7 @@ if(HAVE_JUCE)
         AIEqualizerPro
         juce::juce_core
         juce::juce_audio_basics
+        juce::juce_audio_formats   # SemanticPerceptualGateTest: WAV corpus read/write, test-only
         juce::juce_audio_processors
         juce::juce_dsp
     )
