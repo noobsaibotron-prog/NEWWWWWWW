@@ -306,7 +306,30 @@ public:
     }
 
     // Semantic EQ application (message thread only)
-    void applySemanticAdjustments(const std::vector<SemanticEQEngine::SemanticEQAdjustment>& adjustments);
+    enum class SemanticApplyPolicy : int
+    {
+        BestEffortLegacy = 0,
+        RequireCompletePlan
+    };
+
+    struct SemanticApplyResult
+    {
+        int requestedBands = 0;
+        int appliedBands = 0;
+        int rejectedBands = 0;
+        bool atomicRejected = false;
+        bool deferredToMessageThread = false;
+
+        [[nodiscard]] bool complete() const noexcept
+        {
+            return !atomicRejected && !deferredToMessageThread
+                && rejectedBands == 0 && appliedBands == requestedBands;
+        }
+    };
+
+    [[nodiscard]] SemanticApplyResult applySemanticAdjustments(
+        const std::vector<SemanticEQEngine::SemanticEQAdjustment>& adjustments,
+        SemanticApplyPolicy policy = SemanticApplyPolicy::BestEffortLegacy);
     
     //==============================================================================
     // AI Corrections (message thread only)
@@ -747,9 +770,21 @@ private:
     // overwrite the same slot — only the last survived (AI-evolution fix A2).
     // Ordinals are stable because generateEQFromState returns adjustments
     // sorted by frequency and a definition's band frequencies are fixed.
-    static constexpr int kMaxSemanticBandSlots = 4;
+    static constexpr int kMaxSemanticBandSlots = maxBands;
     std::array<std::array<int, kMaxSemanticBandSlots>,
                SemanticEQEngine::numQualities> semanticBandAssignments {};
+
+    // Semantic band ownership is explicit. A semantic plan may only claim a
+    // currently disabled band; it never steals an enabled/manual band. The
+    // original state is kept so reset/reconciliation can restore the slot. If
+    // the user manually edits a semantic-owned slot, ownership is relinquished
+    // instead of overwriting that edit on the next semantic update.
+    std::array<bool, maxBands> semanticBandOwned {};
+    std::array<bool, maxBands> semanticBandHasSnapshot {};
+    std::array<BandState, maxBands> semanticBandOriginalStates {};
+    std::array<BandState, maxBands> semanticBandLastAppliedStates {};
+    int semanticOriginalActiveBandCount = -1;
+    int semanticLastRequestedActiveBandCount = -1;
     
     //==============================================================================
     // Utilities

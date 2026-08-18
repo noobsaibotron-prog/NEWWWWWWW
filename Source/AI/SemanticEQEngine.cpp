@@ -1,8 +1,12 @@
 #include "SemanticEQEngine.h"
+#include "SemanticIntentCompiler.h"
+#include "SemanticTargetBuilder.h"
+#include "SemanticPlanner.h"
 #include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <fstream>
+#include <optional>
 #if defined(AIEQ_ENABLE_TORCH)
 #include <torch/torch.h>
 #endif
@@ -893,6 +897,118 @@ std::vector<float> SemanticEQEngine::runSeq2Seq(
         return {};
 
     return seq2seqDecoder->infer(tokenEmbeddings);
+}
+
+//==============================================================================
+AIEQPerceptual::SemanticIntent SemanticEQEngine::compileIntent(
+    const juce::String& input) const
+{
+    return AIEQPerceptual::SemanticIntentCompiler().compile(input.toStdString());
+}
+
+AIEQPerceptual::PerceptualTarget SemanticEQEngine::buildPerceptualTarget(
+    const juce::String& input, double sampleRate) const
+{
+    const auto intent = compileIntent(input);
+    return AIEQPerceptual::SemanticTargetBuilder().build(intent, sampleRate);
+}
+
+AIEQPerceptual::SemanticPlan SemanticEQEngine::planTextCommand(
+    const juce::String& input, double sampleRate) const
+{
+    return AIEQPerceptual::SemanticPlanner().plan(
+        input.toStdString(), sampleRate, globalIntensity);
+}
+
+std::vector<SemanticEQEngine::SemanticEQAdjustment>
+SemanticEQEngine::adjustmentsFromPlan(const AIEQPerceptual::SemanticPlan& plan) const
+{
+    std::vector<SemanticEQAdjustment> adjustments;
+    if (!plan.valid || !plan.fit.valid)
+        return adjustments;
+
+    auto legacyQualityForDimension = [](AIEQPerceptual::SemanticDimension dimension)
+    {
+        using D = AIEQPerceptual::SemanticDimension;
+        switch (dimension)
+        {
+            case D::Brightness: return SemanticQuality::Air;
+            case D::Warmth:     return SemanticQuality::Warmth;
+            case D::Clarity:    return SemanticQuality::Clarity;
+            case D::Presence:   return SemanticQuality::Presence;
+            case D::Smoothness: return SemanticQuality::Smoothness;
+            case D::Weight:     return SemanticQuality::Weight;
+            case D::Punch:      return SemanticQuality::Punch;
+            case D::Tightness:  return SemanticQuality::Tightness;
+            case D::Count:      break;
+        }
+        return SemanticQuality::Clarity;
+    };
+
+    auto dimensionFromGoalSourceId = [](const std::string& sourceId)
+        -> std::optional<AIEQPerceptual::SemanticDimension>
+    {
+        using D = AIEQPerceptual::SemanticDimension;
+        for (int i = 0; i < static_cast<int>(D::Count); ++i)
+        {
+            const auto dimension = static_cast<D>(i);
+            if (sourceId == AIEQPerceptual::SemanticTargetBuilder::sourceIdForDimension(dimension))
+                return dimension;
+        }
+        return std::nullopt;
+    };
+
+    adjustments.reserve(plan.fit.bands.size());
+    for (const auto& band : plan.fit.bands)
+    {
+        std::optional<AIEQPerceptual::SemanticDimension> sourceDimension;
+        for (const auto& contribution : band.contributions)
+        {
+            sourceDimension = dimensionFromGoalSourceId(contribution.sourceId);
+            if (sourceDimension.has_value())
+                break;
+        }
+
+        // Compatibility fallback for targets created before generic provenance
+        // existed. New T3.1 plans should resolve via band.contributions above.
+        if (!sourceDimension.has_value())
+        {
+            const AIEQPerceptual::SemanticGoal* dominantGoal = nullptr;
+            float dominantContribution = -1.0f;
+            for (const auto& goal : plan.intent.goals)
+            {
+                const float shapeDb = AIEQPerceptual::SemanticTargetBuilder::evaluateDimensionShapeDb(
+                    goal.dimension, band.frequencyHz);
+                const float contribution = std::abs(goal.amount * shapeDb);
+                if (contribution > dominantContribution)
+                {
+                    dominantContribution = contribution;
+                    dominantGoal = &goal;
+                }
+            }
+            if (dominantGoal != nullptr)
+                sourceDimension = dominantGoal->dimension;
+        }
+
+        SemanticEQAdjustment adjustment;
+        adjustment.frequency = band.frequencyHz;
+        adjustment.gain = band.gainDb;
+        adjustment.q = band.q;
+        adjustment.filterType = static_cast<int>(band.type);
+        adjustment.enabled = true;
+        adjustment.sourceQuality = sourceDimension.has_value()
+            ? legacyQualityForDimension(*sourceDimension)
+            : SemanticQuality::Clarity;
+        adjustment.confidence = band.confidence;
+
+        adjustment.description = "Semantic plan: " + juce::String(plan.interpretation);
+        if (!band.reason.empty())
+            adjustment.description += " — " + juce::String::fromUTF8(band.reason.c_str());
+
+        adjustments.push_back(std::move(adjustment));
+    }
+
+    return adjustments;
 }
 
 //==============================================================================

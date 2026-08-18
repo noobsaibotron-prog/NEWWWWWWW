@@ -607,6 +607,17 @@ set(PLUGIN_SOURCES
     Source/AI/DynamicCorrectionEngine.h
     Source/AI/SemanticEQEngine.cpp
     Source/AI/SemanticEQEngine.h
+    Source/AI/PerceptualTarget.h
+    Source/AI/SemanticIntent.h
+    Source/AI/SemanticIntentCompiler.cpp
+    Source/AI/SemanticIntentCompiler.h
+    Source/AI/SemanticPlan.h
+    Source/AI/SemanticPlanner.cpp
+    Source/AI/SemanticPlanner.h
+    Source/AI/SemanticTargetBuilder.cpp
+    Source/AI/SemanticTargetBuilder.h
+    Source/AI/SparseParametricFitter.cpp
+    Source/AI/SparseParametricFitter.h
     Source/AI/MultiTrackUnmasking.cpp
     Source/AI/MultiTrackUnmasking.h
     Source/AI/NeuralNetworkWrapper.cpp
@@ -637,8 +648,18 @@ set(PLUGIN_SOURCES
     Source/Utils/PresetManager.h
 )
 
-option(AIEQ_ENABLE_TORCH "Enable Torch C++ seq2seq parser" OFF)
+option(AIEQ_ENABLE_TORCH "Enable legacy Torch C++ seq2seq parser (EXPERIMENTAL, NON-SHIPPING)" OFF)
 set(AIEQ_TORCH_ROOT "" CACHE PATH "Path to libtorch (root directory)")
+
+# T3.1 shipping guard: the legacy Seq2SeqDecoder constructs an LSTM/head but
+# has no trained/shipped weight authority. Accidentally enabling it would make
+# free-text Semantic depend on random initialization. Keep the source available
+# for lab archaeology, but make it impossible to configure a product build.
+if(AIEQ_ENABLE_TORCH)
+    message(FATAL_ERROR
+        "AIEQ_ENABLE_TORCH is non-shipping: the legacy Semantic seq2seq path has no trained weight contract. "
+        "Use the deterministic SemanticIntentCompiler/PerceptualTarget path instead.")
+endif()
 
 # Motore v2 (RTNeural). OFF in shipped builds: gates the vendored RTNeural
 # include, the AIEQ_ENABLE_MOTORE_V2 define, and the parity test. When OFF the
@@ -1189,6 +1210,10 @@ if(HAVE_JUCE)
         Source/AI/OnlineLearningSystem.cpp
         Source/AI/ReferenceMatcher.cpp
         Source/AI/SemanticEQEngine.cpp
+        Source/AI/SemanticIntentCompiler.cpp
+        Source/AI/SemanticPlanner.cpp
+        Source/AI/SemanticTargetBuilder.cpp
+        Source/AI/SparseParametricFitter.cpp
         Source/AI/UserLearning.cpp
         Source/AI/DynamicCorrectionEngine.cpp
         Source/Utils/Logger.cpp
@@ -1208,6 +1233,10 @@ if(HAVE_JUCE)
         Source/Tests/MLBlobV2LoaderTest.cpp
         Source/Tests/FrameCoherenceTest.cpp
         Source/Tests/DynamicCorrectionEngineTest.cpp
+        Source/Tests/SparseParametricFitterTest.cpp
+        Source/Tests/SparseParametricFitterPerformanceTest.cpp
+        Source/Tests/SemanticIntentCompilerTest.cpp
+        Source/Tests/SemanticSlotPreflightTest.cpp
         Source/Tests/RealDataSibilanceTest.cpp
         Source/Tests/ManualClipProbeTest.cpp
         Source/Tests/TestMain.cpp

@@ -9,6 +9,10 @@
 #include <unordered_map>
 #include <string>
 
+#include "PerceptualTarget.h"
+#include "SemanticIntent.h"
+#include "SemanticPlan.h"
+
 //==============================================================================
 /**
  * Semantic EQ Engine - Natural Language to EQ Parameters
@@ -204,6 +208,28 @@ public:
      */
     std::vector<std::pair<SemanticQuality, float>> parseNaturalLanguage(
         const juce::String& input) const;
+
+    /**
+     * New deterministic Semantic v1 compiler. This does not mutate SemanticState
+     * and does not invoke the legacy GloVe/Torch fallback path.
+     */
+    [[nodiscard]] AIEQPerceptual::SemanticIntent compileIntent(
+        const juce::String& input) const;
+
+    /**
+     * Compile text into the shared PerceptualTarget representation used by the
+     * sparse fitter and, later, Match. This is side-effect free.
+     */
+    [[nodiscard]] AIEQPerceptual::PerceptualTarget buildPerceptualTarget(
+        const juce::String& input, double sampleRate) const;
+
+    /** Full side-effect-free text planning path used by the new command UI. */
+    [[nodiscard]] AIEQPerceptual::SemanticPlan planTextCommand(
+        const juce::String& input, double sampleRate) const;
+
+    /** Adapt a validated perceptual plan to Ember's existing semantic band path. */
+    [[nodiscard]] std::vector<SemanticEQAdjustment> adjustmentsFromPlan(
+        const AIEQPerceptual::SemanticPlan& plan) const;
     
     //==========================================================================
     // State management

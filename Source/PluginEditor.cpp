@@ -151,8 +151,24 @@ AIEqualizerAudioProcessorEditor::AIEqualizerAudioProcessorEditor(AIEqualizerAudi
     
     // Connect Semantic Panel to apply EQ changes
     semanticPanel->onEQGenerated = [this](const std::vector<SemanticEQEngine::SemanticEQAdjustment>& adjustments) {
-        // Apply semantic EQ adjustments without disturbing existing manual bands
-        processor.applySemanticAdjustments(adjustments);
+        // Legacy slider/preset path remains best-effort for compatibility.
+        (void) processor.applySemanticAdjustments(
+            adjustments, AIEqualizerAudioProcessor::SemanticApplyPolicy::BestEffortLegacy);
+    };
+
+    semanticPanel->onTextPlanApply = [this](
+        const std::vector<SemanticEQEngine::SemanticEQAdjustment>& adjustments)
+    {
+        const auto result = processor.applySemanticAdjustments(
+            adjustments, AIEqualizerAudioProcessor::SemanticApplyPolicy::RequireCompletePlan);
+
+        SemanticControlPanel::TextApplyFeedback feedback;
+        feedback.requestedBands = result.requestedBands;
+        feedback.appliedBands = result.appliedBands;
+        feedback.rejectedBands = result.rejectedBands;
+        feedback.atomicRejected = result.atomicRejected;
+        feedback.deferred = result.deferredToMessageThread;
+        return feedback;
     };
 
     // A3 fix: feed the live pre-EQ analyzer spectrum (smoothed dB) and the real

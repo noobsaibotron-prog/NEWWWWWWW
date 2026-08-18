@@ -2,6 +2,7 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <memory>
+#include <optional>
 #include "../AI/SemanticEQEngine.h"
 #include "ModernLookAndFeel.h"
 #if AIEQ_GUI_DEBUG
@@ -34,8 +35,28 @@ public:
     // Callback when semantic state changes
     std::function<void(const SemanticEQEngine::SemanticState&)> onStateChanged;
     
-    // Callback to get generated EQ adjustments
+    // Callback to get generated EQ adjustments (legacy slider/preset path).
     std::function<void(const std::vector<SemanticEQEngine::SemanticEQAdjustment>&)> onEQGenerated;
+
+    struct TextApplyFeedback
+    {
+        int requestedBands = 0;
+        int appliedBands = 0;
+        int rejectedBands = 0;
+        bool atomicRejected = false;
+        bool deferred = false;
+
+        [[nodiscard]] bool complete() const noexcept
+        {
+            return !atomicRejected && !deferred
+                && rejectedBands == 0 && appliedBands == requestedBands;
+        }
+    };
+
+    // Typed PLAN/APPLY path: must use all-or-nothing processor policy and return
+    // structured feedback instead of silently dropping bands.
+    std::function<TextApplyFeedback(
+        const std::vector<SemanticEQEngine::SemanticEQAdjustment>&)> onTextPlanApply;
 
     // Supplies the current smoothed dB spectrum (analyzer format: numBins,
     // dB values) for the engine's context-aware mapping. Wired by the editor;
@@ -44,7 +65,14 @@ public:
     std::function<std::vector<float>()> spectrumProvider;
 
     // Must be called when the host sample rate changes (e.g. from PluginEditor::prepareToPlay)
-    void setSampleRate(double sr) { currentSampleRate = sr; }
+    void setSampleRate(double sr)
+    {
+        if (currentSampleRate != sr)
+        {
+            currentSampleRate = sr;
+            invalidatePendingTextPlan();
+        }
+    }
 
     //==========================================================================
     explicit SemanticControlPanel(SemanticEQEngine& engine)
@@ -88,7 +116,7 @@ public:
         addAndMakeVisible(commandInput);
         
         // Apply button for text input
-        applyButton.setButtonText("APPLY");
+        applyButton.setButtonText("PLAN");
         applyButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xFF2D5A27));
         applyButton.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
         applyButton.onClick = [this]() { applyTextCommand(); };
@@ -122,6 +150,7 @@ public:
         intensitySlider.setColour(juce::Slider::thumbColourId, ModernLookAndFeel::Colors::accentYellow);
         intensitySlider.setColour(juce::Slider::trackColourId, ModernLookAndFeel::Colors::bgLighter);
         intensitySlider.onValueChange = [this]() {
+            invalidatePendingTextPlan();
             semanticEngine.setIntensity(static_cast<float>(intensitySlider.getValue()));
             semanticDirty = true;
         };
@@ -352,6 +381,7 @@ public:
     // Slider::Listener
     void sliderValueChanged(juce::Slider* slider) override
     {
+        invalidatePendingTextPlan();
 #if AIEQ_GUI_DEBUG
         debugSliderEventCount++;
         double now = juce::Time::getMillisecondCounterHiRes();
@@ -400,7 +430,11 @@ public:
         applyTextCommand();
     }
     
-    void textEditorTextChanged(juce::TextEditor&) override {}
+    void textEditorTextChanged(juce::TextEditor&) override
+    {
+        if (pendingTextPlan.has_value() && commandInput.getText().trim() != pendingTextCommand)
+            invalidatePendingTextPlan();
+    }
     void textEditorEscapeKeyPressed(juce::TextEditor&) override {}
     void textEditorFocusLost(juce::TextEditor&) override {}
 
@@ -522,6 +556,7 @@ private:
     
     void applyPreset(const std::vector<std::pair<SemanticEQEngine::SemanticQuality, float>>& settings)
     {
+        invalidatePendingTextPlan();
         SemanticEQEngine::SemanticState target;
         target.reset();
         
@@ -546,34 +581,133 @@ private:
     
     void applyTextCommand()
     {
-        juce::String text = commandInput.getText().trim();
-        if (text.isEmpty()) return;
-        
-        auto parsed = semanticEngine.parseNaturalLanguage(text);
-        
-        if (parsed.empty())
+        const juce::String text = commandInput.getText().trim();
+        if (text.isEmpty())
+            return;
+
+        // Second activation applies the exact plan that the user just reviewed.
+        // We do not silently recompile between PLAN and APPLY. Editing the text
+        // invalidates pendingTextPlan through textEditorTextChanged().
+        if (pendingTextPlan.has_value() && pendingTextCommand == text)
         {
-            statusLabel.setText("Couldn't understand command", juce::dontSendNotification);
+            const auto adjustments = semanticEngine.adjustmentsFromPlan(*pendingTextPlan);
+            if (adjustments.empty())
+            {
+                statusLabel.setText("No safe EQ move to apply", juce::dontSendNotification);
+                return;
+            }
+
+            const juce::String interpretation = juce::String::fromUTF8(
+                pendingTextPlan->interpretation.c_str());
+
+            if (onTextPlanApply)
+            {
+                const auto feedback = onTextPlanApply(adjustments);
+                if (feedback.atomicRejected)
+                {
+                    statusLabel.setText(
+                        "Can't apply safely: "
+                        + juce::String(feedback.rejectedBands)
+                        + " plan band(s) have no free EQ slot",
+                        juce::dontSendNotification);
+                    return; // keep the reviewed plan pending
+                }
+                if (feedback.deferred)
+                {
+                    statusLabel.setText("Apply deferred — retry from the UI thread",
+                                        juce::dontSendNotification);
+                    return;
+                }
+                if (!feedback.complete())
+                {
+                    statusLabel.setText(
+                        "Plan not fully applied ("
+                        + juce::String(feedback.appliedBands) + "/"
+                        + juce::String(feedback.requestedBands) + ")",
+                        juce::dontSendNotification);
+                    return;
+                }
+            }
+            else
+            {
+                // Typed text plans are reliability-first and therefore never fall
+                // back to the legacy best-effort slider callback. Without an
+                // authoritative atomic apply endpoint, keep the reviewed plan.
+                statusLabel.setText("Apply unavailable — atomic Semantic endpoint not connected",
+                                    juce::dontSendNotification);
+                return;
+            }
+
+            invalidatePendingTextPlan();
+            commandInput.clear();
+            statusLabel.setText("Applied: " + interpretation, juce::dontSendNotification);
             return;
         }
-        
-        // Apply parsed qualities
-        for (const auto& [quality, amount] : parsed)
+
+        const auto plan = semanticEngine.planTextCommand(text, currentSampleRate);
+        if (!plan.intent.hasRecognizedContent)
         {
-            float current = semanticEngine.getQuality(quality);
-            float newValue = juce::jlimit(-1.0f, 1.0f, current + amount);
-            semanticEngine.setQuality(quality, newValue);
+            statusLabel.setText("Couldn't understand command", juce::dontSendNotification);
+            invalidatePendingTextPlan();
+            return;
         }
-        
-        syncSlidersFromEngine();
-        updateEQFromState();
-        
-        commandInput.clear();
-        statusLabel.setText("Applied: " + text, juce::dontSendNotification);
+
+        if (plan.intent.contradictory)
+        {
+            statusLabel.setText(
+                plan.intent.goalConstraintConflict
+                    ? "Contradictory request — goal conflicts with requested protection"
+                    : "Ambiguous command — clarify the direction",
+                juce::dontSendNotification);
+            invalidatePendingTextPlan();
+            return;
+        }
+
+        if (!plan.valid || !plan.fit.valid)
+        {
+            statusLabel.setText("Couldn't build a safe semantic plan",
+                                juce::dontSendNotification);
+            invalidatePendingTextPlan();
+            return;
+        }
+
+        if (plan.fit.bands.empty())
+        {
+            if (!plan.outcomeSummary.empty())
+                statusLabel.setText(
+                    "No safe move — "
+                    + juce::String::fromUTF8(plan.outcomeSummary.c_str()),
+                    juce::dontSendNotification);
+            else
+                statusLabel.setText("No meaningful EQ move required",
+                                    juce::dontSendNotification);
+            invalidatePendingTextPlan();
+            return;
+        }
+
+        pendingTextCommand = text;
+        pendingTextPlan = plan;
+        applyButton.setButtonText("APPLY");
+
+        const juce::String interpretation = juce::String::fromUTF8(
+            plan.interpretation.c_str());
+        juce::String planStatus = "Plan: " + interpretation + " | "
+            + juce::String(static_cast<int>(plan.fit.bands.size())) + " band(s)";
+        if (!plan.outcomeSummary.empty())
+            planStatus += " | " + juce::String::fromUTF8(plan.outcomeSummary.c_str());
+        statusLabel.setText(planStatus, juce::dontSendNotification);
+    }
+
+    void invalidatePendingTextPlan()
+    {
+        pendingTextPlan.reset();
+        pendingTextCommand.clear();
+        applyButton.setButtonText("PLAN");
     }
     
     void resetAllSliders()
     {
+        invalidatePendingTextPlan();
         semanticEngine.resetState();
         
         for (auto& qs : qualitySliders)
@@ -680,6 +814,8 @@ private:
     
     std::vector<QualitySliderData> qualitySliders;
     std::vector<std::unique_ptr<juce::TextButton>> presetButtons;
+    std::optional<AIEQPerceptual::SemanticPlan> pendingTextPlan;
+    juce::String pendingTextCommand;
     bool semanticDirty = false;            // Coalesce semantic updates to timer rate
 
 #if AIEQ_GUI_DEBUG
