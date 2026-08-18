@@ -151,7 +151,13 @@ std::vector<float> monoMix(const juce::AudioBuffer<float>& audio)
 /** Builds a mature SpectralContext from a whole real file via the SAME
     PerceptualFrontEnd class the production drain uses (Frame::bandDbFused,
     Frame::lfValid) - not a re-derivation of the analysis, an actual run of it. */
-SpectralContext buildContextFromFile(const juce::AudioBuffer<float>& audio, double sr)
+struct ContextDiagnostics
+{
+    SpectralContext context;
+    float meanTemporalStdDevDb = 0.0f; // what the confidence stability term sees
+};
+
+ContextDiagnostics buildContextFromFile(const juce::AudioBuffer<float>& audio, double sr)
 {
     const auto mono = monoMix(audio);
 
@@ -168,7 +174,41 @@ SpectralContext buildContextFromFile(const juce::AudioBuffer<float>& audio, doub
     acc.prepare(centers);
     for (const auto& f : frames)
         acc.pushFrame(f.bandDbFused, f.lfValid);
-    return acc.snapshot();
+
+    // Mean per-band temporal standard deviation, recomputed here rather than
+    // read out of the accumulator (which does not expose it). This is the
+    // quantity the confidence stability term is a function of, and "why is
+    // confidence low on this clip" is the first question a human reading the
+    // report will ask - so it belongs in the report, not in a debugger.
+    ContextDiagnostics out;
+    out.context = acc.snapshot();
+
+    if (frames.size() > 1 && !centers.empty())
+    {
+        const std::size_t nb = centers.size();
+        std::vector<double> mean(nb, 0.0), m2(nb, 0.0);
+        std::size_t n = 0;
+        for (const auto& f : frames)
+        {
+            if (f.bandDbFused.size() != nb) continue;
+            ++n;
+            for (std::size_t i = 0; i < nb; ++i)
+            {
+                const double x = f.bandDbFused[i];
+                const double d = x - mean[i];
+                mean[i] += d / static_cast<double>(n);
+                m2[i] += d * (x - mean[i]);
+            }
+        }
+        if (n > 1)
+        {
+            double acc2 = 0.0;
+            for (std::size_t i = 0; i < nb; ++i)
+                acc2 += std::sqrt(std::max(0.0, m2[i] / static_cast<double>(n - 1)));
+            out.meanTemporalStdDevDb = static_cast<float>(acc2 / static_cast<double>(nb));
+        }
+    }
+    return out;
 }
 
 /** Runs `audio` through a fresh ParametricEQProcessor. If `bands` is empty, the
@@ -319,10 +359,13 @@ public:
                 continue;
             }
 
-            const auto context = buildContextFromFile(source, sr);
+            const auto diagnostics = buildContextFromFile(source, sr);
+            const auto& context = diagnostics.context;
             logMessage("  " + wav.getFileName() + "  context: valid=" + juce::String(context.valid ? 1 : 0)
                        + " confidence=" + juce::String(context.confidence, 2)
-                       + " frames=" + juce::String(context.framesObserved));
+                       + " frames=" + juce::String(context.framesObserved)
+                       + " sourceLevel=" + juce::String(context.sourceLevelDb, 1) + "dB"
+                       + " meanTemporalStdDev=" + juce::String(diagnostics.meanTemporalStdDevDb, 1) + "dB");
 
             const auto inputHealth = measure(source);
             const bool inputClipped = inputHealth.peakDb >= -0.05f;
