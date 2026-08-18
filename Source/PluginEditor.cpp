@@ -156,6 +156,11 @@ AIEqualizerAudioProcessorEditor::AIEqualizerAudioProcessorEditor(AIEqualizerAudi
             adjustments, AIEqualizerAudioProcessor::SemanticApplyPolicy::BestEffortLegacy);
     };
 
+    semanticPanel->onRequestSpectralContext = [this]()
+    {
+        return processor.getSpectralContextSnapshot();
+    };
+
     semanticPanel->onTextPlanApply = [this](
         const std::vector<SemanticEQEngine::SemanticEQAdjustment>& adjustments)
     {

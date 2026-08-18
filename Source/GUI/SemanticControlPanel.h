@@ -59,6 +59,12 @@ public:
     std::function<TextApplyFeedback(
         const std::vector<SemanticEQEngine::SemanticEQAdjustment>&)> onTextPlanApply;
 
+    /** T5.3 - the source context to plan against, taken on the message thread
+        at the instant PLAN is pressed and then frozen into the request. Left
+        unset the planner degrades to text-only, which is exactly what an
+        invalid context already means downstream. */
+    std::function<std::optional<AIEQPerceptual::SpectralContext>()> onRequestSpectralContext;
+
     // Supplies the current smoothed dB spectrum (analyzer format: numBins,
     // dB values) for the engine's context-aware mapping. Wired by the editor;
     // when unset the engine falls back to context-neutral behaviour (A3 fix —
@@ -658,9 +664,18 @@ private:
             && planningText == text)
             return; // already planning exactly this
 
+        // Snapshot now, not in the worker: planning must reason about the
+        // source as it was when the user asked, and the worker must never read
+        // analysis state that keeps moving while it computes.
+        AIEQPerceptual::SpectralContext contextSnapshot;
+        if (onRequestSpectralContext)
+            if (auto snapshot = onRequestSpectralContext())
+                contextSnapshot = *snapshot;
+
         pendingGeneration = planningService.submit(text.toStdString(),
                                                    semanticEngine.getIntensity(),
-                                                   currentSampleRate);
+                                                   currentSampleRate,
+                                                   contextSnapshot);
         planningText = text;
         planningUiState = AIEQPerceptual::SemanticPlanningUiState::Planning;
         applyButton.setButtonText("PLAN");

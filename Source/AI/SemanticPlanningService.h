@@ -34,6 +34,7 @@
 #include <juce_core/juce_core.h>
 
 #include "SemanticPlan.h"
+#include "SpectralContext.h"
 
 namespace AIEQPerceptual
 {
@@ -47,9 +48,12 @@ struct SemanticPlanningRequest
     float         intensity = 1.0f;
     double        sampleRate = 44100.0;
 
-    // T5 extension point. The snapshot is taken before enqueue, never pulled by
-    // the worker:
-    // std::optional<SpectralContext> contextSnapshot;
+    // T5.3 - the source as it was when PLAN was pressed. Carried BY VALUE, and
+    // taken on the message thread before enqueue: the worker must never reach
+    // into live analysis, or the picture it reasons about would keep moving
+    // underneath it. A default-constructed context is invalid and contextualises
+    // to identity, so an unwired caller degrades to text-only planning.
+    SpectralContext spectralContext;
 };
 
 /** An unusable command is still a valid planning OUTCOME. The UI has to be able
@@ -102,7 +106,8 @@ public:
 
     /** Replaces any pending request and supersedes any in-flight one. Returns
         the generation the caller must quote to recognise its own result. */
-    std::uint64_t submit(std::string text, float intensity, double sampleRate);
+    std::uint64_t submit(std::string text, float intensity, double sampleRate,
+                         const SpectralContext& context = {});
 
     /** Every event that changes planning inputs must call this — not merely
         clear a pending plan. Bumping the epoch is what makes an in-flight

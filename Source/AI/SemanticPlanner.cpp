@@ -224,6 +224,16 @@ SemanticPlan SemanticPlanner::plan(std::string_view text,
                                    double sampleRate,
                                    float intensity) const
 {
+    // No context: an invalid one contextualises to identity, so the two paths
+    // share a single implementation rather than drifting apart.
+    return plan(text, sampleRate, intensity, SpectralContext {});
+}
+
+SemanticPlan SemanticPlanner::plan(std::string_view text,
+                                   double sampleRate,
+                                   float intensity,
+                                   const SpectralContext& context) const
+{
     SemanticPlan result;
     result.intent = SemanticIntentCompiler().compile(text);
 
@@ -239,6 +249,19 @@ SemanticPlan SemanticPlanner::plan(std::string_view text,
 
     if (result.intent.contradictory)
         return result;
+
+    // Source awareness sits here on purpose: after the intent is understood and
+    // the user's intensity applied, before any geometry is chosen. It may only
+    // attenuate a requested amount - it cannot invent a goal, flip one, or
+    // touch a constraint - so the contradiction check above is still the last
+    // word on what the user asked for.
+    {
+        const auto contextualized = SemanticContextualizer().contextualize(result.intent, context);
+        result.intent = contextualized.intent;
+        result.contextConfidence = contextualized.contextConfidence;
+        result.contextApplied = contextualized.contextApplied;
+        result.contextAdjustments = contextualized.adjustments;
+    }
 
     result.target = SemanticTargetBuilder().build(result.intent, sampleRate);
     if (!result.target.isValid(sampleRate))

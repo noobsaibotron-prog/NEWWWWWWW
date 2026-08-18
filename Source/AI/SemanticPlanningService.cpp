@@ -75,7 +75,8 @@ void SemanticPlanningService::stop()
     stopThread(-1);
 }
 
-std::uint64_t SemanticPlanningService::submit(std::string text, float intensity, double sampleRate)
+std::uint64_t SemanticPlanningService::submit(std::string text, float intensity,
+                                              double sampleRate, const SpectralContext& context)
 {
     // Bump first: anything already in flight is stale from this instant, whether
     // or not the worker has noticed yet.
@@ -83,7 +84,8 @@ std::uint64_t SemanticPlanningService::submit(std::string text, float intensity,
 
     {
         const std::lock_guard<std::mutex> lock(mailboxMutex);
-        pendingRequest = SemanticPlanningRequest { gen, std::move(text), intensity, sampleRate };
+        pendingRequest = SemanticPlanningRequest { gen, std::move(text), intensity,
+                                                   sampleRate, context };
         completedResult.reset(); // an older answer must not survive a newer question
     }
 
@@ -174,9 +176,14 @@ void SemanticPlanningService::run()
         // Computed outside the lock: this is the expensive part, and holding the
         // mailbox here would make submit() block the message thread — which is
         // the whole problem T3.2 exists to remove.
+        // Everything the plan depends on came in with the request. The worker
+        // touches no processor, no APVTS, no accumulator and no live front-end
+        // state - which is what lets the epoch rule below be the whole of the
+        // staleness story.
         SemanticPlan plan = SemanticPlanner().plan(request.text,
                                                    request.sampleRate,
-                                                   request.intensity);
+                                                   request.intensity,
+                                                   request.spectralContext);
 
         if (threadShouldExit())
             return;

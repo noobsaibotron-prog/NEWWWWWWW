@@ -4,6 +4,7 @@
 #include "SemanticPlan.h"
 #include "SemanticTargetBuilder.h"
 #include "SparseParametricFitter.h"
+#include "SemanticContextualizer.h"
 
 #include <string_view>
 
@@ -17,6 +18,17 @@ public:
     [[nodiscard]] SemanticPlan plan(std::string_view text,
                                     double sampleRate,
                                     float intensity = 1.0f) const;
+
+    /** T5.3 - the same pipeline with a source context applied between intent
+        and target. The context is passed BY VALUE at the call site as an
+        immutable snapshot: the planner never reaches into live analysis, which
+        is what makes it safe to run on the planning worker. An invalid or
+        low-confidence context leaves the intent untouched, so this overload
+        degrades exactly into the one above. */
+    [[nodiscard]] SemanticPlan plan(std::string_view text,
+                                    double sampleRate,
+                                    float intensity,
+                                    const SpectralContext& context) const;
 };
 
 [[nodiscard]] const char* semanticDimensionName(SemanticDimension dimension) noexcept;

@@ -2,6 +2,7 @@
 
 #include "PerceptualTarget.h"
 #include "SemanticIntent.h"
+#include "SemanticContextualizer.h"
 
 #include <string>
 #include <vector>
@@ -36,6 +37,14 @@ struct SemanticPlan
     std::vector<SemanticGoalOutcome> goalOutcomes;
     std::string interpretation;
     std::string outcomeSummary;
+
+    // T5.3 - what the source context did to this plan. Recorded rather than
+    // inferred, so a caller can explain the decision and a test can assert on
+    // it without re-deriving the policy.
+    float contextConfidence = 0.0f;
+    bool  contextApplied = false;
+    std::vector<SemanticContextAdjustment> contextAdjustments;
+
     bool valid = false;
 };
 
