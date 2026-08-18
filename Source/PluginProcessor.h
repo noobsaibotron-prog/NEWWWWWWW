@@ -219,6 +219,27 @@ public:
     [[nodiscard]] juce::AudioProcessorValueTreeState& getAPVTS() noexcept { return apvts; }
 
     [[nodiscard]] PhaseMode getCurrentPhaseMode() const noexcept { return currentPhaseMode.load(std::memory_order_relaxed); }
+
+    /** The Dynamic EQ instance that is actually processing audio right now.
+
+        There are four of them and only one runs at a time: the base instance in
+        Zero Latency and Linear Phase, dynamicEQProcessorHQ in Natural Phase
+        (which works on the oversampled buffer), and the Mid/Side pair in M/S.
+        They all receive identical band parameters, but only the running one has
+        live envelope state.
+
+        The display reads that live state directly to draw the moving dynamic
+        curve, so it has to read the running instance. Reading the base one
+        unconditionally is what froze the curve the moment the user switched to
+        Natural Phase: the instance it was watching had stopped processing, so
+        its envelopes stayed at whatever value they last held. The band meters
+        did not show the bug because they go through the mode-aware cache that
+        updateDynamicMeterCacheFrom() fills from the running instance.
+
+        M/S runs two independent instances against different content, and the
+        curve is a single line: it follows Mid. That is a real half rather than
+        a frozen whole. */
+    [[nodiscard]] const DynamicEQProcessor& getActiveDynamicEQProcessorForDisplay() const noexcept;
     [[nodiscard]] MSMode getCurrentMSMode() const noexcept { return currentMSMode.load(std::memory_order_relaxed); }
     
     //==============================================================================

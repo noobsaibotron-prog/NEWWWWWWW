@@ -3576,6 +3576,23 @@ void AIEqualizerAudioProcessor::clearDynamicMeterCache() noexcept
     dynamicTotalGR.store(0.0f, std::memory_order_relaxed);
 }
 
+const DynamicEQProcessor&
+AIEqualizerAudioProcessor::getActiveDynamicEQProcessorForDisplay() const noexcept
+{
+    // Mirrors the routing in processBlock. Kept next to nothing else on purpose:
+    // if a fifth instance or a new mode appears, this is the one place that has
+    // to learn about it, and the display follows automatically.
+    if (cachedMSModeParam != nullptr
+        && cachedMSModeParam->load(std::memory_order_relaxed) > 0.5f)
+        return dynamicEQProcessorMid;
+
+    if (currentPhaseMode.load(std::memory_order_relaxed) == PhaseMode::NaturalPhase
+        && hqRuntimeReady.load(std::memory_order_acquire))
+        return dynamicEQProcessorHQ;
+
+    return dynamicEQProcessor;
+}
+
 void AIEqualizerAudioProcessor::updateDynamicMeterCacheFrom(const DynamicEQProcessor& src) noexcept
 {
     // FIX: Use minimum of both maxBands to prevent out-of-bounds access

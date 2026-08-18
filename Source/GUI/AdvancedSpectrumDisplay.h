@@ -3033,7 +3033,8 @@ private:
 
         const int numActive = processor.getNumActiveBands();
         const int limit     = std::min(numActive, AIEqualizerAudioProcessor::maxBands);
-        const auto& dynProc = processor.getDynamicEQProcessor();
+        // The instance that is actually running: see the note on the accessor.
+        const auto& dynProc = processor.getActiveDynamicEQProcessorForDisplay();
         bool hasAny = false;
 
         for (int i = 0; i < limit; ++i)
@@ -3055,7 +3056,8 @@ private:
     {
         if (graphBounds.isEmpty()) return;
 
-        const auto& dynProc = processor.getDynamicEQProcessor();
+        // The instance that is actually running: see the note on the accessor.
+        const auto& dynProc = processor.getActiveDynamicEQProcessorForDisplay();
         rebuildEQCurvePath();
 
         if (eqCurveFrequencies.empty() || eqCurveMagnitudes.size() != eqCurveFrequencies.size())
