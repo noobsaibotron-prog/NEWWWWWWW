@@ -151,6 +151,50 @@ float SemanticContextualizer::axisPosition(SemanticDimension dimension,
     return clamp11(db / options.axisFullScaleDb);
 }
 
+float SemanticContextualizer::evidenceConfidence(SemanticDimension dimension,
+                                                 SemanticSpectralFocus focus,
+                                                 const SpectralContext& context) const noexcept
+{
+    auto mean2 = [&context](SpectralRegion a, SpectralRegion b)
+    {
+        return 0.5f * (context.region_confidence(a) + context.region_confidence(b));
+    };
+
+    // An explicit facet names its region directly.
+    switch (focus)
+    {
+        case SemanticSpectralFocus::Air:        return context.region_confidence(SpectralRegion::Air);
+        case SemanticSpectralFocus::Brilliance: return context.region_confidence(SpectralRegion::Brilliance);
+        case SemanticSpectralFocus::Presence:   return context.region_confidence(SpectralRegion::Presence);
+        case SemanticSpectralFocus::LowMid:     return context.region_confidence(SpectralRegion::LowMid);
+        case SemanticSpectralFocus::Bass:       return context.region_confidence(SpectralRegion::Bass);
+        case SemanticSpectralFocus::Sub:        return context.region_confidence(SpectralRegion::Sub);
+        case SemanticSpectralFocus::General:    break;
+    }
+
+    // Otherwise the dimension implies a span. Averaged rather than minimised:
+    // partial evidence across a span is partial grounds to act, and taking the
+    // minimum would let one empty region veto a well-observed neighbour.
+    switch (dimension)
+    {
+        case SemanticDimension::Brightness:
+            return (context.region_confidence(SpectralRegion::Presence)
+                  + context.region_confidence(SpectralRegion::Brilliance)
+                  + context.region_confidence(SpectralRegion::Air)) / 3.0f;
+        case SemanticDimension::Warmth:  return mean2(SpectralRegion::Bass, SpectralRegion::LowMid);
+        case SemanticDimension::Weight:  return mean2(SpectralRegion::Sub, SpectralRegion::Bass);
+        case SemanticDimension::Clarity: return mean2(SpectralRegion::LowMid, SpectralRegion::Mid);
+        case SemanticDimension::Presence: return mean2(SpectralRegion::Mid, SpectralRegion::Presence);
+
+        case SemanticDimension::Smoothness:
+        case SemanticDimension::Punch:
+        case SemanticDimension::Tightness:
+        case SemanticDimension::Count:
+            return context.confidence;
+    }
+    return context.confidence;
+}
+
 ContextualizedSemanticIntent SemanticContextualizer::contextualize(
     const SemanticIntent& input,
     const SpectralContext& context) const
@@ -160,8 +204,8 @@ ContextualizedSemanticIntent SemanticContextualizer::contextualize(
     out.contextConfidence = context.confidence;
     out.adjustments.reserve(out.intent.goals.size());
 
-    const bool contextUsable = context.valid
-        && context.confidence >= options.minimumContextConfidence;
+    // Layer 1 is a hard yes/no; the graded part lives in `influence` below.
+    const bool contextUsable = context.valid && context.hasUsableEvidence;
 
     for (auto& goal : out.intent.goals)
     {
@@ -181,8 +225,22 @@ ContextualizedSemanticIntent SemanticContextualizer::contextualize(
                 const float normalized = (alignment - options.deadband)
                     / std::max(1.0e-6f, 1.0f - options.deadband);
                 const float reduction = options.maximumReduction * smooth01(normalized);
-                adjustment.scale = std::clamp(1.0f - reduction,
-                                              1.0f - options.maximumReduction, 1.0f);
+                const float fullScale = std::clamp(1.0f - reduction,
+                                                   1.0f - options.maximumReduction, 1.0f);
+
+                // Fade the context in over the confidence ramp rather than
+                // switching it on. Evidence is consulted for the REGION this
+                // goal depends on, so "more air" on a bass finds nothing to go
+                // on and the user's requested amount survives intact - which is
+                // the correct failure direction: less evidence, less
+                // interference, never a larger move than was asked for.
+                const float evidence = evidenceConfidence(goal.dimension, goal.focus, context);
+                const float influence = smooth01(
+                    std::clamp((evidence - options.lowConfidence)
+                             / std::max(1.0e-6f, options.highConfidence - options.lowConfidence),
+                               0.0f, 1.0f));
+
+                adjustment.scale = 1.0f + influence * (fullScale - 1.0f);
                 goal.amount *= adjustment.scale;
                 adjustment.adjustedAmount = goal.amount;
                 adjustment.contextualized = adjustment.scale < 0.9999f;

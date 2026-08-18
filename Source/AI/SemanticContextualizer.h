@@ -38,7 +38,14 @@ class SemanticContextualizer
 public:
     struct Options
     {
-        float minimumContextConfidence = 0.45f;
+        // Schema 4 replaces the single binary gate. Below `lowConfidence` the
+        // context has no influence at all; above `highConfidence` it has its
+        // full influence; between, it fades. The old gate sat at 0.45, which is
+        // the midpoint of this ramp, so the decision point is unchanged - only
+        // the cliff either side of it is gone. 0.449 and 0.451 no longer mean
+        // text-only versus fully source-aware.
+        float lowConfidence = 0.25f;
+        float highConfidence = 0.65f;
         float axisFullScaleDb = 6.0f;
         float deadband = 0.12f;
         float maximumReduction = 0.75f; // at most reduce to 25% of requested amount
@@ -55,6 +62,14 @@ public:
         callers and tests keep their meaning. */
     [[nodiscard]] float axisPosition(SemanticDimension dimension,
                                      const SpectralContext& context) const noexcept;
+
+    /** How much reliable evidence exists for the region this goal depends on.
+        A bass has nothing measurable above 10 kHz, so "more air" on a bass must
+        find that out - without the bass being declared unanalysable overall,
+        which is what a single global confidence forced it to do. */
+    [[nodiscard]] float evidenceConfidence(SemanticDimension dimension,
+                                           SemanticSpectralFocus focus,
+                                           const SpectralContext& context) const noexcept;
 
     /** Facet-aware position. "more air" and "brighter" are both Brightness but
         must not read the same descriptors: a source can be loud at 3-7 kHz and

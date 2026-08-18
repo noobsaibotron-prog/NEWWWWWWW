@@ -184,14 +184,23 @@ public:
             logMessage("  (0.891 -> 0.909). The real vocal's coverage of 0.709 therefore comes from");
             logMessage("  something this proxy does not yet model, and must not be attributed to pauses.");
 
-            // Assertions only where the direction is not a judgement call.
-            expect(broadStatic.confidence > sparsePhrased.confidence,
-                   "the synthetic fixture family does not score above vocal-like "
-                   "material - this grid is not reproducing the problem it exists "
-                   "to characterise");
-            expect(broadStatic.confidence >= 0.45f,
-                   "even broadband stationary material is now gated off, which "
-                   "would mean something changed in the formula, not in the input");
+            // Under schema 3 this grid separated: broadband stationary scored
+            // 1.000 and the vocal-like row 0.215, and the assertion here was
+            // that the separation existed, because the separation WAS the
+            // defect. Schema 4 removes it deliberately - all four rows describe
+            // well-observed sources and now say so - so the assertion becomes
+            // its opposite. It is kept rather than deleted because a return of
+            // the spread would mean source character had started counting as
+            // uncertainty again.
+            logMessage("  schema 3 scored these 1.000 / 0.579 / 0.918 / 0.471 / 0.215.");
+            for (const auto* row : { &broadStatic, &broadDynamic, &sparseStatic,
+                                     &sparseDynamic, &sparsePhrased })
+                expect(row->confidence >= 0.45f,
+                       "a well-observed synthetic source is still being scored as "
+                       "unreliable - source character is being charged as uncertainty");
+            expect(std::abs(broadStatic.confidence - sparsePhrased.confidence) < 0.25f,
+                   "broadband-stationary and sparse-dynamic material still receive "
+                   "materially different confidence despite both being well observed");
         }
 
         //==================================================================

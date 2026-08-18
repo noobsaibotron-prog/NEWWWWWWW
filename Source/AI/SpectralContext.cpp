@@ -88,16 +88,22 @@ SpectralContext SpectralContextBuilder::build(
     std::span<const float> meanBandDbFused,
     std::span<const float> temporalStdDevDb,
     int framesObserved,
-    float lfValidFraction) const
+    float lfValidFraction,
+    int activeFrames) const
 {
     SpectralContext out;
     out.framesObserved = std::max(framesObserved, 0);
+    out.activeFrames = activeFrames < 0 ? out.framesObserved
+                                        : std::clamp(activeFrames, 0, out.framesObserved);
+    out.activeFrameFraction = out.framesObserved > 0
+        ? static_cast<float>(out.activeFrames) / static_cast<float>(out.framesObserved)
+        : 0.0f;
     out.lfValidFraction = clamp01(lfValidFraction);
 
     if (!finiteAscending(bandCentersHz, meanBandDbFused)
         || (!temporalStdDevDb.empty() && temporalStdDevDb.size() != bandCentersHz.size())
         || !(options.maxAnalysisHz > options.minAnalysisHz)
-        || options.fullWarmupFrames <= 0
+        || options.fullObservationFrames <= 0
         || !(options.rolloffFraction > 0.0f && options.rolloffFraction < 1.0f))
         return out;
 
@@ -244,13 +250,34 @@ SpectralContext SpectralContextBuilder::build(
         0.55f * out.region(SpectralRegion::Brilliance)
       + 0.45f * out.region(SpectralRegion::Air));
 
+    // ---- descriptive occupancy (no longer a confidence factor) -----------
     const float coverageScore = clamp01(static_cast<float>(usableBands)
                                       / static_cast<float>(consideredBands));
-    const float levelScore = smoothStep(options.minUsableDb,
-                                        options.fullLevelConfidenceDb,
-                                        globalRefDb);
-    const float warmupScore = clamp01(static_cast<float>(out.framesObserved)
-                                    / static_cast<float>(options.fullWarmupFrames));
+
+    // ---- layer 1: hard validity -----------------------------------------
+    // Structural sufficiency is a yes/no question and is kept out of the graded
+    // score, so that silence and a two-frame buffer fail for the reason they
+    // actually fail rather than by scoring low on a curve.
+    float bandPeakDb = -200.0f;
+    for (std::size_t i = 0; i < bandCentersHz.size(); ++i)
+        if (bandCentersHz[i] >= options.minAnalysisHz
+            && bandCentersHz[i] <= options.maxAnalysisHz)
+            bandPeakDb = std::max(bandPeakDb, meanBandDbFused[i]);
+    out.bandPeakDb = bandPeakDb;
+
+    const bool aboveSilence = bandPeakDb > options.nearSilenceFloorDb;
+    const bool enoughFrames = out.activeFrames >= options.minObservationFrames;
+    out.hasUsableEvidence = aboveSilence && enoughFrames;
+
+    // ---- layer 2: graded evidence quality --------------------------------
+    const float levelScore = smoothStep(options.nearSilenceFloorDb,
+                                        options.fullEvidenceLevelDb,
+                                        bandPeakDb);
+
+    const float observationScore = smoothStep(
+        static_cast<float>(options.minObservationFrames),
+        static_cast<float>(options.fullObservationFrames),
+        static_cast<float>(out.activeFrames));
 
     float meanStdDev = 0.0f;
     int stdCount = 0;
@@ -270,21 +297,70 @@ SpectralContext SpectralContextBuilder::build(
     if (stdCount > 0)
         meanStdDev /= static_cast<float>(stdCount);
 
-    // Mildly discount extremely unstable snapshots; dynamic music should still
-    // reach high confidence after sufficient observation.
+    // How well the AGGREGATE is pinned down, not how alike the frames were.
+    // A singer changing note makes every frame differ and leaves the average
+    // spectrum just as knowable, provided enough frames were averaged.
+    out.aggregateStandardErrorDb = out.activeFrames > 0
+        ? meanStdDev / std::sqrt(static_cast<float>(out.activeFrames))
+        : meanStdDev;
+    // Descending ramp: LESS standard error means MORE confidence. smoothStep()
+    // requires edge0 < edge1 and silently degrades to a step otherwise, so the
+    // inversion is explicit here rather than smuggled into the argument order.
     const float stabilityScore = stdCount > 0
-        ? std::clamp(std::exp(-meanStdDev / 18.0f), 0.35f, 1.0f)
-        : 1.0f;
+        ? 1.0f - smoothStep(options.fullStabilityStdErrDb,
+                            options.noStabilityStdErrDb,
+                            out.aggregateStandardErrorDb)
+        : observationScore;
+
     const float lfScore = 0.92f + 0.08f * out.lfValidFraction;
 
     out.levelScore = levelScore;
     out.coverageScore = coverageScore;
-    out.warmupScore = warmupScore;
+    out.warmupScore = observationScore;
     out.stabilityScore = stabilityScore;
     out.lfScore = lfScore;
 
-    out.confidence = clamp01(levelScore * coverageScore * warmupScore
-                           * stabilityScore * lfScore);
+    // Normalized (geometric-mean) combination rather than a raw product. Three
+    // terms at 0.7 multiply to 0.34 and fail a 0.45 gate even though every one
+    // of them says "good enough"; their geometric mean is 0.7, which is what
+    // three partial evidences actually amount to. Weights are equal because
+    // nothing measured so far justifies ranking these three against each other,
+    // and an unjustified weighting is just a tuned constant in disguise.
+    float softConfidence = 0.0f;
+    if (levelScore > 0.0f && stabilityScore > 0.0f && observationScore > 0.0f)
+    {
+        constexpr float kThird = 1.0f / 3.0f;
+        softConfidence = std::exp(kThird * (std::log(levelScore)
+                                          + std::log(stabilityScore)
+                                          + std::log(observationScore)));
+    }
+    out.confidence = out.hasUsableEvidence ? clamp01(softConfidence * lfScore) : 0.0f;
+
+    // ---- layer 3: regional evidence --------------------------------------
+    // Occupancy measured against the ABSOLUTE analysis floor, per region. A
+    // relative-to-peak criterion was measured and rejected: a full mix falls
+    // ~40 dB from its bass peak to 15 kHz purely because music is pink, which
+    // would have scored a perfectly ordinary mix as having no HF evidence.
+    for (std::size_t r = 0; r < kSpectralRegionCount; ++r)
+    {
+        const auto range = kRegions[r];
+        int inRegion = 0, usableInRegion = 0;
+        for (std::size_t i = 0; i < bandCentersHz.size(); ++i)
+        {
+            const float f = bandCentersHz[i];
+            if (f < range.lo || f >= range.hi
+                || f < options.minAnalysisHz || f > options.maxAnalysisHz)
+                continue;
+            ++inRegion;
+            if (meanBandDbFused[i] >= options.minUsableDb)
+                ++usableInRegion;
+        }
+        const float occupancy = inRegion > 0
+            ? static_cast<float>(usableInRegion) / static_cast<float>(inRegion)
+            : 0.0f;
+        out.regionConfidence[r] = out.confidence * smoothStep(0.15f, 0.60f, occupancy);
+    }
+
     out.valid = true;
     return out;
 }
@@ -302,7 +378,9 @@ void SpectralContextAccumulator::reset() noexcept
     std::fill(mean.begin(), mean.end(), 0.0);
     std::fill(m2.begin(), m2.end(), 0.0);
     frames = 0;
+    activeFrames = 0;
     lfValidFrames = 0;
+    runningPeakDb = -200.0f;
 }
 
 bool SpectralContextAccumulator::pushFrame(std::span<const float> bandDbFused,
@@ -317,7 +395,21 @@ bool SpectralContextAccumulator::pushFrame(std::span<const float> bandDbFused,
     ++frames;
     if (lfValid) ++lfValidFrames;
 
-    const double n = static_cast<double>(frames);
+    // Separate playing from pausing. The gap between two sung phrases is not
+    // evidence that the voice has a weak spectrum; it is the absence of
+    // evidence for that frame. Folding it into the tonal average was measured
+    // to cost a lead vocal 11 dB of apparent level and to nearly double its
+    // apparent instability.
+    float frameLevelDb = -200.0f;
+    for (float value : bandDbFused)
+        frameLevelDb = std::max(frameLevelDb, value);
+    runningPeakDb = std::max(runningPeakDb, frameLevelDb);
+
+    if (frameLevelDb < runningPeakDb - builderOptions.activeFrameRangeDb)
+        return true;   // counted as observed, contributes no tonal statistics
+
+    ++activeFrames;
+    const double n = static_cast<double>(activeFrames);
     for (std::size_t i = 0; i < bandDbFused.size(); ++i)
     {
         const double x = bandDbFused[i];
@@ -334,17 +426,29 @@ SpectralContext SpectralContextAccumulator::snapshot() const
     if (frames <= 0 || centers.empty())
         return {};
 
+    if (activeFrames <= 0)
+    {
+        // Observed, but nothing was ever loud enough to describe. Report it as
+        // a well-formed snapshot with no usable evidence rather than as a
+        // malformed one.
+        SpectralContext quiet;
+        quiet.framesObserved = frames;
+        quiet.valid = true;
+        return quiet;
+    }
+
     std::vector<float> means(mean.size());
     std::vector<float> stddev(mean.size(), 0.0f);
     for (std::size_t i = 0; i < mean.size(); ++i)
     {
         means[i] = static_cast<float>(mean[i]);
-        if (frames > 1)
-            stddev[i] = static_cast<float>(std::sqrt(std::max(0.0, m2[i] / static_cast<double>(frames - 1))));
+        if (activeFrames > 1)
+            stddev[i] = static_cast<float>(std::sqrt(std::max(0.0, m2[i] / static_cast<double>(activeFrames - 1))));
     }
 
     return builder.build(centers, means, stddev, frames,
-        static_cast<float>(lfValidFrames) / static_cast<float>(frames));
+        static_cast<float>(lfValidFrames) / static_cast<float>(frames),
+        activeFrames);
 }
 
 } // namespace AIEQPerceptual

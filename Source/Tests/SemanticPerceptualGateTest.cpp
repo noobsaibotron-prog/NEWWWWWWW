@@ -366,13 +366,22 @@ public:
                        + " frames=" + juce::String(context.framesObserved)
                        + " sourceLevel=" + juce::String(context.sourceLevelDb, 1) + "dB"
                        + " meanTemporalStdDev=" + juce::String(diagnostics.meanTemporalStdDevDb, 1) + "dB");
-            logMessage("      confidence factors: level=" + juce::String(context.levelScore, 3)
-                       + " coverage=" + juce::String(context.coverageScore, 3)
-                       + " warmup=" + juce::String(context.warmupScore, 3)
+            logMessage("      evidence: level=" + juce::String(context.levelScore, 3)
                        + " stability=" + juce::String(context.stabilityScore, 3)
-                       + " lf=" + juce::String(context.lfScore, 3)
-                       + "  -> product=" + juce::String(context.confidence, 3)
-                       + (context.confidence < 0.45f ? "  [BELOW the 0.45 contextualizer gate]" : ""));
+                       + " observation=" + juce::String(context.warmupScore, 3)
+                       + " stdErr=" + juce::String(context.aggregateStandardErrorDb, 3) + "dB"
+                       + " active=" + juce::String(context.activeFrames)
+                       + "/" + juce::String(context.framesObserved)
+                       + " peak=" + juce::String(context.bandPeakDb, 1) + "dB"
+                       + (context.hasUsableEvidence ? "" : "  [NO USABLE EVIDENCE]"));
+            juce::String regions;
+            static const char* kRegionNames[] =
+                { "Sub", "Bass", "LoMid", "Mid", "Pres", "Brill", "Air" };
+            for (std::size_t r = 0; r < AIEQPerceptual::kSpectralRegionCount; ++r)
+                regions += juce::String(kRegionNames[r]) + "="
+                         + juce::String(context.regionConfidence[r], 2) + " ";
+            logMessage("      regional: " + regions
+                       + " (global coverage=" + juce::String(context.coverageScore, 3) + ")");
 
             const auto inputHealth = measure(source);
             const bool inputClipped = inputHealth.peakDb >= -0.05f;
