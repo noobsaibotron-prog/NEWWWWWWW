@@ -4,6 +4,7 @@
 #include <memory>
 #include <optional>
 #include "../AI/SemanticEQEngine.h"
+#include "../AI/SemanticPlanningService.h"
 #include "ModernLookAndFeel.h"
 #if AIEQ_GUI_DEBUG
 #include "../Utils/DebugLog.h"
@@ -189,12 +190,16 @@ public:
         statusLabel.setJustificationType(juce::Justification::centred);
         addAndMakeVisible(statusLabel);
         
+        planningService.start();
         startTimerHz(30);
     }
     
     ~SemanticControlPanel() override
     {
         stopTimer();
+        // Join before any member the worker could still be publishing into is
+        // destroyed. stop() is idempotent and waits; it must not be a timeout.
+        planningService.stop();
     }
     
     void paint(juce::Graphics& g) override
@@ -351,6 +356,8 @@ public:
     void timerCallback() override
     {
         bool needsRepaint = false;
+
+        consumePlanningResult();
 
         // Update morph progress
         if (semanticEngine.isMorphing())
@@ -644,49 +651,89 @@ private:
             return;
         }
 
-        const auto plan = semanticEngine.planTextCommand(text, currentSampleRate);
-        if (!plan.intent.hasRecognizedContent)
-        {
-            statusLabel.setText("Couldn't understand command", juce::dontSendNotification);
-            invalidatePendingTextPlan();
-            return;
-        }
+        // PLAN. The fit costs 32-42 ms on this machine (measured 44.1/48/96 kHz),
+        // so it runs on a worker: doing it here dropped 2-3 GUI frames per press.
+        // Everything the worker needs is captured now, by value.
+        if (planningUiState == AIEQPerceptual::SemanticPlanningUiState::Planning
+            && planningText == text)
+            return; // already planning exactly this
 
-        if (plan.intent.contradictory)
-        {
-            statusLabel.setText(
-                plan.intent.goalConstraintConflict
-                    ? "Contradictory request — goal conflicts with requested protection"
-                    : "Ambiguous command — clarify the direction",
-                juce::dontSendNotification);
-            invalidatePendingTextPlan();
-            return;
-        }
+        pendingGeneration = planningService.submit(text.toStdString(),
+                                                   semanticEngine.getIntensity(),
+                                                   currentSampleRate);
+        planningText = text;
+        planningUiState = AIEQPerceptual::SemanticPlanningUiState::Planning;
+        applyButton.setButtonText("PLAN");
+        statusLabel.setText("Planning...", juce::dontSendNotification);
+    }
 
-        if (!plan.valid || !plan.fit.valid)
-        {
-            statusLabel.setText("Couldn't build a safe semantic plan",
-                                juce::dontSendNotification);
-            invalidatePendingTextPlan();
+    /** Message thread. Consumes a current-generation planning result, if one is
+        ready. The status wording is deliberately identical to what the previous
+        synchronous path produced, so moving the work off-thread cannot silently
+        change what the user is told. */
+    void consumePlanningResult()
+    {
+        if (planningUiState != AIEQPerceptual::SemanticPlanningUiState::Planning)
             return;
-        }
 
-        if (plan.fit.bands.empty())
+        auto result = planningService.takeCurrentResult();
+        if (!result.has_value())
+            return;
+
+        // takeCurrentResult() already dropped stale generations; this is a second
+        // guard for the panel's own epoch and costs nothing.
+        if (result->generation != pendingGeneration)
+            return;
+
+        planningUiState = AIEQPerceptual::SemanticPlanningUiState::Idle;
+
+        using Status = AIEQPerceptual::SemanticPlanningStatus;
+        const auto& plan = result->plan;
+
+        switch (result->status)
         {
-            if (!plan.outcomeSummary.empty())
+            case Status::UnknownIntent:
+                statusLabel.setText("Couldn't understand command", juce::dontSendNotification);
+                invalidatePendingTextPlan();
+                return;
+
+            case Status::ContradictoryIntent:
                 statusLabel.setText(
-                    "No safe move — "
-                    + juce::String::fromUTF8(plan.outcomeSummary.c_str()),
+                    plan.intent.goalConstraintConflict
+                        ? "Contradictory request - goal conflicts with requested protection"
+                        : "Ambiguous command - clarify the direction",
                     juce::dontSendNotification);
-            else
-                statusLabel.setText("No meaningful EQ move required",
+                invalidatePendingTextPlan();
+                return;
+
+            case Status::InternalError:
+                statusLabel.setText("Couldn't build a safe semantic plan",
                                     juce::dontSendNotification);
-            invalidatePendingTextPlan();
-            return;
+                invalidatePendingTextPlan();
+                return;
+
+            case Status::NoSafeMove:
+                if (!plan.outcomeSummary.empty())
+                    statusLabel.setText(
+                        "No safe move - "
+                        + juce::String::fromUTF8(plan.outcomeSummary.c_str()),
+                        juce::dontSendNotification);
+                else
+                    statusLabel.setText("No meaningful EQ move required",
+                                        juce::dontSendNotification);
+                invalidatePendingTextPlan();
+                return;
+
+            case Status::Cancelled:
+                return; // superseded; a newer plan is already on its way
+
+            case Status::Ready:
+                break;
         }
 
-        pendingTextCommand = text;
+        pendingTextCommand = planningText;
         pendingTextPlan = plan;
+        planningUiState = AIEQPerceptual::SemanticPlanningUiState::Ready;
         applyButton.setButtonText("APPLY");
 
         const juce::String interpretation = juce::String::fromUTF8(
@@ -702,6 +749,12 @@ private:
     {
         pendingTextPlan.reset();
         pendingTextCommand.clear();
+        // Bump the epoch, do not merely clear the slot: an in-flight fit is only
+        // made unpublishable by a newer generation.
+        planningService.invalidate();
+        planningUiState = AIEQPerceptual::SemanticPlanningUiState::Idle;
+        pendingGeneration = 0;
+        planningText.clear();
         applyButton.setButtonText("PLAN");
     }
     
@@ -816,6 +869,14 @@ private:
     std::vector<std::unique_ptr<juce::TextButton>> presetButtons;
     std::optional<AIEQPerceptual::SemanticPlan> pendingTextPlan;
     juce::String pendingTextCommand;
+
+    // T3.2 async planning. The panel owns the UX state; the worker owns only
+    // the computation. pendingGeneration is the epoch this panel is waiting for.
+    AIEQPerceptual::SemanticPlanningService planningService;
+    AIEQPerceptual::SemanticPlanningUiState planningUiState
+        = AIEQPerceptual::SemanticPlanningUiState::Idle;
+    std::uint64_t pendingGeneration = 0;
+    juce::String planningText;
     bool semanticDirty = false;            // Coalesce semantic updates to timer rate
 
 #if AIEQ_GUI_DEBUG

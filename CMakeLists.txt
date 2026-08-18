@@ -614,6 +614,8 @@ set(PLUGIN_SOURCES
     Source/AI/SemanticPlan.h
     Source/AI/SemanticPlanner.cpp
     Source/AI/SemanticPlanner.h
+    Source/AI/SemanticPlanningService.cpp
+    Source/AI/SemanticPlanningService.h
     Source/AI/SemanticTargetBuilder.cpp
     Source/AI/SemanticTargetBuilder.h
     Source/AI/SparseParametricFitter.cpp
@@ -1212,6 +1214,7 @@ if(HAVE_JUCE)
         Source/AI/SemanticEQEngine.cpp
         Source/AI/SemanticIntentCompiler.cpp
         Source/AI/SemanticPlanner.cpp
+        Source/AI/SemanticPlanningService.cpp
         Source/AI/SemanticTargetBuilder.cpp
         Source/AI/SparseParametricFitter.cpp
         Source/AI/UserLearning.cpp
