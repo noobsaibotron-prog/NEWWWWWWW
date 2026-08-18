@@ -366,6 +366,13 @@ public:
                        + " frames=" + juce::String(context.framesObserved)
                        + " sourceLevel=" + juce::String(context.sourceLevelDb, 1) + "dB"
                        + " meanTemporalStdDev=" + juce::String(diagnostics.meanTemporalStdDevDb, 1) + "dB");
+            logMessage("      confidence factors: level=" + juce::String(context.levelScore, 3)
+                       + " coverage=" + juce::String(context.coverageScore, 3)
+                       + " warmup=" + juce::String(context.warmupScore, 3)
+                       + " stability=" + juce::String(context.stabilityScore, 3)
+                       + " lf=" + juce::String(context.lfScore, 3)
+                       + "  -> product=" + juce::String(context.confidence, 3)
+                       + (context.confidence < 0.45f ? "  [BELOW the 0.45 contextualizer gate]" : ""));
 
             const auto inputHealth = measure(source);
             const bool inputClipped = inputHealth.peakDb >= -0.05f;

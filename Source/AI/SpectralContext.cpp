@@ -277,6 +277,12 @@ SpectralContext SpectralContextBuilder::build(
         : 1.0f;
     const float lfScore = 0.92f + 0.08f * out.lfValidFraction;
 
+    out.levelScore = levelScore;
+    out.coverageScore = coverageScore;
+    out.warmupScore = warmupScore;
+    out.stabilityScore = stabilityScore;
+    out.lfScore = lfScore;
+
     out.confidence = clamp01(levelScore * coverageScore * warmupScore
                            * stabilityScore * lfScore);
     out.valid = true;

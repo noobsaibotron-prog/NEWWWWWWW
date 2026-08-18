@@ -1247,6 +1247,7 @@ if(HAVE_JUCE)
         Source/Tests/SemanticIntentCompilerTest.cpp
         Source/Tests/SpectralContextTest.cpp
         Source/Tests/SpectralContextAdversarialTest.cpp
+        Source/Tests/SpectralContextConfidenceCalibrationTest.cpp
         Source/Tests/SemanticContextualizerTest.cpp
         Source/Tests/SemanticSlotPreflightTest.cpp
         Source/Tests/RealDataSibilanceTest.cpp

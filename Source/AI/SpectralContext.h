@@ -8,7 +8,7 @@
 namespace AIEQPerceptual
 {
 
-inline constexpr std::uint32_t kSpectralContextSchemaVersion = 2;
+inline constexpr std::uint32_t kSpectralContextSchemaVersion = 3;
 
 enum class SpectralRegion : std::uint8_t
 {
@@ -73,6 +73,22 @@ struct SpectralContext
     // Absolute level is kept only to make confidence fail closed near silence.
     float sourceLevelDb = -120.0f;
     float confidence = 0.0f;
+
+    // Schema 3 - the factors confidence is the product of, published rather
+    // than left to be reconstructed by hand.
+    //
+    // The first real material this was ever pointed at (a lead vocal) produced
+    // confidence 0.18 against 0.92 for stationary pink noise, which gated
+    // source awareness off entirely. Working out WHICH factor caused that
+    // required redoing the arithmetic outside the code, and arithmetic done
+    // outside the code is exactly how a plausible-but-wrong explanation gets
+    // adopted. These are diagnostic only: nothing reads them to make a
+    // decision, and confidence remains their product.
+    float levelScore = 0.0f;
+    float coverageScore = 0.0f;
+    float warmupScore = 0.0f;
+    float stabilityScore = 0.0f;
+    float lfScore = 0.0f;
     int framesObserved = 0;
     float lfValidFraction = 0.0f;
     bool valid = false;
