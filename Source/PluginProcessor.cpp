@@ -544,6 +544,18 @@ void AIEqualizerAudioProcessor::analyzeSpectrumSerialized(const std::vector<floa
     aiEngine.analyzeSpectrum(spectrum, force);
 }
 
+std::optional<AIEQPerceptual::SpectralContext>
+AIEqualizerAudioProcessor::getSpectralContextSnapshot() noexcept
+{
+    auto view = spectralContextMailbox.acquireLatest();
+    if (!view)
+        return std::nullopt;
+
+    AIEQPerceptual::SpectralContext copy = *view.payload;
+    spectralContextMailbox.release(view);
+    return copy;
+}
+
 void AIEqualizerAudioProcessor::aiAnalysisThreadFunc()
 {
     try
@@ -599,9 +611,11 @@ void AIEqualizerAudioProcessor::aiAnalysisThreadFunc()
         {
             bool didWork = false;
 
+            // T5.2: suspended only when nothing needs analysis. Assist being
+            // off is no longer sufficient - Semantic still needs the context.
             const bool suspendFrontEnd =
                 aiOfflineRenderActive.load(std::memory_order_acquire)
-                || !aiEngine.isEnabled();
+                || !analysisNeeded();
             const bool discontinuity =
                 aiFrontEndDiscontinuityPending.exchange(false, std::memory_order_acq_rel);
 
@@ -665,6 +679,12 @@ void AIEqualizerAudioProcessor::aiAnalysisThreadFunc()
                                     f.rawDb.data(), static_cast<int>(f.rawDb.size()), v2sr, 64);
                                 aiEngine.pushMotoreV2Frame(mel.data());
 #endif
+                                // T5.1: every frame feeds the tonal context, not
+                                // only the ones the detector cadence selects -
+                                // the statistics need the whole stream. Welford
+                                // over ~122 bands, no allocation.
+                                aiSpectralContextAccumulator.pushFrame(f.bandDbFused, f.lfValid);
+
                                 const int interval = aiAnalysisIntervalSamples;
                                 if (interval <= 0)
                                     return;
@@ -699,6 +719,12 @@ void AIEqualizerAudioProcessor::aiAnalysisThreadFunc()
                             });
                     }
                     aiFrontEndDrainBusy.store(false, std::memory_order_seq_cst);
+
+                    // T5.1: publish on the detection cadence, and deliberately
+                    // after the busy flag is cleared - snapshot() allocates, and
+                    // prepareToPlay waits on that flag.
+                    if (selectedCount > 0)
+                        spectralContextMailbox.publish(aiSpectralContextAccumulator.snapshot());
 
                     aiFrontEndFrames.store(aiFrontEnd.framesProcessed(), std::memory_order_relaxed);
                     aiFrontEndMeanNs.store(aiFrontEnd.meanFrameNs(), std::memory_order_relaxed);
@@ -1251,6 +1277,16 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     postEqSpectrumFifo.prepare(32768);
     aiFrontEndFifo.prepare(32768);   // dedicated SPSC: audio producer, AI consumer
     aiFrontEnd.prepare(sampleRate);
+    {
+        // T5.1: the accumulator is bound to the PFE's OWN band geometry rather
+        // than a duplicated table, so the two can never drift apart.
+        std::vector<float> contextCentres;
+        contextCentres.reserve(static_cast<size_t>(aiFrontEnd.numBands()));
+        for (int b = 0; b < aiFrontEnd.numBands(); ++b)
+            contextCentres.push_back(aiFrontEnd.bandCenterHz(b));
+        aiSpectralContextAccumulator.prepare(contextCentres);
+        spectralContextMailbox.reset();
+    }
     aiFrontEndScratch.assign(4096, 0.0f);
 #if defined(AIEQ_ENABLE_MOTORE_V2) && AIEQ_ENABLE_MOTORE_V2
     {
@@ -2120,7 +2156,8 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     // Never feed the production AI frontend across offline/disabled gaps. The
     // discontinuity marker is sticky until the worker has discarded queued
     // history and reset overlap, so even a very short gap cannot be missed.
-    if (aiEnabledLocal && !isOffline)
+    setAnalysisConsumer(AnalysisConsumer::Assist, aiEnabledLocal);
+    if (analysisNeeded() && !isOffline)
     {
         const int accepted = aiFrontEndFifo.pushStereoMixAllOrNothing(buffer);
         if (accepted != blockSamples)

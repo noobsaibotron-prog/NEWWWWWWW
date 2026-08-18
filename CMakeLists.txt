@@ -1353,6 +1353,8 @@ if(HAVE_JUCE)
         Source/Tests/AIAnalysisSerializationTest.cpp
         Source/Tests/AIFrontEndWiringTest.cpp
         Source/Tests/SemanticIntegrationHarnessTest.cpp
+        Source/Tests/SpectralContextProductionWiringTest.cpp
+        Source/Tests/SpectralContextAlwaysOnCostTest.cpp
         Source/Tests/AIHeadlessDetectionParityTest.cpp
         Source/Tests/AIHeadlessPositiveBackendWitnessTest.cpp
         Source/Tests/AICaptureDisabledWitnessTest.cpp

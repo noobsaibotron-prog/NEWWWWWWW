@@ -56,6 +56,7 @@
 #include "AI/AIEngine.h"
 #include "AI/PerceptualFrontEnd.h"
 #include "AI/ReferenceMatcher.h"
+#include "AI/SpectralContext.h"
 #include "AI/UserLearning.h"
 #include "AI/SemanticEQEngine.h"
 #include "AI/DynamicCorrectionEngine.h"
@@ -168,6 +169,49 @@ public:
     [[nodiscard]] UserLearningSystem& getUserLearning() noexcept { return userLearning; }
     [[nodiscard]] const UserLearningSystem& getUserLearning() const noexcept { return userLearning; }
     
+    /** T5.1 - message thread. The freshest deterministic tonal context the AI
+        worker has published, or nullopt if none is available yet.
+
+        Deliberately a SNAPSHOT and not a live reference: planning must freeze
+        what the source looked like when the user pressed PLAN, and the worker
+        must never reach into analysis state that keeps moving underneath it. */
+    [[nodiscard]] std::optional<AIEQPerceptual::SpectralContext> getSpectralContextSnapshot() noexcept;
+
+    /** T5.2 - who currently needs the analysis front-end running.
+    
+        Historically the front-end was fed only while Ember Assist was enabled,
+        which silently made every other consumer depend on a switch that has
+        nothing to do with them: with Assist off, Semantic would go
+        source-blind and Match later would too. Analysis is infrastructure, not
+        a feature of Assist, so it runs while ANY consumer needs it and the
+        consumers stay independent of each other. */
+    enum class AnalysisConsumer : std::uint32_t
+    {
+        Assist   = 1u << 0,
+        Semantic = 1u << 1,
+        Match    = 1u << 2
+    };
+
+    void setAnalysisConsumer(AnalysisConsumer consumer, bool needed) noexcept
+    {
+        const auto bit = static_cast<std::uint32_t>(consumer);
+        if (needed)
+            analysisConsumerMask.fetch_or(bit, std::memory_order_acq_rel);
+        else
+            analysisConsumerMask.fetch_and(~bit, std::memory_order_acq_rel);
+    }
+
+    [[nodiscard]] bool isAnalysisConsumerActive(AnalysisConsumer consumer) const noexcept
+    {
+        return (analysisConsumerMask.load(std::memory_order_acquire)
+                & static_cast<std::uint32_t>(consumer)) != 0u;
+    }
+
+    [[nodiscard]] bool analysisNeeded() const noexcept
+    {
+        return analysisConsumerMask.load(std::memory_order_acquire) != 0u;
+    }
+
     [[nodiscard]] SemanticEQEngine& getSemanticEngine() noexcept { return semanticEngine; }
     [[nodiscard]] const SemanticEQEngine& getSemanticEngine() const noexcept { return semanticEngine; }
     
@@ -890,6 +934,20 @@ private:
     // The audio producer does not feed aiFrontEndFifo in this mode and the AI
     // worker suppresses forced re-analysis until realtime resumes.
     std::atomic<bool> aiOfflineRenderActive { false };
+
+    // T5.1 - deterministic tonal context, fanned out from the SAME front-end
+    // frame the detector already consumes. No second FFT, and the push is a
+    // Welford update over ~122 bands with no allocation, so it can sit inside
+    // the drain without re-introducing the cost T3.2 took out of it.
+    // The accumulator is AI-thread-owned; the message thread only ever sees an
+    // immutable published snapshot, never the live statistics.
+    // Semantic is registered from construction: its planning must be able to
+    // describe the source whether or not the user has ever switched Assist on.
+    std::atomic<std::uint32_t> analysisConsumerMask {
+        static_cast<std::uint32_t>(AnalysisConsumer::Semantic) };
+
+    AIEQPerceptual::SpectralContextAccumulator aiSpectralContextAccumulator;
+    LatestValueMailbox<AIEQPerceptual::SpectralContext, 4> spectralContextMailbox;
 
     // Sticky stream-integrity marker. The audio producer sets this whenever it
     // intentionally skips AI samples (offline/disabled) or the SPSC FIFO drops
