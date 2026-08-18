@@ -130,6 +130,8 @@ public:
             beginTest(juce::String("Dynamic mode ") + dm.name
                       + ": the drawn curve moves in every phase mode");
 
+            const float reference = curveExcursionDb(0, dm.index);   // Zero Latency
+
             for (const auto& pm : phaseModes)
             {
                 const float exc = curveExcursionDb(pm.index, dm.index);
@@ -142,6 +144,16 @@ public:
                        + juce::String(exc, 2) + " dB while the audio swung across the "
                        "threshold. The display is reading an instance that is not "
                        "processing.");
+
+                // Movement alone is not enough. A curve that moves by half is still
+                // lying about how much the band is doing, and that is exactly what
+                // the oversampled instance produced while its coefficients were
+                // evaluated at the host rate.
+                expectWithinAbsoluteError(exc, reference, 1.0f,
+                       juce::String("The dynamic curve moves in ") + pm.name
+                       + " but by a different amount than Zero Latency ("
+                       + juce::String(exc, 2) + " vs " + juce::String(reference, 2)
+                       + " dB) on the same audio and the same settings.");
             }
         }
 

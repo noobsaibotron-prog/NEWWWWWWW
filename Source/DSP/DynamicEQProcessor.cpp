@@ -1284,9 +1284,26 @@ void DynamicEQProcessor::evaluateDynamicReplacementDeltaDbForFrequencyArray(
     if (frequenciesHz == nullptr || deltaDbOut == nullptr || numPoints == 0)
         return;
 
-    if (sampleRate <= 0.0)
-        sampleRate = currentSampleRate.load(std::memory_order_relaxed);
-    if (sampleRate <= 0.0)
+    // The coefficients compared below are built by makeEQCoefficients(), which
+    // designs them against THIS instance's currentSampleRate. Evaluating them at
+    // any other rate reads a filter that was never built: the same bell comes out
+    // shallower, because its normalised centre frequency has moved.
+    //
+    // That is not hypothetical. The Natural Phase instance runs on the
+    // oversampled buffer at 2x or 4x the host rate, and the display asked for the
+    // response at the host rate. Measured on a 500 Hz band with 8:1 compression,
+    // the drawn curve swung 4.93 dB where the underlying gain swung 10.40 —
+    // identical to the other modes, which happen to agree with the host rate and
+    // so never showed it.
+    //
+    // The response of a filter is a physical fact, independent of the rate it is
+    // computed at, PROVIDED design and evaluation agree. So the instance's own
+    // rate wins here, and the argument is kept only as a fallback for an
+    // unprepared processor.
+    const double coeffSampleRate = currentSampleRate.load(std::memory_order_relaxed);
+    if (coeffSampleRate > 0.0)
+        sampleRate = coeffSampleRate;
+    else if (sampleRate <= 0.0)
         sampleRate = 44100.0;
 
     struct DynamicBandSnapshot
