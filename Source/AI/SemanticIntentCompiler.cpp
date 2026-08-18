@@ -17,6 +17,9 @@ struct Alias
     SemanticDimension dimension;
     int polarity; // +1 means the phrase names the positive dimension direction.
     float defaultAmount;
+    // Defaulted so only the phrases that genuinely name a sub-band need a row
+    // change. "brighter" is a whole-dimension request; "more air" is not.
+    SemanticSpectralFocus focus = SemanticSpectralFocus::General;
 };
 
 // Long phrases deliberately precede their shorter relatives. Word-boundary
@@ -30,11 +33,11 @@ constexpr std::array<Alias, 87> kAliases {{
 
     { "brighter",      SemanticDimension::Brightness,  +1, 0.68f },
     { "brightness",    SemanticDimension::Brightness,  +1, 0.64f },
-    { "brilliance",    SemanticDimension::Brightness,  +1, 0.62f },
-    { "sparkle",       SemanticDimension::Brightness,  +1, 0.60f },
+    { "brilliance",    SemanticDimension::Brightness,  +1, 0.62f , SemanticSpectralFocus::Brilliance},
+    { "sparkle",       SemanticDimension::Brightness,  +1, 0.60f , SemanticSpectralFocus::Brilliance},
     { "bright",        SemanticDimension::Brightness,  +1, 0.64f },
-    { "airy",          SemanticDimension::Brightness,  +1, 0.62f },
-    { "air",           SemanticDimension::Brightness,  +1, 0.62f },
+    { "airy",          SemanticDimension::Brightness,  +1, 0.62f , SemanticSpectralFocus::Air},
+    { "air",           SemanticDimension::Brightness,  +1, 0.62f , SemanticSpectralFocus::Air},
     { "open",          SemanticDimension::Brightness,  +1, 0.58f },
     { "darker",        SemanticDimension::Brightness,  -1, 0.68f },
     { "darkness",      SemanticDimension::Brightness,  -1, 0.64f },
@@ -42,7 +45,7 @@ constexpr std::array<Alias, 87> kAliases {{
     { "dark",          SemanticDimension::Brightness,  -1, 0.64f },
     { "brillante",     SemanticDimension::Brightness,  +1, 0.64f },
     { "brillantezza",  SemanticDimension::Brightness,  +1, 0.64f },
-    { "aria",          SemanticDimension::Brightness,  +1, 0.62f },
+    { "aria",          SemanticDimension::Brightness,  +1, 0.62f , SemanticSpectralFocus::Air},
     { "scuro",         SemanticDimension::Brightness,  -1, 0.64f },
 
     { "warmer",        SemanticDimension::Warmth,      +1, 0.68f },
@@ -528,6 +531,7 @@ SemanticIntent SemanticIntentCompiler::compile(std::string_view input) const
 
         SemanticGoal goal;
         goal.dimension = term.alias->dimension;
+        goal.focus = term.alias->focus;
         goal.amount = std::clamp(term.alias->defaultAmount
                                  * static_cast<float>(term.alias->polarity)
                                  * static_cast<float>(modifier)

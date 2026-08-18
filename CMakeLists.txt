@@ -612,6 +612,10 @@ set(PLUGIN_SOURCES
     Source/AI/SemanticIntentCompiler.cpp
     Source/AI/SemanticIntentCompiler.h
     Source/AI/SemanticPlan.h
+    Source/AI/SemanticContextualizer.cpp
+    Source/AI/SemanticContextualizer.h
+    Source/AI/SpectralContext.cpp
+    Source/AI/SpectralContext.h
     Source/AI/SemanticPlanner.cpp
     Source/AI/SemanticPlanner.h
     Source/AI/SemanticPlanningService.cpp
@@ -1213,6 +1217,8 @@ if(HAVE_JUCE)
         Source/AI/ReferenceMatcher.cpp
         Source/AI/SemanticEQEngine.cpp
         Source/AI/SemanticIntentCompiler.cpp
+        Source/AI/SemanticContextualizer.cpp
+        Source/AI/SpectralContext.cpp
         Source/AI/SemanticPlanner.cpp
         Source/AI/SemanticPlanningService.cpp
         Source/AI/SemanticTargetBuilder.cpp
@@ -1239,6 +1245,9 @@ if(HAVE_JUCE)
         Source/Tests/SparseParametricFitterTest.cpp
         Source/Tests/SparseParametricFitterPerformanceTest.cpp
         Source/Tests/SemanticIntentCompilerTest.cpp
+        Source/Tests/SpectralContextTest.cpp
+        Source/Tests/SpectralContextAdversarialTest.cpp
+        Source/Tests/SemanticContextualizerTest.cpp
         Source/Tests/SemanticSlotPreflightTest.cpp
         Source/Tests/RealDataSibilanceTest.cpp
         Source/Tests/ManualClipProbeTest.cpp

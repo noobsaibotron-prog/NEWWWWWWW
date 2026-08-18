@@ -34,12 +34,49 @@ float lowShelfShape(float frequencyHz, float pivotHz, float widthOctaves) noexce
     return 1.0f - highShelfShape(frequencyHz, pivotHz, widthOctaves);
 }
 
-float dimensionShapeImpl(SemanticDimension dimension, float frequencyHz) noexcept
+/**
+ * Where a brightness request should put its energy.
+ *
+ * Until T4.2 every brightness goal produced the same 6 kHz shelf, so "brighter",
+ * "more brilliance" and "more air" differed only in HOW MUCH was applied, never
+ * in WHERE. The contextualizer had already learned to tell them apart; the
+ * curve had not, which meant an air request could still be answered with a
+ * boost starting at 4-6 kHz.
+ *
+ * General keeps the original shelf exactly, so existing behaviour is unchanged
+ * for whole-dimension requests. The named facets are placed inside the
+ * perceptual regions they refer to: Presence 2-5 kHz, Brilliance 5-10 kHz, Air
+ * 10 kHz and up. Air stays a shelf because air genuinely extends to the top;
+ * Brilliance is a lobe because it has air above it.
+ */
+float brightnessShapeDb(SemanticSpectralFocus focus, float frequencyHz) noexcept
+{
+    switch (focus)
+    {
+        case SemanticSpectralFocus::Presence:
+            return 2.35f * gaussianOctaves(frequencyHz, 3200.0f, 0.82f);
+        case SemanticSpectralFocus::Brilliance:
+            return 2.50f * gaussianOctaves(frequencyHz, 7000.0f, 0.75f);
+        case SemanticSpectralFocus::Air:
+            return 2.50f * highShelfShape(frequencyHz, 11000.0f, 0.55f);
+        case SemanticSpectralFocus::General:
+        case SemanticSpectralFocus::LowMid:
+        case SemanticSpectralFocus::Bass:
+        case SemanticSpectralFocus::Sub:
+            break;
+    }
+    return 2.50f * highShelfShape(frequencyHz, 6000.0f, 0.70f);
+}
+
+float dimensionShapeImpl(SemanticDimension dimension, float frequencyHz,
+                         SemanticSpectralFocus focus) noexcept
 {
     switch (dimension)
     {
         case SemanticDimension::Brightness:
-            return 2.50f * highShelfShape(frequencyHz, 6000.0f, 0.70f);
+            // The only dimension with facets today. The others ignore focus
+            // rather than guess at a geometry nothing has asked for.
+            return brightnessShapeDb(focus, frequencyHz);
 
         case SemanticDimension::Warmth:
             return 2.50f * gaussianOctaves(frequencyHz, 190.0f, 0.85f);
@@ -189,9 +226,15 @@ const ResponseBoundRegion* limitingBoundAtFrequency(
 } // namespace
 
 float SemanticTargetBuilder::evaluateDimensionShapeDb(
+    SemanticDimension dimension, SemanticSpectralFocus focus, float frequencyHz) noexcept
+{
+    return dimensionShapeImpl(dimension, frequencyHz, focus);
+}
+
+float SemanticTargetBuilder::evaluateDimensionShapeDb(
     SemanticDimension dimension, float frequencyHz) noexcept
 {
-    return dimensionShapeImpl(dimension, frequencyHz);
+    return dimensionShapeImpl(dimension, frequencyHz, SemanticSpectralFocus::General);
 }
 
 const char* SemanticTargetBuilder::sourceIdForDimension(
@@ -270,7 +313,7 @@ PerceptualTarget SemanticTargetBuilder::build(const SemanticIntent& intent,
         for (const auto& goal : intent.goals)
         {
             const float contributionDb = goal.amount
-                * evaluateDimensionShapeDb(goal.dimension, frequency);
+                * evaluateDimensionShapeDb(goal.dimension, goal.focus, frequency);
             rawDeltaDb += contributionDb;
             point.confidence = std::min(point.confidence, goal.confidence);
 

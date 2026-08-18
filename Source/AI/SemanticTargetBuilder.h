@@ -30,6 +30,10 @@ public:
 
     // Signed dB shape of a +1.0 canonical semantic direction before global
     // safety clamping. Exposed for explanation/provenance, not UI control.
+    /** Facet-aware shape. General reproduces the whole-dimension curve. */
+    [[nodiscard]] static float evaluateDimensionShapeDb(
+        SemanticDimension dimension, SemanticSpectralFocus focus, float frequencyHz) noexcept;
+
     [[nodiscard]] static float evaluateDimensionShapeDb(
         SemanticDimension dimension, float frequencyHz) noexcept;
 

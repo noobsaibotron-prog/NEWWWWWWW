@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 #include <algorithm>
 #include <cmath>
 #include <string>
@@ -48,12 +50,38 @@ enum class SemanticConstraintKind : int
     Preserve
 };
 
+/**
+ * Which part of a dimension the phrase actually named.
+ *
+ * "brighter" and "more air" are both Brightness requests, but they are not the
+ * same request: a source can be loud at 3-7 kHz and genuinely short of 10 kHz+,
+ * and treating the second as the first damps exactly the boost the user asked
+ * for. A facet keeps that distinction without multiplying the artistic
+ * dimensions, which would destabilise the compiler/builder contracts that are
+ * already tested.
+ */
+enum class SemanticSpectralFocus : std::uint8_t
+{
+    General = 0,
+    Air,
+    Brilliance,
+    Presence,
+    LowMid,
+    Bass,
+    Sub
+};
+
 struct SemanticGoal
 {
     SemanticDimension dimension = SemanticDimension::Brightness;
     float amount = 0.0f;      // signed [-1, 1]
     float confidence = 1.0f;  // [0, 1]
     std::string sourcePhrase;
+
+    // Last on purpose: existing aggregate initialisers stay valid and keep
+    // defaulting to General, so adding the facet cannot silently reorder a
+    // call site.
+    SemanticSpectralFocus focus = SemanticSpectralFocus::General;
 };
 
 struct SemanticConstraint
