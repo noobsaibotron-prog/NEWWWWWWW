@@ -160,11 +160,29 @@ public:
             report("sparse + dynamic + silent gaps", sparsePhrased);
 
             logMessage("  ---");
-            logMessage("  Real vocal measured by the L0 tool, for comparison:");
-            logMessage("    0 Lead Vocal.wav                 conf=0.185  level=0.642 coverage=0.709 stability=0.405");
+            logMessage("  REAL MATERIAL measured by the Level 0 tool (9 sources, ordinary production");
+            logMessage("  material, not prepared for this test). Audio is not committed; these are");
+            logMessage("  the recorded measurements. * marks the binding (smallest) term.");
+            logMessage("                        conf    level   coverage stability   gated?");
+            logMessage("    lead vocal A       0.185    0.642    0.709    0.405*     GATED");
+            logMessage("    lead vocal B       0.165    0.527    0.682    0.459*     GATED");
+            logMessage("    bass               0.299    0.877    0.418*   0.815      GATED");
+            logMessage("    pad                0.157    0.316*   0.618    0.805      GATED");
+            logMessage("    hi-hat             0.202    0.283*   1.000    0.715      GATED");
+            logMessage("    shaker             0.306    0.404*   1.000    0.759      GATED");
+            logMessage("    vocal (other song) 0.497    0.812    0.982    0.624*     passes");
+            logMessage("    kick               0.645    0.927    1.000    0.696*     passes");
+            logMessage("    full mix           0.641    0.947    1.000    0.677*     passes");
+            logMessage("  READ: 6 of 9 real sources have source awareness switched off. Each of the");
+            logMessage("  three terms is the binding constraint on some real source - level on 3,");
+            logMessage("  stability on 2, coverage on 1 - so no single-term repair rescues the set:");
+            logMessage("  perfect stability still leaves the bass at 0.367, and perfect coverage");
+            logMessage("  still leaves lead vocal A at 0.260. Both remain under the 0.45 gate.");
             logMessage("  READ: the attenuated-gap row scores ABOVE the 0.45 gate and therefore does");
-            logMessage("  NOT reproduce the problem. Silence between phrases - not sparsity, and not");
-            logMessage("  per-band movement - is what drives the level and coverage terms down.");
+            logMessage("  NOT reproduce the problem. Only true silence between phrases does, and it");
+            logMessage("  moves level and STABILITY - coverage does not fall there, it rises slightly");
+            logMessage("  (0.891 -> 0.909). The real vocal's coverage of 0.709 therefore comes from");
+            logMessage("  something this proxy does not yet model, and must not be attributed to pauses.");
 
             // Assertions only where the direction is not a judgement call.
             expect(broadStatic.confidence > sparsePhrased.confidence,
