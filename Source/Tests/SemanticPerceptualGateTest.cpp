@@ -386,19 +386,36 @@ public:
             const auto inputHealth = measure(source);
             const bool inputClipped = inputHealth.peakDb >= -0.05f;
 
+            const SemanticContextualizer contextualizer;
+
             for (const auto& phrase : kCanonicalPhrases)
             {
                 const auto plan = planner.plan(phrase, sr, 1.0f, context);
 
                 juce::String dimension = "-", focus = "-", goalStatus = "-";
                 float contextScale = 1.0f;
+                float regionalConfidence = -1.0f;
+                float originalAmount = 0.0f, adjustedAmount = 0.0f, axisPosition = 0.0f;
                 if (!plan.intent.goals.empty())
                 {
                     const auto& g = plan.intent.goals.front();
                     dimension = semanticDimensionName(g.dimension);
                     focus = juce::String((int) g.focus);
+                    // Which region this goal actually depends on. Reported rather
+                    // than inferred from the phrase, because the mapping is the
+                    // thing under test: "more air" must consult Air, not the
+                    // global figure that says every real source is analysable.
+                    regionalConfidence = contextualizer.evidenceConfidence(
+                        g.dimension, g.focus, context);
                     for (const auto& adj : plan.contextAdjustments)
-                        if (adj.dimension == g.dimension) { contextScale = adj.scale; break; }
+                        if (adj.dimension == g.dimension)
+                        {
+                            contextScale = adj.scale;
+                            originalAmount = adj.originalAmount;
+                            adjustedAmount = adj.adjustedAmount;
+                            axisPosition = adj.axisPosition;
+                            break;
+                        }
                 }
                 if (!plan.goalOutcomes.empty())
                 {
@@ -446,6 +463,33 @@ public:
                            + " outPeak=" + juce::String(outputHealth.peakDb, 1) + "dB"
                            + (outputNewClipping ? "  ** NEW CLIPPING **" : "")
                            + (outputHealth.hasNaNOrInf ? "  ** NaN/Inf **" : ""));
+
+                // Per-case detail. Level 1 is a listening judgement, and a
+                // listener who hears something odd needs to be able to see what
+                // the planner actually did without re-running anything.
+                logMessage("        confidence: global=" + juce::String(context.confidence, 2)
+                           + "  relevant-region=" + juce::String(regionalConfidence, 2)
+                           + "  axisPosition=" + juce::String(axisPosition, 2)
+                           + "   amount " + juce::String(originalAmount, 3)
+                           + " -> " + juce::String(adjustedAmount, 3));
+                {
+                    juce::String bands;
+                    for (const auto& b : plan.fit.bands)
+                    {
+                        static const char* kTypeNames[] = { "LowShelf", "Peak", "HighShelf" };
+                        const int ti = juce::jlimit(0, 2, static_cast<int>(b.type));
+                        bands += juce::String(kTypeNames[ti]) + " "
+                               + juce::String(b.frequencyHz, 0) + "Hz "
+                               + (b.gainDb >= 0.0f ? "+" : "") + juce::String(b.gainDb, 2) + "dB "
+                               + "Q" + juce::String(b.q, 2) + "   ";
+                    }
+                    logMessage("        EQ: " + bands);
+                }
+                if (!plan.goalOutcomes.empty()
+                    && plan.goalOutcomes.front().status == GoalOutcomeStatus::ConstraintLimited)
+                    logMessage("        constraint: limited by '"
+                               + juce::String(plan.goalOutcomes.front().limitingPhrase)
+                               + "'  achieved=" + juce::String(plan.goalOutcomes.front().achievedFraction, 2));
 
                 expect(!outputHealth.hasNaNOrInf,
                        "NaN/Inf in rendered output: " + pairName);
