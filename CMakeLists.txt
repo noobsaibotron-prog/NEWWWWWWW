@@ -1346,6 +1346,7 @@ if(HAVE_JUCE)
         Source/Tests/SemanticPerceptualGateTest.cpp
         Source/Tests/SpectralConfidenceCandidateProbe.cpp
         Source/Tests/GoalSpecificContextProbe.cpp
+        Source/Tests/RegionalEvidenceProbe.cpp
         Source/Tests/PerceptualSimulationTest.cpp
         Source/Tests/AIAccuracyTest.cpp
         Source/Tests/AIEngineIntegrationAuditTest.cpp
