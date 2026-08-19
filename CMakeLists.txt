@@ -1345,6 +1345,7 @@ if(HAVE_JUCE)
         Source/Tests/RB4OfflineRenderTest.cpp
         Source/Tests/SemanticPerceptualGateTest.cpp
         Source/Tests/SpectralConfidenceCandidateProbe.cpp
+        Source/Tests/GoalSpecificContextProbe.cpp
         Source/Tests/PerceptualSimulationTest.cpp
         Source/Tests/AIAccuracyTest.cpp
         Source/Tests/AIEngineIntegrationAuditTest.cpp
