@@ -216,31 +216,57 @@ void PerceptualFrontEnd::pushMono(const float* samples, int numSamples,
     }
 
     // P2C3: the LF (8192) path consumes the same mono stream in parallel.
-    pushLfMono(samples, numSamples);
+    //
+    // Both paths are advanced in slices of at most kHopSize so that the result
+    // does not depend on how the caller chopped the audio. Feeding the whole
+    // block to the LF path first - which is what this did - ran that path to
+    // the END of the block before any main frame was produced, so every main
+    // frame fused the LF spectrum of the block's last LF frame. With a whole
+    // file in one call, every band below kLfCutoverHz became the file's final
+    // LF frame repeated: a kick drum whose sub band never moved.
+    //
+    // kHopSize is a safe slice length rather than an arbitrary one. Main frames
+    // fall due at kFftSize + n*kHopSize and LF frames at kLfFftSize +
+    // m*kLfHopSize, and all four constants are multiples of kHopSize, so every
+    // frame boundary lands on a slice boundary. Two frames can therefore never
+    // fall due at different positions inside one slice, and the fixed
+    // LF-before-main order within a slice is the true temporal order.
+    static_assert(kFftSize % kHopSize == 0 && kLfFftSize % kHopSize == 0
+                  && kLfHopSize % kHopSize == 0,
+                  "slice length must divide every frame boundary, or LF and main "
+                  "frames can fall due at different positions within one slice "
+                  "and their order becomes caller-dependent again");
 
-    int consumed = 0;
-    while (consumed < numSamples)
+    for (int offset = 0; offset < numSamples; )
     {
-        const int space = static_cast<int>(pending.size()) - pendingCount;
-        const int take  = juce::jmin(space, numSamples - consumed);
-        if (take <= 0)
-        {
-            // Defensive: accumulation buffer full and no frame produced — cannot
-            // happen with the sizes set in prepare(), but never spin.
-            jassertfalse;
-            return;
-        }
-        std::copy(samples + consumed, samples + consumed + take,
-                  pending.begin() + pendingCount);
-        pendingCount += take;
-        consumed += take;
+        const int slice = juce::jmin(kHopSize, numSamples - offset);
+        pushLfMono(samples + offset, slice);
 
-        // Produce as many frames as the accumulated samples allow.
-        while ((!primed && pendingCount >= kFftSize)
-               || (primed && pendingCount >= kHopSize))
+        int consumed = 0;
+        while (consumed < slice)
         {
-            processOneFrame(onFrame);
+            const int space = static_cast<int>(pending.size()) - pendingCount;
+            const int take  = juce::jmin(space, slice - consumed);
+            if (take <= 0)
+            {
+                // Defensive: accumulation buffer full and no frame produced — cannot
+                // happen with the sizes set in prepare(), but never spin.
+                jassertfalse;
+                return;
+            }
+            std::copy(samples + offset + consumed, samples + offset + consumed + take,
+                      pending.begin() + pendingCount);
+            pendingCount += take;
+            consumed += take;
+
+            // Produce as many frames as the accumulated samples allow.
+            while ((!primed && pendingCount >= kFftSize)
+                   || (primed && pendingCount >= kHopSize))
+            {
+                processOneFrame(onFrame);
+            }
         }
+        offset += slice;
     }
 }
 
