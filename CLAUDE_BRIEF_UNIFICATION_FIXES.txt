@@ -1,0 +1,172 @@
+================================================================================
+BRIEF PER SESSIONE CLAUDE — CHIUSURA DEI QUATTRO PUNTI DEBOLI DELL'UNIFICAZIONE
+Data: 2026-08-13
+Ramo: feature/ember-core-unified
+Worktree: /Users/marco/Desktop/NEWWWWWWW/.claude/worktrees/ember-core-unified
+HEAD: 7114524b  test(rt): assert the correction mailbox stays live, not merely finite
+================================================================================
+
+Codex sta facendo in parallelo il counter-exam avversariale dei cinque commit
+(punti A-E: merge, test di liveness, protocollo, perimetro, Gate 5). Tu NON
+rifai quel lavoro. Tu chiudi i quattro punti deboli che Claude ha dichiarato da
+solo e che sono ancora aperti.
+
+Checkpoint di ripristino (non toccarli):
+  checkpoint/pre-unification-unified-70ff8007-2026-08-12
+  checkpoint/pre-unification-motore-v3-6cb02fbe-2026-08-12
+
+--------------------------------------------------------------------------------
+STATO VERIFICATO (2026-08-13, sola lettura — RIVERIFICALO, non fidarti)
+--------------------------------------------------------------------------------
+
+S1. .gitignore contiene: build/ build-mac/ build_vs2022/ build_nmake/
+    build_torch/ build_backup*/ build-aitest/ build-san/ build-tsan/
+    NON contiene /build*/ . build-verify/ non e' coperta da nessuna riga.
+
+S2. build-release/ E' TRACCIATO: 13 file, fra cui
+      build-release/.ninja_deps    (~2,5 MB)
+      build-release/.ninja_log
+      build-release/build.ninja    (~659 KB)
+      build-release/JUCE/JUCEConfig.cmake  (+ altri file CMake di JUCE)
+
+S3. Le due soglie arbitrarie sono in
+      Source/Tests/DynamicCorrectionEngineTest.cpp:347  kMaxBlocks = 200000
+      Source/Tests/DynamicCorrectionEngineTest.cpp:373  expect(blocks < kMaxBlocks, ...)
+      Source/Tests/DynamicCorrectionEngineTest.cpp:378  "...blocked for over 50 ms..."
+
+S4. TSan: eseguito una volta a mano, non e' in CI. pluginval e auval: mai
+    eseguiti su questo ramo. docs/RELEASE_GATE.md li dichiara necessari.
+
+--------------------------------------------------------------------------------
+LAVORO 1 — IL PATTERN .gitignore (il piu' piccolo, il piu' insidioso)
+--------------------------------------------------------------------------------
+
+Storia: e' stato proposto "build*/", poi scoperto sbagliato perche' in gitignore
+un pattern senza slash iniziale matcha a QUALSIASI profondita' e avrebbe
+ingoiato ThirdParty/TFLite/.../builders/ (146 file tracciati). La correzione
+proposta e' "/build*/" ancorato alla root.
+
+NON dare per buona la correzione. Il compito e' PROVARLA:
+
+  a) enumera i path tracciati che il pattern candidato matcherebbe, con
+     git check-ignore -v --no-index, o con git ls-files | git check-ignore
+     --stdin -v ; l'insieme atteso e' VUOTO
+  b) enumera le directory non tracciate che DEVE catturare: build-verify/,
+     e qualunque altra buildXXX/ presente in root
+  c) cerca il terzo caso che nessuno ha visto: esiste una directory in root il
+     cui nome inizia per "build" e che DEVE restare tracciata? (build-release/
+     lo e' oggi — vedi LAVORO 3: se resta tracciata, git la ignora comunque
+     perche' i file gia' tracciati non vengono re-ignorati, ma il pattern la
+     nasconderebbe a un clone fresco dopo un eventuale git rm --cached)
+  d) prova il pattern su un clone temporaneo pulito nello scratchpad, non solo
+     ragionandoci sopra
+
+Gate falsificabile: `git status --porcelain` non deve mostrare NESSUN file
+tracciato come cancellato dopo l'aggiunta, e `git ls-files | wc -l` deve essere
+identico prima e dopo.
+
+--------------------------------------------------------------------------------
+LAVORO 2 — LE DUE SOGLIE DEL TEST DI LIVENESS
+--------------------------------------------------------------------------------
+
+Il test in 7114524b afferma che la mailbox delle correzioni resta viva, non
+solo finita. Claude ha scelto kMaxBlocks = 200000 e "un publish sotto 50 ms" a
+mano. Entrambe sono arbitrarie e sono soglie WALL-CLOCK o dipendenti dal carico:
+su una macchina carica o in CI il test puo' diventare flaky.
+
+Compito:
+  a) MISURA la flakiness invece di stimarla: esegui il test almeno 50 volte di
+     fila e riporta la distribuzione di `blocks` e del tempo di publish massimo.
+     Poi rifallo sotto carico artificiale (es. N processi che occupano i core)
+     e riporta come cambia.
+  b) Se e' flaky, sostituisci il criterio. Direzione preferita: un invariante
+     che non dipenda dal tempo di parete — per esempio "il reader osserva
+     almeno K snapshot distinti su N publish", oppure un contatore di slot
+     rilasciati, cioe' una proprieta' del protocollo invece che una latenza.
+     Il tempo di parete misura la macchina, non il codice.
+  c) Se decidi di tenere una soglia temporale, deve essere derivata da una
+     misura dichiarata (es. p99 osservato x fattore), non scelta a occhio, e il
+     margine va scritto nel commit message.
+  d) Mantieni la capacita' di uccisione: le due mutazioni che il test uccide
+     oggi (fra cui la rimozione del rilascio dello slot precedente in
+     acquireLatestSnapshot) devono continuare a essere uccise dal criterio
+     nuovo. Riproducile e dimostralo.
+
+Gate falsificabile: 50 esecuzioni consecutive verdi a macchina scarica E sotto
+carico; entrambe le mutazioni ancora uccise.
+
+--------------------------------------------------------------------------------
+LAVORO 3 — build-release/ TRACCIATO (decisione, non solo esecuzione)
+--------------------------------------------------------------------------------
+
+13 file, ~3,7 MB di artefatti di build sono gia' nella storia del repository.
+`.ninja_deps` e `.ninja_log` sono output di build macchina-specifici: cambiano
+a ogni compilazione, sporcano ogni diff, e non hanno alcun valore per un altro
+sviluppatore.
+
+Compito: NON decidere da solo. Prepara a Marco una raccomandazione motivata con
+i rischi, distinguendo tre voci separate:
+  (i)   aggiungere il pattern al .gitignore — effetto solo sul futuro
+  (ii)  cancellare build-verify/ (~811 MB, non tracciata) — nessun effetto su git
+  (iii) `git rm --cached` su build-release/ — cambia cosa il repo considera
+        parte del progetto, e va capito PRIMA se qualcosa (CI, script, CMake,
+        un altro worktree) referenzia quei file. Cercalo, non assumerlo.
+
+Verifica obbligatoria prima di raccomandare (iii): grep in .github/, scripts/,
+CMakeLists.txt e nei file di configurazione per riferimenti a build-release.
+
+Nessuna esecuzione di (iii) senza ok esplicito di Marco.
+
+--------------------------------------------------------------------------------
+LAVORO 4 — I CANCELLI CHE NON SONO CANCELLI
+--------------------------------------------------------------------------------
+
+Oggi la RT-safety poggia su una lettura piu' un run TSan una tantum, e il build
+di verifica e' stato nativo arm64 con Ninja, non Xcode universale come la CI.
+Nessun pluginval, nessun auval. docs/RELEASE_GATE.md li dichiara necessari.
+
+Compito, in ordine:
+  a) LEGGI docs/RELEASE_GATE.md e trascrivi l'elenco esatto dei cancelli che
+     dichiara, con file:riga. Non lavorare a memoria.
+  b) Esegui i cancelli mancanti su QUESTO ramo: build Xcode universale,
+     pluginval con gli stessi flag usati storicamente (cerca nel repo il seed e
+     lo strictness level gia' in uso — non inventarli), auval.
+  c) TSan: portalo da osservazione a cancello. O entra in CI, o esiste un target
+     ctest che lo esegue e che qualcuno puo' invocare. Se lo metti in CI,
+     dichiara il costo in tempo: un TSan che raddoppia la CI e' una decisione,
+     non un dettaglio.
+  d) Riporta gli output LETTERALI. "Dovrebbe passare" non e' un risultato.
+
+Se uno dei cancelli fallisce, FERMATI e riporta: un fallimento qui e' il
+risultato piu' prezioso di tutto il brief, non un ostacolo da aggirare.
+
+--------------------------------------------------------------------------------
+VINCOLI INVARIATI (non negoziabili)
+--------------------------------------------------------------------------------
+
+- NIENTE PUSH. Il push e' di Marco, sempre.
+- Staging stretto: mai `git add -A`, mai `git commit -am`. Una causa per commit.
+- Documenti firmati: mai modifiche in-place. Le correzioni sono errata
+  append-only. Vale per i ballot REV8 e per il contratto.
+- I due tag di checkpoint non si toccano.
+- Interprete canonico per il lab Python:
+  /Users/marco/aieq_data/motore_v3/env/venv/bin/python  (CPython 3.12.13)
+  Suite: python -B -m unittest discover -s ml_v3/tests -t .
+  Il flag -B e' obbligatorio; dopo ogni invocazione:
+  find ml_v3 -name "__pycache__" -type d -exec rm -rf {} +
+- Messaggi di commit che documentano la verifica ESEGUITA, con i numeri. Non
+  una riga secca.
+- Comunicazione con Marco in italiano.
+
+--------------------------------------------------------------------------------
+FORMATO DELLA RELAZIONE FINALE
+--------------------------------------------------------------------------------
+
+Per ciascun lavoro 1-4:
+  cosa hai cambiato | evidenza (comando + output letterale) | gate superato |
+  cosa resta aperto
+
+Chiudi con: quali cancelli di RELEASE_GATE.md sono ora verdi, quali no, e se il
+ramo e' nello stato in cui Marco puo' considerarlo unificato per davvero.
+
+================================================================================
