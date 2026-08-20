@@ -150,7 +150,18 @@ public:
             const auto brightIntent = contextualizer.contextualize(airIntent, bright);
             const auto darkTarget = builder.build(darkIntent.intent, 48000.0);
             const auto brightTarget = builder.build(brightIntent.intent, 48000.0);
-            expect(maxPositiveTarget(darkTarget) > maxPositiveTarget(brightTarget) + 0.50f);
+            // The 0.50 dB margin was tied to the old axis scale, where a
+            // pink-tilted source railed at -1.00 and the gap between "dark" and
+            // "bright" was therefore maximal by construction. T5.5.2 measures a
+            // tilt-corrected residual over a 9 dB full scale, chosen so the
+            // largest holdback measured on real material (+6.8 dB) stays off
+            // the clamp, so the same fixtures now separate by less. What must
+            // hold is the ordering and a real, not-merely-numerical difference.
+            logMessage("  dark target peak=" + juce::String(maxPositiveTarget(darkTarget), 3)
+                       + " dB   bright=" + juce::String(maxPositiveTarget(brightTarget), 3) + " dB");
+            expect(maxPositiveTarget(darkTarget) > maxPositiveTarget(brightTarget) + 0.10f,
+                   "a dark source and a bright source receive materially the same brightness "
+                   "target, so context is not ranking them");
 
             auto warmIntent = oneGoal(SemanticDimension::Warmth, 0.8f, "warmer");
             warmIntent.constraints.push_back({ SemanticDimension::Clarity,

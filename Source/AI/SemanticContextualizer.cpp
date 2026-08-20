@@ -64,43 +64,89 @@ float SemanticContextualizer::axisPosition(SemanticDimension dimension,
     {
         case SemanticDimension::Brightness:
         {
+            // T5.5.2. Brightness is read as a tilt-corrected residual: is this
+            // region above or below what THIS source's own slope predicts?
+            //
+            // The previous form compared region level against the median band.
+            // Music is pink-tilted, so every HF region sat below that reference
+            // and the axis railed at -1.00 in 37 of 45 measured cases - a
+            // commercial full mix included, which the axis therefore could not
+            // tell apart from a dull vocal stem. A railed axis cannot rank
+            // sources, and ranking is the whole job.
+            //
+            // Regions without evidence are DROPPED rather than averaged in.
+            // The residual extrapolates a slope fitted across 80 Hz to 12 kHz,
+            // so on a narrowband source it is not merely noisy: the bass in the
+            // corpus fits -19.2 dB/octave and produces an Air residual of
+            // +39.8 dB for a region that is empty.
+            auto supported = [this, &c](SpectralRegion r)
+            {
+                return c.region_confidence(r) >= options.minRegionEvidenceForResidual;
+            };
+
             if (focus == SemanticSpectralFocus::Air)
             {
-                // The air question is about 10 kHz and up. Presence energy is
-                // not evidence that the request is unnecessary — measured on a
-                // source with Presence +7.1 dB and Air -5.9 dB, the old shared
-                // axis damped "more air" by 18% while the region the user named
-                // was the emptiest part of the spectrum.
-                db = c.region(SpectralRegion::Air);
-
-                // Corroboration, not a co-equal vote: if the perceptual rolloff
-                // already sits high, the top really is extended.
-                const float rolloffOct = std::log2(std::max(1.0f, c.perceptualRolloffHz) / 9000.0f);
-                db += 1.5f * std::clamp(rolloffOct, -2.0f, 2.0f);
+                if (!supported(SpectralRegion::Air))
+                    return 0.0f;   // no evidence up there: do not hold anything back
+                db = c.regionResidualDb(SpectralRegion::Air);
 
                 // A narrow HF spike is a reason for restraint even on a source
-                // that is broadly dark: pushing air would amplify it. This can
-                // only reduce a "+air" request, never license a larger one.
+                // that is broadly dark, because pushing air would amplify it.
+                // Kept from the previous form: it can only reduce a "+air"
+                // request, never license a larger one.
                 db += 1.2f * std::max(0.0f, c.hfPeakProminenceDb - 4.0f);
-                break;
+                return clamp11(db / options.brightnessResidualFullScaleDb);
             }
             if (focus == SemanticSpectralFocus::Brilliance)
             {
-                db = c.region(SpectralRegion::Brilliance);
-                break;
+                if (!supported(SpectralRegion::Brilliance))
+                    return 0.0f;
+                db = c.regionResidualDb(SpectralRegion::Brilliance);
+                return clamp11(db / options.brightnessResidualFullScaleDb);
             }
-            // General brightness keeps the whole top as the primary signal and
-            // uses tilt/centroid only to corroborate it.
-            db = 0.40f * c.region(SpectralRegion::Presence)
-               + 0.35f * c.region(SpectralRegion::Brilliance)
-               + 0.25f * c.region(SpectralRegion::Air);
+
+            // General brightness is BROAD, and that changes what the residual
+            // may be used for. The residual deliberately removes the source's
+            // own slope, but a uniformly dull source is dull largely BECAUSE of
+            // that slope - remove it and a dull source and a neutral one read
+            // alike. Measured: a fixture at -2.0 dB/octave and one at +1.2
+            // collapsed to a 0.09 gap in requested amount, where the contract
+            // requires them to be clearly distinguishable.
+            //
+            // So the broad axis restores tilt and centroid as CONTRIBUTORS,
+            // which the facet axes above must not do because their question is
+            // local. Both are clamped hard and weighted below 1: together they
+            // can move the axis by at most ~0.27 of full scale, so they cannot
+            // rail it on their own - which is what the old form did to every
+            // pink-tilted source - but they can separate broadly dark material
+            // from broadly bright.
+            float sum = 0.0f; int n = 0;
+            for (auto r : { SpectralRegion::Presence, SpectralRegion::Brilliance,
+                            SpectralRegion::Air })
+                if (supported(r)) { sum += c.regionResidualDb(r); ++n; }
+            if (n == 0)
+                return 0.0f;
+
+            db = sum / static_cast<float>(n);
             db += 0.8f * std::clamp(c.spectralTiltDbPerOctave, -3.0f, 3.0f);
-            db += 0.8f * std::clamp(std::log2(std::max(1.0f, c.perceptualCentroidHz) / 1200.0f), -2.0f, 2.0f);
-            break;
+            db += 0.8f * std::clamp(
+                std::log2(std::max(1.0f, c.perceptualCentroidHz) / 1200.0f), -2.0f, 2.0f);
+            return clamp11(db / options.brightnessResidualFullScaleDb);
         }
 
         case SemanticDimension::Warmth:
         {
+            // DELIBERATELY NOT converted to a tilt residual in T5.5.2, and the
+            // reason is measured rather than stylistic. The fitted slope is an
+            // extrapolation, and warmth lives at ~180 Hz, far from the 1 kHz
+            // pivot: on the corpus bass, tilt -19.2 dB/octave predicts +47 dB
+            // at that point and the residual comes out at -48 dB, i.e. "this
+            // bass desperately needs warmth". The terms below compare warmth
+            // against its own neighbours instead and never extrapolate.
+            //
+            // Warmth is also the smaller problem: it rails in 12 of 18 cases
+            // against 37 of 45 for Brightness, and part of that was the LF
+            // fusion defect fixed in a677e4d2 rather than the axis.
             // Two INDEPENDENT reasons to hold back on "warmer", and they must
             // not be summed. Summing lets weights decide the ordering between a
             // source that is already warm and one that is merely congested, and

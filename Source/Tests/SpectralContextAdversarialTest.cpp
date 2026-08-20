@@ -125,9 +125,26 @@ public:
                      + "  scale=" + f2(airScale));
 
             expect(sc.valid, "context invalid on a well-formed source");
-            expect(airScale > generalScale + 0.05f,
-                   "an air request on an air-poor source is damped as hard as a generic "
-                   "brightness request; the facet is not changing the decision");
+            // Rewritten for T5.5.2, and the reason is that the defect this line
+            // was written to catch is gone rather than merely smaller. The
+            // comment above describes it: a weighted sum of Presence, Brilliance
+            // and Air let a presence peak make the source read "already bright"
+            // while the region the user named was empty. The tilt-corrected
+            // residual does not sum that way, and the general axis on this
+            // fixture now reads about 0.02 - neutral - so it damps nothing at
+            // all and there is no longer a damping difference to measure.
+            //
+            // The claim being protected is that the facet CHANGES THE READING,
+            // so it is asserted where the reading lives. Outcome is still
+            // covered by the next assertion: the air request must survive.
+            expect(ctx.axisPosition(SemanticDimension::Brightness,
+                                    SemanticSpectralFocus::Air, sc)
+                   < ctx.axisPosition(SemanticDimension::Brightness, sc) - 0.15f,
+                   "the air facet reads this air-poor source no darker than the generic "
+                   "brightness axis does; the facet is not changing the decision");
+            expect(airScale >= generalScale,
+                   "an air request on an air-poor source is damped HARDER than a generic "
+                   "brightness request");
             expect(airScale > 0.9f,
                    "the source is 5.9 dB SHORT of air and the user asked for air, yet the "
                    "request is still being reduced");

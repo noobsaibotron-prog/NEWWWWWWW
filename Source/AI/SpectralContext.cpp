@@ -83,6 +83,17 @@ float regionMean(std::span<const float> centers,
 
 } // namespace
 
+float SpectralContext::regionResidualDb(SpectralRegion r) const noexcept
+{
+    // Geometric centres of the seven ranges declared in kRegions.
+    static constexpr std::array<float, kSpectralRegionCount> kCentreHz {
+        34.6f, 98.0f, 283.0f, 1000.0f, 3162.0f, 7071.0f, 15492.0f };
+
+    const float centre = kCentreHz[static_cast<std::size_t>(r)];
+    const float predicted = spectralTiltDbPerOctave * std::log2(centre / 1000.0f);
+    return region(r) - predicted;
+}
+
 SpectralContext SpectralContextBuilder::build(
     std::span<const float> bandCentersHz,
     std::span<const float> meanBandDbFused,

@@ -143,6 +143,26 @@ struct SpectralContext
         return regionConfidence[static_cast<std::size_t>(r)];
     }
 
+    /** Region level measured against this source's OWN fitted slope rather than
+        against the median band.
+
+        Music is pink-tilted, so a level-versus-median reading puts every low
+        region above the reference and every high region below it. Measured on
+        nine real sources, that saturated the Brightness axis in 37 of 45 cases
+        and reported a commercial full mix as maximally dark. The residual asks
+        the question that actually matters - is this region above or below what
+        this source's own trend predicts - and reads +0.9 dB at Air on the same
+        full mix.
+
+        CAUTION: the slope is fitted across 80 Hz to 12 kHz, so on a source
+        whose content occupies a narrow span it is an extrapolation and can be
+        wildly wrong. The bass in the corpus fits -19.2 dB/octave and yields an
+        Air residual of +39.8 dB, for a region with no content at all. Callers
+        must gate on regionConfidence; this function cannot do it for them
+        because a caller averaging several regions has to drop the unsupported
+        ones rather than average a sentinel. */
+    [[nodiscard]] float regionResidualDb(SpectralRegion r) const noexcept;
+
     [[nodiscard]] float region(SpectralRegion regionIn) const noexcept
     {
         return regionRelativeDb[static_cast<std::size_t>(regionIn)];

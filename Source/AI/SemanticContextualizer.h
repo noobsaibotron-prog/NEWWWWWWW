@@ -47,6 +47,22 @@ public:
         float lowConfidence = 0.25f;
         float highConfidence = 0.65f;
         float axisFullScaleDb = 6.0f;
+
+        // Full scale for the tilt-corrected Brightness residual. It is a
+        // different quantity from axisFullScaleDb, which measures level against
+        // the median band, so it does not inherit that number. Measured
+        // positive residuals across nine real sources reach +6.8 dB, and the
+        // positive side is the one that has to stay resolved because it is the
+        // holdback side: a source that reads "already bright" must be RANKED,
+        // while a source that reads "dark" only needs to pass the request
+        // through unreduced. 9 dB keeps every measured holdback value inside
+        // the range instead of on the clamp.
+        float brightnessResidualFullScaleDb = 9.0f;
+
+        // Below this, a region's residual is not trusted enough to contribute.
+        // The residual extrapolates a fitted slope, and where a region has no
+        // content the extrapolation is meaningless rather than merely noisy.
+        float minRegionEvidenceForResidual = 0.35f;
         float deadband = 0.12f;
         float maximumReduction = 0.75f; // at most reduce to 25% of requested amount
     };
