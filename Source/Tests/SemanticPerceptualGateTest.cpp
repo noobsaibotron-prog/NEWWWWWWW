@@ -342,6 +342,15 @@ public:
         logMessage("  clips=" + juce::String(wavs.size())
                    + "  phrases=" + juce::String((int) kCanonicalPhrases.size()));
 
+        // Counted in code. A shell parser over this log previously dropped every
+        // "darker" row, because its amount is negative and the pattern only
+        // accepted digits, and the resulting figure was reported as evidence
+        // while the axis was being calibrated. Counting here removes the step
+        // that can silently lose cases.
+        int axisCases = 0, axisRail = 0;
+        int brightCases = 0, brightRail = 0;
+        int warmCases = 0, warmRail = 0;
+
         juce::String csv = "clip,phrase,dimension,focus,context_scale,context_applied,"
                            "target_peak_db,goal_status,input_peak_db,output_peak_db,"
                            "input_rms_db,output_rms_db,input_clipped,output_new_clipping,"
@@ -428,6 +437,17 @@ public:
                     }
                 }
 
+                if (!plan.intent.goals.empty())
+                {
+                    const auto dim = plan.intent.goals.front().dimension;
+                    const bool railed = std::abs(axisPosition) >= 0.999f;
+                    ++axisCases; if (railed) ++axisRail;
+                    if (dim == SemanticDimension::Brightness)
+                    { ++brightCases; if (railed) ++brightRail; }
+                    else if (dim == SemanticDimension::Warmth)
+                    { ++warmCases; if (railed) ++warmRail; }
+                }
+
                 float targetPeak = 0.0f;
                 for (const auto& p : plan.target.points)
                     targetPeak = std::max(targetPeak, p.deltaDb);
@@ -509,6 +529,20 @@ public:
 
         const auto reportFile = outDir.getChildFile("semantic_gate_report.csv");
         reportFile.replaceWithText(csv);
+        auto rate = [](int n, int d)
+        {
+            return juce::String(n) + " / " + juce::String(d)
+                 + (d > 0 ? "  (" + juce::String(juce::roundToInt(100.0 * n / d)) + "%)" : "");
+        };
+        logMessage("");
+        logMessage("  AXIS SATURATION - contextualization cases at the +/-1.0 clamp:");
+        logMessage("    overall     " + rate(axisRail, axisCases));
+        logMessage("    Brightness  " + rate(brightRail, brightCases));
+        logMessage("    Warmth      " + rate(warmRail, warmCases));
+        logMessage("    READ: a railed axis cannot rank sources - every source at the rail");
+        logMessage("    receives the same treatment. This is the T5.5 measurement; it is");
+        logMessage("    printed by the harness so it never depends on parsing this log.");
+        logMessage("");
         logMessage("  CSV written: " + reportFile.getFullPathName());
         logMessage("  Audio pairs written to: " + outDir.getFullPathName());
         logMessage("  READ: this is Level 0 (mechanical) only. goal_status=ConstraintLimited on "

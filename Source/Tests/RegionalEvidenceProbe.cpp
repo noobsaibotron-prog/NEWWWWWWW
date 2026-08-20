@@ -88,6 +88,9 @@ struct RegionStats
     float corrWithSource = 0.0f;  // covariance with the source's own level
     float floorMargin = 0.0f;     // p50 - p10
     float regionConfidence = 0.0f;
+    int   validBands = 0;         // bands in this region above the analysis floor
+    int   totalBands = 0;
+    int   contributingFrames = 0;
 };
 
 struct Measured
@@ -173,6 +176,18 @@ Measured measure(const juce::File& file)
                 { s += frames[i].bandDbFused[b]; ++n; }
             if (n > 0) series.push_back(static_cast<float>(s / n));
         }
+        st.contributingFrames = static_cast<int>(series.size());
+        for (std::size_t b = 0; b < nb; ++b)
+            if (centers[b] >= kRegions[r].lo && centers[b] < kRegions[r].hi
+                && centers[b] >= kLoHz && centers[b] <= kHiHz)
+            {
+                ++st.totalBands;
+                double acc2 = 0.0; int fr = 0;
+                for (std::size_t i = 0; i < frames.size(); ++i)
+                    if (active[i] && frames[i].bandDbFused.size() == nb)
+                    { acc2 += frames[i].bandDbFused[b]; ++fr; }
+                if (fr > 0 && acc2 / fr >= -108.0) ++st.validBands;
+            }
         if (series.empty()) { m.regions.push_back(st); continue; }
 
         {
@@ -238,6 +253,25 @@ public:
 
         std::vector<Measured> all;
         for (const auto& w : wavs) { auto m = measure(w); if (!m.regions.empty()) all.push_back(std::move(m)); }
+
+        logMessage("");
+        logMessage("  T5.5.1b-R DEFINITIVE TABLE (post LF fix). All values from active frames.");
+        for (const auto& m : all)
+        {
+            logMessage("");
+            logMessage("    " + m.name);
+            logMessage("      region      p10     p50     p90  spread    corr   conf  bands  frames");
+            for (std::size_t r = 0; r < 7 && r < m.regions.size(); ++r)
+            {
+                const auto& st = m.regions[r];
+                logMessage(juce::String("      ") + juce::String(kRegions[r].name).paddedRight(' ', 8)
+                    + padL(d1(st.p10), 8) + padL(d1(st.p50), 8) + padL(d1(st.p90), 8)
+                    + padL(d1(st.spread), 8) + padL(d2(st.corrWithSource), 8)
+                    + padL(d1(st.regionConfidence), 7)
+                    + padL(juce::String(st.validBands) + "/" + juce::String(st.totalBands), 8)
+                    + padL(juce::String(st.contributingFrames), 8));
+            }
+        }
 
         for (int block = 0; block < 5; ++block)
         {
