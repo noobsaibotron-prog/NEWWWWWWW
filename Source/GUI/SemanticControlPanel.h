@@ -755,9 +755,64 @@ private:
             plan.interpretation.c_str());
         juce::String planStatus = "Plan: " + interpretation + " | "
             + juce::String(static_cast<int>(plan.fit.bands.size())) + " band(s)";
+        planStatus += describeSourceContext(plan);
         if (!plan.outcomeSummary.empty())
             planStatus += " | " + juce::String::fromUTF8(plan.outcomeSummary.c_str());
         statusLabel.setText(planStatus, juce::dontSendNotification);
+    }
+
+
+    /** What the SOURCE did to the request, in the few characters the status row
+        has room for.
+
+        Without this the panel shows only what was planned, so a request that
+        came back at 44% of what the user typed looked identical to one that
+        came back whole - the plug-in appeared to under-deliver for no visible
+        reason. The plan already carries all of it; it simply was not surfaced.
+
+        Confidence is printed only when it is NOT high, because a confidence of
+        1.00 explains nothing: it is the low values that are the reason for an
+        unexpected result. */
+    [[nodiscard]] juce::String describeSourceContext(
+        const AIEQPerceptual::SemanticPlan& plan) const
+    {
+        if (plan.intent.goals.empty())
+            return {};
+
+        const auto dimension = plan.intent.goals.front().dimension;
+        const AIEQPerceptual::SemanticContextAdjustment* adjustment = nullptr;
+        for (const auto& a : plan.contextAdjustments)
+            if (a.dimension == dimension) { adjustment = &a; break; }
+
+        juce::String out = " | src ";
+
+        if (adjustment == nullptr)
+            return out + "n/a";
+
+        if (adjustment->contextualized)
+        {
+            // Held back: the source already leans this way. Report BOTH the
+            // amount kept and how strongly the source reads that way, because
+            // "held to 44%" without the reading is a number with no cause.
+            out += juce::String(juce::roundToInt(100.0f * adjustment->scale)) + "%";
+            out += " (has " + juce::String(adjustment->axisPosition, 2) + ")";
+        }
+        else if (std::abs(adjustment->axisPosition) < 1.0e-6f)
+        {
+            // Axis exactly neutral means no usable evidence in the region this
+            // goal depends on - a bass asked for air - rather than a source
+            // that happens to sit at zero.
+            out += "full, no evidence";
+        }
+        else
+        {
+            out += "full (has " + juce::String(adjustment->axisPosition, 2) + ")";
+        }
+
+        if (plan.contextConfidence < 0.95f)
+            out += " conf " + juce::String(plan.contextConfidence, 2);
+
+        return out;
     }
 
     void invalidatePendingTextPlan()
