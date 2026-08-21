@@ -225,3 +225,4 @@ build-san/
 build-tsan/
 /build-verify/
 /build-release/
+build-semantic/
