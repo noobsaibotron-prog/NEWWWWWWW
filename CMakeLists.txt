@@ -676,6 +676,10 @@ option(AIEQ_ENABLE_MOTORE_V2 "Enable Motore v2 (RTNeural) bridge" OFF)
 # v2 hybrid engine installs ALONGSIDE the shipped plugin, which stays untouched.
 # Implies the RTNeural bridge in the plugin target. OFF => shipped identity.
 option(AIEQ_MOTORE_V2_EXP "Build the Motore v2 EXP listening plugin (separate identity)" OFF)
+# Semantic listening build: separate plugin identity so the branch can be
+# auditioned in a host alongside the installed shipping plug-in instead of
+# replacing it. Identity only; enables no extra engine.
+option(AIEQ_SEMANTIC_EXP "Build the Semantic listening plugin (separate identity)" OFF)
 set(AIEQ_MOTORE_V2_MODEL_JSON "" CACHE FILEPATH
     "Optional Motore v2 RTNeural JSON copied into the EXP plugin bundle as motore_v2.json")
 if(AIEQ_MOTORE_V2_EXP)
@@ -720,7 +724,17 @@ if(HAVE_JUCE)
     # Create the plugin using JUCE helper
     # Motore v2 EXP uses a DISTINCT plugin code + name so macOS/Ableton treat it
     # as a separate plugin installed next to the shipped one (untouched).
-    if(AIEQ_MOTORE_V2_EXP)
+    if(AIEQ_SEMANTIC_EXP)
+        # Same reasoning as the Motore v2 EXP identity below, for a different
+        # feature: the Semantic branch needs to be auditioned in a host BESIDE
+        # the shipping plug-in, not on top of it. Sharing PRODUCT_NAME and
+        # PLUGIN_CODE would overwrite the bundle the user's existing sessions
+        # load. This switch changes identity ONLY - it does not enable Motore
+        # v2, which AIEQ_MOTORE_V2_EXP does as a side effect.
+        set(_AIEQ_CODE "AIQS")
+        set(_AIEQ_NAME "AI Equalizer Pro SEMANTIC")
+        set(_AIEQ_BUNDLE_ID "com.AIAudio.AIEqualizerProSemantic")
+    elseif(AIEQ_MOTORE_V2_EXP)
         set(_AIEQ_CODE "AIQ2")
         set(_AIEQ_NAME "AI Equalizer Pro v2 EXP")
         set(_AIEQ_BUNDLE_ID "com.AIAudio.AIEqualizerProV2EXP")
