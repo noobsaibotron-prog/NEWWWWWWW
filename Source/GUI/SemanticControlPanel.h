@@ -321,41 +321,60 @@ public:
             commandInput.setBounds(inputRow.reduced(0, 2));
             bounds.removeFromTop(10);
 
-            // Quality sliders
-            int sliderHeight = 40;
-            for (auto& slider : qualitySliders)
-            {
-                slider.bounds = bounds.removeFromTop(sliderHeight);
-                slider.slider->setBounds(slider.bounds.reduced(4));
-                slider.slider->setTextBoxStyle(juce::Slider::TextBoxRight, false, 45, 18);
-                slider.slider->setVisible(true);
-                auto labelBounds = slider.bounds.removeFromLeft(70);
-                slider.label->setBounds(labelBounds);
-                slider.label->setVisible(true);
-            }
-
-            bounds.removeFromTop(8);
-
-            // Intensity slider
-            auto intensityRow = bounds.removeFromTop(24);
-            intensityLabel.setBounds(intensityRow.removeFromLeft(60));
-            intensitySlider.setBounds(intensityRow);
-            bounds.removeFromTop(8);
-
-            // Preset buttons
-            auto presetRow = bounds.removeFromTop(26);
-            int presetW = (presetRow.getWidth() - 8) / 4;
-            for (auto& btn : presetButtons)
-            {
-                btn->setBounds(presetRow.removeFromLeft(presetW).reduced(2));
-            }
-            bounds.removeFromTop(8);
-
-            // Bottom buttons
-            auto bottomRow = bounds.removeFromTop(28);
+            // Bottom-anchored rows are reserved BEFORE the sliders.
+            //
+            // They used to be laid out after them, and the arithmetic did not
+            // fit: eight sliders at 40 px plus the header, input row, intensity,
+            // presets and button row need 504 px, while the editor gives this
+            // panel 274. Everything past the fifth slider received a
+            // zero-height rectangle, which silently included the status label -
+            // the only feedback the typed PLAN/APPLY path has. Typing a phrase
+            // and pressing PLAN therefore looked like it did nothing at all,
+            // while the plan was in fact being computed and reported into a
+            // label with no height.
+            //
+            // Taking them from the bottom first means the sliders absorb any
+            // shortfall instead, and they degrade gracefully because their
+            // height is adaptive below.
+            auto bottomRow = bounds.removeFromBottom(28);
             resetButton.setBounds(bottomRow.removeFromLeft(60).reduced(2));
             morphButton.setBounds(bottomRow.removeFromLeft(60).reduced(2));
             statusLabel.setBounds(bottomRow);
+            bounds.removeFromBottom(8);
+
+            auto presetRow = bounds.removeFromBottom(26);
+            int presetW = presetRow.getWidth() / juce::jmax(1, (int) presetButtons.size());
+            for (auto& btn : presetButtons)
+                btn->setBounds(presetRow.removeFromLeft(presetW).reduced(2));
+            bounds.removeFromBottom(8);
+
+            auto intensityRow = bounds.removeFromBottom(24);
+            intensityLabel.setBounds(intensityRow.removeFromLeft(60));
+            intensitySlider.setBounds(intensityRow);
+            bounds.removeFromBottom(8);
+
+            // Quality sliders take what is left, shrinking rather than
+            // overflowing. 18 px is the floor at which the label and thumb are
+            // still usable.
+            const int sliderCount = juce::jmax(1, (int) qualitySliders.size());
+            const int sliderHeight =
+                juce::jlimit(18, 40, bounds.getHeight() / sliderCount);
+            for (auto& slider : qualitySliders)
+            {
+                if (bounds.getHeight() < sliderHeight)
+                {
+                    slider.slider->setVisible(false);
+                    slider.label->setVisible(false);
+                    continue;
+                }
+                slider.slider->setVisible(true);
+                slider.label->setVisible(true);
+                slider.bounds = bounds.removeFromTop(sliderHeight);
+                slider.slider->setBounds(slider.bounds.reduced(4));
+                slider.slider->setTextBoxStyle(juce::Slider::TextBoxRight, false, 45, 18);
+                auto labelBounds = slider.bounds.removeFromLeft(70);
+                slider.label->setBounds(labelBounds);
+            }
         }
     }
     
