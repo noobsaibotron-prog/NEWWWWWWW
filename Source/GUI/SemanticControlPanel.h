@@ -353,15 +353,31 @@ public:
             intensitySlider.setBounds(intensityRow);
             bounds.removeFromBottom(8);
 
-            // Quality sliders take what is left, shrinking rather than
-            // overflowing. 18 px is the floor at which the label and thumb are
-            // still usable.
+            // Quality sliders take what is left. The full editor is wide but
+            // deliberately shallow, so use two columns when possible instead
+            // of hiding the final qualities. 18 px is the floor at which the
+            // label and thumb are still usable.
             const int sliderCount = juce::jmax(1, (int) qualitySliders.size());
+            const int columnCount = bounds.getWidth() >= 520 && sliderCount > 4 ? 2 : 1;
+            const int rowCount = (sliderCount + columnCount - 1) / columnCount;
             const int sliderHeight =
-                juce::jlimit(18, 40, bounds.getHeight() / sliderCount);
-            for (auto& slider : qualitySliders)
+                juce::jlimit(18, 40, bounds.getHeight() / juce::jmax(1, rowCount));
+            const int columnGap = columnCount == 2 ? 10 : 0;
+            const int columnWidth =
+                (bounds.getWidth() - columnGap * (columnCount - 1)) / columnCount;
+
+            for (int index = 0; index < sliderCount; ++index)
             {
-                if (bounds.getHeight() < sliderHeight)
+                auto& slider = qualitySliders[static_cast<size_t>(index)];
+                const int column = index / rowCount;
+                const int row = index % rowCount;
+                auto sliderBounds = juce::Rectangle<int>(
+                    bounds.getX() + column * (columnWidth + columnGap),
+                    bounds.getY() + row * sliderHeight,
+                    columnWidth,
+                    sliderHeight);
+
+                if (sliderBounds.getBottom() > bounds.getBottom())
                 {
                     slider.slider->setVisible(false);
                     slider.label->setVisible(false);
@@ -369,7 +385,7 @@ public:
                 }
                 slider.slider->setVisible(true);
                 slider.label->setVisible(true);
-                slider.bounds = bounds.removeFromTop(sliderHeight);
+                slider.bounds = sliderBounds;
                 slider.slider->setBounds(slider.bounds.reduced(4));
                 slider.slider->setTextBoxStyle(juce::Slider::TextBoxRight, false, 45, 18);
                 auto labelBounds = slider.bounds.removeFromLeft(70);
@@ -976,4 +992,3 @@ private:
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SemanticControlPanel)
 };
-
