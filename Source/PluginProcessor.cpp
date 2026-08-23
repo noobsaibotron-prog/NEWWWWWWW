@@ -1,4 +1,5 @@
 #include "PluginProcessor.h"
+#include "DSP/NumericSafety.h"
 #include "AI/SemanticSlotPreflight.h"
 #include "PluginEditor.h"
 #include "DSP/DefaultBandFrequencies.h"
@@ -3256,30 +3257,18 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     checkClicks(5);
 
     // ── Safety soft limiter ────────────────────────────────────────────
-    // Prevents numerical explosions from reaching the DAW output WITHOUT
-    // introducing discontinuities.  Uses tanh soft-knee around ±ceiling:
-    //   |x| ≤ ceiling: output ≈ x  (linear region, transparent)
-    //   |x| > ceiling: output → ±ceiling asymptotically (no hard edge)
-    // NaN/Inf are flushed to zero.  ceiling = 32.0 (+30 dBFS) gives full
-    // headroom for the ±48 dB gain range while catching runaway states.
+    // Exactly transparent through +/-8, then C1-soft-limited towards +/-40.
+    // Non-finite samples are flushed to zero and counted diagnostically.
     {
-        constexpr float kCeiling = 32.0f;
-        constexpr float kInvCeiling = 1.0f / kCeiling;
         for (int ch = 0; ch < totalNumInputChannels; ++ch)
         {
             auto* data = buffer.getWritePointer(ch);
             for (int s = 0; s < numSamples; ++s)
             {
-                const float x = data[s];
-                if (std::isnan(x) || std::isinf(x))
-                {
-                    data[s] = 0.0f;
-                }
-                else
-                {
-                    // tanh soft limit: linear below ceiling, smooth saturation above
-                    data[s] = std::tanh(x * kInvCeiling) * kCeiling;
-                }
+                bool fault = false;
+                data[s] = AIEQDSP::NumericSafety::safetyLimit(data[s], fault);
+                if (fault)
+                    safetyLimiterFaultCount.fetch_add(1, std::memory_order_relaxed);
             }
         }
     }

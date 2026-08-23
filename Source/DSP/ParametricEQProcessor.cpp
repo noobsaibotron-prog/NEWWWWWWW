@@ -1,4 +1,5 @@
 #include "ParametricEQProcessor.h"
+#include "NumericSafety.h"
 #include <cmath>
 
 namespace
@@ -14,12 +15,6 @@ inline bool validProcessingConfiguration(double sampleRate, int samplesPerBlock,
         && samplesPerBlock > 0 && channels > 0;
 }
 
-inline float fastTanhApprox(float x) noexcept
-{
-    // Padé [3/3] approximation, accurate enough for audio soft clipping
-    const float x2 = x * x;
-    return x * (27.0f + x2) / (27.0f + 9.0f * x2);
-}
 }
 
 //==============================================================================
@@ -269,7 +264,7 @@ void ParametricEQProcessor::process(juce::AudioBuffer<float>& buffer)
                     if (wc.hadSolo && !ob.solo) continue;
                     if (!ob.coeffs[0].valid) continue;
                     for (int s = 0; s < ob.numStages; ++s)
-                        oldSample = ob.filtersL[s].processSample(oldSample, ob.coeffs[s]);
+                        oldSample = processBiquadWithFault(ob.filtersL[s], oldSample, ob.coeffs[s]);
                 }
 
                 // New chain: cascade through all new bands
@@ -284,7 +279,7 @@ void ParametricEQProcessor::process(juce::AudioBuffer<float>& buffer)
                     auto& st = bandStates[b];
                     if (!st.coefficients[0].valid) continue;
                     for (int s = 0; s < st.numActiveStages; ++s)
-                        newSample = st.filtersL[s].processSample(newSample, st.coefficients[s]);
+                        newSample = processBiquadWithFault(st.filtersL[s], newSample, st.coefficients[s]);
                 }
 
                 buffer.setSample(0, i, oldSample + (newSample - oldSample) * t);
@@ -303,7 +298,7 @@ void ParametricEQProcessor::process(juce::AudioBuffer<float>& buffer)
                     if (wc.hadSolo && !ob.solo) continue;
                     if (!ob.coeffs[0].valid) continue;
                     for (int s = 0; s < ob.numStages; ++s)
-                        oldSample = ob.filtersR[s].processSample(oldSample, ob.coeffs[s]);
+                        oldSample = processBiquadWithFault(ob.filtersR[s], oldSample, ob.coeffs[s]);
                 }
 
                 float newSample = input;
@@ -317,7 +312,7 @@ void ParametricEQProcessor::process(juce::AudioBuffer<float>& buffer)
                     auto& st = bandStates[b];
                     if (!st.coefficients[0].valid) continue;
                     for (int s = 0; s < st.numActiveStages; ++s)
-                        newSample = st.filtersR[s].processSample(newSample, st.coefficients[s]);
+                        newSample = processBiquadWithFault(st.filtersR[s], newSample, st.coefficients[s]);
                 }
 
                 buffer.setSample(1, i, oldSample + (newSample - oldSample) * t);
@@ -385,18 +380,18 @@ void ParametricEQProcessor::process(juce::AudioBuffer<float>& buffer)
 
                     float newSample = input;
                     for (int s = 0; s < numStages; ++s)
-                        newSample = state.filtersL[s].processSample(newSample, state.coefficients[s]);
+                        newSample = processBiquadWithFault(
+                            state.filtersL[s], newSample, state.coefficients[s]);
 
                     float oldSample = input;
                     for (int s = 0; s < xfade.oldNumStages; ++s)
-                        oldSample = xfade.oldFiltersL[s].processSample(oldSample, xfade.oldCoeffs[s]);
+                        oldSample = processBiquadWithFault(
+                            xfade.oldFiltersL[s], oldSample, xfade.oldCoeffs[s]);
 
                     if (applyVintage)
                     {
-                        constexpr float drive = 1.2f;
-                        constexpr float invDrive = 1.0f / 1.2f;
-                        newSample = fastTanhApprox(newSample * drive) * invDrive;
-                        oldSample = fastTanhApprox(oldSample * drive) * invDrive;
+                        newSample = applyVintageSaturation(newSample);
+                        oldSample = applyVintageSaturation(oldSample);
                     }
 
                     dataL[i] = oldSample + (newSample - oldSample) * t;
@@ -409,18 +404,18 @@ void ParametricEQProcessor::process(juce::AudioBuffer<float>& buffer)
 
                     float newSample = input;
                     for (int s = 0; s < numStages; ++s)
-                        newSample = state.filtersR[s].processSample(newSample, state.coefficients[s]);
+                        newSample = processBiquadWithFault(
+                            state.filtersR[s], newSample, state.coefficients[s]);
 
                     float oldSample = input;
                     for (int s = 0; s < xfade.oldNumStages; ++s)
-                        oldSample = xfade.oldFiltersR[s].processSample(oldSample, xfade.oldCoeffs[s]);
+                        oldSample = processBiquadWithFault(
+                            xfade.oldFiltersR[s], oldSample, xfade.oldCoeffs[s]);
 
                     if (applyVintage)
                     {
-                        constexpr float drive = 1.2f;
-                        constexpr float invDrive = 1.0f / 1.2f;
-                        newSample = fastTanhApprox(newSample * drive) * invDrive;
-                        oldSample = fastTanhApprox(oldSample * drive) * invDrive;
+                        newSample = applyVintageSaturation(newSample);
+                        oldSample = applyVintageSaturation(oldSample);
                     }
 
                     dataR[i] = oldSample + (newSample - oldSample) * t;
@@ -441,14 +436,13 @@ void ParametricEQProcessor::process(juce::AudioBuffer<float>& buffer)
                 float* channelData = buffer.getWritePointer(0);
                 if (applyVintage)
                 {
-                    constexpr float drive = 1.2f;
-                    constexpr float invDrive = 1.0f / 1.2f;
                     for (int i = 0; i < numSamples; ++i)
                     {
                         float sample = channelData[i];
                         for (int s = 0; s < numStages; ++s)
-                            sample = state.filtersL[s].processSample(sample, state.coefficients[s]);
-                        channelData[i] = fastTanhApprox(sample * drive) * invDrive;
+                            sample = processBiquadWithFault(
+                                state.filtersL[s], sample, state.coefficients[s]);
+                        channelData[i] = applyVintageSaturation(sample);
                     }
                 }
                 else
@@ -457,7 +451,8 @@ void ParametricEQProcessor::process(juce::AudioBuffer<float>& buffer)
                     {
                         float sample = channelData[i];
                         for (int s = 0; s < numStages; ++s)
-                            sample = state.filtersL[s].processSample(sample, state.coefficients[s]);
+                            sample = processBiquadWithFault(
+                                state.filtersL[s], sample, state.coefficients[s]);
                         channelData[i] = sample;
                     }
                 }
@@ -468,14 +463,13 @@ void ParametricEQProcessor::process(juce::AudioBuffer<float>& buffer)
                 float* channelData = buffer.getWritePointer(1);
                 if (applyVintage)
                 {
-                    constexpr float drive = 1.2f;
-                    constexpr float invDrive = 1.0f / 1.2f;
                     for (int i = 0; i < numSamples; ++i)
                     {
                         float sample = channelData[i];
                         for (int s = 0; s < numStages; ++s)
-                            sample = state.filtersR[s].processSample(sample, state.coefficients[s]);
-                        channelData[i] = fastTanhApprox(sample * drive) * invDrive;
+                            sample = processBiquadWithFault(
+                                state.filtersR[s], sample, state.coefficients[s]);
+                        channelData[i] = applyVintageSaturation(sample);
                     }
                 }
                 else
@@ -484,7 +478,8 @@ void ParametricEQProcessor::process(juce::AudioBuffer<float>& buffer)
                     {
                         float sample = channelData[i];
                         for (int s = 0; s < numStages; ++s)
-                            sample = state.filtersR[s].processSample(sample, state.coefficients[s]);
+                            sample = processBiquadWithFault(
+                                state.filtersR[s], sample, state.coefficients[s]);
                         channelData[i] = sample;
                     }
                 }
@@ -500,6 +495,26 @@ void ParametricEQProcessor::process(juce::AudioBuffer<float>& buffer)
     }
     
     // NOTE: No manual denormal cleanup needed - ScopedNoDenormals handles this via DAZ/FTZ
+}
+
+//==============================================================================
+float ParametricEQProcessor::processBiquadWithFault(
+    BiquadState& state, float input, const BiquadCoeffs& coefficients) noexcept
+{
+    bool fault = false;
+    const float output = state.processSample(input, coefficients, &fault);
+    if (fault)
+        numericalFaultCount.fetch_add(1, std::memory_order_relaxed);
+    return output;
+}
+
+float ParametricEQProcessor::applyVintageSaturation(float input) noexcept
+{
+    bool fault = false;
+    const float output = AIEQDSP::NumericSafety::vintageSaturate(input, fault);
+    if (fault)
+        numericalFaultCount.fetch_add(1, std::memory_order_relaxed);
+    return output;
 }
 
 //==============================================================================

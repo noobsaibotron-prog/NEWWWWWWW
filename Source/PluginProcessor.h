@@ -257,6 +257,10 @@ public:
 
     // Output peak metering (GUI reads, audio thread writes)
     [[nodiscard]] float getOutputPeakLeft() const noexcept { return outputPeakLeft.load(std::memory_order_relaxed); }
+    [[nodiscard]] uint64_t getSafetyLimiterFaultCount() const noexcept
+    {
+        return safetyLimiterFaultCount.load(std::memory_order_acquire);
+    }
     [[nodiscard]] float getOutputPeakRight() const noexcept { return outputPeakRight.load(std::memory_order_relaxed); }
 
     // Parameter tree access
@@ -1058,6 +1062,7 @@ private:
 
     // Output peak metering (lock-free, written by audio thread, read by GUI)
     std::atomic<float> outputPeakLeft { 0.0f };
+    std::atomic<uint64_t> safetyLimiterFaultCount { 0 };
     std::atomic<float> outputPeakRight { 0.0f };
     std::atomic<uint64_t> parameterChangeCounter { 0 };
     std::atomic<uint64_t> eqCurveChangeCounter { 0 };  // Only curve-affecting params

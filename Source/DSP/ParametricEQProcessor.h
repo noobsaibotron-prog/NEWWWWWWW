@@ -127,6 +127,10 @@ public:
         return static_cast<BiquadValidationFailure>(
             bandValidationFailures[static_cast<size_t>(index)].load(std::memory_order_acquire));
     }
+    [[nodiscard]] uint64_t getNumericalFaultCount() const noexcept
+    {
+        return numericalFaultCount.load(std::memory_order_acquire);
+    }
     void reset();
     void process(juce::AudioBuffer<float>& buffer);
     
@@ -229,6 +233,9 @@ private:
     //==============================================================================
     void updateCoefficientsForBand(int index);
     void resetRuntimeStateNoAllocation(double sampleRate, int samplesPerBlock, int channels) noexcept;
+    [[nodiscard]] float processBiquadWithFault(BiquadState& state, float input,
+                                               const BiquadCoeffs& coefficients) noexcept;
+    [[nodiscard]] float applyVintageSaturation(float input) noexcept;
     
     [[nodiscard]] BiquadCoeffs makeCoefficients(
         FilterType type, float freq, float gain, float q, double sampleRate) const;
@@ -254,6 +261,7 @@ private:
     // Processing state for each band (audio thread only)
     std::array<BandProcessingState, 24> bandStates;
     std::array<std::atomic<uint8_t>, 24> bandValidationFailures {};
+    std::atomic<uint64_t> numericalFaultCount { 0 };
 
     // Per-band crossfade state for topology changes (audio thread only)
     struct BandCrossfade
