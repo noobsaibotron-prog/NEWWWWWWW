@@ -1939,28 +1939,14 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         }
     }
 
-    // AI correction: widen SmoothedValue ramp for gentler per-block coefficient steps.
-    // AI correction: widen SmoothedValue ramp. Per-band crossfade for type changes
-    // is handled in applySmoothedBandParams().
+    // AI corrections keep the same hard slew ceilings as manual automation,
+    // but use an 80 ms minimum transition where the requested distance permits.
+    // Rate configuration is deferred until after updateEQFromParameters() has
+    // published the new targets in this same process quantum.
     if (aiCorrectionCrossfadePending.exchange(false, std::memory_order_acquire))
     {
-        // Widen SmoothedValue ramp for gentler per-block coefficient steps
-        const double sr = currentSampleRate.load(std::memory_order_relaxed);
-        constexpr double correctionRampSec = 0.08; // 80ms
-        for (int i = 0; i < maxBands; ++i)
-        {
-            auto idx = static_cast<size_t>(i);
-            const float curFreq = smoothedBandFreq[idx].getCurrentValue();
-            const float curGain = smoothedBandGain[idx].getCurrentValue();
-            const float curQ    = smoothedBandQ[idx].getCurrentValue();
-            smoothedBandFreq[idx].reset(sr, correctionRampSec);
-            smoothedBandGain[idx].reset(sr, correctionRampSec);
-            smoothedBandQ[idx].reset(sr, correctionRampSec);
-            smoothedBandFreq[idx].setCurrentAndTargetValue(curFreq);
-            smoothedBandGain[idx].setCurrentAndTargetValue(curGain);
-            smoothedBandQ[idx].setCurrentAndTargetValue(curQ);
-        }
         correctionSmoothingActive.store(true, std::memory_order_relaxed);
+        correctionSmoothingNeedsRateConfig = true;
     }
 
     if (bypassPhase.load(std::memory_order_relaxed) == BypassPhase::Bypassed)
@@ -2073,7 +2059,8 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     }
 
     // Apply smoothed band params (anti-zippering) before processing
-    applySmoothedBandParams(blockSamples, needsParamUpdate);
+    const bool smoothedBandParamsApplied =
+        applySmoothedBandParams(blockSamples, needsParamUpdate);
 
     // FIX: Bump EQ curve version from audio thread after band params are written.
     // Without this, AI corrections cause a race: the message-thread version bump
@@ -2081,26 +2068,10 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     // reads stale data (old filter type/gain) and consumes the version counter.
     // The curve then stays stale until the next user interaction.
     //
-    // Additionally: while ANY band's freq/gain/Q smoothing is still in flight,
-    // band params are still morphing block-to-block. Bumping only on the
-    // initial needsParamUpdate would freeze the curve on a mid-transition
-    // snapshot — visible during profile A/B switches as a stale curve that
-    // only unfreezes when the user touches a node. So we also bump while
-    // smoothing is active, letting the GUI repaint the morph.
-    bool anyBandSmoothing = false;
-    for (int i = 0; i < maxBands; ++i)
-    {
-        const auto idx = static_cast<size_t>(i);
-        if (smoothedBandFreq[idx].isSmoothing()
-            || smoothedBandGain[idx].isSmoothing()
-            || smoothedBandQ[idx].isSmoothing())
-        {
-            anyBandSmoothing = true;
-            break;
-        }
-    }
-
-    if (needsParamUpdate || anyBandSmoothing)
+    // Additionally, every quantum that actually publishes a bounded-slew or
+    // topology value bumps the curve, including the final quantum that reaches
+    // the exact target. This prevents the GUI from freezing one step short.
+    if (needsParamUpdate || smoothedBandParamsApplied)
         eqCurveChangeCounter.fetch_add(1, std::memory_order_relaxed);
 
     if (autoGainEnabledLocal)
@@ -3770,35 +3741,92 @@ void AIEqualizerAudioProcessor::handleAsyncUpdate()
 
 void AIEqualizerAudioProcessor::primeBandSmoothers(double sampleRate)
 {
-    constexpr double rampSeconds = 0.02;  // 20ms for freq/gain
-    constexpr double qRampSeconds = 0.03; // 30ms for Q (longer: coeff sensitivity)
+    constexpr double maxLog2SlewPerSecond = 100.0;
+    constexpr double maxGainDbSlewPerSecond = 2400.0;
     for (int i = 0; i < maxBands; ++i)
     {
         auto idx = static_cast<size_t>(i);
-        smoothedBandFreq[idx].reset(sampleRate, rampSeconds);
-        smoothedBandGain[idx].reset(sampleRate, rampSeconds);
-        smoothedBandQ[idx].reset(sampleRate, qRampSeconds);
+        smoothedBandFreq[idx].prepare(sampleRate, maxLog2SlewPerSecond);
+        smoothedBandGain[idx].prepare(sampleRate, maxGainDbSlewPerSecond);
+        smoothedBandQ[idx].prepare(sampleRate, maxLog2SlewPerSecond);
         smoothedBandFreq[idx].setCurrentAndTargetValue(targetBandFreq[idx]);
         smoothedBandGain[idx].setCurrentAndTargetValue(targetBandGain[idx]);
         smoothedBandQ[idx].setCurrentAndTargetValue(targetBandQ[idx]);
         prevAppliedBandType[idx] = targetBandType[idx];
         prevAppliedBandCurveMode[idx] = targetBandCurveMode[idx];
+        bandTopologyFadeSamplesRemaining[idx] = 0;
     }
+    previousSmoothedBandBlockSamples = 0;
+    correctionSmoothingNeedsRateConfig = false;
+    correctionSmoothingActive.store(false, std::memory_order_relaxed);
     bandSmoothingPrimed = true;
 }
 
-void AIEqualizerAudioProcessor::applySmoothedBandParams(int blockSamples, bool paramsChanged)
+bool AIEqualizerAudioProcessor::applySmoothedBandParams(int blockSamples, bool paramsChanged)
 {
+    constexpr double maxLog2SlewPerSecond = 100.0;
+    constexpr double maxGainDbSlewPerSecond = 2400.0;
+    constexpr double correctionRampSeconds = 0.08;
+    constexpr int topologyFadeSamples = 128;
+
     const int activeBandsLocal = numActiveBands.load(std::memory_order_relaxed);
     const int availableBands = std::min({ activeBandsLocal, maxBands,
                                           eqProcessor.getNumBands(),
                                           eqProcessorHQ.getNumBands(),
                                           eqProcessorMid.getNumBands(),
                                           eqProcessorSide.getNumBands() });
+    bool anyBandApplied = false;
+
+    // The AI request flag is observed before parameter synchronization. Configure
+    // its gentler rates only now, after the new targets are available. A smaller
+    // correction still takes 80 ms; a larger one is capped by the normative
+    // 100 oct/s and 2400 dB/s ceilings.
+    if (correctionSmoothingActive.load(std::memory_order_relaxed)
+        && correctionSmoothingNeedsRateConfig)
+    {
+        for (int i = 0; i < maxBands; ++i)
+        {
+            const auto idx = static_cast<size_t>(i);
+            const double freqDistance = std::abs(smoothedBandFreq[idx].getTargetLog2()
+                                                - smoothedBandFreq[idx].getCurrentLog2());
+            const double qDistance = std::abs(smoothedBandQ[idx].getTargetLog2()
+                                             - smoothedBandQ[idx].getCurrentLog2());
+            const double gainDistance = std::abs(smoothedBandGain[idx].getTargetValueDouble()
+                                                - smoothedBandGain[idx].getCurrentValueDouble());
+
+            smoothedBandFreq[idx].setMaximumRate(std::min(
+                maxLog2SlewPerSecond,
+                freqDistance > 0.0 ? freqDistance / correctionRampSeconds
+                                   : maxLog2SlewPerSecond));
+            smoothedBandQ[idx].setMaximumRate(std::min(
+                maxLog2SlewPerSecond,
+                qDistance > 0.0 ? qDistance / correctionRampSeconds
+                                : maxLog2SlewPerSecond));
+            smoothedBandGain[idx].setMaximumRate(std::min(
+                maxGainDbSlewPerSecond,
+                gainDistance > 0.0 ? gainDistance / correctionRampSeconds
+                                   : maxGainDbSlewPerSecond));
+        }
+        correctionSmoothingNeedsRateConfig = false;
+    }
 
     for (int i = 0; i < availableBands; ++i)
     {
         auto idx = static_cast<size_t>(i);
+
+        // This countdown represents samples processed by the preceding call.
+        // While it is non-zero, new Type/CurveMode requests remain only in the
+        // target arrays. The last target observed is applied after completion.
+        if (bandTopologyFadeSamplesRemaining[idx] > 0)
+        {
+            bandTopologyFadeSamplesRemaining[idx] = std::max(
+                0, bandTopologyFadeSamplesRemaining[idx]
+                 - previousSmoothedBandBlockSamples);
+        }
+
+        const bool topologyReady = bandTopologyFadeSamplesRemaining[idx] == 0
+            && (targetBandType[idx] != prevAppliedBandType[idx]
+                || targetBandCurveMode[idx] != prevAppliedBandCurveMode[idx]);
         const bool isMoving = smoothedBandFreq[idx].isSmoothing()
                            || smoothedBandGain[idx].isSmoothing()
                            || smoothedBandQ[idx].isSmoothing();
@@ -3808,35 +3836,35 @@ void AIEqualizerAudioProcessor::applySmoothedBandParams(int blockSamples, bool p
         smoothedBandGain[idx].skip(blockSamples);
         smoothedBandQ[idx].skip(blockSamples);
 
-        if (!isMoving && !paramsChanged)
+        if (!isMoving && !paramsChanged && !topologyReady)
             continue;
+
+        anyBandApplied = true;
 
         const float freq = smoothedBandFreq[idx].getCurrentValue();
         const float gain = smoothedBandGain[idx].getCurrentValue();
         const float q = smoothedBandQ[idx].getCurrentValue();
-        const int type = targetBandType[idx];
-        const int curveMode = targetBandCurveMode[idx];
+        if (topologyReady)
+        {
+            if (i < eqProcessor.getNumBands())
+                eqProcessor.beginBandCrossfade(i, topologyFadeSamples);
+            if (i < eqProcessorHQ.getNumBands())
+                eqProcessorHQ.beginBandCrossfade(i, topologyFadeSamples);
+            if (i < eqProcessorMid.getNumBands())
+                eqProcessorMid.beginBandCrossfade(i, topologyFadeSamples);
+            if (i < eqProcessorSide.getNumBands())
+                eqProcessorSide.beginBandCrossfade(i, topologyFadeSamples);
+
+            prevAppliedBandType[idx] = targetBandType[idx];
+            prevAppliedBandCurveMode[idx] = targetBandCurveMode[idx];
+            bandTopologyFadeSamplesRemaining[idx] = topologyFadeSamples;
+        }
+
+        const int type = prevAppliedBandType[idx];
+        const int curveMode = prevAppliedBandCurveMode[idx];
         const int slope = targetBandSlope[idx];
         const bool enabled = targetBandEnabled[idx];
         const bool solo = targetBandSolo[idx];
-
-        // Per-band output crossfade on filter topology change.
-        // Processes same input through both old and new filter, blends over 128 samples.
-        // This eliminates the transfer function discontinuity (e.g. HighShelf→Notch).
-        if (type != prevAppliedBandType[idx]
-            || curveMode != prevAppliedBandCurveMode[idx])
-        {
-            if (i < eqProcessor.getNumBands())
-                eqProcessor.beginBandCrossfade(i, 128);
-            if (i < eqProcessorHQ.getNumBands())
-                eqProcessorHQ.beginBandCrossfade(i, 128);
-            if (i < eqProcessorMid.getNumBands())
-                eqProcessorMid.beginBandCrossfade(i, 128);
-            if (i < eqProcessorSide.getNumBands())
-                eqProcessorSide.beginBandCrossfade(i, 128);
-            prevAppliedBandType[idx] = type;
-            prevAppliedBandCurveMode[idx] = curveMode;
-        }
 
         const auto dspCurveMode = curveMode == kSurgicalCurveMode
             ? ParametricEQProcessor::CurveMode::Surgical
@@ -3901,7 +3929,10 @@ void AIEqualizerAudioProcessor::applySmoothedBandParams(int blockSamples, bool p
         }
     }
 
-    // When AI correction ramp finishes, restore fast ramp for user drag responsiveness
+    previousSmoothedBandBlockSamples = blockSamples;
+
+    // When an AI correction finishes, restore the authority maxima used for
+    // direct user/host automation. Current values are never reset.
     if (correctionSmoothingActive.load(std::memory_order_relaxed))
     {
         bool anyStillSmoothing = false;
@@ -3914,25 +3945,18 @@ void AIEqualizerAudioProcessor::applySmoothedBandParams(int blockSamples, bool p
         }
         if (!anyStillSmoothing)
         {
-            const double sr = currentSampleRate.load(std::memory_order_relaxed);
-            constexpr double fastRamp = 0.02;  // 20ms for drag
-            constexpr double fastQRamp = 0.03; // 30ms for Q
             for (int i = 0; i < maxBands; ++i)
             {
                 auto idx = static_cast<size_t>(i);
-                const float f = smoothedBandFreq[idx].getCurrentValue();
-                const float g = smoothedBandGain[idx].getCurrentValue();
-                const float qv = smoothedBandQ[idx].getCurrentValue();
-                smoothedBandFreq[idx].reset(sr, fastRamp);
-                smoothedBandGain[idx].reset(sr, fastQRamp);
-                smoothedBandQ[idx].reset(sr, fastQRamp);
-                smoothedBandFreq[idx].setCurrentAndTargetValue(f);
-                smoothedBandGain[idx].setCurrentAndTargetValue(g);
-                smoothedBandQ[idx].setCurrentAndTargetValue(qv);
+                smoothedBandFreq[idx].setMaximumRate(maxLog2SlewPerSecond);
+                smoothedBandQ[idx].setMaximumRate(maxLog2SlewPerSecond);
+                smoothedBandGain[idx].setMaximumRate(maxGainDbSlewPerSecond);
             }
             correctionSmoothingActive.store(false, std::memory_order_relaxed);
         }
     }
+
+    return anyBandApplied;
 }
 
 //==============================================================================

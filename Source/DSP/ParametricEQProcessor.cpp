@@ -174,8 +174,10 @@ void ParametricEQProcessor::process(juce::AudioBuffer<float>& buffer)
         if (currentVersion != state.lastVersion)
         {
             // ── Arm per-band output crossfade BEFORE updating coefficients ──
-            // Save old filter state so we can blend old→new over 128 samples,
-            // eliminating the biquad coefficient-jump discontinuity (pop/click).
+            // Save old filter state so ordinary coefficient motion can use the
+            // adaptive 1024/2048-sample blend below. Explicit Type/CurveMode
+            // changes are armed separately by PluginProcessor with the signed
+            // 128-sample topology contract.
             auto& xfade = bandCrossfades[i];
             const bool oldPathValid = state.useTpt
                 ? state.tptCoefficients.isValid()
@@ -209,8 +211,8 @@ void ParametricEQProcessor::process(juce::AudioBuffer<float>& buffer)
                 xfade.total = fadeSamples;
 
                 // Cat 2 Fix: do NOT reset live filter state here.
-                // During parameter smoothing (20ms SmoothedValue), setBandParameters
-                // is called every block → version bumps → auto-arm triggers here.
+                // During sample-count-driven bounded slew, setBandParameters is
+                // called every block → version bumps → auto-arm triggers here.
                 // With fadeSamples==blockSize==128, the crossfade ends exactly at
                 // the block boundary, so the NEXT block re-arms and would reset
                 // the filter again. That cumulative reset produces a ~0.4 click

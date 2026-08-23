@@ -586,6 +586,7 @@ set(PLUGIN_SOURCES
     Source/DSP/SpectrumAnalyzer.h
     Source/DSP/ParametricEQProcessor.cpp
     Source/DSP/ParametricEQProcessor.h
+    Source/DSP/BoundedSlewLimiter.h
     Source/DSP/DynamicEQProcessor.cpp
     Source/DSP/DynamicEQProcessor.h
     Source/DSP/LinearPhaseProcessor.cpp
@@ -1356,6 +1357,7 @@ if(HAVE_JUCE)
         Source/Tests/MSModeSwitchContinuityTest.cpp
         Source/Tests/SoloModeTransitionTest.cpp
         Source/Tests/BandDragContinuityTest.cpp
+        Source/Tests/SurgicalAutomationContractTest.cpp
         Source/Tests/HostSessionClickTest.cpp
         Source/Tests/DynEQRoutingOwnershipTest.cpp
         Source/Tests/RBValidationTest.cpp

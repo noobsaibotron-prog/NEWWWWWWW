@@ -52,6 +52,7 @@
 #include "DSP/ParametricEQProcessor.h"
 #include "DSP/DynamicEQProcessor.h"
 #include "DSP/LinearPhaseProcessor.h"
+#include "DSP/BoundedSlewLimiter.h"
 #include "Core/OSCParameterServer.h"
 #include "AI/AIEngine.h"
 #include "AI/PerceptualFrontEnd.h"
@@ -570,7 +571,8 @@ private:
                                        bool includeMid,
                                        bool includeSide) noexcept;
     void primeBandSmoothers(double sampleRate);
-    void applySmoothedBandParams(int blockSamples, bool paramsChanged = false);
+    [[nodiscard]] bool applySmoothedBandParams(int blockSamples,
+                                               bool paramsChanged = false);
     
     // M/S encoding/decoding helpers
     void encodeMidSide(juce::AudioBuffer<float>& buffer, int numSamples);
@@ -639,10 +641,12 @@ private:
     std::array<DynamicMeterCacheEntry, maxBands> dynamicMeterCache {};
     std::atomic<float> dynamicTotalGR { 0.0f };
 
-    // Smoothed band targets (frequency/gain/Q) for anti-zippering automation
-    std::array<juce::SmoothedValue<float>, maxBands> smoothedBandFreq {};
-    std::array<juce::SmoothedValue<float>, maxBands> smoothedBandGain {};
-    std::array<juce::SmoothedValue<float>, maxBands> smoothedBandQ {};
+    // Authority-bounded automation: frequency/Q move in log2 at <=100 oct/s;
+    // gain moves linearly in dB at <=2400 dB/s. State advances by the exact
+    // number of elapsed host samples and never depends on wall-clock timing.
+    std::array<AIEQDSP::Log2SlewLimiter, maxBands> smoothedBandFreq {};
+    std::array<AIEQDSP::LinearSlewLimiter, maxBands> smoothedBandGain {};
+    std::array<AIEQDSP::Log2SlewLimiter, maxBands> smoothedBandQ {};
     std::array<float, maxBands> targetBandFreq {};
     std::array<float, maxBands> targetBandGain {};
     std::array<float, maxBands> targetBandQ {};
@@ -650,12 +654,15 @@ private:
     std::array<int, maxBands> prevAppliedBandType {};  // track type for state clear on topology change
     std::array<int, maxBands> targetBandCurveMode {};
     std::array<int, maxBands> prevAppliedBandCurveMode {};
+    std::array<int, maxBands> bandTopologyFadeSamplesRemaining {};
+    int previousSmoothedBandBlockSamples { 0 };
     std::array<int, maxBands> targetBandSlope {};
     std::array<bool, maxBands> targetBandEnabled {};
     std::array<bool, maxBands> targetBandSolo {};
     std::array<DynamicEQProcessor::DynamicBandParams, maxBands> targetDynamicBandParams {};
     bool bandSmoothingPrimed { false };
     std::atomic<bool> correctionSmoothingActive { false };
+    bool correctionSmoothingNeedsRateConfig { false };
 
     // Linear-phase delay compensation when IR is not ready
     juce::AudioBuffer<float> linearPhaseDelayBuffer;
