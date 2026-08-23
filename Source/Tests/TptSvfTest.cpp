@@ -1,7 +1,10 @@
 #include <juce_core/juce_core.h>
+#include "DSP/ParametricEQProcessor.h"
 #include "DSP/TptSvf.h"
 #include <algorithm>
+#include <bit>
 #include <cmath>
+#include <cstdint>
 #include <limits>
 
 class TptSvfTest final : public juce::UnitTest
@@ -17,6 +20,10 @@ public:
         testShelfMonotonicityAndReciprocity();
         testTimeDomainMatchesTransferFunction();
         testHighRateFiniteProcessing();
+        testParametricLegacyBitIdentity();
+        testParametricProcessorSurgicalRouting();
+        testParametricProcessorSurgicalLinearity();
+        testCurveModeCrossfadeIsFinite();
     }
 
 private:
@@ -231,6 +238,173 @@ private:
                 }
             }
         }
+    }
+
+    void testParametricProcessorSurgicalRouting()
+    {
+        beginTest("Parametric EQ routes Bell/shelves through the Surgical core");
+        constexpr double sampleRate = 48000.0;
+        ParametricEQProcessor processor;
+        processor.prepare(sampleRate, 256, 1);
+        const int band = processor.addBand(
+            1000.0f, 18.0f, 2.5f, ParametricEQProcessor::Peak);
+        processor.setBandCurveMode(band, ParametricEQProcessor::CurveMode::Surgical);
+        expect(processor.getBandCurveMode(band)
+            == ParametricEQProcessor::CurveMode::Surgical);
+
+        const auto reference = AIEQDSP::TptSvfCoefficients::design(
+            AIEQDSP::TptSvfType::Bell, sampleRate, 1000.0, 18.0, 2.5);
+        const float publishedMagnitude = processor.getMagnitudeForFrequency(
+            1000.0f, sampleRate);
+        expectWithinAbsoluteError(
+            static_cast<double>(publishedMagnitude),
+            reference.getMagnitudeForFrequency(1000.0, sampleRate), 2.0e-6);
+
+        processor.setBandType(band, ParametricEQProcessor::LowShelf);
+        processor.setBandQ(band, 0.1f);
+        const float shelfAtLowQ = processor.getMagnitudeForFrequency(1000.0f, sampleRate);
+        processor.setBandQ(band, 10.0f);
+        const float shelfAtHighQ = processor.getMagnitudeForFrequency(1000.0f, sampleRate);
+        expectWithinAbsoluteError(shelfAtLowQ, shelfAtHighQ, 1.0e-7f);
+        expectWithinAbsoluteError(
+            20.0 * std::log10(static_cast<double>(shelfAtLowQ)), 9.0, 2.0e-5);
+
+        // Exercise the audible route independently of the published response.
+        // Add before prepare so there is no legacy topology to crossfade from.
+        ParametricEQProcessor audible;
+        const int audibleBand = audible.addBand(
+            1375.0f, -15.0f, 4.0f, ParametricEQProcessor::Peak);
+        audible.setBandCurveMode(
+            audibleBand, ParametricEQProcessor::CurveMode::Surgical);
+        audible.prepare(sampleRate, 512, 1);
+
+        const auto audibleReference = AIEQDSP::TptSvfCoefficients::design(
+            AIEQDSP::TptSvfType::Bell, sampleRate, 1375.0, -15.0, 4.0);
+        AIEQDSP::TptSvfState referenceState;
+        juce::AudioBuffer<float> audibleBuffer(1, 512);
+        std::array<float, 512> expected {};
+        for (int sample = 0; sample < audibleBuffer.getNumSamples(); ++sample)
+        {
+            const float input = 0.31f * std::sin(0.071f * static_cast<float>(sample))
+                              + 0.09f * std::cos(0.019f * static_cast<float>(sample));
+            audibleBuffer.setSample(0, sample, input);
+            expected[static_cast<size_t>(sample)] = static_cast<float>(
+                referenceState.processSample(static_cast<double>(input), audibleReference));
+        }
+        audible.process(audibleBuffer);
+        for (int sample = 0; sample < audibleBuffer.getNumSamples(); ++sample)
+        {
+            expect(std::bit_cast<uint32_t>(audibleBuffer.getSample(0, sample))
+                == std::bit_cast<uint32_t>(expected[static_cast<size_t>(sample)]));
+        }
+    }
+
+    void testParametricLegacyBitIdentity()
+    {
+        beginTest("Legacy Parametric processing remains bit-identical");
+        constexpr int blockSize = 1024;
+        ParametricEQProcessor processor;
+        processor.prepare(48000.0, blockSize, 1);
+        (void) processor.addBand(
+            1000.0f, 6.0f, 0.7f, ParametricEQProcessor::Peak);
+        expect(processor.getBandCurveMode(0)
+            == ParametricEQProcessor::CurveMode::Legacy);
+
+        const auto coefficients = BiquadCoeffs::makePeakFilter(
+            48000.0, 1000.0f, 0.7f,
+            juce::Decibels::decibelsToGain(6.0f), BiquadPrecision::Automatic);
+        expect(coefficients.valid);
+        BiquadState referenceState;
+        juce::AudioBuffer<float> buffer(1, blockSize);
+        for (int sample = 0; sample < blockSize; ++sample)
+        {
+            const float input = 0.2f * std::sin(0.031f * static_cast<float>(sample))
+                              + 0.07f * std::cos(0.113f * static_cast<float>(sample));
+            buffer.setSample(0, sample, input);
+        }
+
+        std::array<float, blockSize> expected {};
+        for (int sample = 0; sample < blockSize; ++sample)
+            expected[static_cast<size_t>(sample)] = referenceState.processSample(
+                buffer.getSample(0, sample), coefficients);
+        processor.process(buffer);
+
+        for (int sample = 0; sample < blockSize; ++sample)
+        {
+            expect(std::bit_cast<uint32_t>(buffer.getSample(0, sample))
+                == std::bit_cast<uint32_t>(expected[static_cast<size_t>(sample)]));
+        }
+    }
+
+    void testParametricProcessorSurgicalLinearity()
+    {
+        beginTest("Surgical Parametric path is linear and applies no band saturation");
+        constexpr int blockSize = 256;
+        ParametricEQProcessor lower;
+        ParametricEQProcessor upper;
+        lower.prepare(48000.0, blockSize, 1);
+        upper.prepare(48000.0, blockSize, 1);
+        const int lowerBand = lower.addBand(
+            800.0f, 24.0f, 3.0f, ParametricEQProcessor::Peak);
+        const int upperBand = upper.addBand(
+            800.0f, 24.0f, 3.0f, ParametricEQProcessor::Peak);
+        lower.setBandCurveMode(lowerBand, ParametricEQProcessor::CurveMode::Surgical);
+        upper.setBandCurveMode(upperBand, ParametricEQProcessor::CurveMode::Surgical);
+
+        juce::AudioBuffer<float> lowerBuffer(1, blockSize);
+        juce::AudioBuffer<float> upperBuffer(1, blockSize);
+        for (int block = 0; block < 32; ++block)
+        {
+            for (int sample = 0; sample < blockSize; ++sample)
+            {
+                const int absoluteSample = block * blockSize + sample;
+                const float value = 0.2f * std::sin(
+                    0.013f * static_cast<float>(absoluteSample));
+                lowerBuffer.setSample(0, sample, value);
+                upperBuffer.setSample(0, sample, value * 2.0f);
+            }
+
+            lower.process(lowerBuffer);
+            upper.process(upperBuffer);
+            for (int sample = 0; sample < blockSize; ++sample)
+            {
+                expectWithinAbsoluteError(
+                    upperBuffer.getSample(0, sample),
+                    lowerBuffer.getSample(0, sample) * 2.0f, 3.0e-6f);
+            }
+        }
+    }
+
+    void testCurveModeCrossfadeIsFinite()
+    {
+        beginTest("Legacy-to-Surgical topology crossfade remains finite");
+        constexpr int blockSize = 256;
+        ParametricEQProcessor processor;
+        processor.prepare(48000.0, blockSize, 1);
+        const int band = processor.addBand(
+            1200.0f, 18.0f, 8.0f, ParametricEQProcessor::Peak);
+        juce::AudioBuffer<float> buffer(1, blockSize);
+
+        for (int block = 0; block < 8; ++block)
+        {
+            for (int sample = 0; sample < blockSize; ++sample)
+                buffer.setSample(0, sample, 0.5f * std::sin(
+                    0.17f * static_cast<float>(block * blockSize + sample)));
+            processor.process(buffer);
+        }
+
+        processor.beginBandCrossfade(band, 128);
+        processor.setBandCurveMode(band, ParametricEQProcessor::CurveMode::Surgical);
+        for (int block = 0; block < 16; ++block)
+        {
+            for (int sample = 0; sample < blockSize; ++sample)
+                buffer.setSample(0, sample, 0.5f * std::sin(
+                    0.17f * static_cast<float>((block + 8) * blockSize + sample)));
+            processor.process(buffer);
+            for (int sample = 0; sample < blockSize; ++sample)
+                expect(std::isfinite(buffer.getSample(0, sample)));
+        }
+        expectEquals(static_cast<int>(processor.getNumericalFaultCount()), 0);
     }
 };
 

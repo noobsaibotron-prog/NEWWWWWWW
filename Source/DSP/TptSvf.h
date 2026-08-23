@@ -154,9 +154,9 @@ struct TptSvfCoefficients
             || sampleRate <= 0.0 || frequency < 0.0 || frequency > sampleRate * 0.5)
             return std::numeric_limits<double>::quiet_NaN();
 
-        if (frequency == 0.0)
+        if (frequency <= 0.0)
             return std::abs(m2);
-        if (frequency == sampleRate * 0.5)
+        if (frequency >= sampleRate * 0.5)
             return std::abs(m0);
 
         constexpr double pi = 3.141592653589793238462643383279502884;

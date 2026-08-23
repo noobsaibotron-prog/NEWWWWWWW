@@ -20,6 +20,7 @@ public:
         testLimiterShape();
         testLimiterCompatibilityBound();
         testProcessorFaultPublication();
+        testWholeChainCrossfadePreservesVintageSaturation();
     }
 
 private:
@@ -143,6 +144,32 @@ private:
         expect(processor.getNumericalFaultCount() > 0);
         for (int i = 0; i < buffer.getNumSamples(); ++i)
             expect(std::isfinite(buffer.getSample(0, i)));
+    }
+
+    void testWholeChainCrossfadePreservesVintageSaturation()
+    {
+        beginTest("Whole-chain A/B crossfade preserves per-band Vintage saturation");
+        ParametricEQProcessor processor;
+        processor.prepare(48000.0, 256, 1);
+        const int band = processor.addBand(
+            1000.0f, 0.0f, 1.0f, ParametricEQProcessor::VintageLowShelf);
+        processor.setBandVintageMode(band, true);
+
+        juce::AudioBuffer<float> buffer(1, 256);
+        buffer.clear();
+        processor.process(buffer); // publish the Vintage state
+
+        processor.beginWholeChainCrossfade(128);
+        buffer.clear();
+        for (int sample = 0; sample < buffer.getNumSamples(); ++sample)
+            buffer.setSample(0, sample, 4.0f);
+        processor.process(buffer);
+
+        bool fault = false;
+        const float expected = AIEQDSP::NumericSafety::vintageSaturate(4.0f, fault);
+        expect(!fault);
+        for (int sample = 0; sample < buffer.getNumSamples(); ++sample)
+            expectWithinAbsoluteError(buffer.getSample(0, sample), expected, 2.0e-5f);
     }
 };
 

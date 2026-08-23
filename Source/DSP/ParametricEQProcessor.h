@@ -5,6 +5,7 @@
 #include "../Core/LockFreeStructures.h"
 #include "BiquadCoefficients.h"
 #include "CutFilterDesigner.h"
+#include "TptSvf.h"
 #include <array>
 #include <atomic>
 #include <cstdint>
@@ -43,6 +44,12 @@ public:
         VintageLowShelf, // Pultec-style low shelf with analog modeling
         VintageHighShelf // Pultec-style high shelf with analog modeling
     };
+
+    enum class CurveMode : uint8_t
+    {
+        Legacy = 0,
+        Surgical
+    };
     
     //==============================================================================
     // Atomic band parameters (lock-free, trivially copyable)
@@ -59,6 +66,7 @@ public:
                                                    // DynamicEQProcessor handles it dynamically.
         std::atomic<bool> solo { false };
         std::atomic<bool> vintageMode { false };
+        std::atomic<uint8_t> curveMode { static_cast<uint8_t>(CurveMode::Legacy) };
         std::atomic<int> slope { 0 };  // 0=12dB/oct, 1=24dB/oct, 2=48dB/oct (LowCut/HighCut only)
         std::atomic<uint64_t> version { 0 };  // Incremented on any change
         
@@ -85,7 +93,12 @@ public:
         std::array<BiquadState, maxFilterStages> filtersL;
         std::array<BiquadState, maxFilterStages> filtersR;
         std::array<BiquadCoeffs, maxFilterStages> coefficients;
+        AIEQDSP::TptSvfState tptStateL;
+        AIEQDSP::TptSvfState tptStateR;
+        AIEQDSP::TptSvfCoefficients tptCoefficients;
         int numActiveStages = 1;
+        bool useTpt = false;
+        bool appliedVintage = false;
         uint64_t lastVersion = 0;  // Track when coefficients need update
         bool prepared = false;
     };
@@ -101,6 +114,7 @@ public:
         bool enabled = false;
         bool solo = false;
         bool vintageMode = false;
+        CurveMode curveMode = CurveMode::Legacy;
     };
 
     //==============================================================================
@@ -153,6 +167,7 @@ public:
     void setBandAudioBypass(int index, bool bypass);  // Bypass audio only, keep visual
     void setBandSolo(int index, bool solo);
     void setBandVintageMode(int index, bool vintage);
+    void setBandCurveMode(int index, CurveMode mode);
     
     void setBandParameters(int index, float freq, float gain, float q, int type);
     void setBandSlope(int index, int slope);  // 0=12, 1=24, 2=48 dB/oct (LowCut/HighCut only)
@@ -175,6 +190,7 @@ public:
     [[nodiscard]] bool isBandEnabled(int index) const;
     [[nodiscard]] bool isBandSolo(int index) const;
     [[nodiscard]] int getBandSlope(int index) const;
+    [[nodiscard]] CurveMode getBandCurveMode(int index) const;
     
     // Get complete band info (for GUI display)
     [[nodiscard]] BandInfo getBandInfo(int index) const;
@@ -235,6 +251,14 @@ private:
     void resetRuntimeStateNoAllocation(double sampleRate, int samplesPerBlock, int channels) noexcept;
     [[nodiscard]] float processBiquadWithFault(BiquadState& state, float input,
                                                const BiquadCoeffs& coefficients) noexcept;
+    [[nodiscard]] float processFilterPath(
+        bool useTpt,
+        AIEQDSP::TptSvfState& tptState,
+        const AIEQDSP::TptSvfCoefficients& tptCoefficients,
+        std::array<BiquadState, BandProcessingState::maxFilterStages>& filters,
+        const std::array<BiquadCoeffs, BandProcessingState::maxFilterStages>& coefficients,
+        int numStages,
+        float input) noexcept;
     [[nodiscard]] float applyVintageSaturation(float input) noexcept;
     
     [[nodiscard]] BiquadCoeffs makeCoefficients(
@@ -243,13 +267,17 @@ private:
     struct FilterDesign
     {
         std::array<BiquadCoeffs, BandProcessingState::maxFilterStages> coefficients {};
+        AIEQDSP::TptSvfCoefficients tptCoefficients {};
         int numStages = 0;
+        bool useTpt = false;
         BiquadValidationFailure failure = BiquadValidationFailure::IntentionalBypass;
     };
 
     [[nodiscard]] FilterDesign makeFilterDesign(
         FilterType type, float freq, float gain, float q, int slope,
-        double sampleRate) const;
+        double sampleRate, CurveMode curveMode = CurveMode::Legacy) const;
+    [[nodiscard]] static double getFilterDesignMagnitude(
+        const FilterDesign& design, double frequency, double sampleRate) noexcept;
     
     //==============================================================================
     // LOCK-FREE ARCHITECTURE
@@ -270,7 +298,12 @@ private:
         std::array<BiquadCoeffs, maxFilterStages> oldCoeffs;
         std::array<BiquadState, maxFilterStages> oldFiltersL;
         std::array<BiquadState, maxFilterStages> oldFiltersR;
+        AIEQDSP::TptSvfState oldTptStateL;
+        AIEQDSP::TptSvfState oldTptStateR;
+        AIEQDSP::TptSvfCoefficients oldTptCoefficients;
         int oldNumStages = 1;
+        bool oldUseTpt = false;
+        bool oldVintage = false;
         int remaining = 0;   // samples left in crossfade
         int total = 0;       // total crossfade length
     };
@@ -290,7 +323,12 @@ private:
             std::array<BiquadCoeffs, maxFilterStages> coeffs;
             std::array<BiquadState, maxFilterStages> filtersL;
             std::array<BiquadState, maxFilterStages> filtersR;
+            AIEQDSP::TptSvfState tptStateL;
+            AIEQDSP::TptSvfState tptStateR;
+            AIEQDSP::TptSvfCoefficients tptCoefficients;
             int numStages = 1;
+            bool useTpt = false;
+            bool vintage = false;
             bool enabled = false;
             bool solo = false;
         };

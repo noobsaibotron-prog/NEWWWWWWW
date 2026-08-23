@@ -28,6 +28,8 @@ ParametricEQProcessor::ParametricEQProcessor()
         bandParams[i].gain.store(0.0f, std::memory_order_relaxed);
         bandParams[i].q.store(1.0f, std::memory_order_relaxed);
         bandParams[i].type.store(static_cast<int>(Peak), std::memory_order_relaxed);
+        bandParams[i].curveMode.store(
+            static_cast<uint8_t>(CurveMode::Legacy), std::memory_order_relaxed);
         bandParams[i].version.store(0, std::memory_order_relaxed);
         bandValidationFailures[static_cast<size_t>(i)].store(
             static_cast<uint8_t>(BiquadValidationFailure::IntentionalBypass),
@@ -74,6 +76,10 @@ void ParametricEQProcessor::resetRuntimeStateNoAllocation(double sampleRate,
             state.filtersL[s].reset();
             state.filtersR[s].reset();
         }
+        state.tptStateL.reset();
+        state.tptStateR.reset();
+        state.useTpt = false;
+        state.appliedVintage = false;
         state.lastVersion = 0;  // Force coefficient update
         state.prepared = true;
     }
@@ -98,6 +104,11 @@ void ParametricEQProcessor::reset()
             bandStates[i].filtersR[s].reset();
             bandStates[i].coefficients[s] = BiquadCoeffs{};
         }
+        bandStates[i].tptStateL.reset();
+        bandStates[i].tptStateR.reset();
+        bandStates[i].tptCoefficients = AIEQDSP::TptSvfCoefficients{};
+        bandStates[i].useTpt = false;
+        bandStates[i].appliedVintage = false;
     }
 }
 
@@ -166,9 +177,17 @@ void ParametricEQProcessor::process(juce::AudioBuffer<float>& buffer)
             // Save old filter state so we can blend old→new over 128 samples,
             // eliminating the biquad coefficient-jump discontinuity (pop/click).
             auto& xfade = bandCrossfades[i];
-            if (xfade.remaining <= 0 && state.coefficients[0].valid)
+            const bool oldPathValid = state.useTpt
+                ? state.tptCoefficients.isValid()
+                : state.coefficients[0].valid;
+            if (xfade.remaining <= 0 && oldPathValid)
             {
                 xfade.oldNumStages = state.numActiveStages;
+                xfade.oldUseTpt = state.useTpt;
+                xfade.oldVintage = state.appliedVintage;
+                xfade.oldTptStateL = state.tptStateL;
+                xfade.oldTptStateR = state.tptStateR;
+                xfade.oldTptCoefficients = state.tptCoefficients;
                 for (int s = 0; s < BandProcessingState::maxFilterStages; ++s)
                 {
                     xfade.oldCoeffs[s] = state.coefficients[s];
@@ -216,11 +235,27 @@ void ParametricEQProcessor::process(juce::AudioBuffer<float>& buffer)
             const float q = params.q.load(std::memory_order_relaxed);
             const int type = params.type.load(std::memory_order_relaxed);
             const int slope = params.slope.load(std::memory_order_relaxed);
+            const auto curveMode = static_cast<CurveMode>(
+                params.curveMode.load(std::memory_order_relaxed));
+            const bool vintage = params.vintageMode.load(std::memory_order_relaxed);
 
             const auto design = makeFilterDesign(
-                static_cast<FilterType>(type), freq, gain, q, slope, sr);
+                static_cast<FilterType>(type), freq, gain, q, slope, sr, curveMode);
+            const bool topologyChanged = state.useTpt != design.useTpt;
             state.numActiveStages = design.numStages;
             state.coefficients = design.coefficients;
+            state.tptCoefficients = design.tptCoefficients;
+            state.useTpt = design.useTpt;
+            state.appliedVintage = !design.useTpt && vintage
+                && (type == static_cast<int>(VintageLowShelf)
+                    || type == static_cast<int>(VintageHighShelf));
+            if (topologyChanged)
+            {
+                state.tptStateL.reset();
+                state.tptStateR.reset();
+                for (auto& filter : state.filtersL) filter.reset();
+                for (auto& filter : state.filtersR) filter.reset();
+            }
             bandValidationFailures[static_cast<size_t>(i)].store(
                 static_cast<uint8_t>(design.failure), std::memory_order_release);
 
@@ -262,9 +297,11 @@ void ParametricEQProcessor::process(juce::AudioBuffer<float>& buffer)
                     auto& ob = wc.oldBands[b];
                     if (!ob.enabled) continue;
                     if (wc.hadSolo && !ob.solo) continue;
-                    if (!ob.coeffs[0].valid) continue;
-                    for (int s = 0; s < ob.numStages; ++s)
-                        oldSample = processBiquadWithFault(ob.filtersL[s], oldSample, ob.coeffs[s]);
+                    oldSample = processFilterPath(
+                        ob.useTpt, ob.tptStateL, ob.tptCoefficients,
+                        ob.filtersL, ob.coeffs, ob.numStages, oldSample);
+                    if (ob.vintage)
+                        oldSample = applyVintageSaturation(oldSample);
                 }
 
                 // New chain: cascade through all new bands
@@ -277,9 +314,14 @@ void ParametricEQProcessor::process(juce::AudioBuffer<float>& buffer)
                     if (!en || ab) continue;
                     if (hasSolo && !sl) continue;
                     auto& st = bandStates[b];
-                    if (!st.coefficients[0].valid) continue;
-                    for (int s = 0; s < st.numActiveStages; ++s)
-                        newSample = processBiquadWithFault(st.filtersL[s], newSample, st.coefficients[s]);
+                    const bool pathValid = st.useTpt
+                        ? st.tptCoefficients.isValid() : st.coefficients[0].valid;
+                    if (!pathValid) continue;
+                    newSample = processFilterPath(
+                        st.useTpt, st.tptStateL, st.tptCoefficients,
+                        st.filtersL, st.coefficients, st.numActiveStages, newSample);
+                    if (st.appliedVintage)
+                        newSample = applyVintageSaturation(newSample);
                 }
 
                 buffer.setSample(0, i, oldSample + (newSample - oldSample) * t);
@@ -296,9 +338,11 @@ void ParametricEQProcessor::process(juce::AudioBuffer<float>& buffer)
                     auto& ob = wc.oldBands[b];
                     if (!ob.enabled) continue;
                     if (wc.hadSolo && !ob.solo) continue;
-                    if (!ob.coeffs[0].valid) continue;
-                    for (int s = 0; s < ob.numStages; ++s)
-                        oldSample = processBiquadWithFault(ob.filtersR[s], oldSample, ob.coeffs[s]);
+                    oldSample = processFilterPath(
+                        ob.useTpt, ob.tptStateR, ob.tptCoefficients,
+                        ob.filtersR, ob.coeffs, ob.numStages, oldSample);
+                    if (ob.vintage)
+                        oldSample = applyVintageSaturation(oldSample);
                 }
 
                 float newSample = input;
@@ -310,9 +354,14 @@ void ParametricEQProcessor::process(juce::AudioBuffer<float>& buffer)
                     if (!en || ab) continue;
                     if (hasSolo && !sl) continue;
                     auto& st = bandStates[b];
-                    if (!st.coefficients[0].valid) continue;
-                    for (int s = 0; s < st.numActiveStages; ++s)
-                        newSample = processBiquadWithFault(st.filtersR[s], newSample, st.coefficients[s]);
+                    const bool pathValid = st.useTpt
+                        ? st.tptCoefficients.isValid() : st.coefficients[0].valid;
+                    if (!pathValid) continue;
+                    newSample = processFilterPath(
+                        st.useTpt, st.tptStateR, st.tptCoefficients,
+                        st.filtersR, st.coefficients, st.numActiveStages, newSample);
+                    if (st.appliedVintage)
+                        newSample = applyVintageSaturation(newSample);
                 }
 
                 buffer.setSample(1, i, oldSample + (newSample - oldSample) * t);
@@ -337,8 +386,6 @@ void ParametricEQProcessor::process(juce::AudioBuffer<float>& buffer)
         const bool enabled = params.enabled.load(std::memory_order_relaxed);
         const bool bypassed_for_dyn = params.audioBypass.load(std::memory_order_relaxed);
         const bool solo = params.solo.load(std::memory_order_relaxed);
-        const bool vintage = params.vintageMode.load(std::memory_order_relaxed);
-        const int type = params.type.load(std::memory_order_relaxed);
 
         // Skip if not enabled or audio-bypassed (DynEQ handles this band)
         if (!enabled || bypassed_for_dyn)
@@ -347,16 +394,16 @@ void ParametricEQProcessor::process(juce::AudioBuffer<float>& buffer)
             continue;
 
         // Skip if no valid coefficients (check first stage)
-        if (!state.coefficients[0].valid)
+        const bool pathValid = state.useTpt
+            ? state.tptCoefficients.isValid() : state.coefficients[0].valid;
+        if (!pathValid)
             continue;
 
         const int numStages = state.numActiveStages;
         auto& xfade = bandCrossfades[bandIdx];
         const bool crossfading = xfade.remaining > 0;
 
-        // Check for vintage modes that need soft clipping
-        const bool applyVintage = vintage &&
-            (type == static_cast<int>(VintageLowShelf) || type == static_cast<int>(VintageHighShelf));
+        const bool applyVintage = state.appliedVintage;
 
         if (crossfading)
         {
@@ -378,21 +425,17 @@ void ParametricEQProcessor::process(juce::AudioBuffer<float>& buffer)
                 {
                     const float input = dataL[i];
 
-                    float newSample = input;
-                    for (int s = 0; s < numStages; ++s)
-                        newSample = processBiquadWithFault(
-                            state.filtersL[s], newSample, state.coefficients[s]);
-
-                    float oldSample = input;
-                    for (int s = 0; s < xfade.oldNumStages; ++s)
-                        oldSample = processBiquadWithFault(
-                            xfade.oldFiltersL[s], oldSample, xfade.oldCoeffs[s]);
+                    float newSample = processFilterPath(
+                        state.useTpt, state.tptStateL, state.tptCoefficients,
+                        state.filtersL, state.coefficients, numStages, input);
+                    float oldSample = processFilterPath(
+                        xfade.oldUseTpt, xfade.oldTptStateL, xfade.oldTptCoefficients,
+                        xfade.oldFiltersL, xfade.oldCoeffs, xfade.oldNumStages, input);
 
                     if (applyVintage)
-                    {
                         newSample = applyVintageSaturation(newSample);
+                    if (xfade.oldVintage)
                         oldSample = applyVintageSaturation(oldSample);
-                    }
 
                     dataL[i] = oldSample + (newSample - oldSample) * t;
                 }
@@ -402,21 +445,17 @@ void ParametricEQProcessor::process(juce::AudioBuffer<float>& buffer)
                 {
                     const float input = dataR[i];
 
-                    float newSample = input;
-                    for (int s = 0; s < numStages; ++s)
-                        newSample = processBiquadWithFault(
-                            state.filtersR[s], newSample, state.coefficients[s]);
-
-                    float oldSample = input;
-                    for (int s = 0; s < xfade.oldNumStages; ++s)
-                        oldSample = processBiquadWithFault(
-                            xfade.oldFiltersR[s], oldSample, xfade.oldCoeffs[s]);
+                    float newSample = processFilterPath(
+                        state.useTpt, state.tptStateR, state.tptCoefficients,
+                        state.filtersR, state.coefficients, numStages, input);
+                    float oldSample = processFilterPath(
+                        xfade.oldUseTpt, xfade.oldTptStateR, xfade.oldTptCoefficients,
+                        xfade.oldFiltersR, xfade.oldCoeffs, xfade.oldNumStages, input);
 
                     if (applyVintage)
-                    {
                         newSample = applyVintageSaturation(newSample);
+                    if (xfade.oldVintage)
                         oldSample = applyVintageSaturation(oldSample);
-                    }
 
                     dataR[i] = oldSample + (newSample - oldSample) * t;
                 }
@@ -438,10 +477,9 @@ void ParametricEQProcessor::process(juce::AudioBuffer<float>& buffer)
                 {
                     for (int i = 0; i < numSamples; ++i)
                     {
-                        float sample = channelData[i];
-                        for (int s = 0; s < numStages; ++s)
-                            sample = processBiquadWithFault(
-                                state.filtersL[s], sample, state.coefficients[s]);
+                        float sample = processFilterPath(
+                            state.useTpt, state.tptStateL, state.tptCoefficients,
+                            state.filtersL, state.coefficients, numStages, channelData[i]);
                         channelData[i] = applyVintageSaturation(sample);
                     }
                 }
@@ -449,11 +487,9 @@ void ParametricEQProcessor::process(juce::AudioBuffer<float>& buffer)
                 {
                     for (int i = 0; i < numSamples; ++i)
                     {
-                        float sample = channelData[i];
-                        for (int s = 0; s < numStages; ++s)
-                            sample = processBiquadWithFault(
-                                state.filtersL[s], sample, state.coefficients[s]);
-                        channelData[i] = sample;
+                        channelData[i] = processFilterPath(
+                            state.useTpt, state.tptStateL, state.tptCoefficients,
+                            state.filtersL, state.coefficients, numStages, channelData[i]);
                     }
                 }
             }
@@ -465,10 +501,9 @@ void ParametricEQProcessor::process(juce::AudioBuffer<float>& buffer)
                 {
                     for (int i = 0; i < numSamples; ++i)
                     {
-                        float sample = channelData[i];
-                        for (int s = 0; s < numStages; ++s)
-                            sample = processBiquadWithFault(
-                                state.filtersR[s], sample, state.coefficients[s]);
+                        float sample = processFilterPath(
+                            state.useTpt, state.tptStateR, state.tptCoefficients,
+                            state.filtersR, state.coefficients, numStages, channelData[i]);
                         channelData[i] = applyVintageSaturation(sample);
                     }
                 }
@@ -476,11 +511,9 @@ void ParametricEQProcessor::process(juce::AudioBuffer<float>& buffer)
                 {
                     for (int i = 0; i < numSamples; ++i)
                     {
-                        float sample = channelData[i];
-                        for (int s = 0; s < numStages; ++s)
-                            sample = processBiquadWithFault(
-                                state.filtersR[s], sample, state.coefficients[s]);
-                        channelData[i] = sample;
+                        channelData[i] = processFilterPath(
+                            state.useTpt, state.tptStateR, state.tptCoefficients,
+                            state.filtersR, state.coefficients, numStages, channelData[i]);
                     }
                 }
             }
@@ -505,6 +538,35 @@ float ParametricEQProcessor::processBiquadWithFault(
     const float output = state.processSample(input, coefficients, &fault);
     if (fault)
         numericalFaultCount.fetch_add(1, std::memory_order_relaxed);
+    return output;
+}
+
+float ParametricEQProcessor::processFilterPath(
+    bool useTpt,
+    AIEQDSP::TptSvfState& tptState,
+    const AIEQDSP::TptSvfCoefficients& tptCoefficients,
+    std::array<BiquadState, BandProcessingState::maxFilterStages>& filters,
+    const std::array<BiquadCoeffs, BandProcessingState::maxFilterStages>& coefficients,
+    int numStages,
+    float input) noexcept
+{
+    if (useTpt)
+    {
+        bool fault = false;
+        const double output = tptState.processSample(
+            static_cast<double>(input), tptCoefficients, &fault);
+        if (fault)
+            numericalFaultCount.fetch_add(1, std::memory_order_relaxed);
+        return static_cast<float>(output);
+    }
+
+    float output = input;
+    const int safeStages = juce::jlimit(
+        0, BandProcessingState::maxFilterStages, numStages);
+    for (int stage = 0; stage < safeStages; ++stage)
+        output = processBiquadWithFault(
+            filters[static_cast<size_t>(stage)], output,
+            coefficients[static_cast<size_t>(stage)]);
     return output;
 }
 
@@ -535,6 +597,8 @@ int ParametricEQProcessor::addBand(float freq, float gainDb, float q, int type)
     params.type.store(juce::jlimit(0, 8, type), std::memory_order_relaxed);
     params.solo.store(false, std::memory_order_relaxed);
     params.vintageMode.store(false, std::memory_order_relaxed);
+    params.curveMode.store(
+        static_cast<uint8_t>(CurveMode::Legacy), std::memory_order_relaxed);
     params.enabled.store(true, std::memory_order_relaxed);
     params.version.fetch_add(1, std::memory_order_release);  // Signal update
     
@@ -550,13 +614,18 @@ int ParametricEQProcessor::addBand(float freq, float gainDb, float q, int type)
             state.filtersL[s].reset();
             state.filtersR[s].reset();
         }
+        state.tptStateL.reset();
+        state.tptStateR.reset();
         state.numActiveStages = 1;
         state.prepared = true;
 
         const auto design = makeFilterDesign(
-            static_cast<FilterType>(type), freq, gainDb, q, 0, sr);
+            static_cast<FilterType>(type), freq, gainDb, q, 0, sr, CurveMode::Legacy);
         state.numActiveStages = design.numStages;
         state.coefficients = design.coefficients;
+        state.tptCoefficients = design.tptCoefficients;
+        state.useTpt = design.useTpt;
+        state.appliedVintage = false;
         bandValidationFailures[static_cast<size_t>(newIndex)].store(
             static_cast<uint8_t>(design.failure), std::memory_order_release);
         state.lastVersion = params.version.load(std::memory_order_acquire);
@@ -589,12 +658,18 @@ void ParametricEQProcessor::removeBand(int index)
         dest.enabled.store(src.enabled.load(std::memory_order_relaxed), std::memory_order_relaxed);
         dest.solo.store(src.solo.load(std::memory_order_relaxed), std::memory_order_relaxed);
         dest.vintageMode.store(src.vintageMode.load(std::memory_order_relaxed), std::memory_order_relaxed);
+        dest.curveMode.store(src.curveMode.load(std::memory_order_relaxed), std::memory_order_relaxed);
         dest.slope.store(src.slope.load(std::memory_order_relaxed), std::memory_order_relaxed);
         dest.version.fetch_add(1, std::memory_order_release);
         
         // Copy filter state
         for (int s = 0; s < BandProcessingState::maxFilterStages; ++s)
             bandStates[i].coefficients[s] = bandStates[i + 1].coefficients[s];
+        bandStates[i].tptCoefficients = bandStates[i + 1].tptCoefficients;
+        bandStates[i].tptStateL = bandStates[i + 1].tptStateL;
+        bandStates[i].tptStateR = bandStates[i + 1].tptStateR;
+        bandStates[i].useTpt = bandStates[i + 1].useTpt;
+        bandStates[i].appliedVintage = bandStates[i + 1].appliedVintage;
         bandStates[i].numActiveStages = bandStates[i + 1].numActiveStages;
         bandStates[i].lastVersion = 0;  // Force update
         bandValidationFailures[static_cast<size_t>(i)].store(
@@ -696,6 +771,19 @@ void ParametricEQProcessor::setBandVintageMode(int index, bool vintage)
         return;
     
     bandParams[index].vintageMode.store(vintage, std::memory_order_relaxed);
+    bandParams[index].version.fetch_add(1, std::memory_order_release);
+}
+
+void ParametricEQProcessor::setBandCurveMode(int index, CurveMode mode)
+{
+    if (index < 0 || index >= numActiveBands.load(std::memory_order_acquire))
+        return;
+
+    const CurveMode safeMode = mode == CurveMode::Surgical
+        ? CurveMode::Surgical : CurveMode::Legacy;
+    bandParams[index].curveMode.store(
+        static_cast<uint8_t>(safeMode), std::memory_order_relaxed);
+    bandParams[index].version.fetch_add(1, std::memory_order_release);
 }
 
 void ParametricEQProcessor::setBandParameters(int index, float freq, float gain, float q, int type)
@@ -724,6 +812,8 @@ void ParametricEQProcessor::clearBandFilterState(int index) noexcept
     auto& state = bandStates[index];
     for (auto& f : state.filtersL) f.reset();
     for (auto& f : state.filtersR) f.reset();
+    state.tptStateL.reset();
+    state.tptStateR.reset();
 }
 
 void ParametricEQProcessor::beginBandCrossfade(int index, int fadeSamples) noexcept
@@ -772,6 +862,11 @@ void ParametricEQProcessor::executePerBandCrossfadeSetup(int index, int fadeSamp
 
     // Save current coefficients and filter state
     xfade.oldNumStages = state.numActiveStages;
+    xfade.oldUseTpt = state.useTpt;
+    xfade.oldVintage = state.appliedVintage;
+    xfade.oldTptStateL = state.tptStateL;
+    xfade.oldTptStateR = state.tptStateR;
+    xfade.oldTptCoefficients = state.tptCoefficients;
     for (int s = 0; s < BandProcessingState::maxFilterStages; ++s)
     {
         xfade.oldCoeffs[s]   = state.coefficients[s];
@@ -782,6 +877,8 @@ void ParametricEQProcessor::executePerBandCrossfadeSetup(int index, int fadeSamp
     // Reset live filter state so new coefficients start clean
     for (auto& f : state.filtersL) f.reset();
     for (auto& f : state.filtersR) f.reset();
+    state.tptStateL.reset();
+    state.tptStateR.reset();
 
     // Start crossfade
     xfade.remaining = fadeSamples;
@@ -811,7 +908,13 @@ void ParametricEQProcessor::executeWholeChainCrossfadeSetup(int fadeSamples) noe
         auto& ob = wc.oldBands[i];
         auto& state = bandStates[i];
         ob.numStages = state.numActiveStages;
-        ob.enabled = state.coefficients[0].valid;
+        ob.useTpt = state.useTpt;
+        ob.vintage = state.appliedVintage;
+        ob.tptStateL = state.tptStateL;
+        ob.tptStateR = state.tptStateR;
+        ob.tptCoefficients = state.tptCoefficients;
+        ob.enabled = state.useTpt
+            ? state.tptCoefficients.isValid() : state.coefficients[0].valid;
         ob.solo = false;
 
         for (int s = 0; s < BandProcessingState::maxFilterStages; ++s)
@@ -824,6 +927,8 @@ void ParametricEQProcessor::executeWholeChainCrossfadeSetup(int fadeSamples) noe
         // Reset live filter state so new coefficients start clean
         for (auto& f : state.filtersL) f.reset();
         for (auto& f : state.filtersR) f.reset();
+        state.tptStateL.reset();
+        state.tptStateR.reset();
     }
 
     // Cancel any per-band crossfades (whole-chain supersedes)
@@ -883,6 +988,15 @@ int ParametricEQProcessor::getBandSlope(int index) const
     return bandParams[index].slope.load(std::memory_order_relaxed);
 }
 
+ParametricEQProcessor::CurveMode ParametricEQProcessor::getBandCurveMode(int index) const
+{
+    if (index < 0 || index >= getMaxBands())
+        return CurveMode::Legacy;
+    const auto mode = static_cast<CurveMode>(
+        bandParams[index].curveMode.load(std::memory_order_relaxed));
+    return mode == CurveMode::Surgical ? CurveMode::Surgical : CurveMode::Legacy;
+}
+
 ParametricEQProcessor::BandInfo ParametricEQProcessor::getBandInfo(int index) const
 {
     BandInfo info;
@@ -897,6 +1011,10 @@ ParametricEQProcessor::BandInfo ParametricEQProcessor::getBandInfo(int index) co
         info.enabled = params.enabled.load(std::memory_order_relaxed);
         info.solo = params.solo.load(std::memory_order_relaxed);
         info.vintageMode = params.vintageMode.load(std::memory_order_relaxed);
+        const auto mode = static_cast<CurveMode>(
+            params.curveMode.load(std::memory_order_relaxed));
+        info.curveMode = mode == CurveMode::Surgical
+            ? CurveMode::Surgical : CurveMode::Legacy;
     }
     
     return info;
@@ -926,12 +1044,14 @@ float ParametricEQProcessor::getMagnitudeForFrequency(float freq, double sampleR
         const float bQ    = bandParams[i].q.load(std::memory_order_relaxed);
         const int   bType = bandParams[i].type.load(std::memory_order_relaxed);
         const int   bSlope = bandParams[i].slope.load(std::memory_order_relaxed);
+        const auto curveMode = static_cast<CurveMode>(
+            bandParams[i].curveMode.load(std::memory_order_relaxed));
 
         const auto design = makeFilterDesign(
-            static_cast<FilterType>(bType), bFreq, bGain, bQ, bSlope, sampleRate);
-        for (int stage = 0; stage < design.numStages; ++stage)
-            magnitude *= design.coefficients[static_cast<size_t>(stage)]
-                .getMagnitudeForFrequency(static_cast<double>(freq), sampleRate);
+            static_cast<FilterType>(bType), bFreq, bGain, bQ, bSlope,
+            sampleRate, curveMode);
+        magnitude *= getFilterDesignMagnitude(
+            design, static_cast<double>(freq), sampleRate);
     }
 
     return static_cast<float>(magnitude) * outputGain.load(std::memory_order_relaxed);
@@ -968,17 +1088,17 @@ void ParametricEQProcessor::getMagnitudeForFrequencyArray(const float* frequenci
         const float bQ    = bandParams[bandIdx].q.load(std::memory_order_relaxed);
         const int   bType = bandParams[bandIdx].type.load(std::memory_order_relaxed);
         const int   bSlope = bandParams[bandIdx].slope.load(std::memory_order_relaxed);
+        const auto curveMode = static_cast<CurveMode>(
+            bandParams[bandIdx].curveMode.load(std::memory_order_relaxed));
 
         const auto design = makeFilterDesign(
-            static_cast<FilterType>(bType), bFreq, bGain, bQ, bSlope, sampleRate);
+            static_cast<FilterType>(bType), bFreq, bGain, bQ, bSlope,
+            sampleRate, curveMode);
 
         for (size_t i = 0; i < numPoints; ++i)
         {
-            double totalMag = 1.0;
-            for (int stage = 0; stage < design.numStages; ++stage)
-                totalMag *= design.coefficients[static_cast<size_t>(stage)]
-                    .getMagnitudeForFrequency(static_cast<double>(frequencies[i]), sampleRate);
-            magnitudes[i] *= static_cast<float>(totalMag);
+            magnitudes[i] *= static_cast<float>(getFilterDesignMagnitude(
+                design, static_cast<double>(frequencies[i]), sampleRate));
         }
     }
 
@@ -1017,21 +1137,21 @@ void ParametricEQProcessor::getMagnitudeForFrequencyArrayWithGainOffsets(
         const float bQ     = bandParams[bandIdx].q.load(std::memory_order_relaxed);
         const int   bType  = bandParams[bandIdx].type.load(std::memory_order_relaxed);
         const int   bSlope = bandParams[bandIdx].slope.load(std::memory_order_relaxed);
+        const auto curveMode = static_cast<CurveMode>(
+            bandParams[bandIdx].curveMode.load(std::memory_order_relaxed));
 
         // Apply per-band gain offset (gain reduction from dynamic EQ)
         const float offset = (gainOffsets && bandIdx < numOffsets) ? gainOffsets[bandIdx] : 0.0f;
         const float bGain  = bGainBase + offset;
 
         const auto design = makeFilterDesign(
-            static_cast<FilterType>(bType), bFreq, bGain, bQ, bSlope, sampleRate);
+            static_cast<FilterType>(bType), bFreq, bGain, bQ, bSlope,
+            sampleRate, curveMode);
 
         for (size_t i = 0; i < numPoints; ++i)
         {
-            double totalMag = 1.0;
-            for (int stage = 0; stage < design.numStages; ++stage)
-                totalMag *= design.coefficients[static_cast<size_t>(stage)]
-                    .getMagnitudeForFrequency(static_cast<double>(frequencies[i]), sampleRate);
-            magnitudes[i] *= static_cast<float>(totalMag);
+            magnitudes[i] *= static_cast<float>(getFilterDesignMagnitude(
+                design, static_cast<double>(frequencies[i]), sampleRate));
         }
     }
 
@@ -1054,12 +1174,20 @@ void ParametricEQProcessor::updateCoefficientsForBand(int index)
     const float q = params.q.load(std::memory_order_relaxed);
     const int type = params.type.load(std::memory_order_relaxed);
     const int slope = params.slope.load(std::memory_order_relaxed);
+    const auto curveMode = static_cast<CurveMode>(
+        params.curveMode.load(std::memory_order_relaxed));
+    const bool vintage = params.vintageMode.load(std::memory_order_relaxed);
     const double sr = currentSampleRate.load(std::memory_order_relaxed);
     
     const auto design = makeFilterDesign(
-        static_cast<FilterType>(type), freq, gain, q, slope, sr);
+        static_cast<FilterType>(type), freq, gain, q, slope, sr, curveMode);
     state.numActiveStages = design.numStages;
     state.coefficients = design.coefficients;
+    state.tptCoefficients = design.tptCoefficients;
+    state.useTpt = design.useTpt;
+    state.appliedVintage = !design.useTpt && vintage
+        && (type == static_cast<int>(VintageLowShelf)
+            || type == static_cast<int>(VintageHighShelf));
     bandValidationFailures[static_cast<size_t>(index)].store(
         static_cast<uint8_t>(design.failure), std::memory_order_release);
     
@@ -1068,9 +1196,30 @@ void ParametricEQProcessor::updateCoefficientsForBand(int index)
 
 ParametricEQProcessor::FilterDesign ParametricEQProcessor::makeFilterDesign(
     FilterType type, float freq, float gain, float q, int slope,
-    double sampleRate) const
+    double sampleRate, CurveMode curveMode) const
 {
     FilterDesign result;
+
+    const bool useSurgicalTpt = curveMode == CurveMode::Surgical
+        && (type == LowShelf || type == Peak || type == HighShelf);
+    if (useSurgicalTpt)
+    {
+        AIEQDSP::TptSvfType tptType = AIEQDSP::TptSvfType::Bell;
+        if (type == LowShelf)
+            tptType = AIEQDSP::TptSvfType::LowShelf;
+        else if (type == HighShelf)
+            tptType = AIEQDSP::TptSvfType::HighShelf;
+
+        result.tptCoefficients = AIEQDSP::TptSvfCoefficients::design(
+            tptType, sampleRate, static_cast<double>(freq),
+            static_cast<double>(gain), static_cast<double>(q));
+        result.useTpt = result.tptCoefficients.isValid();
+        result.numStages = result.useTpt ? 1 : 0;
+        result.failure = result.useTpt
+            ? BiquadValidationFailure::None
+            : BiquadValidationFailure::InvalidDomain;
+        return result;
+    }
 
     if (type == LowCut || type == HighCut)
     {
@@ -1094,6 +1243,25 @@ ParametricEQProcessor::FilterDesign ParametricEQProcessor::makeFilterDesign(
     result.numStages = result.coefficients[0].valid ? 1 : 0;
     result.failure = result.coefficients[0].failure;
     return result;
+}
+
+double ParametricEQProcessor::getFilterDesignMagnitude(
+    const FilterDesign& design, double frequency, double sampleRate) noexcept
+{
+    if (design.useTpt)
+    {
+        const double magnitude = design.tptCoefficients.getMagnitudeForFrequency(
+            frequency, sampleRate);
+        return std::isfinite(magnitude) ? magnitude : 1.0;
+    }
+
+    double magnitude = 1.0;
+    for (int stage = 0; stage < design.numStages; ++stage)
+    {
+        magnitude *= design.coefficients[static_cast<size_t>(stage)]
+            .getMagnitudeForFrequency(frequency, sampleRate);
+    }
+    return magnitude;
 }
 
 BiquadCoeffs ParametricEQProcessor::makeCoefficients(
