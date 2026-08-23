@@ -381,6 +381,7 @@ struct alignas(kCacheLineSize) BandParameterBlock
     
     // Dynamic EQ parameters
     int dynamicMode = 0;  // Off
+    int triggerSide = 0;  // Above; legacy dynamicMode 3 overrides to Below
     float threshold = -20.0f;
     float ratio = 2.0f;
     float attackMs = 10.0f;

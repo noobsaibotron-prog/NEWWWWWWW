@@ -114,6 +114,7 @@ AIEqualizerAudioProcessor::AIEqualizerAudioProcessor()
         // was never called when the user moved a dynamic EQ knob, so setBandParams()
         // never updated the SmoothedValues - causing the GR meter to freeze.
         eqParameterIDs.push_back(prefix + "DynMode");
+        eqParameterIDs.push_back(prefix + "DynTrigger");
         eqParameterIDs.push_back(prefix + "Threshold");
         eqParameterIDs.push_back(prefix + "Ratio");
         eqParameterIDs.push_back(prefix + "Attack");
@@ -1102,6 +1103,19 @@ juce::AudioProcessorValueTreeState::ParameterLayout AIEqualizerAudioProcessor::c
             kSurgicalCurveMode));
     }
 
+    // Append-only dynamic trigger surface. DynMode deliberately retains its
+    // historical four host values; value 3 is interpreted as Expand+Below and
+    // overrides this new parameter so legacy automation remains deterministic.
+    for (int i = 0; i < AIEqualizerAudioProcessor::maxBands; ++i)
+    {
+        const auto prefix = "band" + juce::String(i);
+        params.push_back(std::make_unique<juce::AudioParameterChoice>(
+            juce::ParameterID{prefix + "DynTrigger", 2},
+            "Band " + juce::String(i + 1) + " Dynamic Trigger",
+            juce::StringArray{"Above", "Below"},
+            DynamicEQProcessor::TriggerSide_Above));
+    }
+
     return {params.begin(), params.end()};
 }
 
@@ -1121,6 +1135,7 @@ void AIEqualizerAudioProcessor::cacheParameterPointers()
         cachedParams[i].enabled = apvts.getRawParameterValue(prefix + "Enabled");
         cachedParams[i].solo = apvts.getRawParameterValue(prefix + "Solo");
         cachedParams[i].dynMode = apvts.getRawParameterValue(prefix + "DynMode");
+        cachedParams[i].dynTrigger = apvts.getRawParameterValue(prefix + "DynTrigger");
         cachedParams[i].dynThreshold = apvts.getRawParameterValue(prefix + "Threshold");
         cachedParams[i].dynRatio = apvts.getRawParameterValue(prefix + "Ratio");
         cachedParams[i].dynAttack = apvts.getRawParameterValue(prefix + "Attack");
@@ -4086,7 +4101,17 @@ void AIEqualizerAudioProcessor::updateEQFromParameters()
         //----------------------------------------------------------------------
         // Update Dynamic EQ band parameters
         //----------------------------------------------------------------------
-        int dynMode = static_cast<int>(loadParam(p.dynMode, 0.0f));
+        const int dynMode = juce::jlimit(0, 3,
+            static_cast<int>(std::round(loadParam(p.dynMode, 0.0f))));
+        const int storedTrigger = juce::jlimit(
+            DynamicEQProcessor::TriggerSide_Above,
+            DynamicEQProcessor::TriggerSide_Below,
+            static_cast<int>(std::round(loadParam(
+                p.dynTrigger,
+                static_cast<float>(DynamicEQProcessor::TriggerSide_Above)))));
+        const int effectiveTrigger = dynMode == DynamicEQProcessor::DynamicMode_Gate
+            ? DynamicEQProcessor::TriggerSide_Below
+            : storedTrigger;
         float threshold = loadParam(p.dynThreshold, -20.0f);
         float ratio = loadParam(p.dynRatio, 2.0f);
         float attack = loadParam(p.dynAttack, 10.0f);
@@ -4108,7 +4133,8 @@ void AIEqualizerAudioProcessor::updateEQFromParameters()
         // In plugin integration, .enabled means "owned by / enabled inside the
         // dynamic stage", not the raw UI band-enabled state.
         dynParams.enabled = bandOwnedByDynamicStage;
-        dynParams.dynamicMode = dynMode;  // Now int, not enum class
+        dynParams.dynamicMode = dynMode;
+        dynParams.triggerSide = effectiveTrigger;
         dynParams.threshold = threshold;
         dynParams.ratio = ratio;
         dynParams.attackMs = attack;
@@ -4302,6 +4328,7 @@ void AIEqualizerAudioProcessor::loadStateFromSlot(ABState slot)
             currentState.slope != bandState.slope ||
             currentState.curveMode != bandState.curveMode ||
             currentState.dynMode != bandState.dynMode ||
+            currentState.dynTrigger != bandState.dynTrigger ||
             std::abs(currentState.dynThreshold - bandState.dynThreshold) > 0.05f ||
             std::abs(currentState.dynRatio - bandState.dynRatio) > 0.02f ||
             std::abs(currentState.dynAttack - bandState.dynAttack) > 0.1f ||
@@ -5080,6 +5107,7 @@ AIEqualizerAudioProcessor::applySemanticAdjustments(
             && a.slope == b.slope
             && a.curveMode == b.curveMode
             && a.dynMode == b.dynMode
+            && a.dynTrigger == b.dynTrigger
             && std::abs(a.dynThreshold - b.dynThreshold) <= 0.05f
             && std::abs(a.dynRatio - b.dynRatio) <= 0.02f
             && std::abs(a.dynAttack - b.dynAttack) <= 0.05f
@@ -5302,6 +5330,7 @@ AIEqualizerAudioProcessor::applySemanticAdjustments(
         state.enabled = adj.enabled;
         state.solo = false;
         state.dynMode = 0; // typed/legacy semantic static plan cannot inherit stale dynamics
+        state.dynTrigger = DynamicEQProcessor::TriggerSide_Above;
 
         if (!bandStatesEquivalent(previousState, state))
         {
@@ -5423,6 +5452,14 @@ AIEqualizerAudioProcessor::BandState AIEqualizerAudioProcessor::getBandState(int
     else
         state.dynMode = 0;
 
+    if (auto* dynTriggerParam = apvts.getRawParameterValue(prefix + "DynTrigger"))
+        state.dynTrigger = juce::jlimit(
+            DynamicEQProcessor::TriggerSide_Above,
+            DynamicEQProcessor::TriggerSide_Below,
+            static_cast<int>(std::round(dynTriggerParam->load())));
+    else
+        state.dynTrigger = DynamicEQProcessor::TriggerSide_Above;
+
     if (auto* dynThresholdParam = apvts.getRawParameterValue(prefix + "Threshold"))
         state.dynThreshold = dynThresholdParam->load();
     else
@@ -5479,6 +5516,10 @@ bool AIEqualizerAudioProcessor::applyBandStateDelta(int bandIndex, const BandSta
     clampedState.curveMode = juce::jlimit(kLegacyCurveMode, kSurgicalCurveMode,
                                          clampedState.curveMode);
     clampedState.dynMode = juce::jlimit(0, 3, clampedState.dynMode);
+    clampedState.dynTrigger = juce::jlimit(
+        DynamicEQProcessor::TriggerSide_Above,
+        DynamicEQProcessor::TriggerSide_Below,
+        clampedState.dynTrigger);
     clampedState.dynThreshold = juce::jlimit(-60.0f, 0.0f, clampedState.dynThreshold);
     clampedState.dynRatio = juce::jlimit(1.0f, 20.0f, clampedState.dynRatio);
     clampedState.dynAttack = juce::jlimit(0.1f, 500.0f, clampedState.dynAttack);
@@ -5495,6 +5536,7 @@ bool AIEqualizerAudioProcessor::applyBandStateDelta(int bandIndex, const BandSta
     const bool slopeChanged = currentState.slope != clampedState.slope;
     const bool curveModeChanged = currentState.curveMode != clampedState.curveMode;
     const bool dynModeChanged = currentState.dynMode != clampedState.dynMode;
+    const bool dynTriggerChanged = currentState.dynTrigger != clampedState.dynTrigger;
     const bool dynThresholdChanged = std::abs(currentState.dynThreshold - clampedState.dynThreshold) > 0.05f;
     const bool dynRatioChanged = std::abs(currentState.dynRatio - clampedState.dynRatio) > 0.02f;
     const bool dynAttackChanged = std::abs(currentState.dynAttack - clampedState.dynAttack) > 0.1f;
@@ -5503,7 +5545,7 @@ bool AIEqualizerAudioProcessor::applyBandStateDelta(int bandIndex, const BandSta
     const bool dynKneeChanged = std::abs(currentState.dynKnee - clampedState.dynKnee) > 0.05f;
 
     const bool anyChanged = freqChanged || gainChanged || qChanged || typeChanged || enabledChanged || soloChanged ||
-                            slopeChanged || curveModeChanged || dynModeChanged || dynThresholdChanged || dynRatioChanged ||
+                            slopeChanged || curveModeChanged || dynModeChanged || dynTriggerChanged || dynThresholdChanged || dynRatioChanged ||
                             dynAttackChanged || dynReleaseChanged || dynRangeChanged || dynKneeChanged;
     if (!anyChanged)
         return false;
@@ -5539,6 +5581,10 @@ bool AIEqualizerAudioProcessor::applyBandStateDelta(int bandIndex, const BandSta
                        static_cast<float>(clampedState.curveMode)));
     if (dynModeChanged)
         applyParam(apvts.getParameter(prefix + "DynMode"), apvts.getParameter(prefix + "DynMode")->convertTo0to1(static_cast<float>(clampedState.dynMode)));
+    if (dynTriggerChanged)
+        applyParam(apvts.getParameter(prefix + "DynTrigger"),
+                   apvts.getParameter(prefix + "DynTrigger")->convertTo0to1(
+                       static_cast<float>(clampedState.dynTrigger)));
     if (dynThresholdChanged)
         applyParam(apvts.getParameter(prefix + "Threshold"), apvts.getParameter(prefix + "Threshold")->convertTo0to1(clampedState.dynThreshold));
     if (dynRatioChanged)
@@ -5654,6 +5700,7 @@ void AIEqualizerAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
             bandTree.setProperty("slope", band.slope, nullptr);
             bandTree.setProperty("curveMode", band.curveMode, nullptr);
             bandTree.setProperty("dynMode", band.dynMode, nullptr);
+            bandTree.setProperty("dynTrigger", band.dynTrigger, nullptr);
             bandTree.setProperty("dynThreshold", band.dynThreshold, nullptr);
             bandTree.setProperty("dynRatio", band.dynRatio, nullptr);
             bandTree.setProperty("dynAttack", band.dynAttack, nullptr);
@@ -5801,6 +5848,13 @@ void AIEqualizerAudioProcessor::setStateInformation(const void* data, int sizeIn
                             band.curveMode = kLegacyCurveMode;
                         if (bandTree.hasProperty("dynMode"))
                             band.dynMode = static_cast<int>(bandTree.getProperty("dynMode"));
+                        if (bandTree.hasProperty("dynTrigger"))
+                            band.dynTrigger = juce::jlimit(
+                                DynamicEQProcessor::TriggerSide_Above,
+                                DynamicEQProcessor::TriggerSide_Below,
+                                static_cast<int>(bandTree.getProperty("dynTrigger")));
+                        else
+                            band.dynTrigger = DynamicEQProcessor::TriggerSide_Above;
                         if (bandTree.hasProperty("dynThreshold"))
                             band.dynThreshold = static_cast<float>(bandTree.getProperty("dynThreshold"));
                         if (bandTree.hasProperty("dynRatio"))
@@ -6047,7 +6101,19 @@ void AIEqualizerAudioProcessor::loadParameterSnapshot(AIEQCore::ProcessBlockPara
         band.enabled = loadParam(cached.enabled, 1.0f) > 0.5f;
 
         // Dynamic EQ (clamped for safety)
-        band.dynamicMode = juce::jlimit(0, 2, static_cast<int>(loadParam(cached.dynMode, 0.0f)));
+        const int hostDynamicMode = juce::jlimit(
+            0, 3, static_cast<int>(std::round(loadParam(cached.dynMode, 0.0f))));
+        band.dynamicMode = hostDynamicMode == DynamicEQProcessor::DynamicMode_Gate
+            ? DynamicEQProcessor::DynamicMode_Expand
+            : hostDynamicMode;
+        band.triggerSide = hostDynamicMode == DynamicEQProcessor::DynamicMode_Gate
+            ? DynamicEQProcessor::TriggerSide_Below
+            : juce::jlimit(
+                DynamicEQProcessor::TriggerSide_Above,
+                DynamicEQProcessor::TriggerSide_Below,
+                static_cast<int>(std::round(loadParam(
+                    cached.dynTrigger,
+                    static_cast<float>(DynamicEQProcessor::TriggerSide_Above)))));
         band.threshold = juce::jlimit(-120.0f, 24.0f, loadParam(cached.dynThreshold, -20.0f));
         band.ratio = juce::jlimit(0.1f, 20.0f, loadParam(cached.dynRatio, 2.0f));
         band.attackMs = juce::jlimit(0.05f, 500.0f, loadParam(cached.dynAttack, 10.0f));

@@ -20,6 +20,7 @@ public:
         testPresetSchemaRoundTrip();
         testFactoryPresetUtf8RoundTrip();
         testDynamicABStateRoundTrip();
+        testDynTriggerRoundTripAndLegacyPrecedence();
         testHostParameterSurfaceGoldenList();
         testCurveModeSchemaRoundTrip();
         testLegacyStateMigratesCurveMode();
@@ -104,6 +105,11 @@ private:
         for (int band = 0; band < AIEqualizerAudioProcessor::maxBands; ++band)
             ids.push_back({ "band" + juce::String(band) + "CurveMode", 2 });
 
+        // DynTrigger is a second append-only block. It must never be inserted
+        // into the historical per-band group or ahead of CurveMode.
+        for (int band = 0; band < AIEqualizerAudioProcessor::maxBands; ++band)
+            ids.push_back({ "band" + juce::String(band) + "DynTrigger", 2 });
+
         return ids;
     }
 
@@ -145,16 +151,20 @@ private:
         if (! expected.empty())
         {
             const auto dynamicCorrectionsIndex = expected.size()
-                - static_cast<size_t>(AIEqualizerAudioProcessor::maxBands) - 1u;
+                - 2u * static_cast<size_t>(AIEqualizerAudioProcessor::maxBands) - 1u;
             expect(expected[dynamicCorrectionsIndex].id == "dynamicCorrections",
                    "CurveMode parameters must be appended after the old host surface");
-            expect(expected.back().id == "band23CurveMode",
-                   "CurveMode append-only block must remain the host-surface tail");
+            expect(expected[dynamicCorrectionsIndex
+                            + static_cast<size_t>(AIEqualizerAudioProcessor::maxBands)].id
+                       == "band23CurveMode",
+                   "DynTrigger must be appended after the complete CurveMode block");
+            expect(expected.back().id == "band23DynTrigger",
+                   "DynTrigger append-only block must remain the host-surface tail");
             if (! params.isEmpty())
             {
                 auto* withID = dynamic_cast<juce::AudioProcessorParameterWithID*>(params.getLast());
-                expect(withID != nullptr && withID->getParameterID() == "band23CurveMode",
-                       "band23CurveMode must remain the final createParameters() entry");
+                expect(withID != nullptr && withID->getParameterID() == "band23DynTrigger",
+                       "band23DynTrigger must remain the final createParameters() entry");
             }
         }
     }
@@ -175,6 +185,89 @@ private:
     {
         if (auto* p = apvts.getParameter(id))
             p->setValueNotifyingHost(p->convertTo0to1(value));
+    }
+
+    void testDynTriggerRoundTripAndLegacyPrecedence()
+    {
+        beginTest("DynTrigger is append-only, round-trips, and legacy Gate overrides it");
+
+        AIEqualizerAudioProcessor proc;
+        proc.prepareToPlay(48000.0, 64);
+        auto& apvts = proc.getAPVTS();
+        auto* trigger = apvts.getRawParameterValue("band0DynTrigger");
+        expect(trigger != nullptr);
+        if (trigger == nullptr)
+            return;
+
+        expectWithinAbsoluteError(trigger->load(),
+                                  static_cast<float>(DynamicEQProcessor::TriggerSide_Above),
+                                  0.0f);
+
+        setChoice(apvts, "band0DynMode", DynamicEQProcessor::DynamicMode_Expand);
+        setChoice(apvts, "band0DynTrigger", DynamicEQProcessor::TriggerSide_Below);
+
+        juce::AudioBuffer<float> buffer(2, 64);
+        buffer.clear();
+        juce::MidiBuffer midi;
+        proc.processBlock(buffer, midi);
+        auto live = proc.getDynamicEQProcessor().getBandParams(0);
+        expectEquals(live.dynamicMode, DynamicEQProcessor::DynamicMode_Expand);
+        expectEquals(live.triggerSide, DynamicEQProcessor::TriggerSide_Below);
+
+        juce::MemoryBlock blob;
+        proc.getStateInformation(blob);
+        setChoice(apvts, "band0DynTrigger", DynamicEQProcessor::TriggerSide_Above);
+        proc.setStateInformation(blob.getData(), static_cast<int>(blob.getSize()));
+        expectWithinAbsoluteError(trigger->load(),
+                                  static_cast<float>(DynamicEQProcessor::TriggerSide_Below),
+                                  0.0f);
+
+        // Host value 3 keeps its historical cardinality and always means
+        // Expand+Below, even if current/new automation writes DynTrigger=Above.
+        setChoice(apvts, "band0DynTrigger", DynamicEQProcessor::TriggerSide_Above);
+        setChoice(apvts, "band0DynMode", DynamicEQProcessor::DynamicMode_Gate);
+        proc.processBlock(buffer, midi);
+        live = proc.getDynamicEQProcessor().getBandParams(0);
+        expectEquals(live.dynamicMode, DynamicEQProcessor::DynamicMode_Gate);
+        expectEquals(live.triggerSide, DynamicEQProcessor::TriggerSide_Below);
+        expectWithinAbsoluteError(trigger->load(),
+                                  static_cast<float>(DynamicEQProcessor::TriggerSide_Above),
+                                  0.0f,
+                                  "Legacy override must not mutate the separately automated parameter");
+
+        // Early schema-v1 states predate DynTrigger. Loading one must append
+        // Above explicitly rather than inherit the value from the current
+        // instance; DynMode=3 still resolves to Below at the DSP boundary.
+        auto xml = proc.getXmlFromBinary(blob.getData(), static_cast<int>(blob.getSize()));
+        expect(xml != nullptr);
+        if (xml != nullptr)
+        {
+            auto oldV1 = juce::ValueTree::fromXml(*xml);
+            for (int i = oldV1.getNumChildren(); --i >= 0;)
+            {
+                auto child = oldV1.getChild(i);
+                const auto id = child.getProperty("id").toString();
+                if (child.hasType("PARAM") && id.endsWith("DynTrigger"))
+                    oldV1.removeChild(i, nullptr);
+                else if (child.hasType("PARAM") && id == "band0DynMode")
+                    child.setProperty("value", 3.0f, nullptr); // APVTS stores the real choice index
+            }
+
+            setChoice(apvts, "band0DynTrigger", DynamicEQProcessor::TriggerSide_Below);
+            juce::MemoryBlock oldV1Blob;
+            auto oldV1Xml = oldV1.createXml();
+            juce::AudioProcessor::copyXmlToBinary(*oldV1Xml, oldV1Blob);
+            proc.setStateInformation(oldV1Blob.getData(), static_cast<int>(oldV1Blob.getSize()));
+
+            expectWithinAbsoluteError(trigger->load(),
+                                      static_cast<float>(DynamicEQProcessor::TriggerSide_Above),
+                                      0.0f,
+                                      "Missing DynTrigger inherited stale live state");
+            proc.processBlock(buffer, midi);
+            live = proc.getDynamicEQProcessor().getBandParams(0);
+            expectEquals(live.dynamicMode, DynamicEQProcessor::DynamicMode_Gate);
+            expectEquals(live.triggerSide, DynamicEQProcessor::TriggerSide_Below);
+        }
     }
 
     void primeBands(AIEqualizerAudioProcessor& proc)
@@ -306,9 +399,12 @@ private:
         for (int i = preV1Preset.state.getNumChildren(); --i >= 0;)
         {
             const auto child = preV1Preset.state.getChild(i);
-            if (child.hasType("PARAM")
-                && child.getProperty("id").toString().endsWith("CurveMode"))
-                preV1Preset.state.removeChild(i, nullptr);
+            if (child.hasType("PARAM"))
+            {
+                const auto id = child.getProperty("id").toString();
+                if (id.endsWith("CurveMode") || id.endsWith("DynTrigger"))
+                    preV1Preset.state.removeChild(i, nullptr);
+            }
         }
 
         setChoice(apvts, "band0CurveMode", 1);
@@ -321,6 +417,11 @@ private:
             expect(mode != nullptr);
             if (mode != nullptr)
                 expectWithinAbsoluteError(mode->load(), 0.0f, 0.0f);
+            auto* triggerParam = apvts.getRawParameterValue(
+                "band" + juce::String(i) + "DynTrigger");
+            expect(triggerParam != nullptr);
+            if (triggerParam != nullptr)
+                expectWithinAbsoluteError(triggerParam->load(), 0.0f, 0.0f);
         }
 
         // Unsupported preset schemas must not partially alter the live APVTS.
@@ -409,6 +510,7 @@ private:
         band0.enabled = true;
         band0.solo = false;
         band0.dynMode = 0;
+        band0.dynTrigger = DynamicEQProcessor::TriggerSide_Above;
         band0.dynThreshold = 0.0f;
         band0.dynRatio = 2.0f;
         band0.dynAttack = 10.0f;
@@ -429,6 +531,7 @@ private:
         setFloat(apvts, "dynEqMix", 100.0f);
         setBool(apvts, "dynAutoMakeup", true);
         band0.dynMode = 1;
+        band0.dynTrigger = DynamicEQProcessor::TriggerSide_Below;
         band0.dynThreshold = -30.0f;
         band0.dynRatio = 8.0f;
         band0.dynAttack = 1.0f;
@@ -449,6 +552,8 @@ private:
         restored.setABState(AIEqualizerAudioProcessor::ABState::A);
         if (auto* p = restoredAPVTS.getRawParameterValue("band0DynMode"))
             expectWithinAbsoluteError(p->load(), 0.0f, 0.01f);
+        if (auto* p = restoredAPVTS.getRawParameterValue("band0DynTrigger"))
+            expectWithinAbsoluteError(p->load(), 0.0f, 0.01f);
         if (auto* p = restoredAPVTS.getRawParameterValue("band0Threshold"))
             expectWithinAbsoluteError(p->load(), 0.0f, 0.05f);
         if (auto* p = restoredAPVTS.getRawParameterValue("band0Ratio"))
@@ -464,6 +569,8 @@ private:
 
         restored.setABState(AIEqualizerAudioProcessor::ABState::B);
         if (auto* p = restoredAPVTS.getRawParameterValue("band0DynMode"))
+            expectWithinAbsoluteError(p->load(), 1.0f, 0.01f);
+        if (auto* p = restoredAPVTS.getRawParameterValue("band0DynTrigger"))
             expectWithinAbsoluteError(p->load(), 1.0f, 0.01f);
         if (auto* p = restoredAPVTS.getRawParameterValue("band0Threshold"))
             expectWithinAbsoluteError(p->load(), -30.0f, 0.05f);
@@ -538,9 +645,12 @@ private:
         for (int i = legacy.getNumChildren(); --i >= 0;)
         {
             auto child = legacy.getChild(i);
-            if (child.hasType("PARAM")
-                && child.getProperty("id").toString().endsWith("CurveMode"))
-                legacy.removeChild(i, nullptr);
+            if (child.hasType("PARAM"))
+            {
+                const auto id = child.getProperty("id").toString();
+                if (id.endsWith("CurveMode") || id.endsWith("DynTrigger"))
+                    legacy.removeChild(i, nullptr);
+            }
         }
         for (const auto slotName : { "SlotA", "SlotB", "SlotC", "SlotD" })
         {
@@ -549,7 +659,10 @@ private:
             {
                 auto band = slot.getChildWithName("band" + juce::String(i));
                 if (band.isValid())
+                {
                     band.removeProperty("curveMode", nullptr);
+                    band.removeProperty("dynTrigger", nullptr);
+                }
             }
         }
 
@@ -568,6 +681,11 @@ private:
             expect(mode != nullptr);
             if (mode != nullptr)
                 expectWithinAbsoluteError(mode->load(), 0.0f, 0.0f);
+            auto* trigger = restoredState.getRawParameterValue(
+                "band" + juce::String(i) + "DynTrigger");
+            expect(trigger != nullptr);
+            if (trigger != nullptr)
+                expectWithinAbsoluteError(trigger->load(), 0.0f, 0.0f);
         }
 
         restored.setABState(AIEqualizerAudioProcessor::ABState::B);

@@ -139,17 +139,27 @@ public:
 
         // DynEQ mode selector
         // CRITICAL: Must match APVTS AudioParameterChoice indices exactly
-        // APVTS: 0=Off, 1=Compress, 2=Expand, 3=Gate
+        // APVTS: 0=Off, 1=Compress, 2=Expand, 3=legacy Gate.
+        // Value 3 remains readable for host ABI compatibility but the new UI
+        // cannot emit it; Expand+Below is the canonical gate configuration.
         // ComboBox IDs MUST be index+1 because JUCE treats ID 0 as "no selection"
         dynModeCombo.addItem("Off", 1);       // APVTS index 0
         dynModeCombo.addItem("Compress", 2);  // APVTS index 1
         dynModeCombo.addItem("Expand", 3);    // APVTS index 2
-        dynModeCombo.addItem("Gate", 4);      // APVTS index 3
+        dynModeCombo.addItem("Gate (Legacy)", 4); // APVTS index 3
+        dynModeCombo.setItemEnabled(4, false);
         dynModeCombo.setColour(juce::ComboBox::backgroundColourId, ModernLookAndFeel::Colors::bgPanel);
         dynModeCombo.setColour(juce::ComboBox::textColourId, ModernLookAndFeel::Colors::textPrimary);
         dynModeCombo.setColour(juce::ComboBox::outlineColourId, ModernLookAndFeel::Colors::bgLighter);
         dynModeCombo.onChange = [this] { updateDynEQVisibility(); };
         addAndMakeVisible(dynModeCombo);
+
+        dynTriggerCombo.addItem("Above", 1);
+        dynTriggerCombo.addItem("Below", 2);
+        dynTriggerCombo.setColour(juce::ComboBox::backgroundColourId, ModernLookAndFeel::Colors::bgPanel);
+        dynTriggerCombo.setColour(juce::ComboBox::textColourId, ModernLookAndFeel::Colors::textPrimary);
+        dynTriggerCombo.setColour(juce::ComboBox::outlineColourId, ModernLookAndFeel::Colors::bgLighter);
+        addAndMakeVisible(dynTriggerCombo);
 
         // DynEQ expand button ("..." opens overlay)
         dynExpandBtn.setTooltip("Advanced DynEQ settings (Range, Knee)");
@@ -186,6 +196,7 @@ public:
 
         // DynEQ APVTS attachments
         dynModeAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(parameters, prefix + "DynMode", dynModeCombo);
+        dynTriggerAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(parameters, prefix + "DynTrigger", dynTriggerCombo);
         thrAtt = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(parameters, prefix + "Threshold", thresholdKnob);
         ratAtt = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(parameters, prefix + "Ratio", ratioKnob);
         atkAtt = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(parameters, prefix + "Attack", attackKnob);
@@ -220,7 +231,7 @@ public:
         freqAtt.reset(); gainAtt.reset(); qAtt.reset();
         typeAtt.reset(); slopeAtt.reset();
         enableAtt.reset(); soloAtt.reset();
-        dynModeAtt.reset(); thrAtt.reset(); ratAtt.reset(); atkAtt.reset(); relAtt.reset();
+        dynModeAtt.reset(); dynTriggerAtt.reset(); thrAtt.reset(); ratAtt.reset(); atkAtt.reset(); relAtt.reset();
 
         bandIndex = newIndex;
         juce::String prefix = "band" + juce::String(bandIndex);
@@ -241,6 +252,7 @@ public:
 
         // DynEQ APVTS attachments
         dynModeAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(parameters, prefix + "DynMode", dynModeCombo);
+        dynTriggerAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(parameters, prefix + "DynTrigger", dynTriggerCombo);
         thrAtt = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(parameters, prefix + "Threshold", thresholdKnob);
         ratAtt = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(parameters, prefix + "Ratio", ratioKnob);
         atkAtt = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(parameters, prefix + "Attack", attackKnob);
@@ -439,9 +451,11 @@ public:
                 slopeLabel.setVisible(false);
             }
 
-            // DynEQ mode selector row (22px) — combo + "..." button
+            // DynEQ action/trigger row (22px) — two combos + "..." button
             auto dynModeRow = bounds.removeFromTop(22);
-            dynModeCombo.setBounds(dynModeRow.removeFromLeft(dynModeRow.getWidth() - 36).reduced(2, 0));
+            const int actionWidth = (dynModeRow.getWidth() - 38) * 3 / 5;
+            dynModeCombo.setBounds(dynModeRow.removeFromLeft(actionWidth).reduced(2, 0));
+            dynTriggerCombo.setBounds(dynModeRow.removeFromLeft(dynModeRow.getWidth() - 36).reduced(2, 0));
             dynModeRow.removeFromLeft(2);
             dynExpandBtn.setBounds(dynModeRow.reduced(1));
             bounds.removeFromTop(2);
@@ -522,7 +536,8 @@ private:
 
     void updateDynEQVisibility()
     {
-        // Note: ComboBox IDs are 1-based (1=Off, 2=Compress, 3=Expand, 4=Gate)
+        // Note: ComboBox IDs are 1-based (1=Off, 2=Compress, 3=Expand,
+        // 4=legacy Gate read-only).
         // APVTS indices are 0-based, handled by ComboBoxAttachment automatically
         dynEQActive = (dynModeCombo.getSelectedId() > 1); // 1 = Off
         thresholdKnob.setVisible(dynEQActive);
@@ -558,7 +573,7 @@ private:
     juce::TextButton enableBtn, soloBtn;
 
     // DynEQ mode selector (always visible)
-    juce::ComboBox dynModeCombo;
+    juce::ComboBox dynModeCombo, dynTriggerCombo;
     juce::TextButton dynExpandBtn { "···" }; // opens overlay for Range/Knee
 
     // DynEQ knobs (visible only when mode != Off)
@@ -574,6 +589,7 @@ private:
 
     // DynEQ APVTS attachments
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> dynModeAtt;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> dynTriggerAtt;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> thrAtt, ratAtt, atkAtt, relAtt;
 
     // Layout state

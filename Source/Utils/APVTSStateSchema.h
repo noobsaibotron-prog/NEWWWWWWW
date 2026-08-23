@@ -67,6 +67,23 @@ inline void setOrAppendParameterValue(juce::ValueTree& state,
     state.addChild(std::move(child), -1, nullptr);
 }
 
+inline void appendParameterValueIfMissing(juce::ValueTree& state,
+                                          const juce::String& parameterID,
+                                          float parameterValue)
+{
+    for (int i = 0; i < state.getNumChildren(); ++i)
+    {
+        const auto child = state.getChild(i);
+        if (child.hasType("PARAM") && child.getProperty("id").toString() == parameterID)
+            return;
+    }
+
+    juce::ValueTree child("PARAM");
+    child.setProperty("id", parameterID, nullptr);
+    child.setProperty("value", parameterValue, nullptr);
+    state.addChild(std::move(child), -1, nullptr);
+}
+
 inline void migrateLegacyCurveModes(juce::ValueTree& state)
 {
     for (int i = 0; i < bandCount; ++i)
@@ -77,6 +94,14 @@ inline void migrateLegacyCurveModes(juce::ValueTree& state)
     stampCurrent(state);
 }
 
+inline void ensureDynamicTriggers(juce::ValueTree& state)
+{
+    for (int i = 0; i < bandCount; ++i)
+        appendParameterValueIfMissing(state,
+                                      "band" + juce::String(i) + "DynTrigger",
+                                      0.0f); // Above
+}
+
 // Normalises a candidate copy before it reaches APVTS::replaceState(). The
 // caller retains the original tree, so Reject is transactional by construction.
 [[nodiscard]] inline LoadKind prepareForLoad(juce::ValueTree& candidate)
@@ -84,6 +109,8 @@ inline void migrateLegacyCurveModes(juce::ValueTree& state)
     const auto kind = classify(candidate);
     if (kind == LoadKind::LegacyWithoutSchema)
         migrateLegacyCurveModes(candidate);
+    if (kind != LoadKind::Reject)
+        ensureDynamicTriggers(candidate);
     return kind;
 }
 

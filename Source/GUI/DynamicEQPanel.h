@@ -13,7 +13,7 @@
  * Dynamic EQ Control Panel - FabFilter Pro-Q / TDR Nova Style
  * 
  * Provides per-band dynamic EQ controls:
- * - Dynamic Mode selector (Off/Compress/Expand/Gate)
+ * - Dynamic Action selector (Off/Compress/Expand) and Above/Below trigger
  * - Threshold knob with meter
  * - Ratio knob
  * - Attack/Release knobs
@@ -36,7 +36,8 @@ public:
         modeCombo.addItem("Off", 1);
         modeCombo.addItem("Compress", 2);
         modeCombo.addItem("Expand", 3);
-        modeCombo.addItem("Gate", 4);
+        modeCombo.addItem("Gate (Legacy)", 4);
+        modeCombo.setItemEnabled(4, false); // host value remains readable, never emitted by new UI
         modeCombo.setSelectedId(1);
         modeCombo.setColour(juce::ComboBox::backgroundColourId, ModernLookAndFeel::Colors::bgLighter);
         modeCombo.setColour(juce::ComboBox::textColourId, ModernLookAndFeel::Colors::textBright);
@@ -44,6 +45,16 @@ public:
         addAndMakeVisible(modeCombo);
         modeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
             apvts, prefix + "DynMode", modeCombo);
+
+        triggerCombo.addItem("Above", 1);
+        triggerCombo.addItem("Below", 2);
+        triggerCombo.setSelectedId(1);
+        triggerCombo.setColour(juce::ComboBox::backgroundColourId, ModernLookAndFeel::Colors::bgLighter);
+        triggerCombo.setColour(juce::ComboBox::textColourId, ModernLookAndFeel::Colors::textBright);
+        triggerCombo.setColour(juce::ComboBox::outlineColourId, ModernLookAndFeel::Colors::accentBlue);
+        addAndMakeVisible(triggerCombo);
+        triggerAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
+            apvts, prefix + "DynTrigger", triggerCombo);
         
         // Setup knobs
         setupKnob(thresholdKnob, "Threshold", -60.0f, 0.0f, -20.0f, " dB");
@@ -68,7 +79,7 @@ public:
             apvts, prefix + "Knee", kneeKnob);
         
         // Labels
-        for (auto* label : {&modeLabel, &thresholdLabel, &ratioLabel, 
+        for (auto* label : {&modeLabel, &triggerLabel, &thresholdLabel, &ratioLabel,
                             &attackLabel, &releaseLabel, &rangeLabel, &kneeLabel})
         {
             label->setColour(juce::Label::textColourId, juce::Colours::white.withAlpha(0.9f));
@@ -82,6 +93,7 @@ public:
         }
         
         modeLabel.setText("MODE", juce::dontSendNotification);
+        triggerLabel.setText("TRIGGER", juce::dontSendNotification);
         thresholdLabel.setText("THRESH", juce::dontSendNotification);
         ratioLabel.setText("RATIO", juce::dontSendNotification);
         attackLabel.setText("ATTACK", juce::dontSendNotification);
@@ -132,6 +144,7 @@ public:
         };
 
         modeCombo.onChange = notifyDynamicParamChanged;
+        triggerCombo.onChange = notifyDynamicParamChanged;
         thresholdKnob.onValueChange = notifyDynamicParamChanged;
         ratioKnob.onValueChange = notifyDynamicParamChanged;
         attackKnob.onValueChange = notifyDynamicParamChanged;
@@ -177,11 +190,14 @@ public:
     {
         if (compactMode)
         {
-            // Compact: only the mode combo occupies the visible row.
+            // Compact: action and trigger share the visible row.
             auto area = getLocalBounds().reduced(6, 4);
             // Skip the 1px divider drawn in paint()
             area.removeFromTop(2);
-            modeCombo.setBounds(area.removeFromTop(juce::jmin(22, area.getHeight())));
+            auto row = area.removeFromTop(juce::jmin(22, area.getHeight()));
+            modeCombo.setBounds(row.removeFromLeft(row.getWidth() / 2).reduced(0, 0));
+            row.removeFromLeft(3);
+            triggerCombo.setBounds(row);
             gainReductionBounds = {};
             return;
         }
@@ -194,10 +210,14 @@ public:
         titleLabel.setBounds(titleRow);
         bounds.removeFromTop(5);
 
-        // Mode selector
+        // Action + trigger selectors
         auto modeArea = bounds.removeFromTop(50);
-        modeLabel.setBounds(modeArea.removeFromTop(15));
-        modeCombo.setBounds(modeArea.reduced(5, 5));
+        auto actionArea = modeArea.removeFromLeft(modeArea.getWidth() / 2);
+        auto triggerArea = modeArea;
+        modeLabel.setBounds(actionArea.removeFromTop(15));
+        triggerLabel.setBounds(triggerArea.removeFromTop(15));
+        modeCombo.setBounds(actionArea.reduced(5, 5));
+        triggerCombo.setBounds(triggerArea.reduced(5, 5));
 
         bounds.removeFromTop(5);
 
@@ -262,7 +282,8 @@ public:
         //
         // meter.inputLevel = smoothedEnv in dB from audio thread (updates while audio flows).
         // knob values        = always current (read directly here).
-        const int modeId = modeCombo.getSelectedId(); // 1=Off, 2=Compress, 3=Expand, 4=Gate
+        const int modeId = modeCombo.getSelectedId(); // 1=Off, 2=Compress, 3=Expand, 4=legacy Gate
+        const int triggerId = triggerCombo.getSelectedId(); // 1=Above, 2=Below
         float newGR = 0.0f;
 
         if (modeId > 1 && std::isfinite(meter.inputLevel))
@@ -275,7 +296,7 @@ public:
             const auto* gainParam = apvts.getRawParameterValue(prefix + "Gain");
             const float staticGain = gainParam != nullptr ? gainParam->load() : 0.0f;
             newGR = computeExpectedGR(
-                meter.inputLevel, modeId - 1, staticGain,
+                meter.inputLevel, modeId - 1, triggerId - 1, staticGain,
                 thresh, ratio, knee, range);
         }
 
@@ -312,6 +333,7 @@ public:
         // alive, the old attachment's listener fires and writes the new band's value
         // into the OLD band's parameter — corrupting the previous band's settings.
         modeAttachment.reset();
+        triggerAttachment.reset();
         thresholdAtt.reset();
         ratioAtt.reset();
         attackAtt.reset();
@@ -325,6 +347,8 @@ public:
         // Now safe to create new attachments — no old listener can intercept
         modeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
             apvts, prefix + "DynMode", modeCombo);
+        triggerAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
+            apvts, prefix + "DynTrigger", triggerCombo);
         thresholdAtt = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
             apvts, prefix + "Threshold", thresholdKnob);
         ratioAtt = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
@@ -363,6 +387,7 @@ public:
         rangeLabel.setVisible(showFull);
         kneeLabel.setVisible(showFull);
         modeLabel.setVisible(showFull);
+        triggerLabel.setVisible(showFull);
         thresholdKnob.setVisible(showFull);
         ratioKnob.setVisible(showFull);
         attackKnob.setVisible(showFull);
@@ -372,6 +397,7 @@ public:
 
         // modeCombo remains visible in both modes
         modeCombo.setVisible(true);
+        triggerCombo.setVisible(true);
 
         resized();
         repaint();
@@ -382,7 +408,7 @@ public:
 private:
     // Same pure authority model as the audio thread, evaluated from current GUI
     // parameters so visual feedback does not wait for the next control publish.
-    static float computeExpectedGR(float inputDb, int dynMode,
+    static float computeExpectedGR(float inputDb, int dynMode, int triggerSide,
                                    float staticGain,
                                    float threshold, float ratio, float knee, float range)
     {
@@ -394,7 +420,9 @@ private:
                 : AIEQDSP::DynamicGainModel::Action::Off;
         const auto trigger = dynMode == DynamicEQProcessor::DynamicMode_Gate
             ? AIEQDSP::DynamicGainModel::TriggerSide::Below
-            : AIEQDSP::DynamicGainModel::TriggerSide::Above;
+            : triggerSide == DynamicEQProcessor::TriggerSide_Below
+                ? AIEQDSP::DynamicGainModel::TriggerSide::Below
+                : AIEQDSP::DynamicGainModel::TriggerSide::Above;
         return static_cast<float>(AIEQDSP::DynamicGainModel::evaluate(
             inputDb, staticGain, action, trigger,
             threshold, ratio, knee, range).dynamicGainDb);
@@ -453,14 +481,14 @@ private:
     std::function<void(int)> onDynamicParamsChanged;
     
     // UI Components
-    juce::ComboBox modeCombo;
+    juce::ComboBox modeCombo, triggerCombo;
     PremiumKnob thresholdKnob { "THR",  PremiumKnob::Style::SmallBlue };
     PremiumKnob ratioKnob     { "RAT",  PremiumKnob::Style::SmallBlue };
     PremiumKnob attackKnob    { "ATK",  PremiumKnob::Style::SmallBlue };
     PremiumKnob releaseKnob   { "REL",  PremiumKnob::Style::SmallBlue };
     PremiumKnob rangeKnob     { "RNG",  PremiumKnob::Style::SmallBlue };
     PremiumKnob kneeKnob      { "KNEE", PremiumKnob::Style::SmallBlue };
-    juce::Label titleLabel, modeLabel, thresholdLabel, ratioLabel;
+    juce::Label titleLabel, modeLabel, triggerLabel, thresholdLabel, ratioLabel;
     juce::Label attackLabel, releaseLabel, rangeLabel, kneeLabel;
     juce::TextButton closeBtn;  // ✕ close overlay button
 
@@ -469,6 +497,7 @@ private:
     
     // Attachments
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> modeAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> triggerAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> thresholdAtt;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> ratioAtt;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attackAtt;

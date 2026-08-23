@@ -312,6 +312,7 @@ public:
         bool solo = false;
         int slope = 0;
         int dynMode = 0;
+        int dynTrigger = DynamicEQProcessor::TriggerSide_Above;
         float dynThreshold = -24.0f;
         float dynRatio = 2.0f;
         float dynAttack = 10.0f;
@@ -1111,6 +1112,7 @@ private:
         std::atomic<float>* enabled = nullptr;
         std::atomic<float>* solo = nullptr;
         std::atomic<float>* dynMode = nullptr;
+        std::atomic<float>* dynTrigger = nullptr;
         std::atomic<float>* dynThreshold = nullptr;
         std::atomic<float>* dynRatio = nullptr;
         std::atomic<float>* dynAttack = nullptr;
