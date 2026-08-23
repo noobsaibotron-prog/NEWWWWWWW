@@ -587,6 +587,7 @@ set(PLUGIN_SOURCES
     Source/DSP/ParametricEQProcessor.cpp
     Source/DSP/ParametricEQProcessor.h
     Source/DSP/BoundedSlewLimiter.h
+    Source/DSP/DynamicGainModel.h
     Source/DSP/DynamicEQProcessor.cpp
     Source/DSP/DynamicEQProcessor.h
     Source/DSP/LinearPhaseProcessor.cpp
@@ -1181,6 +1182,7 @@ if(HAVE_JUCE)
         Source/Tests/FuzzBlockSizeTest.cpp
         Source/Tests/LinearPhaseBehavioralTest.cpp
         Source/Tests/DynamicEQBehavioralTest.cpp
+        Source/Tests/DynamicGainModelTest.cpp
         Source/Tests/BiquadRegressionTest.cpp
         Source/Tests/HighRateBiquadPrecisionTest.cpp
         Source/Tests/NumericSafetyTest.cpp
