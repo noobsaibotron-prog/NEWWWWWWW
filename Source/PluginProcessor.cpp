@@ -3,6 +3,7 @@
 #include "AI/SemanticSlotPreflight.h"
 #include "PluginEditor.h"
 #include "DSP/DefaultBandFrequencies.h"
+#include "Utils/APVTSStateSchema.h"
 #include "Utils/Logger.h"
 #if defined(AIEQ_ENABLE_MOTORE_V2) && AIEQ_ENABLE_MOTORE_V2
 #include "AI/MotoreV2Features.h"   // EXP hybrid: rawDb -> 64 log-mel (gated)
@@ -17,6 +18,7 @@ namespace
 {
     static_assert(AIEqualizerAudioProcessor::maxBands
                   == static_cast<int>(AIEQDSP::defaultBandFrequencies.size()));
+    static_assert(AIEqualizerAudioProcessor::maxBands == AIEQStateSchema::bandCount);
 
     // M/S encoding/decoding scale factor (1 / sqrt(2))
     // Used in both encodeStereoToMS() and decodeMSToStereo() to normalise
@@ -33,6 +35,10 @@ namespace
     // Score multiplier applied when a band is within reuse threshold — even
     // stronger preference for merging near-frequency corrections.
     constexpr float kReuseThresholdScoreMult = 0.2f;
+
+    constexpr int kCurrentStateSchemaVersion = AIEQStateSchema::currentVersion;
+    constexpr int kLegacyCurveMode = AIEQStateSchema::legacyCurveMode;
+    constexpr int kSurgicalCurveMode = AIEQStateSchema::surgicalCurveMode;
 
     class AnalysisConcurrencyGuard
     {
@@ -74,6 +80,10 @@ AIEqualizerAudioProcessor::AIEqualizerAudioProcessor()
                      .withInput("Sidechain", juce::AudioChannelSet::mono(), false)),
       apvts(*this, nullptr, "Parameters", createParameters())
 {
+    // Fresh instances are schema-v1 and default to Surgical. States without
+    // this root property are treated as pre-v1 and migrated to Legacy on load.
+    apvts.state.setProperty("stateSchemaVersion", kCurrentStateSchemaVersion, nullptr);
+
     apvts.addParameterListener("phaseMode", this);
     apvts.addParameterListener("msMode", this);
     apvts.addParameterListener("oversamplingFactor", this);
@@ -96,6 +106,7 @@ AIEqualizerAudioProcessor::AIEqualizerAudioProcessor()
         eqParameterIDs.push_back(prefix + "Type");
         eqParameterIDs.push_back(prefix + "Enabled");
         eqParameterIDs.push_back(prefix + "Slope");
+        eqParameterIDs.push_back(prefix + "CurveMode");
 
         // FIX: Also listen to Dynamic EQ parameters so that tweaking
         // threshold/ratio/attack/release from the GUI triggers parameterChanged()
@@ -175,6 +186,7 @@ AIEqualizerAudioProcessor::AIEqualizerAudioProcessor()
         targetBandGain[static_cast<size_t>(i)] = 0.0f;
         targetBandQ[static_cast<size_t>(i)] = 1.0f;
         targetBandType[static_cast<size_t>(i)] = ParametricEQProcessor::Peak;
+        targetBandCurveMode[static_cast<size_t>(i)] = kSurgicalCurveMode;
         targetBandEnabled[static_cast<size_t>(i)] = (i < 8);
         targetBandSolo[static_cast<size_t>(i)] = false;
     }
@@ -1078,6 +1090,18 @@ juce::AudioProcessorValueTreeState::ParameterLayout AIEqualizerAudioProcessor::c
     params.push_back(std::make_unique<juce::AudioParameterBool>(
         juce::ParameterID{"dynamicCorrections", 2}, "Dynamic AI Cuts", false));
 
+    // Append-only host surface: never insert these inside the per-band block,
+    // otherwise every parameter after band 0 would change host index.
+    for (int i = 0; i < AIEqualizerAudioProcessor::maxBands; ++i)
+    {
+        const auto prefix = "band" + juce::String(i);
+        params.push_back(std::make_unique<juce::AudioParameterChoice>(
+            juce::ParameterID{prefix + "CurveMode", 2},
+            "Band " + juce::String(i + 1) + " Curve Mode",
+            juce::StringArray{"Legacy", "Surgical"},
+            kSurgicalCurveMode));
+    }
+
     return {params.begin(), params.end()};
 }
 
@@ -1104,6 +1128,7 @@ void AIEqualizerAudioProcessor::cacheParameterPointers()
         cachedParams[i].dynKnee = apvts.getRawParameterValue(prefix + "Knee");
         cachedParams[i].dynRange = apvts.getRawParameterValue(prefix + "Range");
         cachedParams[i].slope = apvts.getRawParameterValue(prefix + "Slope");
+        cachedParams[i].curveMode = apvts.getRawParameterValue(prefix + "CurveMode");
     }
 
     cachedOutputGain = apvts.getRawParameterValue("outputGain");
@@ -1140,6 +1165,7 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     // until restartBackgroundWorkersAfterLifecycle(). No background worker may
     // observe partially re-prepared state.
     quiesceBackgroundWorkersForLifecycle();
+    linearIRTestOverridePinned.store(false, std::memory_order_release);
 
     cacheParameterPointers();
 
@@ -3298,7 +3324,8 @@ void AIEqualizerAudioProcessor::parameterChanged(const juce::String& parameterID
         // A simple string check is faster than parsing the band index.
         // We only care if *any* band's visual parameter has changed.
         if (parameterID.contains("Freq") || parameterID.contains("Gain") || parameterID.contains("Q") ||
-            parameterID.contains("Type") || parameterID.contains("Enabled") || parameterID.contains("Slope"))
+            parameterID.contains("Type") || parameterID.contains("Enabled") || parameterID.contains("Slope") ||
+            parameterID.contains("CurveMode"))
         {
             affectsEQCurve = true;
         }
@@ -3451,6 +3478,16 @@ void AIEqualizerAudioProcessor::triggerLinearPhaseIRUpdate()
 
 void AIEqualizerAudioProcessor::updateLinearPhaseIRIfNeeded()
 {
+    if (linearIRTestOverridePinned.load(std::memory_order_acquire))
+    {
+        // Keep the explicitly injected fixture authoritative. Drain any result
+        // produced by an earlier queued request so the mailbox remains reusable.
+        auto ignored = pendingFreqIR.acquireLatest();
+        if (ignored)
+            pendingFreqIR.release(ignored);
+        return;
+    }
+
     // Claim and pin are one compare-exchange: while this view is held the slot
     // is READING and the builder cannot reclaim or overwrite it. Bounded
     // retries inside acquireLatest() keep this audio-thread call free of any
@@ -3479,6 +3516,8 @@ void AIEqualizerAudioProcessor::forceLinearIRReady()
     // Build a Dirac-delta IR (flat magnitude, zero phase = identity convolution).
     // This injects the IR directly into the convolver, bypassing the builder thread,
     // so tests can deterministically control when linearIRLoaded transitions to true.
+    linearIRTestOverridePinned.store(true, std::memory_order_release);
+
     std::vector<float> diracIR(PartitionedConvolver::irSize, 0.0f);
     diracIR[0] = 1.0f;  // unit impulse → flat frequency response
 
@@ -3743,6 +3782,7 @@ void AIEqualizerAudioProcessor::primeBandSmoothers(double sampleRate)
         smoothedBandGain[idx].setCurrentAndTargetValue(targetBandGain[idx]);
         smoothedBandQ[idx].setCurrentAndTargetValue(targetBandQ[idx]);
         prevAppliedBandType[idx] = targetBandType[idx];
+        prevAppliedBandCurveMode[idx] = targetBandCurveMode[idx];
     }
     bandSmoothingPrimed = true;
 }
@@ -3775,6 +3815,7 @@ void AIEqualizerAudioProcessor::applySmoothedBandParams(int blockSamples, bool p
         const float gain = smoothedBandGain[idx].getCurrentValue();
         const float q = smoothedBandQ[idx].getCurrentValue();
         const int type = targetBandType[idx];
+        const int curveMode = targetBandCurveMode[idx];
         const int slope = targetBandSlope[idx];
         const bool enabled = targetBandEnabled[idx];
         const bool solo = targetBandSolo[idx];
@@ -3782,7 +3823,8 @@ void AIEqualizerAudioProcessor::applySmoothedBandParams(int blockSamples, bool p
         // Per-band output crossfade on filter topology change.
         // Processes same input through both old and new filter, blends over 128 samples.
         // This eliminates the transfer function discontinuity (e.g. HighShelf→Notch).
-        if (type != prevAppliedBandType[idx])
+        if (type != prevAppliedBandType[idx]
+            || curveMode != prevAppliedBandCurveMode[idx])
         {
             if (i < eqProcessor.getNumBands())
                 eqProcessor.beginBandCrossfade(i, 128);
@@ -3793,7 +3835,12 @@ void AIEqualizerAudioProcessor::applySmoothedBandParams(int blockSamples, bool p
             if (i < eqProcessorSide.getNumBands())
                 eqProcessorSide.beginBandCrossfade(i, 128);
             prevAppliedBandType[idx] = type;
+            prevAppliedBandCurveMode[idx] = curveMode;
         }
+
+        const auto dspCurveMode = curveMode == kSurgicalCurveMode
+            ? ParametricEQProcessor::CurveMode::Surgical
+            : ParametricEQProcessor::CurveMode::Legacy;
 
         // targetDynamicBandParams[idx].enabled is the routing ownership flag:
         // true means this band is currently owned by / enabled inside the
@@ -3804,6 +3851,7 @@ void AIEqualizerAudioProcessor::applySmoothedBandParams(int blockSamples, bool p
 
         if (i < eqProcessor.getNumBands())
         {
+            eqProcessor.setBandCurveMode(i, dspCurveMode);
             eqProcessor.setBandParameters(i, freq, gain, q, type);
             eqProcessor.setBandSlope(i, slope);
             eqProcessor.setBandEnabled(i, enabled);
@@ -3812,6 +3860,7 @@ void AIEqualizerAudioProcessor::applySmoothedBandParams(int blockSamples, bool p
         }
         if (i < eqProcessorHQ.getNumBands())
         {
+            eqProcessorHQ.setBandCurveMode(i, dspCurveMode);
             eqProcessorHQ.setBandParameters(i, freq, gain, q, type);
             eqProcessorHQ.setBandSlope(i, slope);
             eqProcessorHQ.setBandEnabled(i, enabled);
@@ -3820,6 +3869,7 @@ void AIEqualizerAudioProcessor::applySmoothedBandParams(int blockSamples, bool p
         }
         if (i < eqProcessorMid.getNumBands())
         {
+            eqProcessorMid.setBandCurveMode(i, dspCurveMode);
             eqProcessorMid.setBandParameters(i, freq, gain, q, type);
             eqProcessorMid.setBandSlope(i, slope);
             eqProcessorMid.setBandEnabled(i, enabled);
@@ -3828,6 +3878,7 @@ void AIEqualizerAudioProcessor::applySmoothedBandParams(int blockSamples, bool p
         }
         if (i < eqProcessorSide.getNumBands())
         {
+            eqProcessorSide.setBandCurveMode(i, dspCurveMode);
             eqProcessorSide.setBandParameters(i, freq, gain, q, type);
             eqProcessorSide.setBandSlope(i, slope);
             eqProcessorSide.setBandEnabled(i, enabled);
@@ -3994,6 +4045,9 @@ void AIEqualizerAudioProcessor::updateEQFromParameters()
 
         int type = static_cast<int>(loadParam(p.type, 2.0f));
         int slopeVal = static_cast<int>(loadParam(p.slope, 0.0f));
+        const int curveMode = juce::jlimit(kLegacyCurveMode, kSurgicalCurveMode,
+            static_cast<int>(std::round(loadParam(p.curveMode,
+                                                  static_cast<float>(kSurgicalCurveMode)))));
         // Fallback for legacy states
         if (p.type == nullptr)
         {
@@ -4044,6 +4098,7 @@ void AIEqualizerAudioProcessor::updateEQFromParameters()
         targetBandGain[idx] = gain;
         targetBandQ[idx] = q;
         targetBandType[idx] = type;
+        targetBandCurveMode[idx] = curveMode;
         targetBandSlope[idx] = slopeVal;
         targetBandEnabled[idx] = enabledFiltered;
         targetBandSolo[idx] = solo;
@@ -4067,6 +4122,10 @@ void AIEqualizerAudioProcessor::updateEQFromParameters()
         // These are read by the IR builder thread without locking
         if (i < eqProcessorForIR.getNumBands())
         {
+            eqProcessorForIR.setBandCurveMode(i,
+                curveMode == kSurgicalCurveMode
+                    ? ParametricEQProcessor::CurveMode::Surgical
+                    : ParametricEQProcessor::CurveMode::Legacy);
             eqProcessorForIR.setBandParameters(i, freq, gain, q, type);
             eqProcessorForIR.setBandEnabled(i, enabledFiltered && !bandOwnedByDynamicStage);
             eqProcessorForIR.setBandSolo(i, solo);
@@ -4217,6 +4276,7 @@ void AIEqualizerAudioProcessor::loadStateFromSlot(ABState slot)
             currentState.enabled != bandState.enabled ||
             currentState.solo != bandState.solo ||
             currentState.slope != bandState.slope ||
+            currentState.curveMode != bandState.curveMode ||
             currentState.dynMode != bandState.dynMode ||
             std::abs(currentState.dynThreshold - bandState.dynThreshold) > 0.05f ||
             std::abs(currentState.dynRatio - bandState.dynRatio) > 0.02f ||
@@ -4994,6 +5054,7 @@ AIEqualizerAudioProcessor::applySemanticAdjustments(
             && a.enabled == b.enabled
             && a.solo == b.solo
             && a.slope == b.slope
+            && a.curveMode == b.curveMode
             && a.dynMode == b.dynMode
             && std::abs(a.dynThreshold - b.dynThreshold) <= 0.05f
             && std::abs(a.dynRatio - b.dynRatio) <= 0.02f
@@ -5327,6 +5388,12 @@ AIEqualizerAudioProcessor::BandState AIEqualizerAudioProcessor::getBandState(int
     else
         state.slope = 0;
 
+    if (auto* curveModeParam = apvts.getRawParameterValue(prefix + "CurveMode"))
+        state.curveMode = juce::jlimit(kLegacyCurveMode, kSurgicalCurveMode,
+                                      static_cast<int>(std::round(curveModeParam->load())));
+    else
+        state.curveMode = kLegacyCurveMode;
+
     if (auto* dynModeParam = apvts.getRawParameterValue(prefix + "DynMode"))
         state.dynMode = static_cast<int>(std::round(dynModeParam->load()));
     else
@@ -5385,6 +5452,8 @@ bool AIEqualizerAudioProcessor::applyBandStateDelta(int bandIndex, const BandSta
     clampedState.q = juce::jlimit(0.1f, 10.0f, clampedState.q);
     clampedState.type = juce::jlimit(0, 8, clampedState.type);
     clampedState.slope = juce::jlimit(0, 2, clampedState.slope);
+    clampedState.curveMode = juce::jlimit(kLegacyCurveMode, kSurgicalCurveMode,
+                                         clampedState.curveMode);
     clampedState.dynMode = juce::jlimit(0, 3, clampedState.dynMode);
     clampedState.dynThreshold = juce::jlimit(-60.0f, 0.0f, clampedState.dynThreshold);
     clampedState.dynRatio = juce::jlimit(1.0f, 20.0f, clampedState.dynRatio);
@@ -5400,6 +5469,7 @@ bool AIEqualizerAudioProcessor::applyBandStateDelta(int bandIndex, const BandSta
     const bool enabledChanged = currentState.enabled != clampedState.enabled;
     const bool soloChanged = currentState.solo != clampedState.solo;
     const bool slopeChanged = currentState.slope != clampedState.slope;
+    const bool curveModeChanged = currentState.curveMode != clampedState.curveMode;
     const bool dynModeChanged = currentState.dynMode != clampedState.dynMode;
     const bool dynThresholdChanged = std::abs(currentState.dynThreshold - clampedState.dynThreshold) > 0.05f;
     const bool dynRatioChanged = std::abs(currentState.dynRatio - clampedState.dynRatio) > 0.02f;
@@ -5409,7 +5479,7 @@ bool AIEqualizerAudioProcessor::applyBandStateDelta(int bandIndex, const BandSta
     const bool dynKneeChanged = std::abs(currentState.dynKnee - clampedState.dynKnee) > 0.05f;
 
     const bool anyChanged = freqChanged || gainChanged || qChanged || typeChanged || enabledChanged || soloChanged ||
-                            slopeChanged || dynModeChanged || dynThresholdChanged || dynRatioChanged ||
+                            slopeChanged || curveModeChanged || dynModeChanged || dynThresholdChanged || dynRatioChanged ||
                             dynAttackChanged || dynReleaseChanged || dynRangeChanged || dynKneeChanged;
     if (!anyChanged)
         return false;
@@ -5439,6 +5509,10 @@ bool AIEqualizerAudioProcessor::applyBandStateDelta(int bandIndex, const BandSta
         applyParam(apvts.getParameter(prefix + "Solo"), clampedState.solo ? 1.0f : 0.0f);
     if (slopeChanged)
         applyParam(apvts.getParameter(prefix + "Slope"), apvts.getParameter(prefix + "Slope")->convertTo0to1(static_cast<float>(clampedState.slope)));
+    if (curveModeChanged)
+        applyParam(apvts.getParameter(prefix + "CurveMode"),
+                   apvts.getParameter(prefix + "CurveMode")->convertTo0to1(
+                       static_cast<float>(clampedState.curveMode)));
     if (dynModeChanged)
         applyParam(apvts.getParameter(prefix + "DynMode"), apvts.getParameter(prefix + "DynMode")->convertTo0to1(static_cast<float>(clampedState.dynMode)));
     if (dynThresholdChanged)
@@ -5525,6 +5599,7 @@ void AIEqualizerAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
 
     auto state = apvts.copyState();
 
+    state.setProperty("stateSchemaVersion", kCurrentStateSchemaVersion, nullptr);
     state.setProperty("abState", static_cast<int>(activeSlot), nullptr);
     state.setProperty("slotAName", localA.name, nullptr);
     state.setProperty("slotBName", localB.name, nullptr);
@@ -5553,6 +5628,7 @@ void AIEqualizerAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
             bandTree.setProperty("enabled", band.enabled, nullptr);
             bandTree.setProperty("solo", band.solo, nullptr);
             bandTree.setProperty("slope", band.slope, nullptr);
+            bandTree.setProperty("curveMode", band.curveMode, nullptr);
             bandTree.setProperty("dynMode", band.dynMode, nullptr);
             bandTree.setProperty("dynThreshold", band.dynThreshold, nullptr);
             bandTree.setProperty("dynRatio", band.dynRatio, nullptr);
@@ -5583,8 +5659,18 @@ void AIEqualizerAudioProcessor::setStateInformation(const void* data, int sizeIn
     {
         if (xmlState->hasTagName(apvts.state.getType()))
         {
+            auto candidateState = juce::ValueTree::fromXml(*xmlState);
+            const auto loadKind = AIEQStateSchema::prepareForLoad(candidateState);
+            if (loadKind == AIEQStateSchema::LoadKind::Reject)
+                return;
+
+            const bool migratingLegacyState =
+                loadKind == AIEQStateSchema::LoadKind::LegacyWithoutSchema;
+
             // Phase 1: Restore APVTS — synchronous, audio thread sees new values immediately.
-            apvts.replaceState(juce::ValueTree::fromXml(*xmlState));
+            // Schema classification happens before this point, so unsupported or
+            // malformed future states leave both APVTS and A/B slots untouched.
+            apvts.replaceState(candidateState);
 
             // FIX: Force parameter listeners to fire so the UI EQ curve updates.
             // replaceState() only swaps the tree without calling updateParameterConnectionsToChildTrees,
@@ -5615,6 +5701,17 @@ void AIEqualizerAudioProcessor::setStateInformation(const void* data, int sizeIn
 
                 auto loadedState = apvts.state;
 
+                // A pre-v1 host state predates CurveMode. Make the migration
+                // total even when an old state has no persisted inactive-slot
+                // trees: every extant slot starts in Legacy before any
+                // explicitly serialized slot data is restored below.
+                if (migratingLegacyState)
+                {
+                    for (auto* slot : { &slotA, &slotB, &slotC, &slotD })
+                        for (auto& band : slot->bands)
+                            band.curveMode = kLegacyCurveMode;
+                }
+
                 // Restore active slot index
                 if (loadedState.hasProperty("abState"))
                 {
@@ -5633,7 +5730,8 @@ void AIEqualizerAudioProcessor::setStateInformation(const void* data, int sizeIn
                     slotD.name = loadedState.getProperty("slotDName").toString();
 
                 // Restore full slot contents (bands + output gain)
-                auto restoreSlot = [&loadedState](const juce::Identifier& id, EQSlot& slot)
+                auto restoreSlot = [&loadedState, migratingLegacyState](const juce::Identifier& id,
+                                                                        EQSlot& slot)
                 {
                     auto slotTree = loadedState.getChildWithName(id);
                     if (!slotTree.isValid())
@@ -5671,6 +5769,12 @@ void AIEqualizerAudioProcessor::setStateInformation(const void* data, int sizeIn
                             band.solo = static_cast<bool>(bandTree.getProperty("solo"));
                         if (bandTree.hasProperty("slope"))
                             band.slope = static_cast<int>(bandTree.getProperty("slope"));
+                        if (bandTree.hasProperty("curveMode"))
+                            band.curveMode = juce::jlimit(
+                                kLegacyCurveMode, kSurgicalCurveMode,
+                                static_cast<int>(bandTree.getProperty("curveMode")));
+                        else if (migratingLegacyState)
+                            band.curveMode = kLegacyCurveMode;
                         if (bandTree.hasProperty("dynMode"))
                             band.dynMode = static_cast<int>(bandTree.getProperty("dynMode"));
                         if (bandTree.hasProperty("dynThreshold"))

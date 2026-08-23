@@ -72,6 +72,12 @@ public:
         setParam(s, "band3Attack", 5.0f);
         setParam(s, "band3Release", 80.0f);
         setParam(s, "phaseMode", static_cast<float>(phaseMode));
+        // This test verifies which live DynamicEQ instance feeds the display;
+        // it is not an asynchronous linear-IR timing test. Pin a flat IR so
+        // background build completion cannot change the detector stimulus at a
+        // nondeterministic block while the tight offline loop is measuring it.
+        if (phaseMode == 2)
+            proc.forceLinearIRReady();
 
         const float probeHz = kBandHz;
         juce::MidiBuffer midi;

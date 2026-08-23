@@ -21,6 +21,9 @@ public:
         testFactoryPresetUtf8RoundTrip();
         testDynamicABStateRoundTrip();
         testHostParameterSurfaceGoldenList();
+        testCurveModeSchemaRoundTrip();
+        testLegacyStateMigratesCurveMode();
+        testFutureSchemaIsRejectedTransactionally();
         testUndoRedoCoversEntireHostSurface();
         testCorruptStateIsRejectedTransactionally();
         testDefaultFrequenciesStayInsideHostRange();
@@ -96,6 +99,11 @@ private:
         ids.push_back({ "dynAutoMakeup", 1 });
         ids.push_back({ "dynamicCorrections", 2 });
 
+        // CurveMode was added append-only after the complete pre-existing host
+        // surface. Keeping these entries at the tail preserves every old index.
+        for (int band = 0; band < AIEqualizerAudioProcessor::maxBands; ++band)
+            ids.push_back({ "band" + juce::String(band) + "CurveMode", 2 });
+
         return ids;
     }
 
@@ -136,12 +144,17 @@ private:
 
         if (! expected.empty())
         {
-            expect(expected.back().id == "dynamicCorrections", "Golden list must keep D1 as the append-only tail");
+            const auto dynamicCorrectionsIndex = expected.size()
+                - static_cast<size_t>(AIEqualizerAudioProcessor::maxBands) - 1u;
+            expect(expected[dynamicCorrectionsIndex].id == "dynamicCorrections",
+                   "CurveMode parameters must be appended after the old host surface");
+            expect(expected.back().id == "band23CurveMode",
+                   "CurveMode append-only block must remain the host-surface tail");
             if (! params.isEmpty())
             {
                 auto* withID = dynamic_cast<juce::AudioProcessorParameterWithID*>(params.getLast());
-                expect(withID != nullptr && withID->getParameterID() == "dynamicCorrections",
-                       "dynamicCorrections must remain the final createParameters() entry");
+                expect(withID != nullptr && withID->getParameterID() == "band23CurveMode",
+                       "band23CurveMode must remain the final createParameters() entry");
             }
         }
     }
@@ -283,6 +296,46 @@ private:
         if (auto* outputGain = apvts.getRawParameterValue("outputGain"))
             expectWithinAbsoluteError(outputGain->load(), 4.0f, 0.01f);
 
+        // A genuinely pre-v1 APVTS preset has neither the root schema marker
+        // nor CurveMode parameters. PresetManager must apply the same migration
+        // as host state recall before it calls replaceState().
+        PresetManager::Preset preV1Preset = source;
+        preV1Preset.name = "Pre-v1 CurveMode Migration";
+        preV1Preset.state = source.state.createCopy();
+        preV1Preset.state.removeProperty("stateSchemaVersion", nullptr);
+        for (int i = preV1Preset.state.getNumChildren(); --i >= 0;)
+        {
+            const auto child = preV1Preset.state.getChild(i);
+            if (child.hasType("PARAM")
+                && child.getProperty("id").toString().endsWith("CurveMode"))
+                preV1Preset.state.removeChild(i, nullptr);
+        }
+
+        setChoice(apvts, "band0CurveMode", 1);
+        expect(presets.loadPreset(preV1Preset));
+        expectEquals(static_cast<int>(apvts.state.getProperty("stateSchemaVersion")), 1);
+        for (int i = 0; i < AIEqualizerAudioProcessor::maxBands; ++i)
+        {
+            auto* mode = apvts.getRawParameterValue(
+                "band" + juce::String(i) + "CurveMode");
+            expect(mode != nullptr);
+            if (mode != nullptr)
+                expectWithinAbsoluteError(mode->load(), 0.0f, 0.0f);
+        }
+
+        // Unsupported preset schemas must not partially alter the live APVTS.
+        PresetManager::Preset futurePreset = source;
+        futurePreset.name = "Unsupported Future Schema";
+        futurePreset.state = source.state.createCopy();
+        futurePreset.state.setProperty("stateSchemaVersion", 2, nullptr);
+        setFloat(apvts, "outputGain", -7.0f);
+        setChoice(apvts, "band0CurveMode", 0);
+        expect(! presets.loadPreset(futurePreset));
+        expectWithinAbsoluteError(apvts.getRawParameterValue("outputGain")->load(),
+                                  -7.0f, 0.01f);
+        expectWithinAbsoluteError(apvts.getRawParameterValue("band0CurveMode")->load(),
+                                  0.0f, 0.0f);
+
         auto invalidRoot = std::make_unique<juce::XmlElement>("AIEqualizerPreset");
         auto invalidState = std::make_unique<juce::XmlElement>("State");
         invalidState->addChildElement(new juce::XmlElement("NotParameters"));
@@ -362,6 +415,7 @@ private:
         band0.dynRelease = 100.0f;
         band0.dynRange = 24.0f;
         band0.dynKnee = 6.0f;
+        band0.curveMode = static_cast<int>(ParametricEQProcessor::CurveMode::Legacy);
         proc.setBandState(0, band0);
         setBool(apvts, "dynEqEnabled", false);
         setFloat(apvts, "dynEqMix", 0.0f);
@@ -381,6 +435,7 @@ private:
         band0.dynRelease = 50.0f;
         band0.dynRange = 24.0f;
         band0.dynKnee = 0.0f;
+        band0.curveMode = static_cast<int>(ParametricEQProcessor::CurveMode::Surgical);
         proc.setBandState(0, band0);
 
         juce::MemoryBlock blob;
@@ -404,6 +459,8 @@ private:
             expectWithinAbsoluteError(p->load(), 0.0f, 0.05f);
         if (auto* p = restoredAPVTS.getRawParameterValue("dynAutoMakeup"))
             expectWithinAbsoluteError(p->load(), 0.0f, 0.01f);
+        if (auto* p = restoredAPVTS.getRawParameterValue("band0CurveMode"))
+            expectWithinAbsoluteError(p->load(), 0.0f, 0.01f);
 
         restored.setABState(AIEqualizerAudioProcessor::ABState::B);
         if (auto* p = restoredAPVTS.getRawParameterValue("band0DynMode"))
@@ -426,6 +483,135 @@ private:
             expectWithinAbsoluteError(p->load(), 100.0f, 0.05f);
         if (auto* p = restoredAPVTS.getRawParameterValue("dynAutoMakeup"))
             expectWithinAbsoluteError(p->load(), 1.0f, 0.01f);
+        if (auto* p = restoredAPVTS.getRawParameterValue("band0CurveMode"))
+            expectWithinAbsoluteError(p->load(), 1.0f, 0.01f);
+    }
+
+    void testCurveModeSchemaRoundTrip()
+    {
+        beginTest("Schema v1 and CurveMode round-trip are explicit");
+
+        AIEqualizerAudioProcessor proc;
+        auto& apvts = proc.getAPVTS();
+        expectEquals(static_cast<int>(apvts.state.getProperty("stateSchemaVersion")), 1);
+        expectWithinAbsoluteError(apvts.getRawParameterValue("band0CurveMode")->load(),
+                                  1.0f, 0.0f);
+
+        setChoice(apvts, "band0CurveMode", 0);
+        setChoice(apvts, "band1CurveMode", 1);
+
+        juce::MemoryBlock blob;
+        proc.getStateInformation(blob);
+        auto xml = proc.getXmlFromBinary(blob.getData(), static_cast<int>(blob.getSize()));
+        expect(xml != nullptr);
+        if (xml != nullptr)
+        {
+            auto saved = juce::ValueTree::fromXml(*xml);
+            expectEquals(static_cast<int>(saved.getProperty("stateSchemaVersion")), 1);
+        }
+
+        setChoice(apvts, "band0CurveMode", 1);
+        setChoice(apvts, "band1CurveMode", 0);
+        proc.setStateInformation(blob.getData(), static_cast<int>(blob.getSize()));
+
+        expectWithinAbsoluteError(apvts.getRawParameterValue("band0CurveMode")->load(),
+                                  0.0f, 0.0f);
+        expectWithinAbsoluteError(apvts.getRawParameterValue("band1CurveMode")->load(),
+                                  1.0f, 0.0f);
+    }
+
+    void testLegacyStateMigratesCurveMode()
+    {
+        beginTest("Pre-v1 state migrates every CurveMode and A/B slot to Legacy");
+
+        AIEqualizerAudioProcessor source;
+        juce::MemoryBlock currentBlob;
+        source.getStateInformation(currentBlob);
+        auto xml = source.getXmlFromBinary(currentBlob.getData(),
+                                           static_cast<int>(currentBlob.getSize()));
+        expect(xml != nullptr);
+        if (xml == nullptr)
+            return;
+
+        auto legacy = juce::ValueTree::fromXml(*xml);
+        legacy.removeProperty("stateSchemaVersion", nullptr);
+        for (int i = legacy.getNumChildren(); --i >= 0;)
+        {
+            auto child = legacy.getChild(i);
+            if (child.hasType("PARAM")
+                && child.getProperty("id").toString().endsWith("CurveMode"))
+                legacy.removeChild(i, nullptr);
+        }
+        for (const auto slotName : { "SlotA", "SlotB", "SlotC", "SlotD" })
+        {
+            auto slot = legacy.getChildWithName(slotName);
+            for (int i = 0; i < AIEqualizerAudioProcessor::maxBands; ++i)
+            {
+                auto band = slot.getChildWithName("band" + juce::String(i));
+                if (band.isValid())
+                    band.removeProperty("curveMode", nullptr);
+            }
+        }
+
+        juce::MemoryBlock legacyBlob;
+        auto legacyXml = legacy.createXml();
+        juce::AudioProcessor::copyXmlToBinary(*legacyXml, legacyBlob);
+
+        AIEqualizerAudioProcessor restored;
+        restored.setStateInformation(legacyBlob.getData(), static_cast<int>(legacyBlob.getSize()));
+        auto& restoredState = restored.getAPVTS();
+        expectEquals(static_cast<int>(restoredState.state.getProperty("stateSchemaVersion")), 1);
+        for (int i = 0; i < AIEqualizerAudioProcessor::maxBands; ++i)
+        {
+            auto* mode = restoredState.getRawParameterValue(
+                "band" + juce::String(i) + "CurveMode");
+            expect(mode != nullptr);
+            if (mode != nullptr)
+                expectWithinAbsoluteError(mode->load(), 0.0f, 0.0f);
+        }
+
+        restored.setABState(AIEqualizerAudioProcessor::ABState::B);
+        expectWithinAbsoluteError(restored.getBandState(0).curveMode,
+                                  static_cast<int>(ParametricEQProcessor::CurveMode::Legacy), 0);
+    }
+
+    void testFutureSchemaIsRejectedTransactionally()
+    {
+        beginTest("Unsupported future state schema is a transactional no-op");
+
+        AIEqualizerAudioProcessor proc;
+        auto& apvts = proc.getAPVTS();
+        setFloat(apvts, "outputGain", 5.0f);
+        setChoice(apvts, "band0CurveMode", 0);
+
+        juce::MemoryBlock blob;
+        proc.getStateInformation(blob);
+        auto xml = proc.getXmlFromBinary(blob.getData(), static_cast<int>(blob.getSize()));
+        expect(xml != nullptr);
+        if (xml == nullptr)
+            return;
+
+        auto future = juce::ValueTree::fromXml(*xml);
+        future.setProperty("stateSchemaVersion", 2, nullptr);
+        for (int i = 0; i < future.getNumChildren(); ++i)
+        {
+            auto child = future.getChild(i);
+            if (child.hasType("PARAM") && child.getProperty("id").toString() == "outputGain")
+                child.setProperty("value", -12.0f, nullptr);
+            if (child.hasType("PARAM") && child.getProperty("id").toString() == "band0CurveMode")
+                child.setProperty("value", 1.0f, nullptr);
+        }
+
+        juce::MemoryBlock futureBlob;
+        auto futureXml = future.createXml();
+        juce::AudioProcessor::copyXmlToBinary(*futureXml, futureBlob);
+        proc.setStateInformation(futureBlob.getData(), static_cast<int>(futureBlob.getSize()));
+
+        expectWithinAbsoluteError(apvts.getRawParameterValue("outputGain")->load(),
+                                  5.0f, 1.0e-6f);
+        expectWithinAbsoluteError(apvts.getRawParameterValue("band0CurveMode")->load(),
+                                  0.0f, 0.0f);
+        expectEquals(static_cast<int>(apvts.state.getProperty("stateSchemaVersion")), 1);
     }
 
     void testUndoRedoCoversEntireHostSurface()

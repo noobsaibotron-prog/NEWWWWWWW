@@ -650,6 +650,7 @@ set(PLUGIN_SOURCES
     # Utils
     Source/Utils/Logger.cpp
     Source/Utils/Logger.h
+    Source/Utils/APVTSStateSchema.h
     Source/Utils/PresetManager.cpp
     Source/Utils/PresetManager.h
 )

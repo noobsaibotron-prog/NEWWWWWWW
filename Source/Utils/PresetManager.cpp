@@ -1,4 +1,5 @@
 #include "PresetManager.h"
+#include "APVTSStateSchema.h"
 #include <algorithm>
 
 namespace
@@ -363,6 +364,7 @@ PresetManager::Preset PresetManager::createPreset(
     // modify the copy via setupFunc, never touch the live APVTS.
     // Zero audible glitches, zero host automation events.
     preset.state = apvts.copyState().createCopy();
+    AIEQStateSchema::stampCurrent(preset.state);
     setupFunc(preset.state);
 
     return preset;
@@ -442,7 +444,9 @@ bool PresetManager::saveUserPreset(const juce::String& name, const juce::String&
         
         // Save current APVTS state wrapped in <State> (canonical schema; the
         // loaders below and getUserPresets() read <State>/<Parameters>).
-        auto stateWrapper = wrapApvtsStateXml(apvts.copyState());
+        auto currentState = apvts.copyState();
+        AIEQStateSchema::stampCurrent(currentState);
+        auto stateWrapper = wrapApvtsStateXml(currentState);
         if (stateWrapper == nullptr)
         {
             AIEQ_LOG_ERROR("Failed to serialize APVTS state for preset: " + name);
@@ -480,7 +484,15 @@ bool PresetManager::loadPreset(const Preset& preset)
             return false;
         }
 
-        apvts.replaceState(preset.state);
+        auto candidateState = preset.state.createCopy();
+        const auto loadKind = AIEQStateSchema::prepareForLoad(candidateState);
+        if (loadKind == AIEQStateSchema::LoadKind::Reject)
+        {
+            AIEQ_LOG_WARNING("Preset load skipped (unsupported state schema): " + preset.name);
+            return false;
+        }
+
+        apvts.replaceState(candidateState);
 
         // FIX: replaceState() may not trigger APVTS Listener::parameterChanged()
         // callbacks reliably. sendValueChangedMessageToListeners() fires
@@ -560,7 +572,12 @@ bool PresetManager::exportPreset(const Preset& preset, const juce::File& targetF
         xml->setAttribute("category", preset.category);
         xml->setAttribute("description", preset.description);
         xml->setAttribute("version", "2.1.0");
-        auto stateWrapper = wrapApvtsStateXml(preset.state);
+        auto candidateState = preset.state.createCopy();
+        if (AIEQStateSchema::prepareForLoad(candidateState)
+            == AIEQStateSchema::LoadKind::Reject)
+            return false;
+
+        auto stateWrapper = wrapApvtsStateXml(candidateState);
         if (stateWrapper == nullptr)
             return false;
         xml->addChildElement(stateWrapper.release());

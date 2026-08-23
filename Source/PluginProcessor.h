@@ -237,7 +237,8 @@ public:
     [[nodiscard]] bool consumeSpectrumDataReady() noexcept { return spectrumDataReady.exchange(false, std::memory_order_acquire); }
     [[nodiscard]] bool consumeAIProblemsChanged() noexcept { return aiProblemsChanged.exchange(false, std::memory_order_acquire); }
     [[nodiscard]] uint64_t getParameterChangeCounter() const noexcept { return parameterChangeCounter.load(std::memory_order_relaxed); }
-    // Counter incremented ONLY when curve-affecting params change (Freq/Gain/Q/Type/Enabled/Slope).
+    // Counter incremented ONLY when curve-affecting params change
+    // (Freq/Gain/Q/Type/Enabled/Slope/CurveMode).
     // Use this for EQ curve rebuild decisions — ignores DynEQ, metering, phase, etc.
     [[nodiscard]] uint64_t getEQCurveChangeCounter() const noexcept { return eqCurveChangeCounter.load(std::memory_order_relaxed); }
     [[nodiscard]] uint32_t getBlockClampEvents() const noexcept { return blockClampEvents.load(std::memory_order_relaxed); }
@@ -316,6 +317,7 @@ public:
         float dynRelease = 100.0f;
         float dynRange = 24.0f;
         float dynKnee = 6.0f;
+        int curveMode = static_cast<int>(ParametricEQProcessor::CurveMode::Surgical);
     };
     
     /**
@@ -433,8 +435,10 @@ public:
     void requestIRBuild();              // Signal background IR builder
 
     /** Test-only hook: inject a flat (Dirac delta) IR directly into the LP
-        convolver and set linearIRLoaded = true, bypassing the builder thread.
-        Enables deterministic testing of the LP first-load crossfade path. */
+        convolver, set linearIRLoaded = true and pin that fixture until the next
+        prepareToPlay(). Background results are drained but cannot replace it.
+        Enables deterministic tests that exercise LP routing rather than the
+        asynchronous IR builder. */
     void forceLinearIRReady();
     
     //==============================================================================
@@ -644,6 +648,8 @@ private:
     std::array<float, maxBands> targetBandQ {};
     std::array<int, maxBands> targetBandType {};
     std::array<int, maxBands> prevAppliedBandType {};  // track type for state clear on topology change
+    std::array<int, maxBands> targetBandCurveMode {};
+    std::array<int, maxBands> prevAppliedBandCurveMode {};
     std::array<int, maxBands> targetBandSlope {};
     std::array<bool, maxBands> targetBandEnabled {};
     std::array<bool, maxBands> targetBandSolo {};
@@ -660,6 +666,7 @@ private:
     ParametricEQProcessor eqProcessorForIR;
     DynamicEQProcessor dynamicEQProcessorForIR;
     std::atomic<bool> irCoefficientsUpdated { false };
+    std::atomic<bool> linearIRTestOverridePinned { false };
     
     // Mid/Side processing chains
     ParametricEQProcessor eqProcessorMid;
@@ -1104,6 +1111,7 @@ private:
         std::atomic<float>* dynKnee = nullptr;
         std::atomic<float>* dynRange = nullptr;
         std::atomic<float>* slope = nullptr;
+        std::atomic<float>* curveMode = nullptr;
     };
     
     std::array<CachedBandParams, maxBands> cachedParams {};
