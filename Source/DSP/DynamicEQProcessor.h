@@ -117,6 +117,28 @@ public:
     [[nodiscard]] bool reconfigureNoAllocation(double sampleRate,
                                                int samplesPerBlock,
                                                int numChannels) noexcept;
+    void setHighPrecisionMode(bool enabled) noexcept
+    {
+        highPrecisionMode.store(enabled, std::memory_order_release);
+    }
+    [[nodiscard]] bool isHighPrecisionMode() const noexcept
+    {
+        return highPrecisionMode.load(std::memory_order_acquire);
+    }
+    [[nodiscard]] BiquadValidationFailure getBandValidationFailure(int index) const noexcept
+    {
+        if (index < 0 || index >= maxBands)
+            return BiquadValidationFailure::InvalidDomain;
+        return static_cast<BiquadValidationFailure>(
+            bandValidationFailures[static_cast<size_t>(index)].load(std::memory_order_acquire));
+    }
+    [[nodiscard]] BiquadValidationFailure getSidechainValidationFailure(int index) const noexcept
+    {
+        if (index < 0 || index >= maxBands)
+            return BiquadValidationFailure::InvalidDomain;
+        return static_cast<BiquadValidationFailure>(
+            sidechainValidationFailures[static_cast<size_t>(index)].load(std::memory_order_acquire));
+    }
     void reset();
     void process(juce::AudioBuffer<float>& buffer);
     
@@ -264,6 +286,8 @@ private:
     
     // Processing state (audio thread only)
     std::array<BandState, maxBands> bandStates;
+    std::array<std::atomic<uint8_t>, maxBands> bandValidationFailures {};
+    std::array<std::atomic<uint8_t>, maxBands> sidechainValidationFailures {};
     
     // Smoothed dynamic parameters (per-band, updated on version change)
     std::array<juce::SmoothedValue<float>, maxBands> smoothedThresholds;
@@ -288,6 +312,7 @@ private:
     // Sample rate and block size
     std::atomic<double> currentSampleRate { 44100.0 };
     std::atomic<int> currentBlockSize { 512 };
+    std::atomic<bool> highPrecisionMode { false };
     int numChannels = 2;
     
     // Lookahead delay line

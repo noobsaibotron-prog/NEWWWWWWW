@@ -3,6 +3,17 @@
 
 namespace
 {
+constexpr double kMinProcessingSampleRate = 32000.0;
+
+inline bool validProcessingConfiguration(double sampleRate, int samplesPerBlock,
+                                         int channels) noexcept
+{
+    return std::isfinite(sampleRate)
+        && sampleRate >= kMinProcessingSampleRate
+        && sampleRate <= BiquadCoeffs::maxProcessingSampleRate()
+        && samplesPerBlock > 0 && channels > 0;
+}
+
 inline float fastTanhApprox(float x) noexcept
 {
     // Padé [3/3] approximation, accurate enough for audio soft clipping
@@ -23,12 +34,20 @@ ParametricEQProcessor::ParametricEQProcessor()
         bandParams[i].q.store(1.0f, std::memory_order_relaxed);
         bandParams[i].type.store(static_cast<int>(Peak), std::memory_order_relaxed);
         bandParams[i].version.store(0, std::memory_order_relaxed);
+        bandValidationFailures[static_cast<size_t>(i)].store(
+            static_cast<uint8_t>(BiquadValidationFailure::IntentionalBypass),
+            std::memory_order_relaxed);
     }
 }
 
 //==============================================================================
 void ParametricEQProcessor::prepare(double sampleRate, int samplesPerBlock, int channels)
 {
+    if (!validProcessingConfiguration(sampleRate, samplesPerBlock, channels))
+    {
+        isPrepared.store(false, std::memory_order_release);
+        return;
+    }
     resetRuntimeStateNoAllocation(sampleRate, samplesPerBlock, channels);
 }
 
@@ -36,6 +55,8 @@ bool ParametricEQProcessor::reconfigureNoAllocation(double sampleRate,
                                                     int samplesPerBlock,
                                                     int channels) noexcept
 {
+    if (!validProcessingConfiguration(sampleRate, samplesPerBlock, channels))
+        return false;
     resetRuntimeStateNoAllocation(sampleRate, samplesPerBlock, channels);
     return true;
 }
@@ -205,6 +226,8 @@ void ParametricEQProcessor::process(juce::AudioBuffer<float>& buffer)
                 static_cast<FilterType>(type), freq, gain, q, slope, sr);
             state.numActiveStages = design.numStages;
             state.coefficients = design.coefficients;
+            bandValidationFailures[static_cast<size_t>(i)].store(
+                static_cast<uint8_t>(design.failure), std::memory_order_release);
 
             state.lastVersion = currentVersion;
         }
@@ -519,6 +542,8 @@ int ParametricEQProcessor::addBand(float freq, float gainDb, float q, int type)
             static_cast<FilterType>(type), freq, gainDb, q, 0, sr);
         state.numActiveStages = design.numStages;
         state.coefficients = design.coefficients;
+        bandValidationFailures[static_cast<size_t>(newIndex)].store(
+            static_cast<uint8_t>(design.failure), std::memory_order_release);
         state.lastVersion = params.version.load(std::memory_order_acquire);
     }
     
@@ -557,10 +582,16 @@ void ParametricEQProcessor::removeBand(int index)
             bandStates[i].coefficients[s] = bandStates[i + 1].coefficients[s];
         bandStates[i].numActiveStages = bandStates[i + 1].numActiveStages;
         bandStates[i].lastVersion = 0;  // Force update
+        bandValidationFailures[static_cast<size_t>(i)].store(
+            bandValidationFailures[static_cast<size_t>(i + 1)].load(std::memory_order_acquire),
+            std::memory_order_release);
     }
     
     // Disable the last band
     bandParams[currentNum - 1].enabled.store(false, std::memory_order_relaxed);
+    bandValidationFailures[static_cast<size_t>(currentNum - 1)].store(
+        static_cast<uint8_t>(BiquadValidationFailure::IntentionalBypass),
+        std::memory_order_release);
     
     // Decrement band count
     numActiveBands.store(currentNum - 1, std::memory_order_release);
@@ -574,6 +605,9 @@ void ParametricEQProcessor::clearAllBands()
     for (int i = 0; i < currentNum; ++i)
     {
         bandParams[i].enabled.store(false, std::memory_order_relaxed);
+        bandValidationFailures[static_cast<size_t>(i)].store(
+            static_cast<uint8_t>(BiquadValidationFailure::IntentionalBypass),
+            std::memory_order_release);
     }
     
     // Reset count
@@ -1011,6 +1045,8 @@ void ParametricEQProcessor::updateCoefficientsForBand(int index)
         static_cast<FilterType>(type), freq, gain, q, slope, sr);
     state.numActiveStages = design.numStages;
     state.coefficients = design.coefficients;
+    bandValidationFailures[static_cast<size_t>(index)].store(
+        static_cast<uint8_t>(design.failure), std::memory_order_release);
     
     state.lastVersion = params.version.load(std::memory_order_acquire);
 }
@@ -1023,24 +1059,37 @@ ParametricEQProcessor::FilterDesign ParametricEQProcessor::makeFilterDesign(
 
     if (type == LowCut || type == HighCut)
     {
+        const auto precision = highPrecisionMode.load(std::memory_order_acquire)
+            ? BiquadPrecision::HighPrecision : BiquadPrecision::Automatic;
         const auto cut = CutFilterDesigner::design(
-            type == LowCut, slope, sampleRate, freq, q);
+            type == LowCut, slope, sampleRate, freq, q, precision);
+        if (cut.numStages <= 0)
+        {
+            result.failure = cut.failure;
+            return result;
+        }
         result.coefficients = cut.coefficients;
-        result.numStages = juce::jlimit(1,
+        result.numStages = juce::jlimit(0,
             BandProcessingState::maxFilterStages, cut.numStages);
+        result.failure = BiquadValidationFailure::None;
         return result;
     }
 
     result.coefficients[0] = makeCoefficients(type, freq, gain, q, sampleRate);
-    result.numStages = 1;
+    result.numStages = result.coefficients[0].valid ? 1 : 0;
+    result.failure = result.coefficients[0].failure;
     return result;
 }
 
 BiquadCoeffs ParametricEQProcessor::makeCoefficients(
     FilterType type, float freq, float gain, float q, double sampleRate) const
 {
-    if (sampleRate <= 0.0 || sampleRate > 192000.0)
-        return BiquadCoeffs::makeBypass();
+    if (!std::isfinite(sampleRate) || sampleRate < kMinProcessingSampleRate
+        || sampleRate > BiquadCoeffs::maxProcessingSampleRate())
+        return BiquadCoeffs::makeRejected(BiquadValidationFailure::InvalidDomain);
+
+    const auto precision = highPrecisionMode.load(std::memory_order_acquire)
+        ? BiquadPrecision::HighPrecision : BiquadPrecision::Automatic;
 
     // Clamp frequency safely below Nyquist
     freq = juce::jlimit(20.0f, static_cast<float>(sampleRate * 0.499), freq);
@@ -1052,47 +1101,47 @@ BiquadCoeffs ParametricEQProcessor::makeCoefficients(
     switch (type)
     {
         case LowCut:
-            return BiquadCoeffs::makeHighPass(sampleRate, freq, q);
+            return BiquadCoeffs::makeHighPass(sampleRate, freq, q, precision);
 
         case LowShelf:
             return BiquadCoeffs::makeLowShelf(
-                sampleRate, freq, q, juce::Decibels::decibelsToGain(gain));
+                sampleRate, freq, q, juce::Decibels::decibelsToGain(gain), precision);
 
         case Peak:
             // Gain near zero: return bypass so the caller skips processing entirely.
             if (std::abs(gain) < 0.05f)
                 return BiquadCoeffs::makeBypass();
             return BiquadCoeffs::makePeakFilter(
-                sampleRate, freq, q, juce::Decibels::decibelsToGain(gain));
+                sampleRate, freq, q, juce::Decibels::decibelsToGain(gain), precision);
 
         case HighShelf:
             return BiquadCoeffs::makeHighShelf(
-                sampleRate, freq, q, juce::Decibels::decibelsToGain(gain));
+                sampleRate, freq, q, juce::Decibels::decibelsToGain(gain), precision);
 
         case HighCut:
-            return BiquadCoeffs::makeLowPass(sampleRate, freq, q);
+            return BiquadCoeffs::makeLowPass(sampleRate, freq, q, precision);
 
         case Notch:
-            return BiquadCoeffs::makeNotch(sampleRate, freq, q);
+            return BiquadCoeffs::makeNotch(sampleRate, freq, q, precision);
 
         case BandPass:
-            return BiquadCoeffs::makeBandPass(sampleRate, freq, q);
+            return BiquadCoeffs::makeBandPass(sampleRate, freq, q, precision);
 
         case VintageLowShelf:
         {
             float vintageQ = juce::jlimit(0.3f, 1.0f, q * 0.6f);
             return BiquadCoeffs::makeLowShelf(
-                sampleRate, freq, vintageQ, juce::Decibels::decibelsToGain(gain));
+                sampleRate, freq, vintageQ, juce::Decibels::decibelsToGain(gain), precision);
         }
 
         case VintageHighShelf:
         {
             float vintageQ = juce::jlimit(0.3f, 1.0f, q * 0.6f);
             return BiquadCoeffs::makeHighShelf(
-                sampleRate, freq, vintageQ, juce::Decibels::decibelsToGain(gain));
+                sampleRate, freq, vintageQ, juce::Decibels::decibelsToGain(gain), precision);
         }
 
         default:
-            return BiquadCoeffs::makeAllPass(sampleRate, 20.0f, 0.1f);
+            return BiquadCoeffs::makeAllPass(sampleRate, 20.0f, 0.1f, precision);
     }
 }

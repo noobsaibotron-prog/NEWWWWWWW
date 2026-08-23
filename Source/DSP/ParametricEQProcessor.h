@@ -112,6 +112,21 @@ public:
     [[nodiscard]] bool reconfigureNoAllocation(double sampleRate,
                                                int samplesPerBlock,
                                                int numChannels) noexcept;
+    void setHighPrecisionMode(bool enabled) noexcept
+    {
+        highPrecisionMode.store(enabled, std::memory_order_release);
+    }
+    [[nodiscard]] bool isHighPrecisionMode() const noexcept
+    {
+        return highPrecisionMode.load(std::memory_order_acquire);
+    }
+    [[nodiscard]] BiquadValidationFailure getBandValidationFailure(int index) const noexcept
+    {
+        if (index < 0 || index >= getMaxBands())
+            return BiquadValidationFailure::InvalidDomain;
+        return static_cast<BiquadValidationFailure>(
+            bandValidationFailures[static_cast<size_t>(index)].load(std::memory_order_acquire));
+    }
     void reset();
     void process(juce::AudioBuffer<float>& buffer);
     
@@ -221,7 +236,8 @@ private:
     struct FilterDesign
     {
         std::array<BiquadCoeffs, BandProcessingState::maxFilterStages> coefficients {};
-        int numStages = 1;
+        int numStages = 0;
+        BiquadValidationFailure failure = BiquadValidationFailure::IntentionalBypass;
     };
 
     [[nodiscard]] FilterDesign makeFilterDesign(
@@ -237,6 +253,7 @@ private:
     
     // Processing state for each band (audio thread only)
     std::array<BandProcessingState, 24> bandStates;
+    std::array<std::atomic<uint8_t>, 24> bandValidationFailures {};
 
     // Per-band crossfade state for topology changes (audio thread only)
     struct BandCrossfade
@@ -284,6 +301,7 @@ private:
     // Sample rate and block size (set in prepare, read in process)
     std::atomic<double> currentSampleRate { 44100.0 };
     std::atomic<int> currentBlockSize { 512 };
+    std::atomic<bool> highPrecisionMode { false };
     int numChannels = 2;
     
     // Prepare flag (ensures safe initialization)

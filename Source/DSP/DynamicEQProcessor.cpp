@@ -5,6 +5,18 @@
 
 namespace
 {
+constexpr double kMinProcessingSampleRate = 32000.0;
+
+[[nodiscard]] bool validProcessingConfiguration(double sampleRate,
+                                                int samplesPerBlock,
+                                                int channels) noexcept
+{
+    return std::isfinite(sampleRate)
+        && sampleRate >= kMinProcessingSampleRate
+        && sampleRate <= BiquadCoeffs::maxProcessingSampleRate()
+        && samplesPerBlock > 0 && channels > 0;
+}
+
 // Control slice width and crossfade settings for live coefficient updates.
 // The live DynEQ path rebuilds a biquad whenever the smoothed effective gain
 // moves far enough. A zero-state swap is stable but creates a cold-start
@@ -104,12 +116,24 @@ DynamicEQProcessor::DynamicEQProcessor()
                                           std::memory_order_relaxed);
         bandParams[index].enabled.store(true, std::memory_order_relaxed);
         bandParams[index].version.store(0, std::memory_order_relaxed);
+        bandValidationFailures[index].store(
+            static_cast<uint8_t>(BiquadValidationFailure::IntentionalBypass),
+            std::memory_order_relaxed);
+        sidechainValidationFailures[index].store(
+            static_cast<uint8_t>(BiquadValidationFailure::IntentionalBypass),
+            std::memory_order_relaxed);
     }
 }
 
 //==============================================================================
 void DynamicEQProcessor::prepare(double sampleRate, int samplesPerBlock, int channels)
 {
+    if (!validProcessingConfiguration(sampleRate, samplesPerBlock, channels))
+    {
+        isPrepared.store(false, std::memory_order_release);
+        return;
+    }
+
     // Pre-allocate dry buffer with generous headroom so process() never needs to resize.
     // 8x block size covers Reaper dynamic block sizes and any host that delivers
     // larger-than-expected blocks without hitting the RT-unsafe setSize path.
@@ -130,7 +154,7 @@ bool DynamicEQProcessor::canReconfigureWithoutAllocation(double sampleRate,
                                                          int samplesPerBlock,
                                                          int channels) const noexcept
 {
-    if (sampleRate <= 0.0 || samplesPerBlock <= 0 || channels <= 0)
+    if (!validProcessingConfiguration(sampleRate, samplesPerBlock, channels))
         return false;
 
     static constexpr double kMaxLookaheadSeconds = 0.020;
@@ -603,7 +627,12 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
                 || std::abs(scQNow - state.scQApplied) > scEps)
             {
                 const double sr2 = currentSampleRate.load(std::memory_order_relaxed);
-                auto newCoeffs = BiquadCoeffs::makeBandPass(sr2, scFreqNow, scQNow);
+                const auto precision = highPrecisionMode.load(std::memory_order_acquire)
+                    ? BiquadPrecision::HighPrecision : BiquadPrecision::Automatic;
+                auto newCoeffs = BiquadCoeffs::makeBandPass(
+                    sr2, scFreqNow, scQNow, precision);
+                sidechainValidationFailures[static_cast<size_t>(bandIdx)].store(
+                    static_cast<uint8_t>(newCoeffs.failure), std::memory_order_release);
                 if (newCoeffs.valid)
                 {
                     state.scCoeffs = newCoeffs;
@@ -726,6 +755,9 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
                         {
                             const BiquadCoeffs newCoeffs = makeEQCoefficients(
                                 filterType, bandFreq, targetEffectiveGainDb, bandQ);
+                            bandValidationFailures[static_cast<size_t>(bandIdx)].store(
+                                static_cast<uint8_t>(newCoeffs.failure),
+                                std::memory_order_release);
                             beginCoeffCrossfade(bandIdx, newCoeffs,
                                                 kDynamicCoeffCrossfadeSamples);
                             state.appliedEffectiveGainDb = targetEffectiveGainDb;
@@ -1132,6 +1164,8 @@ void DynamicEQProcessor::updateBandCoefficients(int bandIndex)
     const float effectiveGain = dynamicActive ? (gain + state.currentGain) : gain;
 
     state.eqCoeffs = makeEQCoefficients(filterType, freq, effectiveGain, q);
+    bandValidationFailures[static_cast<size_t>(bandIndex)].store(
+        static_cast<uint8_t>(state.eqCoeffs.failure), std::memory_order_release);
     state.staticFreqApplied = freq;
     state.staticGainApplied = gain;
     state.staticQApplied = q;
@@ -1167,6 +1201,8 @@ void DynamicEQProcessor::updateSidechainState(int bandIndex)
     if (!enabled)
     {
         state.scCoeffs = BiquadCoeffs::makeBypass();
+        sidechainValidationFailures[static_cast<size_t>(bandIndex)].store(
+            static_cast<uint8_t>(state.scCoeffs.failure), std::memory_order_release);
         state.scFreqApplied = params.sidechainFreq.load(std::memory_order_relaxed);
         state.scQApplied = params.sidechainQ.load(std::memory_order_relaxed);
         state.scFilterL.reset();
@@ -1178,7 +1214,11 @@ void DynamicEQProcessor::updateSidechainState(int bandIndex)
     const float scQ = params.sidechainQ.load(std::memory_order_relaxed);
     const double sr = currentSampleRate.load(std::memory_order_relaxed);
 
-    state.scCoeffs = BiquadCoeffs::makeBandPass(sr, scFreq, scQ);
+    const auto precision = highPrecisionMode.load(std::memory_order_acquire)
+        ? BiquadPrecision::HighPrecision : BiquadPrecision::Automatic;
+    state.scCoeffs = BiquadCoeffs::makeBandPass(sr, scFreq, scQ, precision);
+    sidechainValidationFailures[static_cast<size_t>(bandIndex)].store(
+        static_cast<uint8_t>(state.scCoeffs.failure), std::memory_order_release);
     state.scFreqApplied = scFreq;
     state.scQApplied = scQ;
     state.scFilterL.reset();
@@ -1213,41 +1253,44 @@ BiquadCoeffs DynamicEQProcessor::makeEQCoefficients(
 {
     const double sr = currentSampleRate.load(std::memory_order_relaxed);
 
-    if (sr <= 0.0)
-        return BiquadCoeffs::makeBypass();
+    if (!std::isfinite(sr) || sr < kMinProcessingSampleRate
+        || sr > BiquadCoeffs::maxProcessingSampleRate())
+        return BiquadCoeffs::makeRejected(BiquadValidationFailure::InvalidDomain);
 
     freq = juce::jlimit(20.0f, static_cast<float>(sr * 0.499), freq);
     q    = juce::jlimit(0.1f, 40.0f, q);
+    const auto precision = highPrecisionMode.load(std::memory_order_acquire)
+        ? BiquadPrecision::HighPrecision : BiquadPrecision::Automatic;
 
     switch (filterType)
     {
         case 0: // LowCut
-            return BiquadCoeffs::makeHighPass(sr, freq, q);
+            return BiquadCoeffs::makeHighPass(sr, freq, q, precision);
         case 1: // LowShelf
             return BiquadCoeffs::makeLowShelf(
-                sr, freq, q, juce::Decibels::decibelsToGain(gain));
+                sr, freq, q, juce::Decibels::decibelsToGain(gain), precision);
         case 2: // Peak
             if (std::abs(gain) < 0.05f)
                 return BiquadCoeffs::makeBypass();
             return BiquadCoeffs::makePeakFilter(
-                sr, freq, q, juce::Decibels::decibelsToGain(gain));
+                sr, freq, q, juce::Decibels::decibelsToGain(gain), precision);
         case 3: // HighShelf
             return BiquadCoeffs::makeHighShelf(
-                sr, freq, q, juce::Decibels::decibelsToGain(gain));
+                sr, freq, q, juce::Decibels::decibelsToGain(gain), precision);
         case 4: // HighCut
-            return BiquadCoeffs::makeLowPass(sr, freq, q);
+            return BiquadCoeffs::makeLowPass(sr, freq, q, precision);
         case 5: // Notch
-            return BiquadCoeffs::makeNotch(sr, freq, q);
+            return BiquadCoeffs::makeNotch(sr, freq, q, precision);
         case 6: // BandPass
-            return BiquadCoeffs::makeBandPass(sr, freq, q);
+            return BiquadCoeffs::makeBandPass(sr, freq, q, precision);
         case 7: // VintageLowShelf
             return BiquadCoeffs::makeLowShelf(
-                sr, freq, vintageShelfQ(q), juce::Decibels::decibelsToGain(gain));
+                sr, freq, vintageShelfQ(q), juce::Decibels::decibelsToGain(gain), precision);
         case 8: // VintageHighShelf
             return BiquadCoeffs::makeHighShelf(
-                sr, freq, vintageShelfQ(q), juce::Decibels::decibelsToGain(gain));
+                sr, freq, vintageShelfQ(q), juce::Decibels::decibelsToGain(gain), precision);
         default:
-            return BiquadCoeffs::makeAllPass(sr, 20.0f, 0.1f);
+            return BiquadCoeffs::makeAllPass(sr, 20.0f, 0.1f, precision);
     }
 }
 

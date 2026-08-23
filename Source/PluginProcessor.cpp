@@ -1366,6 +1366,11 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     const int activeHqBlockCapacity = preallocatedMaxSamples * activeHqMultiplier;
     const double activeHqSampleRate = sampleRate * static_cast<double>(activeHqMultiplier);
 
+    // Natural/HQ always uses the double coefficient path, even when its
+    // current internal rate (for example 48 kHz x2) is below 192 kHz.
+    eqProcessorHQ.setHighPrecisionMode(true);
+    dynamicEQProcessorHQ.setHighPrecisionMode(true);
+
     hqReconfigureFailures.store(0, std::memory_order_relaxed);
     dynamicEQProcessorHQ.prepare(sampleRate * static_cast<double>(maxHqMultiplier),
                                  maxHqBlockCapacity,

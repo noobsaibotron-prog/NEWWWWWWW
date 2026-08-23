@@ -1180,6 +1180,7 @@ if(HAVE_JUCE)
         Source/Tests/LinearPhaseBehavioralTest.cpp
         Source/Tests/DynamicEQBehavioralTest.cpp
         Source/Tests/BiquadRegressionTest.cpp
+        Source/Tests/HighRateBiquadPrecisionTest.cpp
         Source/Tests/LinearPhaseResetContinuityTest.cpp
         Source/Tests/CaptureServiceTest.cpp
         Source/Tests/CaptureRingBufferTest.cpp

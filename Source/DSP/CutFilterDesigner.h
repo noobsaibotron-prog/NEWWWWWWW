@@ -21,18 +21,23 @@ struct CutFilterDesigner
     {
         std::array<BiquadCoeffs, maxStages> coefficients {};
         int numStages = 0;
+        BiquadValidationFailure failure = BiquadValidationFailure::IntentionalBypass;
     };
 
     [[nodiscard]] static Design design(bool highPass,
                                        int slopeIndex,
                                        double sampleRate,
                                        float frequency,
-                                       float resonance = 1.0f) noexcept
+                                       float resonance = 1.0f,
+                                       BiquadPrecision precision = BiquadPrecision::Automatic) noexcept
     {
         Design result;
         if (!std::isfinite(sampleRate) || sampleRate <= 0.0
             || !std::isfinite(frequency) || !std::isfinite(resonance))
+        {
+            result.failure = BiquadValidationFailure::InvalidDomain;
             return result;
+        }
 
         const int clampedSlope = slopeIndex < 0 ? 0 : (slopeIndex > 2 ? 2 : slopeIndex);
         const int order = clampedSlope == 0 ? 2 : (clampedSlope == 1 ? 4 : 8);
@@ -50,11 +55,20 @@ struct CutFilterDesigner
             const float butterworthQ = static_cast<float>(1.0 / (2.0 * std::cos(angle)));
             const float sectionQ = std::max(0.1f,
                 std::min(40.0f, butterworthQ * qScale));
-            result.coefficients[static_cast<size_t>(stage)] = highPass
-                ? BiquadCoeffs::makeHighPass(sampleRate, safeFrequency, sectionQ)
-                : BiquadCoeffs::makeLowPass(sampleRate, safeFrequency, sectionQ);
+            const auto coefficients = highPass
+                ? BiquadCoeffs::makeHighPass(sampleRate, safeFrequency, sectionQ, precision)
+                : BiquadCoeffs::makeLowPass(sampleRate, safeFrequency, sectionQ, precision);
+            if (!coefficients.valid)
+            {
+                const auto failure = coefficients.failure;
+                result = {};
+                result.failure = failure;
+                return result;
+            }
+            result.coefficients[static_cast<size_t>(stage)] = coefficients;
         }
 
+        result.failure = BiquadValidationFailure::None;
         return result;
     }
 };
