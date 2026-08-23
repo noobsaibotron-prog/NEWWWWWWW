@@ -1022,8 +1022,14 @@ void AIEngine::applyTemporalPersistence()
         detectionHistory.pop_front();
 
     const std::size_t n = detectionHistory.size();
-    if (n == 0)
+    if (n < kHistoryLen)
+    {
+        // Ring is still filling after play-start / resetDetectionHistory.
+        // A 1/1 hit would otherwise pass the 0.6 fraction gate and surface
+        // immediately. Do not skip the push — that would mute Assist forever.
+        pendingCorrections.clear();
         return;
+    }
 
     // Candidates come from the most recent frame (we never invent a problem the
     // current spectrum does not show); each is kept only if temporally stable.

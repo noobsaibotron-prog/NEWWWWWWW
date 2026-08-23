@@ -408,6 +408,14 @@ public:
         pins this budget. */
     int getSnapshotReadCountForTests() const noexcept { return snapshotReadCountForTests.load(std::memory_order_relaxed); }
     void resetSnapshotReadCountForTests() noexcept { snapshotReadCountForTests.store(0, std::memory_order_relaxed); }
+
+    /** TEST-ONLY: feed one raw live-detection frame through applyTemporalPersistence.
+        Does not touch the force=true capture path. */
+    void persistRawDetectionsForTests (std::vector<Correction> raw)
+    {
+        pendingCorrections = std::move (raw);
+        applyTemporalPersistence();
+    }
    #endif
 
     /** Last raw sigmoid outputs from the ML forward pass (8 floats, 0 if ML didn't run). */

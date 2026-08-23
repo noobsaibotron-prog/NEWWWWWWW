@@ -37,6 +37,7 @@ public:
         testFlatSpectrumStability();
         testResonanceTrigger();
         testTemporalPersistence();
+        testPersistenceWarmupWindow();
         testNewAnalysisFlag();
         testAnalysisHistory();
         testStaticUtilities();
@@ -492,6 +493,48 @@ private:
         feedLive (peak, 4);
         expect (engine.getPendingCorrections().empty(),
                 "A single-frame transient must be suppressed by temporal persistence");
+    }
+
+    //--------------------------------------------------------------------------
+    // Cold-start: a 1/1 (or n<8) hit used to pass the 0.6 fraction gate and
+    // surface immediately. The ring must still fill; pending stays empty until
+    // n==8, after which the existing 5/8 rule applies. force=true never enters
+    // this function (Product Gate / Sweep).
+    void testPersistenceWarmupWindow()
+    {
+        beginTest ("Live persist does not surface detections until the 8-frame window is full");
+
+        AIEngine engine;
+        engine.prepare (kSampleRate, kBlockSize);
+        engine.setEnabled (true);
+
+        const auto hit = makeCorrection (AIEngine::ProblemType::Sibilance,
+                                         7000.0f, 0.8f, 0.9f, -4.0f, 3.0f);
+
+        for (int n = 1; n < 8; ++n)
+        {
+            engine.persistRawDetectionsForTests ({ hit });
+            expect (engine.getPendingCorrections().empty(),
+                    "n=" + juce::String (n)
+                    + " matching hit must not surface before the persistence window is full");
+        }
+
+        engine.persistRawDetectionsForTests ({ hit });
+        const auto pending = engine.getPendingCorrections();
+        expect (! pending.empty(),
+                "After 8 matching analyses the detection must surface");
+        if (! pending.empty())
+            expect (pending.front().type == AIEngine::ProblemType::Sibilance,
+                    "Surfaced detection must keep the injected type");
+
+        // force=true bypasses persist and resets the ring. Capture / Product Gate
+        // / Sweep still use this path; a single call must still run analysis.
+        engine.setSensitivity (1.0f);
+        const int  resonanceBin = frequencyToBin (1000.0f);
+        const auto peak = makePeakedSpectrum (resonanceBin, -10.0f, -60.0f, /*halfWidthBins=*/1);
+        engine.analyzeSpectrum (peak, /*force=*/true);
+        expect (engine.isNewAnalysisAvailable(),
+                "force=true must still run analysis on the first call");
     }
 
     //--------------------------------------------------------------------------
