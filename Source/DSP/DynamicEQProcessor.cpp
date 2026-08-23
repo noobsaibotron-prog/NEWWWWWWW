@@ -61,6 +61,35 @@ constexpr int kMinSamplesBetweenRebuilds = 64;
     }
 }
 
+[[nodiscard]] bool isDynamicGainMode(int mode) noexcept
+{
+    return mode == DynamicEQProcessor::DynamicMode_Compress
+        || mode == DynamicEQProcessor::DynamicMode_Expand
+        || mode == DynamicEQProcessor::DynamicMode_Gate;
+}
+
+[[nodiscard]] AIEQDSP::DynamicGainModel::Action dynamicActionForMode(int mode) noexcept
+{
+    if (mode == DynamicEQProcessor::DynamicMode_Compress)
+        return AIEQDSP::DynamicGainModel::Action::Compress;
+    if (mode == DynamicEQProcessor::DynamicMode_Expand
+        || mode == DynamicEQProcessor::DynamicMode_Gate)
+        return AIEQDSP::DynamicGainModel::Action::Expand;
+    return AIEQDSP::DynamicGainModel::Action::Off;
+}
+
+[[nodiscard]] AIEQDSP::DynamicGainModel::TriggerSide dynamicTriggerForMode(
+    int mode, int triggerSide) noexcept
+{
+    // Host ABI value 3 remains permanently valid and deterministically
+    // overrides the separately stored trigger: legacy Gate == Expand+Below.
+    if (mode == DynamicEQProcessor::DynamicMode_Gate)
+        return AIEQDSP::DynamicGainModel::TriggerSide::Below;
+    return triggerSide == DynamicEQProcessor::TriggerSide_Below
+        ? AIEQDSP::DynamicGainModel::TriggerSide::Below
+        : AIEQDSP::DynamicGainModel::TriggerSide::Above;
+}
+
 [[nodiscard]] float vintageShelfQ(float q) noexcept
 {
     return juce::jlimit(0.3f, 1.0f, q * 0.6f);
@@ -96,11 +125,6 @@ std::complex<double> evaluateComplexResponse(const BiquadCoeffs& coeffs,
     return numerator / denominator;
 }
 
-[[nodiscard]] float computeEffectiveGainDb(float staticGainDb,
-                                           float dynamicDeltaDb) noexcept
-{
-    return staticGainDb + dynamicDeltaDb;
-}
 }
 
 //==============================================================================
@@ -201,15 +225,15 @@ void DynamicEQProcessor::resetRuntimeStateNoAllocation(double sampleRate,
             filter.reset();
         state.scFilterL.reset();
         state.scFilterR.reset();
-        state.envelopeL = -100.0f;
-        state.envelopeR = -100.0f;
+        state.detectorEnvelope = 0.0;
         state.currentGain = 0.0f;
-        state.targetGain = 0.0f;
         state.inputHistoryWritePos = 0;
         state.inputHistoryCount = 0;
         state.inputHistoryL.fill(0.0f);
         state.inputHistoryR.fill(0.0f);
         state.samplesSinceLastRebuild = 0;
+        state.dynamicModeApplied = -1;
+        state.detectionModeApplied = -1;
         
         state.prepared = true;
         state.lastVersion = 0;  // Force update
@@ -244,8 +268,7 @@ void DynamicEQProcessor::resetRuntimeStateNoAllocation(double sampleRate,
         state.liveEffectiveGainDb.store(bandParams[i].gain.load(std::memory_order_relaxed),
                                         std::memory_order_relaxed);
         state.appliedEffectiveGainDb = bandParams[i].gain.load(std::memory_order_relaxed);
-        state.liveGateAmount.store(1.0f, std::memory_order_relaxed);
-        state.meterInputLevel.store(-100.0f, std::memory_order_relaxed);
+        state.meterInputLevel.store(-160.0f, std::memory_order_relaxed);
         state.meterGainReduction.store(0.0f, std::memory_order_relaxed);
         state.meterOutputLevel.store(-100.0f, std::memory_order_relaxed);
     }
@@ -276,22 +299,21 @@ void DynamicEQProcessor::reset()
         state.scFilterL.reset();
         state.scFilterR.reset();
         
-        state.envelopeL = -100.0f;
-        state.envelopeR = -100.0f;
+        state.detectorEnvelope = 0.0;
         state.currentGain = 0.0f;
-        state.targetGain = 0.0f;
         state.inputHistoryWritePos = 0;
         state.inputHistoryCount = 0;
         state.inputHistoryL.fill(0.0f);
         state.inputHistoryR.fill(0.0f);
         state.samplesSinceLastRebuild = 0;
+        state.dynamicModeApplied = -1;
+        state.detectionModeApplied = -1;
         state.liveCurrentGainDb.store(0.0f, std::memory_order_relaxed);
         state.liveEffectiveGainDb.store(
             bandParams[i].gain.load(std::memory_order_relaxed),
             std::memory_order_relaxed);
         state.appliedEffectiveGainDb = bandParams[i].gain.load(std::memory_order_relaxed);
-        state.liveGateAmount.store(1.0f, std::memory_order_relaxed);
-        state.meterInputLevel.store(-100.0f, std::memory_order_relaxed);
+        state.meterInputLevel.store(-160.0f, std::memory_order_relaxed);
         state.meterGainReduction.store(0.0f, std::memory_order_relaxed);
         state.meterOutputLevel.store(-100.0f, std::memory_order_relaxed);
     }
@@ -499,11 +521,10 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
             state.inputHistoryWritePos = 0;
             state.inputHistoryCount = 0;
             state.meterGainReduction.store(0.0f, std::memory_order_relaxed);
-            state.meterInputLevel.store(-100.0f, std::memory_order_relaxed);
+            state.meterInputLevel.store(-160.0f, std::memory_order_relaxed);
             state.meterOutputLevel.store(-100.0f, std::memory_order_relaxed);
             state.liveCurrentGainDb.store(0.0f, std::memory_order_relaxed);
             state.liveEffectiveGainDb.store(0.0f, std::memory_order_relaxed);
-            state.liveGateAmount.store(1.0f, std::memory_order_relaxed);
             continue;
         }
         
@@ -515,12 +536,23 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
             const float gainNow = params.gain.load(std::memory_order_relaxed);
             const float qNow = params.q.load(std::memory_order_relaxed);
             const int filterTypeNow = params.filterType.load(std::memory_order_relaxed);
+            const int dynModeNow = params.dynamicMode.load(std::memory_order_relaxed);
+            const int detectionModeNow = params.detection.load(std::memory_order_relaxed);
+            const bool dynamicModeChanged = state.dynamicModeApplied != dynModeNow;
+            const bool detectionModeChanged = state.detectionModeApplied != detectionModeNow;
+            if (dynamicModeChanged || detectionModeChanged)
+            {
+                state.detectorEnvelope = 0.0;
+                state.currentGain = 0.0f;
+            }
             const bool sidechainEnabledNow = params.sidechainEnabled.load(std::memory_order_relaxed);
             const bool staticShapeChanged =
                 state.staticFilterTypeApplied != filterTypeNow
                 || std::abs(state.staticFreqApplied - freqNow) > 1.0e-6f
                 || std::abs(state.staticGainApplied - gainNow) > 1.0e-6f
-                || std::abs(state.staticQApplied - qNow) > 1.0e-6f;
+                || std::abs(state.staticQApplied - qNow) > 1.0e-6f
+                || dynamicModeChanged
+                || detectionModeChanged;
 
             const bool sidechainStateChanged =
                 state.sidechainEnabledApplied != sidechainEnabledNow;
@@ -532,6 +564,8 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
             if (sidechainStateChanged)
                 updateSidechainState(bandIdx);
             updateAttackReleaseCoeffs(bandIdx);
+            state.dynamicModeApplied = dynModeNow;
+            state.detectionModeApplied = detectionModeNow;
             state.lastVersion = currentVersion;
 
             const bool coeffsChanged = staticShapeChanged
@@ -545,9 +579,8 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
             if (coeffsChanged && previousCoeffs.valid)
             {
                 const float qVal = params.q.load(std::memory_order_relaxed);
-                const int dynModeNow = params.dynamicMode.load(std::memory_order_relaxed);
                 const bool dynamicActiveBand =
-                    (dynModeNow == DynamicMode_Compress || dynModeNow == DynamicMode_Expand)
+                    isDynamicGainMode(dynModeNow)
                     && isGainBearingDynamicFilterType(filterTypeNow);
 
                 // PATH-ARBITRATION FIX (residual drag crackle).
@@ -555,7 +588,7 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
                 // control-slice rebuild: that path is guarded by
                 // `xfade.remaining <= 0` (see the gain-bearing branch below), so
                 // while the long drag fade is in flight the control slice cannot
-                // retune. state.currentGain keeps drifting (per-sample smoother)
+                // retune. state.currentGain keeps following the smoothed detector
                 // while state.appliedEffectiveGainDb stays frozen at the drag
                 // instant's effective gain. When the long fade finally ends, the
                 // accumulated |target - applied| jumps past the epsilon and fires
@@ -598,20 +631,30 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
                 warmBandFiltersFromHistory(state, state.eqCoeffs);
             }
 
-            // Update meter GR immediately (for GUI responsiveness) but do NOT
-            // snap state.currentGain — the per-sample smoother handles the audio
-            // transition. Snapping caused an audible pop.
+            // Update the meter immediately from the already-smoothed detector.
+            // The audio-side value is recomputed per sample below; there is no
+            // second attack/release stage on gain.
             const int dynMode = params.dynamicMode.load(std::memory_order_relaxed);
             if (dynMode != DynamicMode_Off)
             {
-                const float currentEnv = (state.envelopeL + state.envelopeR) * 0.5f;
+                const int detMode = params.detection.load(std::memory_order_relaxed);
+                const auto detectionMode = detMode == DetectionMode_Peak
+                    ? AIEQDSP::DynamicGainModel::DetectionMode::Peak
+                    : AIEQDSP::DynamicGainModel::DetectionMode::RMS;
+                const float currentEnv = static_cast<float>(
+                    AIEQDSP::DynamicGainModel::envelopeToDb(
+                        state.detectorEnvelope, detectionMode));
                 const float threshold = params.threshold.load(std::memory_order_relaxed);
                 const float ratio     = params.ratio.load(std::memory_order_relaxed);
                 const float knee      = params.knee.load(std::memory_order_relaxed);
                 const float range     = params.range.load(std::memory_order_relaxed);
-                const float freshGR   = calculateDynamicGain(currentEnv, dynMode, threshold, ratio, knee, range);
+                const float freshGR   = calculateDynamicGain(
+                    currentEnv,
+                    dynMode,
+                    params.triggerSide.load(std::memory_order_relaxed),
+                    params.gain.load(std::memory_order_relaxed),
+                    threshold, ratio, knee, range);
                 state.meterGainReduction.store(freshGR, std::memory_order_relaxed);
-                // NOTE: state.currentGain NOT snapped — per-sample smoother avoids pop
             }
         }
         
@@ -645,7 +688,7 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
         // Read dynamic mode
         const int dynMode = params.dynamicMode.load(std::memory_order_relaxed);
         const int filterType = params.filterType.load(std::memory_order_relaxed);
-        const bool gainBearingMode = (dynMode == DynamicMode_Compress || dynMode == DynamicMode_Expand)
+        const bool gainBearingMode = isDynamicGainMode(dynMode)
             && isGainBearingDynamicFilterType(filterType);
         
         //----------------------------------------------------------------------
@@ -654,6 +697,7 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
         if (dynMode != DynamicMode_Off)
         {
             const int detMode = params.detection.load(std::memory_order_relaxed);
+            const int triggerSide = params.triggerSide.load(std::memory_order_relaxed);
             const bool scEnabled = params.sidechainEnabled.load(std::memory_order_relaxed);
             const float attackCoeff = state.attackCoeff;
             const float releaseCoeff = state.releaseCoeff;
@@ -665,8 +709,7 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
             float* outRPtr = channels > 1 ? buffer.getWritePointer(1) : nullptr;
             const float* detectBaseL = useLookahead && detectDelayL ? detectDelayL : outLPtr;
             const float* detectBaseR = (useLookahead && detectDelayR) ? detectDelayR : (channels > 1 ? outRPtr : detectBaseL);
-            float lastGateAmount = 1.0f;
-            
+
             for (int sample = 0; sample < numSamples; ++sample)
             {
                 const float threshold = smoothedThresholds[bandIdx].getNextValue();
@@ -697,42 +740,29 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
                     scR = state.scFilterR.processSample(detectR, state.scCoeffs);
                 }
                 
-                // Calculate input level
-                float inputLevel = 0.0f;
-                if (detMode == DetectionMode_Peak)
-                {
-                    inputLevel = std::max(std::abs(scL), std::abs(scR));
-                }
-                else // RMS
-                {
-                    inputLevel = std::sqrt((scL * scL + scR * scR) * 0.5f);
-                }
-                
-                // Convert to dB
-                float inputDb = inputLevel > 1e-10f ? 
-                    juce::Decibels::gainToDecibels(inputLevel) : -100.0f;
-                
-                // Smooth envelope
-                float currentEnv = (state.envelopeL + state.envelopeR) * 0.5f;
-                float coeff = inputDb > currentEnv ? attackCoeff : releaseCoeff;
-                float smoothedEnv = coeff * currentEnv + (1.0f - coeff) * inputDb;
-                
-                state.envelopeL = smoothedEnv;
-                state.envelopeR = smoothedEnv;
-                
-                // Calculate dynamic gain
-                float dynamicGainDb = calculateDynamicGain(smoothedEnv, dynMode, threshold, ratio, knee, range);
-                
-                // Smooth gain changes
-                float gainCoeff = dynamicGainDb < state.currentGain ? attackCoeff : releaseCoeff;
-                state.currentGain = gainCoeff * state.currentGain + (1.0f - gainCoeff) * dynamicGainDb;
+                const auto detectionMode = detMode == DetectionMode_Peak
+                    ? AIEQDSP::DynamicGainModel::DetectionMode::Peak
+                    : AIEQDSP::DynamicGainModel::DetectionMode::RMS;
+                const double detectorValue = AIEQDSP::DynamicGainModel::detectorInput(
+                    static_cast<double>(scL), static_cast<double>(scR), channels,
+                    detectionMode);
+                state.detectorEnvelope = AIEQDSP::DynamicGainModel::advanceEnvelope(
+                    state.detectorEnvelope, detectorValue,
+                    static_cast<double>(attackCoeff), static_cast<double>(releaseCoeff));
+                const float smoothedEnv = static_cast<float>(
+                    AIEQDSP::DynamicGainModel::envelopeToDb(
+                        state.detectorEnvelope, detectionMode));
+
+                // The detector is the sole attack/release stage. Applying the
+                // same coefficients again to gain would square the time response.
+                const float dynamicGainDb = calculateDynamicGain(
+                    smoothedEnv, dynMode, triggerSide, staticGainDb,
+                    threshold, ratio, knee, range);
+                state.currentGain = dynamicGainDb;
                 
                 // Update metering (atomic)
-                // IMPORTANT: store dynamicGainDb (instantaneous, pre-smooth) rather than
-                // state.currentGain (audio-smoothed). The GUI meter has its own visual
-                // smoothing (DynamicEQPanel::timerCallback). Storing the audio-smoothed
-                // value here caused the meter to lag 100ms behind parameter changes —
-                // it was effectively double-smoothed (audio + GUI decay).
+                // The GUI owns any purely visual decay. The audio value is already
+                // temporally defined by the single detector envelope above.
                 state.meterInputLevel.store(smoothedEnv, std::memory_order_relaxed);
                 state.meterGainReduction.store(dynamicGainDb, std::memory_order_relaxed);
 
@@ -746,7 +776,7 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
                     && state.samplesSinceLastRebuild >= kMinSamplesBetweenRebuilds)
                 {
                     const float targetEffectiveGainDb =
-                        computeEffectiveGainDb(staticGainDb, state.currentGain);
+                        juce::jlimit(-36.0f, 36.0f, staticGainDb + state.currentGain);
                     if (std::abs(targetEffectiveGainDb - state.appliedEffectiveGainDb)
                         > kEffectiveGainEpsilonDb)
                     {
@@ -794,25 +824,6 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
                     }
                 }
                 
-                // Gate remains a post-filter amplitude control. Compress/expand
-                // now modulate the live filter gain directly via effectiveGainDb.
-                if (dynMode == DynamicMode_Gate)
-                {
-                    if (smoothedEnv < threshold)
-                    {
-                        float gateAmount = juce::jmap(smoothedEnv,
-                            threshold - range, threshold, 0.0f, 1.0f);
-                        gateAmount = juce::jlimit(0.0f, 1.0f, gateAmount);
-                        outL *= gateAmount;
-                        outR *= gateAmount;
-                        lastGateAmount = gateAmount;
-                    }
-                    else
-                    {
-                        lastGateAmount = 1.0f;
-                    }
-                }
-                
                 outLPtr[sample] = outL;
                 if (channels > 1)
                     outRPtr[sample] = outR;
@@ -830,7 +841,6 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
             state.liveEffectiveGainDb.store(
                 gainBearingMode ? state.appliedEffectiveGainDb : staticGainDb,
                 std::memory_order_relaxed);
-            state.liveGateAmount.store(lastGateAmount, std::memory_order_relaxed);
         }
         else
         {
@@ -880,7 +890,6 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
             state.liveCurrentGainDb.store(0.0f, std::memory_order_relaxed);
             state.liveEffectiveGainDb.store(params.gain.load(std::memory_order_relaxed),
                                             std::memory_order_relaxed);
-            state.liveGateAmount.store(1.0f, std::memory_order_relaxed);
         }
     }
     
@@ -909,8 +918,8 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
     {
         // Ramp the makeup gain across the block instead of stamping a single
         // value with applyGain(): under fast GR modulation, computeAutoMakeup
-        // returned a different value every block (because it reads
-        // meterGainReduction, which is pre-smoothing dynamicGainDb). A
+        // returns a different value every block because it reads the live
+        // detector-derived dynamic gain. A
         // stepwise gain on a continuous signal generates a click at every
         // block boundary, distinct from the coefficient-rebuild crackle.
         const float targetMakeupGain = computeAutoMakeupGainLinear();
@@ -928,81 +937,22 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
 //==============================================================================
 float DynamicEQProcessor::calculateDynamicGain(float inputLevelDb,
                                                int dynMode,
+                                               int triggerSide,
+                                               float staticGainDb,
                                                float threshold,
                                                float ratio,
                                                float knee,
                                                float range) const
 {
-    if (dynMode == DynamicMode_Off)
-        return 0.0f;
-    
-    float gainDb = 0.0f;
-    
-    if (dynMode == DynamicMode_Compress)
-    {
-        if (inputLevelDb > threshold - knee * 0.5f)
-        {
-            gainDb = computeSoftKnee(inputLevelDb, threshold, ratio, knee);
-            gainDb = juce::jlimit(-range, 0.0f, gainDb);
-        }
-    }
-    else if (dynMode == DynamicMode_Expand)
-    {
-        if (inputLevelDb > threshold - knee * 0.5f)
-        {
-            float excess = inputLevelDb - threshold;
-            if (knee > 0.0f && excess < knee * 0.5f)
-            {
-                float kneeRatio = (excess + knee * 0.5f) / knee;
-                gainDb = kneeRatio * excess * (1.0f - 1.0f / ratio);
-            }
-            else
-            {
-                gainDb = excess * (1.0f - 1.0f / ratio);
-            }
-            gainDb = juce::jlimit(0.0f, range, gainDb);
-        }
-    }
-    else if (dynMode == DynamicMode_Gate)
-    {
-        if (inputLevelDb < threshold)
-        {
-            float below = threshold - inputLevelDb;
-            gainDb = -below * ratio;
-            gainDb = juce::jlimit(-range, 0.0f, gainDb);
-        }
-    }
-    
-    return gainDb;
-}
-
-float DynamicEQProcessor::computeSoftKnee(float inputDb, float threshold, float ratio, float knee) const
-{
-    // Guard: unity ratio means no compression — avoid indeterminate gain
-    if (std::abs(ratio - 1.0f) < 0.01f)
-        return 0.0f;
-
-    if (knee <= 0.0f)
-    {
-        if (inputDb <= threshold)
-            return 0.0f;
-        return (threshold - inputDb) * (1.0f - 1.0f / ratio);
-    }
-    
-    float kneeStart = threshold - knee * 0.5f;
-    float kneeEnd = threshold + knee * 0.5f;
-    
-    if (inputDb <= kneeStart)
-        return 0.0f;
-    
-    if (inputDb >= kneeEnd)
-        return (threshold - inputDb) * (1.0f - 1.0f / ratio);
-    
-    float x = inputDb - kneeStart;
-    float kneeWidth = knee;
-    float kneeGain = (x * x) / (2.0f * kneeWidth) * (1.0f / ratio - 1.0f);
-    
-    return kneeGain;
+    return static_cast<float>(AIEQDSP::DynamicGainModel::evaluate(
+        static_cast<double>(inputLevelDb),
+        static_cast<double>(staticGainDb),
+        dynamicActionForMode(dynMode),
+        dynamicTriggerForMode(dynMode, triggerSide),
+        static_cast<double>(threshold),
+        static_cast<double>(ratio),
+        static_cast<double>(knee),
+        static_cast<double>(range)).dynamicGainDb);
 }
 
 //==============================================================================
@@ -1025,6 +975,7 @@ void DynamicEQProcessor::setBandParams(int bandIndex, const DynamicBandParams& p
     p.range.store(params.range, std::memory_order_relaxed);
     p.knee.store(params.knee, std::memory_order_relaxed);
     p.detection.store(params.detection, std::memory_order_relaxed);
+    p.triggerSide.store(params.triggerSide, std::memory_order_relaxed);
     p.sidechainEnabled.store(params.sidechainEnabled, std::memory_order_relaxed);
     p.sidechainFreq.store(params.sidechainFreq, std::memory_order_relaxed);
     p.sidechainQ.store(params.sidechainQ, std::memory_order_relaxed);
@@ -1052,6 +1003,7 @@ DynamicEQProcessor::DynamicBandParams DynamicEQProcessor::getBandParams(int band
     result.range = p.range.load(std::memory_order_relaxed);
     result.knee = p.knee.load(std::memory_order_relaxed);
     result.detection = p.detection.load(std::memory_order_relaxed);
+    result.triggerSide = p.triggerSide.load(std::memory_order_relaxed);
     result.sidechainEnabled = p.sidechainEnabled.load(std::memory_order_relaxed);
     result.sidechainFreq = p.sidechainFreq.load(std::memory_order_relaxed);
     result.sidechainQ = p.sidechainQ.load(std::memory_order_relaxed);
@@ -1159,9 +1111,11 @@ void DynamicEQProcessor::updateBandCoefficients(int bandIndex)
     // ms = audible coefficient churn on every drag frame, which is the residual
     // crackle the previous warm-start fix did not close.
     const bool dynamicActive =
-        (dynMode == DynamicMode_Compress || dynMode == DynamicMode_Expand)
+        isDynamicGainMode(dynMode)
         && isGainBearingDynamicFilterType(filterType);
-    const float effectiveGain = dynamicActive ? (gain + state.currentGain) : gain;
+    const float effectiveGain = dynamicActive
+        ? juce::jlimit(-36.0f, 36.0f, gain + state.currentGain)
+        : gain;
 
     state.eqCoeffs = makeEQCoefficients(filterType, freq, effectiveGain, q);
     bandValidationFailures[static_cast<size_t>(bandIndex)].store(
@@ -1354,7 +1308,6 @@ void DynamicEQProcessor::evaluateDynamicReplacementDeltaDbForFrequencyArray(
         BiquadCoeffs staticCoeffs;
         BiquadCoeffs liveCoeffs;
         int mode = DynamicMode_Off;
-        float liveGateAmount = 1.0f;
     };
 
     std::array<DynamicBandSnapshot, maxBands> activeBands {};
@@ -1380,10 +1333,9 @@ void DynamicEQProcessor::evaluateDynamicReplacementDeltaDbForFrequencyArray(
         snapshot.mode = mode;
         snapshot.staticCoeffs = makeEQCoefficients(filterType, freq, staticGainDb, q);
         snapshot.liveCoeffs =
-            (mode == DynamicMode_Gate || !isGainBearingDynamicFilterType(filterType))
+            (!isDynamicGainMode(mode) || !isGainBearingDynamicFilterType(filterType))
                 ? snapshot.staticCoeffs
                 : makeEQCoefficients(filterType, freq, liveEffectiveGainDb, q);
-        snapshot.liveGateAmount = bandStates[i].liveGateAmount.load(std::memory_order_relaxed);
     }
 
     if (activeCount == 0)
@@ -1414,14 +1366,10 @@ void DynamicEQProcessor::evaluateDynamicReplacementDeltaDbForFrequencyArray(
             staticMagnitudeProduct *= std::abs(staticResponse);
 
             std::complex<double> effectiveResponse = staticResponse;
-            if (snapshot.mode == DynamicMode_Compress || snapshot.mode == DynamicMode_Expand)
+            if (isDynamicGainMode(snapshot.mode))
             {
                 effectiveResponse =
                     evaluateComplexResponse(snapshot.liveCoeffs, freq, sampleRate);
-            }
-            else if (snapshot.mode == DynamicMode_Gate)
-            {
-                effectiveResponse = staticResponse * static_cast<double>(snapshot.liveGateAmount);
             }
 
             liveProduct *= effectiveResponse;

@@ -1182,6 +1182,7 @@ if(HAVE_JUCE)
         Source/Tests/FuzzBlockSizeTest.cpp
         Source/Tests/LinearPhaseBehavioralTest.cpp
         Source/Tests/DynamicEQBehavioralTest.cpp
+        Source/Tests/DynamicEQAuthorityIntegrationTest.cpp
         Source/Tests/DynamicGainModelTest.cpp
         Source/Tests/BiquadRegressionTest.cpp
         Source/Tests/HighRateBiquadPrecisionTest.cpp

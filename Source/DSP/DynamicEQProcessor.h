@@ -4,6 +4,7 @@
 #include <juce_audio_basics/juce_audio_basics.h>
 #include "../Core/LockFreeStructures.h"
 #include "BiquadCoefficients.h"
+#include "DynamicGainModel.h"
 #include <array>
 #include <atomic>
 #include <cmath>
@@ -43,6 +44,9 @@ public:
     static constexpr int DynamicMode_Compress = 1;
     static constexpr int DynamicMode_Expand = 2;
     static constexpr int DynamicMode_Gate = 3;
+
+    static constexpr int TriggerSide_Above = 0;
+    static constexpr int TriggerSide_Below = 1;
     
     //==============================================================================
     // Atomic parameters for each band (lock-free, trivially copyable)
@@ -64,6 +68,7 @@ public:
         std::atomic<float> range { 24.0f };
         std::atomic<float> knee { 6.0f };
         std::atomic<int> detection { DetectionMode_RMS };
+        std::atomic<int> triggerSide { TriggerSide_Above };
         
         // Sidechain
         std::atomic<bool> sidechainEnabled { false };
@@ -92,6 +97,7 @@ public:
         float range = 24.0f;
         float knee = 6.0f;
         int detection = DetectionMode_RMS;
+        int triggerSide = TriggerSide_Above;
         
         bool sidechainEnabled = false;
         float sidechainFreq = 1000.0f;
@@ -101,7 +107,7 @@ public:
     //==============================================================================
     struct BandMeter
     {
-        float inputLevel = -100.0f;
+        float inputLevel = -160.0f;
         float gainReduction = 0.0f;
         float outputLevel = -100.0f;
     };
@@ -198,10 +204,10 @@ private:
         std::array<BiquadState, 2> eqFiltersR;
         BiquadState scFilterL, scFilterR;
         
-        float envelopeL = -100.0f;
-        float envelopeR = -100.0f;
+        // Peak mode stores a smoothed linear amplitude; RMS mode stores
+        // smoothed power. Conversion to dB happens only after smoothing.
+        double detectorEnvelope = 0.0;
         float currentGain = 0.0f;
-        float targetGain = 0.0f;
         float staticFreqApplied = 0.0f;
         float staticGainApplied = 0.0f;
         float staticQApplied = 1.0f;
@@ -209,23 +215,24 @@ private:
         float scFreqApplied = 0.0f;
         float scQApplied = 1.0f;
         bool sidechainEnabledApplied = false;
+        int dynamicModeApplied = -1;
+        int detectionModeApplied = -1;
         
         // Cached attack/release coefficients
         float attackCoeff = 0.0f;
         float releaseCoeff = 0.0f;
         
         // Metering (atomic for thread-safe reads)
-        std::atomic<float> meterInputLevel { -100.0f };
+        std::atomic<float> meterInputLevel { -160.0f };
         std::atomic<float> meterGainReduction { 0.0f };
         std::atomic<float> meterOutputLevel { -100.0f };
 
         // End-of-block mirrors of the values actually applied to audio.
         // The GUI live-curve evaluator consumes these instead of the
-        // instantaneous meter values, which intentionally remain pre-smoothing.
+        // detector-domain meter values, which intentionally precede the
+        // coefficient update cadence and its continuity crossfade.
         std::atomic<float> liveCurrentGainDb { 0.0f };
         std::atomic<float> liveEffectiveGainDb { 0.0f };
-        std::atomic<float> liveGateAmount { 1.0f };
-
         float appliedEffectiveGainDb = 0.0f;
 
         std::array<float, dynamicWarmupHistorySamples> inputHistoryL {};
@@ -252,11 +259,12 @@ private:
     void warmBandFiltersFromHistory(BandState& state, const BiquadCoeffs& coeffs) noexcept;
     [[nodiscard]] float calculateDynamicGain(float inputLevelDb,
                                              int dynMode,
+                                             int triggerSide,
+                                             float staticGainDb,
                                              float threshold,
                                              float ratio,
                                              float knee,
                                              float range) const;
-    [[nodiscard]] float computeSoftKnee(float inputDb, float threshold, float ratio, float knee) const;
     [[nodiscard]] float computeAutoMakeupGainLinear() const noexcept;
 
     [[nodiscard]] BiquadCoeffs makeEQCoefficients(

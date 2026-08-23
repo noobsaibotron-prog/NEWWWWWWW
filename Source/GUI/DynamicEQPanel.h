@@ -265,13 +265,18 @@ public:
         const int modeId = modeCombo.getSelectedId(); // 1=Off, 2=Compress, 3=Expand, 4=Gate
         float newGR = 0.0f;
 
-        if (modeId > 1 && meter.inputLevel > -99.0f)
+        if (modeId > 1 && std::isfinite(meter.inputLevel))
         {
             const float thresh = static_cast<float>(thresholdKnob.getValue());
             const float ratio  = static_cast<float>(ratioKnob.getValue());
             const float range  = static_cast<float>(rangeKnob.getValue());
             const float knee   = static_cast<float>(kneeKnob.getValue());
-            newGR = computeExpectedGR(meter.inputLevel, modeId - 1, thresh, ratio, knee, range);
+            const auto prefix = "band" + juce::String(bandIndex);
+            const auto* gainParam = apvts.getRawParameterValue(prefix + "Gain");
+            const float staticGain = gainParam != nullptr ? gainParam->load() : 0.0f;
+            newGR = computeExpectedGR(
+                meter.inputLevel, modeId - 1, staticGain,
+                thresh, ratio, knee, range);
         }
 
         // Smooth for display: instant attack, fast release (~80ms at 30Hz)
@@ -375,44 +380,24 @@ public:
     bool isCompactMode() const noexcept { return compactMode; }
 
 private:
-    // Mirror of DynamicEQProcessor::calculateDynamicGain — called on GUI thread
-    // so the meter reflects current knob values instantly without waiting for audio thread.
+    // Same pure authority model as the audio thread, evaluated from current GUI
+    // parameters so visual feedback does not wait for the next control publish.
     static float computeExpectedGR(float inputDb, int dynMode,
+                                   float staticGain,
                                    float threshold, float ratio, float knee, float range)
     {
-        // dynMode: 1=Compress, 2=Expand, 3=Gate  (matches DynamicMode_* constants)
-        if (dynMode == 1) // Compress
-        {
-            if (inputDb <= threshold - knee * 0.5f)
-                return 0.0f;
-            if (knee > 0.0f && inputDb < threshold + knee * 0.5f)
-            {
-                float x = inputDb - (threshold - knee * 0.5f);
-                float gr = (x * x) / (2.0f * knee) * (1.0f / ratio - 1.0f);
-                return juce::jlimit(-range, 0.0f, gr);
-            }
-            return juce::jlimit(-range, 0.0f, (threshold - inputDb) * (1.0f - 1.0f / ratio));
-        }
-        if (dynMode == 2) // Expand
-        {
-            if (inputDb <= threshold - knee * 0.5f)
-                return 0.0f;
-            float excess = inputDb - threshold;
-            if (knee > 0.0f && excess < knee * 0.5f)
-            {
-                float kneeRatio = (excess + knee * 0.5f) / knee;
-                return juce::jlimit(0.0f, range, kneeRatio * excess * (1.0f - 1.0f / ratio));
-            }
-            return juce::jlimit(0.0f, range, excess * (1.0f - 1.0f / ratio));
-        }
-        if (dynMode == 3) // Gate
-        {
-            if (inputDb >= threshold)
-                return 0.0f;
-            float below = threshold - inputDb;
-            return juce::jlimit(-range, 0.0f, -below * ratio);
-        }
-        return 0.0f;
+        const auto action = dynMode == DynamicEQProcessor::DynamicMode_Compress
+            ? AIEQDSP::DynamicGainModel::Action::Compress
+            : (dynMode == DynamicEQProcessor::DynamicMode_Expand
+               || dynMode == DynamicEQProcessor::DynamicMode_Gate)
+                ? AIEQDSP::DynamicGainModel::Action::Expand
+                : AIEQDSP::DynamicGainModel::Action::Off;
+        const auto trigger = dynMode == DynamicEQProcessor::DynamicMode_Gate
+            ? AIEQDSP::DynamicGainModel::TriggerSide::Below
+            : AIEQDSP::DynamicGainModel::TriggerSide::Above;
+        return static_cast<float>(AIEQDSP::DynamicGainModel::evaluate(
+            inputDb, staticGain, action, trigger,
+            threshold, ratio, knee, range).dynamicGainDb);
     }
 
     void setupKnob(juce::Slider& knob, const juce::String& name,
@@ -667,4 +652,3 @@ private:
     
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(DynamicEQMasterPanel)
 };
-

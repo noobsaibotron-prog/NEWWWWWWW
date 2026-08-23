@@ -67,10 +67,15 @@ public:
         setParam(s, "band3Gain", -12.0f);
         setParam(s, "band3Q", 1.0f);
         setParam(s, "band3DynMode", static_cast<float>(dynMode));
-        setParam(s, "band3Threshold", -35.0f);
-        setParam(s, "band3Ratio", 8.0f);
+        // Keep both expansion directions away from the range clamp.  The old
+        // 8:1 / -35 dB fixture saturated Expand+Above for almost the entire
+        // modulation cycle once the detector became the sole time smoother,
+        // so a correct live curve was constant by construction.
+        setParam(s, "band3Threshold", -20.0f);
+        setParam(s, "band3Ratio", 2.0f);
         setParam(s, "band3Attack", 5.0f);
-        setParam(s, "band3Release", 80.0f);
+        setParam(s, "band3Release", 20.0f);
+        setParam(s, "band3Range", 48.0f);
         setParam(s, "phaseMode", static_cast<float>(phaseMode));
         // This test verifies which live DynamicEQ instance feeds the display;
         // it is not an asynchronous linear-IR timing test. Pin a flat IR so
@@ -163,28 +168,24 @@ public:
             }
         }
 
-        beginTest("Gate: the curve is equally still in every mode (separate defect)");
+        beginTest("Legacy Gate (Expand+Below): the drawn curve moves in every phase mode");
         {
-            // Gate is NOT covered by the instance-selection fix, and this records
-            // why rather than hiding it. Measured: the drawn delta moves 0.00 dB in
-            // Zero Latency, which never read the wrong instance — so the gate curve
-            // was already static before any of this, and picking the running
-            // instance cannot help. The evaluator reads liveGateAmount, and nothing
-            // in the display path reflects it moving.
-            //
-            // Asserted as parity only. It deliberately does NOT assert movement:
-            // that would be a red test for a defect this change does not claim to
-            // fix, and a green one would be a lie. When the gate curve is fixed,
-            // this section should be replaced by the same movement assertion the
-            // other two modes get.
+            // Host value 3 remains the legacy Gate ABI, but its authoritative
+            // semantics are now Expand+Below.  It uses the same coefficient path
+            // as the other signed dynamic actions, so the display must follow it
+            // rather than merely agreeing on a frozen zero.
             const float zl = curveExcursionDb(0, 3);
             const float np = curveExcursionDb(1, 3);
             const float lp = curveExcursionDb(2, 3);
             logMessage("  Gate:  ZL=" + juce::String(zl, 2)
                        + "  NP=" + juce::String(np, 2)
                        + "  LP=" + juce::String(lp, 2) + " dB");
-            logMessage("  ^ all near zero: the gate curve is static in every mode, "
-                       "including the ones that always read the correct instance.");
+            expect(zl >= kMinExcursion,
+                   "Legacy Gate is active in audio but its Zero Latency display curve is frozen.");
+            expect(np >= kMinExcursion,
+                   "Legacy Gate is active in audio but its Natural Phase display curve is frozen.");
+            expect(lp >= kMinExcursion,
+                   "Legacy Gate is active in audio but its Linear Phase display curve is frozen.");
 
             expectWithinAbsoluteError(np, zl, 2.0f,
                 "Natural Phase diverges from Zero Latency on a gated band. Whatever "
