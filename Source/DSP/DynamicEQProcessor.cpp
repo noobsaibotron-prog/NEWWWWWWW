@@ -68,6 +68,30 @@ constexpr int kMinSamplesBetweenRebuilds = 64;
         || mode == DynamicEQProcessor::DynamicMode_Gate;
 }
 
+[[nodiscard]] int clampDetectorSource(int source) noexcept
+{
+    return juce::jlimit(DynamicEQProcessor::DetectorSource_InternalWideband,
+                        DynamicEQProcessor::DetectorSource_ExternalFiltered,
+                        source);
+}
+
+[[nodiscard]] bool isExternalDetectorSource(int source) noexcept
+{
+    const int clamped = clampDetectorSource(source);
+    return clamped == DynamicEQProcessor::DetectorSource_ExternalWideband
+        || clamped == DynamicEQProcessor::DetectorSource_ExternalFiltered;
+}
+
+[[nodiscard]] bool isFilteredDetectorSource(int source,
+                                            bool legacySidechainEnabled) noexcept
+{
+    const int clamped = clampDetectorSource(source);
+    if (clamped == DynamicEQProcessor::DetectorSource_InternalWideband)
+        return legacySidechainEnabled;
+    return clamped == DynamicEQProcessor::DetectorSource_InternalFiltered
+        || clamped == DynamicEQProcessor::DetectorSource_ExternalFiltered;
+}
+
 [[nodiscard]] AIEQDSP::DynamicGainModel::Action dynamicActionForMode(int mode) noexcept
 {
     if (mode == DynamicEQProcessor::DynamicMode_Compress)
@@ -145,6 +169,9 @@ DynamicEQProcessor::DynamicEQProcessor()
             std::memory_order_relaxed);
         sidechainValidationFailures[index].store(
             static_cast<uint8_t>(BiquadValidationFailure::IntentionalBypass),
+            std::memory_order_relaxed);
+        detectorAvailability[index].store(
+            static_cast<uint8_t>(DetectorAvailability::Internal),
             std::memory_order_relaxed);
     }
 }
@@ -234,6 +261,10 @@ void DynamicEQProcessor::resetRuntimeStateNoAllocation(double sampleRate,
         state.samplesSinceLastRebuild = 0;
         state.dynamicModeApplied = -1;
         state.detectionModeApplied = -1;
+        state.detectorSourceApplied = -1;
+        detectorAvailability[static_cast<size_t>(i)].store(
+            static_cast<uint8_t>(DetectorAvailability::Internal),
+            std::memory_order_relaxed);
         
         state.prepared = true;
         state.lastVersion = 0;  // Force update
@@ -308,6 +339,10 @@ void DynamicEQProcessor::reset()
         state.samplesSinceLastRebuild = 0;
         state.dynamicModeApplied = -1;
         state.detectionModeApplied = -1;
+        state.detectorSourceApplied = -1;
+        detectorAvailability[static_cast<size_t>(i)].store(
+            static_cast<uint8_t>(DetectorAvailability::Internal),
+            std::memory_order_relaxed);
         state.liveCurrentGainDb.store(0.0f, std::memory_order_relaxed);
         state.liveEffectiveGainDb.store(
             bandParams[i].gain.load(std::memory_order_relaxed),
@@ -432,7 +467,8 @@ void DynamicEQProcessor::beginCoeffCrossfade(int bandIndex,
 }
 
 //==============================================================================
-void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
+void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer,
+                                 const juce::AudioBuffer<float>* externalDetector)
 {
     // Hardware denormal flushing
     juce::ScopedNoDenormals noDenormals;
@@ -440,6 +476,13 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
     const int numSamples = buffer.getNumSamples();
     const int channels = juce::jmin(buffer.getNumChannels(), 2);
     const double sr = currentSampleRate.load(std::memory_order_relaxed);
+
+    const int externalChannels = externalDetector != nullptr
+        ? juce::jmin(externalDetector->getNumChannels(), 2)
+        : 0;
+    const bool externalDetectorAvailable = externalDetector != nullptr
+        && externalChannels > 0
+        && externalDetector->getNumSamples() >= numSamples;
     
     // CRITICAL: Safety check - if not prepared, just pass through
     if (!isPrepared.load(std::memory_order_acquire) || numSamples == 0 || channels == 0 || sr <= 0.0)
@@ -517,6 +560,15 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
         // Read enabled flag atomically
         if (!params.enabled.load(std::memory_order_relaxed))
         {
+            const bool externalRequested = isExternalDetectorSource(
+                params.detectorSource.load(std::memory_order_relaxed));
+            detectorAvailability[static_cast<size_t>(bandIdx)].store(
+                static_cast<uint8_t>(externalRequested
+                    ? (externalDetectorAvailable
+                        ? DetectorAvailability::ExternalAvailable
+                        : DetectorAvailability::ExternalUnavailable)
+                    : DetectorAvailability::Internal),
+                std::memory_order_release);
             // FIX: zero the meter when band is disabled so it doesn't freeze at last value
             state.inputHistoryWritePos = 0;
             state.inputHistoryCount = 0;
@@ -538,14 +590,27 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
             const int filterTypeNow = params.filterType.load(std::memory_order_relaxed);
             const int dynModeNow = params.dynamicMode.load(std::memory_order_relaxed);
             const int detectionModeNow = params.detection.load(std::memory_order_relaxed);
+            const int detectorSourceNow = clampDetectorSource(
+                params.detectorSource.load(std::memory_order_relaxed));
             const bool dynamicModeChanged = state.dynamicModeApplied != dynModeNow;
             const bool detectionModeChanged = state.detectionModeApplied != detectionModeNow;
-            if (dynamicModeChanged || detectionModeChanged)
+            const bool detectorSourceChanged = state.detectorSourceApplied != detectorSourceNow;
+            if (dynamicModeChanged || detectionModeChanged || detectorSourceChanged)
             {
                 state.detectorEnvelope = 0.0;
                 state.currentGain = 0.0f;
             }
-            const bool sidechainEnabledNow = params.sidechainEnabled.load(std::memory_order_relaxed);
+            if (detectorSourceChanged)
+            {
+                // A filtered detector carries source-specific history. Never
+                // let samples from the previous source leak into the first
+                // block evaluated after an internal/external source switch.
+                state.scFilterL.reset();
+                state.scFilterR.reset();
+            }
+            const bool sidechainEnabledNow = isFilteredDetectorSource(
+                detectorSourceNow,
+                params.sidechainEnabled.load(std::memory_order_relaxed));
             const bool staticShapeChanged =
                 state.staticFilterTypeApplied != filterTypeNow
                 || std::abs(state.staticFreqApplied - freqNow) > 1.0e-6f
@@ -566,6 +631,7 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
             updateAttackReleaseCoeffs(bandIdx);
             state.dynamicModeApplied = dynModeNow;
             state.detectionModeApplied = detectionModeNow;
+            state.detectorSourceApplied = detectorSourceNow;
             state.lastVersion = currentVersion;
 
             const bool coeffsChanged = staticShapeChanged
@@ -663,7 +729,30 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
         smoothedSidechainQ[bandIdx].skip(numSamples);
         const float scFreqNow = smoothedSidechainFreq[bandIdx].getCurrentValue();
         const float scQNow = smoothedSidechainQ[bandIdx].getCurrentValue();
-        if (params.sidechainEnabled.load(std::memory_order_relaxed) && state.scCoeffs.valid)
+        const int detectorSource = clampDetectorSource(
+            params.detectorSource.load(std::memory_order_relaxed));
+        const bool detectorFiltered = isFilteredDetectorSource(
+            detectorSource,
+            params.sidechainEnabled.load(std::memory_order_relaxed));
+        const bool externalRequested = isExternalDetectorSource(detectorSource);
+        const bool detectorAvailable = !externalRequested || externalDetectorAvailable;
+        detectorAvailability[static_cast<size_t>(bandIdx)].store(
+            static_cast<uint8_t>(externalRequested
+                ? (detectorAvailable ? DetectorAvailability::ExternalAvailable
+                                     : DetectorAvailability::ExternalUnavailable)
+                : DetectorAvailability::Internal),
+            std::memory_order_release);
+
+        if (externalRequested && !detectorAvailable)
+        {
+            // The bus may be reconnected later. Reset while unavailable so a
+            // filtered external detector resumes from a neutral state rather
+            // than stale history captured before disconnection.
+            state.scFilterL.reset();
+            state.scFilterR.reset();
+        }
+
+        if (detectorFiltered && state.scCoeffs.valid)
         {
             constexpr float scEps = 1e-3f;
             if (std::abs(scFreqNow - state.scFreqApplied) > scEps
@@ -698,7 +787,6 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
         {
             const int detMode = params.detection.load(std::memory_order_relaxed);
             const int triggerSide = params.triggerSide.load(std::memory_order_relaxed);
-            const bool scEnabled = params.sidechainEnabled.load(std::memory_order_relaxed);
             const float attackCoeff = state.attackCoeff;
             const float releaseCoeff = state.releaseCoeff;
             const float staticGainDb = params.gain.load(std::memory_order_relaxed);
@@ -721,11 +809,32 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
                 float inL = outLPtr[sample];
                 float inR = channels > 1 ? outRPtr[sample] : inL;
                 
-                // Detector uses undelayed signal when lookahead is active
-                float detectL = useLookahead ? detectBaseL[(lookaheadWriteStart + sample) % delaySize] : detectBaseL[sample];
-                float detectR = (channels > 1)
-                                ? (useLookahead ? detectBaseR[(lookaheadWriteStart + sample) % delaySize] : detectBaseR[sample])
-                                : detectL;
+                // Internal detection sees the undelayed main signal when
+                // lookahead is active. External detection is already aligned by
+                // PluginProcessor for the active phase path; lookahead then
+                // intentionally delays only the main program.
+                float detectL = 0.0f;
+                float detectR = 0.0f;
+                int detectorChannelCount = channels;
+                if (externalRequested && detectorAvailable)
+                {
+                    detectL = externalDetector->getReadPointer(0)[sample];
+                    detectR = externalChannels > 1
+                        ? externalDetector->getReadPointer(1)[sample]
+                        : detectL;
+                    detectorChannelCount = externalChannels;
+                }
+                else if (!externalRequested)
+                {
+                    detectL = useLookahead
+                        ? detectBaseL[(lookaheadWriteStart + sample) % delaySize]
+                        : detectBaseL[sample];
+                    detectR = channels > 1
+                        ? (useLookahead
+                            ? detectBaseR[(lookaheadWriteStart + sample) % delaySize]
+                            : detectBaseR[sample])
+                        : detectL;
+                }
                 
                 // Sidechain filtering
                 // When sidechain is enabled: filter the detect signal with the sidechain bandpass.
@@ -734,7 +843,7 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
                 // the detector signal, which distorts the gain-reduction curve. The second filter
                 // slot in the array is reserved for future 2nd-order (12dB) filter support.
                 float scL = detectL, scR = detectR;
-                if (scEnabled && state.scCoeffs.valid)
+                if (detectorAvailable && detectorFiltered && state.scCoeffs.valid)
                 {
                     scL = state.scFilterL.processSample(detectL, state.scCoeffs);
                     scR = state.scFilterR.processSample(detectR, state.scCoeffs);
@@ -743,22 +852,43 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer)
                 const auto detectionMode = detMode == DetectionMode_Peak
                     ? AIEQDSP::DynamicGainModel::DetectionMode::Peak
                     : AIEQDSP::DynamicGainModel::DetectionMode::RMS;
-                const double detectorValue = AIEQDSP::DynamicGainModel::detectorInput(
-                    static_cast<double>(scL), static_cast<double>(scR), channels,
-                    detectionMode);
-                state.detectorEnvelope = AIEQDSP::DynamicGainModel::advanceEnvelope(
-                    state.detectorEnvelope, detectorValue,
-                    static_cast<double>(attackCoeff), static_cast<double>(releaseCoeff));
-                const float smoothedEnv = static_cast<float>(
-                    AIEQDSP::DynamicGainModel::envelopeToDb(
-                        state.detectorEnvelope, detectionMode));
+                float smoothedEnv = -160.0f;
+                float dynamicGainDb = 0.0f;
+                if (detectorAvailable)
+                {
+                    const double detectorValue = AIEQDSP::DynamicGainModel::detectorInput(
+                        static_cast<double>(scL), static_cast<double>(scR),
+                        detectorChannelCount, detectionMode);
+                    state.detectorEnvelope = AIEQDSP::DynamicGainModel::advanceEnvelope(
+                        state.detectorEnvelope, detectorValue,
+                        static_cast<double>(attackCoeff), static_cast<double>(releaseCoeff));
+                    smoothedEnv = static_cast<float>(
+                        AIEQDSP::DynamicGainModel::envelopeToDb(
+                            state.detectorEnvelope, detectionMode));
 
-                // The detector is the sole attack/release stage. Applying the
-                // same coefficients again to gain would square the time response.
-                const float dynamicGainDb = calculateDynamicGain(
-                    smoothedEnv, dynMode, triggerSide, staticGainDb,
-                    threshold, ratio, knee, range);
-                state.currentGain = dynamicGainDb;
+                    // The detector is the sole attack/release stage during
+                    // ordinary signal-driven operation.
+                    dynamicGainDb = calculateDynamicGain(
+                        smoothedEnv, dynMode, triggerSide, staticGainDb,
+                        threshold, ratio, knee, range);
+                    state.currentGain = dynamicGainDb;
+                }
+                else
+                {
+                    // An absent external bus is not silence: feeding zero into a
+                    // Below detector would incorrectly open a gate/expander. Keep
+                    // the detector unavailable and release the last applied
+                    // control value toward neutral without evaluating the curve.
+                    state.detectorEnvelope = AIEQDSP::DynamicGainModel::advanceEnvelope(
+                        state.detectorEnvelope, 0.0,
+                        static_cast<double>(attackCoeff), static_cast<double>(releaseCoeff));
+                    state.currentGain = std::isfinite(state.currentGain)
+                        ? state.currentGain * releaseCoeff
+                        : 0.0f;
+                    if (std::abs(state.currentGain) < 1.0e-6f)
+                        state.currentGain = 0.0f;
+                    dynamicGainDb = state.currentGain;
+                }
                 
                 // Update metering (atomic)
                 // The GUI owns any purely visual decay. The audio value is already
@@ -976,6 +1106,8 @@ void DynamicEQProcessor::setBandParams(int bandIndex, const DynamicBandParams& p
     p.knee.store(params.knee, std::memory_order_relaxed);
     p.detection.store(params.detection, std::memory_order_relaxed);
     p.triggerSide.store(params.triggerSide, std::memory_order_relaxed);
+    p.detectorSource.store(clampDetectorSource(params.detectorSource),
+                           std::memory_order_relaxed);
     p.sidechainEnabled.store(params.sidechainEnabled, std::memory_order_relaxed);
     p.sidechainFreq.store(params.sidechainFreq, std::memory_order_relaxed);
     p.sidechainQ.store(params.sidechainQ, std::memory_order_relaxed);
@@ -1004,6 +1136,7 @@ DynamicEQProcessor::DynamicBandParams DynamicEQProcessor::getBandParams(int band
     result.knee = p.knee.load(std::memory_order_relaxed);
     result.detection = p.detection.load(std::memory_order_relaxed);
     result.triggerSide = p.triggerSide.load(std::memory_order_relaxed);
+    result.detectorSource = p.detectorSource.load(std::memory_order_relaxed);
     result.sidechainEnabled = p.sidechainEnabled.load(std::memory_order_relaxed);
     result.sidechainFreq = p.sidechainFreq.load(std::memory_order_relaxed);
     result.sidechainQ = p.sidechainQ.load(std::memory_order_relaxed);
@@ -1149,7 +1282,9 @@ void DynamicEQProcessor::updateSidechainState(int bandIndex)
 
     const auto& params = bandParams[bandIndex];
     auto& state = bandStates[bandIndex];
-    const bool enabled = params.sidechainEnabled.load(std::memory_order_relaxed);
+    const bool enabled = isFilteredDetectorSource(
+        params.detectorSource.load(std::memory_order_relaxed),
+        params.sidechainEnabled.load(std::memory_order_relaxed));
     state.sidechainEnabledApplied = enabled;
 
     if (!enabled)

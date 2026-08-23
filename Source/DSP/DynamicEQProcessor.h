@@ -47,6 +47,18 @@ public:
 
     static constexpr int TriggerSide_Above = 0;
     static constexpr int TriggerSide_Below = 1;
+
+    static constexpr int DetectorSource_InternalWideband = 0;
+    static constexpr int DetectorSource_InternalFiltered = 1;
+    static constexpr int DetectorSource_ExternalWideband = 2;
+    static constexpr int DetectorSource_ExternalFiltered = 3;
+
+    enum class DetectorAvailability : uint8_t
+    {
+        Internal = 0,
+        ExternalAvailable,
+        ExternalUnavailable
+    };
     
     //==============================================================================
     // Atomic parameters for each band (lock-free, trivially copyable)
@@ -69,8 +81,10 @@ public:
         std::atomic<float> knee { 6.0f };
         std::atomic<int> detection { DetectionMode_RMS };
         std::atomic<int> triggerSide { TriggerSide_Above };
+        std::atomic<int> detectorSource { DetectorSource_InternalWideband };
         
-        // Sidechain
+        // Compatibility switch for direct API clients that historically used
+        // sidechainEnabled=true to request the internal detector band-pass.
         std::atomic<bool> sidechainEnabled { false };
         std::atomic<float> sidechainFreq { 1000.0f };
         std::atomic<float> sidechainQ { 1.0f };
@@ -98,6 +112,7 @@ public:
         float knee = 6.0f;
         int detection = DetectionMode_RMS;
         int triggerSide = TriggerSide_Above;
+        int detectorSource = DetectorSource_InternalWideband;
         
         bool sidechainEnabled = false;
         float sidechainFreq = 1000.0f;
@@ -145,8 +160,16 @@ public:
         return static_cast<BiquadValidationFailure>(
             sidechainValidationFailures[static_cast<size_t>(index)].load(std::memory_order_acquire));
     }
+    [[nodiscard]] DetectorAvailability getDetectorAvailability(int index) const noexcept
+    {
+        if (index < 0 || index >= maxBands)
+            return DetectorAvailability::ExternalUnavailable;
+        return static_cast<DetectorAvailability>(
+            detectorAvailability[static_cast<size_t>(index)].load(std::memory_order_acquire));
+    }
     void reset();
-    void process(juce::AudioBuffer<float>& buffer);
+    void process(juce::AudioBuffer<float>& buffer,
+                 const juce::AudioBuffer<float>* externalDetector = nullptr);
     
     //==============================================================================
     // Band management (all lock-free)
@@ -215,6 +238,7 @@ private:
         float scFreqApplied = 0.0f;
         float scQApplied = 1.0f;
         bool sidechainEnabledApplied = false;
+        int detectorSourceApplied = -1;
         int dynamicModeApplied = -1;
         int detectionModeApplied = -1;
         
@@ -296,6 +320,7 @@ private:
     std::array<BandState, maxBands> bandStates;
     std::array<std::atomic<uint8_t>, maxBands> bandValidationFailures {};
     std::array<std::atomic<uint8_t>, maxBands> sidechainValidationFailures {};
+    std::array<std::atomic<uint8_t>, maxBands> detectorAvailability {};
     
     // Smoothed dynamic parameters (per-band, updated on version change)
     std::array<juce::SmoothedValue<float>, maxBands> smoothedThresholds;
