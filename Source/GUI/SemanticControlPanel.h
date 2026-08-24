@@ -78,6 +78,7 @@ public:
         {
             currentSampleRate = sr;
             invalidatePendingTextPlan();
+            clearResponseStrip();
         }
     }
 
@@ -158,6 +159,7 @@ public:
         intensitySlider.setColour(juce::Slider::trackColourId, ModernLookAndFeel::Colors::bgLighter);
         intensitySlider.onValueChange = [this]() {
             invalidatePendingTextPlan();
+            clearResponseStrip();
             semanticEngine.setIntensity(static_cast<float>(intensitySlider.getValue()));
             semanticDirty = true;
         };
@@ -190,11 +192,27 @@ public:
         morphButton.setTooltip("Enable smooth transitions between states");
         addAndMakeVisible(morphButton);
         
-        // Status label
-        statusLabel.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
-        statusLabel.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textMuted);
-        statusLabel.setJustificationType(juce::Justification::centred);
-        addAndMakeVisible(statusLabel);
+        // UI-A1: PLAN response lives beside the request, not in the footer.
+        // Chip copy is a 1:1 map of planner/apply outcomes; detail is the
+        // existing planner/apply string. Idle has no chip and no text.
+        {
+            auto chipFont = juce::Font(juce::FontOptions().withHeight(11.5f));
+            chipFont.setBold(true);
+            responseChip.setFont(chipFont);
+            responseChip.setJustificationType(juce::Justification::centredLeft);
+            responseChip.setMinimumHorizontalScale(1.0f);
+            responseChip.setBorderSize({});
+            responseChip.setInterceptsMouseClicks(false, false);
+            addChildComponent(responseChip);
+
+            responseDetail.setFont(juce::Font(juce::FontOptions().withHeight(10.5f)));
+            responseDetail.setColour(juce::Label::textColourId,
+                                     ModernLookAndFeel::Colors::textSecondary);
+            responseDetail.setJustificationType(juce::Justification::centredLeft);
+            responseDetail.setMinimumHorizontalScale(1.0f);
+            responseDetail.setBorderSize({});
+            addChildComponent(responseDetail);
+        }
         
         planningService.start();
         startTimerHz(30);
@@ -222,10 +240,14 @@ public:
         g.setColour(ModernLookAndFeel::Colors::bgLighter);
         g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(0.5f), 8.0f, 1.0f);
 
-        // Section dividers
-        int y = 85;  // After title and input
-        g.setColour(ModernLookAndFeel::Colors::bgLight);
-        g.drawHorizontalLine(y, 10.0f, static_cast<float>(getWidth() - 10));
+        // Divider sits under the reserved response strip so PLAN feedback
+        // stays in the request locus instead of being painted over the axes.
+        if (responseDividerY > 0)
+        {
+            g.setColour(ModernLookAndFeel::Colors::bgLight);
+            g.drawHorizontalLine(responseDividerY, 10.0f,
+                                 static_cast<float>(getWidth() - 10));
+        }
         
         // Draw center notch marks on quality sliders
         for (const auto& qs : qualitySliders)
@@ -256,27 +278,29 @@ public:
     {
         auto bounds = getLocalBounds();
         const bool compact = bounds.getHeight() < 200;
+        responseDividerY = 0;
+        responseStripBounds = {};
 
         if (compact)
         {
-            // ── COMPACT MODE (bottom panel) ──
+            // Compact <200 px: response strip is not guaranteed. This is the
+            // pre-UI-A behaviour (status was already hidden here). Do not treat
+            // a missing strip in compact as a regression of this tranche.
             bounds.reduce(6, 4);
 
-            // Hide non-essential elements
             titleLabel.setVisible(false);
             subtitleLabel.setVisible(false);
             intensitySlider.setVisible(false);
             intensityLabel.setVisible(false);
             resetButton.setVisible(false);
             morphButton.setVisible(false);
-            statusLabel.setVisible(false);
+            responseChip.setVisible(false);
+            responseDetail.setVisible(false);
             for (auto& btn : presetButtons) btn->setVisible(false);
 
-            // Liquid Intelligence: input row moved to bottom (24px tall)
             auto inputArea = bounds.removeFromBottom(24);
-            bounds.removeFromBottom(3);  // spacer above input row
+            bounds.removeFromBottom(3);
 
-            // Quality sliders — compact rows (16px each), occupying remaining bounds
             int sliderH = 16;
             for (auto& qs : qualitySliders)
             {
@@ -293,13 +317,11 @@ public:
                 bounds.removeFromTop(1);
             }
 
-            // Position input row children inside the bottom area
             applyButton.setBounds(inputArea.removeFromRight(52).reduced(1));
             commandInput.setBounds(inputArea.reduced(0, 1));
         }
         else
         {
-            // ── FULL MODE (tall panel) ──
             bounds.reduce(12, 0);
             titleLabel.setVisible(true);
             subtitleLabel.setVisible(true);
@@ -307,56 +329,44 @@ public:
             intensityLabel.setVisible(true);
             resetButton.setVisible(true);
             morphButton.setVisible(true);
-            statusLabel.setVisible(true);
             for (auto& btn : presetButtons) btn->setVisible(true);
 
-            // Title area
             titleLabel.setBounds(bounds.removeFromTop(20));
             subtitleLabel.setBounds(bounds.removeFromTop(16));
-            bounds.removeFromTop(8);
+            bounds.removeFromTop(4);
 
-            // Command input area
             auto inputRow = bounds.removeFromTop(28);
             applyButton.setBounds(inputRow.removeFromRight(60).reduced(2));
             commandInput.setBounds(inputRow.reduced(0, 2));
-            bounds.removeFromTop(10);
+            bounds.removeFromTop(4);
 
-            // Bottom-anchored rows are reserved BEFORE the sliders.
-            //
-            // They used to be laid out after them, and the arithmetic did not
-            // fit: eight sliders at 40 px plus the header, input row, intensity,
-            // presets and button row need 504 px, while the editor gives this
-            // panel 274. Everything past the fifth slider received a
-            // zero-height rectangle, which silently included the status label -
-            // the only feedback the typed PLAN/APPLY path has. Typing a phrase
-            // and pressing PLAN therefore looked like it did nothing at all,
-            // while the plan was in fact being computed and reported into a
-            // label with no height.
-            //
-            // Taking them from the bottom first means the sliders absorb any
-            // shortfall instead, and they degrade gracefully because their
-            // height is adaptive below.
+            // Fixed-height response strip directly under request+PLAN so the
+            // axes never shift when PLAN returns a long or short string.
+            responseStripBounds = bounds.removeFromTop(kResponseStripHeight);
+            layoutResponseStrip();
+            responseDividerY = responseStripBounds.getBottom();
+            bounds.removeFromTop(4);
+
+            // Bottom chrome is reserved BEFORE the sliders so a short panel
+            // starves the axes, not RESET/MORPH (and not the response strip).
+            // The old status label used to share this row and could receive a
+            // zero-height rectangle; it no longer lives here.
             auto bottomRow = bounds.removeFromBottom(28);
             resetButton.setBounds(bottomRow.removeFromLeft(60).reduced(2));
             morphButton.setBounds(bottomRow.removeFromLeft(60).reduced(2));
-            statusLabel.setBounds(bottomRow);
-            bounds.removeFromBottom(8);
+            bounds.removeFromBottom(6);
 
             auto presetRow = bounds.removeFromBottom(26);
             int presetW = presetRow.getWidth() / juce::jmax(1, (int) presetButtons.size());
             for (auto& btn : presetButtons)
                 btn->setBounds(presetRow.removeFromLeft(presetW).reduced(2));
-            bounds.removeFromBottom(8);
+            bounds.removeFromBottom(6);
 
             auto intensityRow = bounds.removeFromBottom(24);
             intensityLabel.setBounds(intensityRow.removeFromLeft(60));
             intensitySlider.setBounds(intensityRow);
-            bounds.removeFromBottom(8);
+            bounds.removeFromBottom(6);
 
-            // Quality sliders take what is left. The full editor is wide but
-            // deliberately shallow, so use two columns when possible instead
-            // of hiding the final qualities. 18 px is the floor at which the
-            // label and thumb are still usable.
             const int sliderCount = juce::jmax(1, (int) qualitySliders.size());
             const int columnCount = bounds.getWidth() >= 520 && sliderCount > 4 ? 2 : 1;
             const int rowCount = (sliderCount + columnCount - 1) / columnCount;
@@ -430,6 +440,7 @@ public:
     void sliderValueChanged(juce::Slider* slider) override
     {
         invalidatePendingTextPlan();
+        clearResponseStrip();
 #if AIEQ_GUI_DEBUG
         debugSliderEventCount++;
         double now = juce::Time::getMillisecondCounterHiRes();
@@ -465,7 +476,6 @@ public:
                     semanticDirty = true;
                 }
 
-                updateStatusLabel(qs.name, value);
                 break;
             }
         }
@@ -481,13 +491,33 @@ public:
     void textEditorTextChanged(juce::TextEditor&) override
     {
         if (pendingTextPlan.has_value() && commandInput.getText().trim() != pendingTextCommand)
+        {
             invalidatePendingTextPlan();
+            clearResponseStrip();
+        }
     }
     void textEditorEscapeKeyPressed(juce::TextEditor&) override {}
     void textEditorFocusLost(juce::TextEditor&) override {}
 
 private:
     //==========================================================================
+    // UI-A1 chips are labels for existing planner/apply outcomes, not new copy.
+    // Ambiguous is ContradictoryIntent without a goal/protection fight — there
+    // is no separate planner enum value.
+    enum class ResponseChip
+    {
+        None,
+        Planning,
+        CantPlan,
+        Conflict,
+        Ambiguous,
+        NoSafeMove,
+        Ready,
+        Applied
+    };
+
+    static constexpr int kResponseStripHeight = 28;
+
     struct QualitySliderData
     {
         SemanticEQEngine::SemanticQuality quality{};
@@ -624,7 +654,7 @@ private:
             updateEQFromState();
         }
         
-        statusLabel.setText("Preset applied", juce::dontSendNotification);
+        clearResponseStrip();
     }
     
     void applyTextCommand()
@@ -641,7 +671,7 @@ private:
             const auto adjustments = semanticEngine.adjustmentsFromPlan(*pendingTextPlan);
             if (adjustments.empty())
             {
-                statusLabel.setText("No safe EQ move to apply", juce::dontSendNotification);
+                setResponseStrip(ResponseChip::NoSafeMove, "No safe EQ move to apply");
                 return;
             }
 
@@ -653,26 +683,24 @@ private:
                 const auto feedback = onTextPlanApply(adjustments);
                 if (feedback.atomicRejected)
                 {
-                    statusLabel.setText(
+                    setResponseStrip(ResponseChip::CantPlan,
                         "Can't apply safely: "
                         + juce::String(feedback.rejectedBands)
-                        + " plan band(s) have no free EQ slot",
-                        juce::dontSendNotification);
+                        + " plan band(s) have no free EQ slot");
                     return; // keep the reviewed plan pending
                 }
                 if (feedback.deferred)
                 {
-                    statusLabel.setText("Apply deferred — retry from the UI thread",
-                                        juce::dontSendNotification);
+                    setResponseStrip(ResponseChip::CantPlan,
+                                    "Apply deferred — retry from the UI thread");
                     return;
                 }
                 if (!feedback.complete())
                 {
-                    statusLabel.setText(
+                    setResponseStrip(ResponseChip::CantPlan,
                         "Plan not fully applied ("
                         + juce::String(feedback.appliedBands) + "/"
-                        + juce::String(feedback.requestedBands) + ")",
-                        juce::dontSendNotification);
+                        + juce::String(feedback.requestedBands) + ")");
                     return;
                 }
             }
@@ -681,14 +709,14 @@ private:
                 // Typed text plans are reliability-first and therefore never fall
                 // back to the legacy best-effort slider callback. Without an
                 // authoritative atomic apply endpoint, keep the reviewed plan.
-                statusLabel.setText("Apply unavailable — atomic Semantic endpoint not connected",
-                                    juce::dontSendNotification);
+                setResponseStrip(ResponseChip::CantPlan,
+                                "Apply unavailable — atomic Semantic endpoint not connected");
                 return;
             }
 
             invalidatePendingTextPlan();
             commandInput.clear();
-            statusLabel.setText("Applied: " + interpretation, juce::dontSendNotification);
+            setResponseStrip(ResponseChip::Applied, "Applied: " + interpretation);
             return;
         }
 
@@ -714,7 +742,7 @@ private:
         planningText = text;
         planningUiState = AIEQPerceptual::SemanticPlanningUiState::Planning;
         applyButton.setButtonText("PLAN");
-        statusLabel.setText("Planning...", juce::dontSendNotification);
+        setResponseStrip(ResponseChip::Planning, "Planning...");
     }
 
     /** Message thread. Consumes a current-generation planning result, if one is
@@ -743,34 +771,32 @@ private:
         switch (result->status)
         {
             case Status::UnknownIntent:
-                statusLabel.setText("Couldn't understand command", juce::dontSendNotification);
+                setResponseStrip(ResponseChip::CantPlan, "Couldn't understand command");
                 invalidatePendingTextPlan();
                 return;
 
             case Status::ContradictoryIntent:
-                statusLabel.setText(
-                    plan.intent.goalConstraintConflict
-                        ? "Contradictory request - goal conflicts with requested protection"
-                        : "Ambiguous command - clarify the direction",
-                    juce::dontSendNotification);
+                setResponseStrip(plan.intent.goalConstraintConflict
+                                     ? ResponseChip::Conflict
+                                     : ResponseChip::Ambiguous,
+                                 plan.intent.goalConstraintConflict
+                                     ? juce::String("Contradictory request - goal conflicts with requested protection")
+                                     : juce::String("Ambiguous command - clarify the direction"));
                 invalidatePendingTextPlan();
                 return;
 
             case Status::InternalError:
-                statusLabel.setText("Couldn't build a safe semantic plan",
-                                    juce::dontSendNotification);
+                setResponseStrip(ResponseChip::CantPlan, "Couldn't build a safe semantic plan");
                 invalidatePendingTextPlan();
                 return;
 
             case Status::NoSafeMove:
                 if (!plan.outcomeSummary.empty())
-                    statusLabel.setText(
+                    setResponseStrip(ResponseChip::NoSafeMove,
                         "No safe move - "
-                        + juce::String::fromUTF8(plan.outcomeSummary.c_str()),
-                        juce::dontSendNotification);
+                        + juce::String::fromUTF8(plan.outcomeSummary.c_str()));
                 else
-                    statusLabel.setText("No meaningful EQ move required",
-                                        juce::dontSendNotification);
+                    setResponseStrip(ResponseChip::NoSafeMove, "No meaningful EQ move required");
                 invalidatePendingTextPlan();
                 return;
 
@@ -793,7 +819,7 @@ private:
         planStatus += describeSourceContext(plan);
         if (!plan.outcomeSummary.empty())
             planStatus += " | " + juce::String::fromUTF8(plan.outcomeSummary.c_str());
-        statusLabel.setText(planStatus, juce::dontSendNotification);
+        setResponseStrip(ResponseChip::Ready, planStatus);
     }
 
 
@@ -874,7 +900,7 @@ private:
         }
         
         updateEQFromState();
-        statusLabel.setText("Reset to neutral", juce::dontSendNotification);
+        clearResponseStrip();
     }
     
     void syncSlidersFromEngine()
@@ -909,13 +935,109 @@ private:
             onStateChanged(semanticEngine.getSemanticState());
     }
     
-    void updateStatusLabel(const juce::String& name, float value)
+    void setResponseStrip(ResponseChip chip, juce::String detail)
     {
-        juce::String direction = value > 0 ? "+" : "";
-        statusLabel.setText(name + ": " + direction + juce::String(value * 100, 0) + "%",
-                           juce::dontSendNotification);
+        currentResponseChip = chip;
+        responseDetailFull = std::move(detail);
+        layoutResponseStrip();
     }
-    
+
+    void clearResponseStrip()
+    {
+        setResponseStrip(ResponseChip::None, {});
+    }
+
+    [[nodiscard]] static juce::String chipTextFor(ResponseChip chip)
+    {
+        switch (chip)
+        {
+            case ResponseChip::None:       return {};
+            case ResponseChip::Planning:   return "PLANNING";
+            case ResponseChip::CantPlan:   return "CAN'T PLAN";
+            case ResponseChip::Conflict:   return "CONFLICT";
+            case ResponseChip::Ambiguous:  return "AMBIGUOUS";
+            case ResponseChip::NoSafeMove: return "NO SAFE MOVE";
+            case ResponseChip::Ready:      return "READY";
+            case ResponseChip::Applied:    return "APPLIED";
+        }
+        return {};
+    }
+
+    [[nodiscard]] static juce::Colour chipColourFor(ResponseChip chip)
+    {
+        using C = ModernLookAndFeel::Colors;
+        switch (chip)
+        {
+            case ResponseChip::Ready:
+            case ResponseChip::Applied:
+                return C::accentYellow;
+            case ResponseChip::Planning:
+            case ResponseChip::None:
+                return C::textSecondary;
+            case ResponseChip::CantPlan:
+            case ResponseChip::Conflict:
+            case ResponseChip::Ambiguous:
+            case ResponseChip::NoSafeMove:
+                return C::accentRed;
+        }
+        return C::textSecondary;
+    }
+
+    [[nodiscard]] static juce::String elideToWidth(const juce::String& text,
+                                                   const juce::Font& font,
+                                                   int width)
+    {
+        if (width <= 0)
+            return {};
+        if (font.getStringWidth(text) <= width)
+            return text;
+
+        const juce::String ellipsis (juce::CharPointer_UTF8 ("\xe2\x80\xa6"));
+        int lo = 0, hi = text.length();
+        while (lo < hi)
+        {
+            const int mid = (lo + hi + 1) / 2;
+            if (font.getStringWidth(text.substring(0, mid) + ellipsis) <= width)
+                lo = mid;
+            else
+                hi = mid - 1;
+        }
+        return lo <= 0 ? ellipsis : text.substring(0, lo) + ellipsis;
+    }
+
+    void layoutResponseStrip()
+    {
+        if (responseStripBounds.isEmpty() || currentResponseChip == ResponseChip::None)
+        {
+            responseChip.setVisible(false);
+            responseDetail.setVisible(false);
+            responseChip.setTooltip({});
+            responseDetail.setTooltip({});
+            return;
+        }
+
+        auto strip = responseStripBounds;
+        const auto chipText = chipTextFor(currentResponseChip);
+        const int chipW = juce::jlimit(0, strip.getWidth(),
+                                       responseChip.getFont().getStringWidth(chipText) + 10);
+
+        responseChip.setText(chipText, juce::dontSendNotification);
+        responseChip.setColour(juce::Label::textColourId, chipColourFor(currentResponseChip));
+        responseChip.setBounds(strip.removeFromLeft(chipW));
+        responseChip.setVisible(true);
+
+        if (strip.getWidth() > 8)
+            strip.removeFromLeft(8);
+
+        const auto shown = elideToWidth(responseDetailFull, responseDetail.getFont(),
+                                        strip.getWidth());
+        responseDetail.setText(shown, juce::dontSendNotification);
+        responseDetail.setTooltip(shown != responseDetailFull ? responseDetailFull
+                                                              : juce::String{});
+        responseDetail.setBounds(strip);
+        responseDetail.setVisible(true);
+    }
+
     void drawQualityVisualizer(juce::Graphics& g)
     {
         // Draw a circular visualizer showing active qualities
@@ -965,7 +1087,12 @@ private:
     SemanticEQEngine& semanticEngine;
     double currentSampleRate = 44100.0;
     
-    juce::Label titleLabel, subtitleLabel, intensityLabel, statusLabel;
+    juce::Label titleLabel, subtitleLabel, intensityLabel;
+    juce::Label responseChip, responseDetail;
+    ResponseChip currentResponseChip = ResponseChip::None;
+    juce::String responseDetailFull;
+    juce::Rectangle<int> responseStripBounds;
+    int responseDividerY = 0;
     juce::TextEditor commandInput;
     juce::TextButton applyButton, resetButton, morphButton;
     juce::Slider intensitySlider;
