@@ -2503,13 +2503,13 @@ private:
             const bool isDragging = (isDraggingBand && i == draggedBandIndex);
             const bool isPrimary  = isDragging || isSelected || isHovered;
 
-            // Hero Graph Polish v1 — emphasis:
-            //   1.0  primary focus (dragged/hovered/selected)
-            //   0.60 other bands when a primary focus exists
-            //   0.82 calm default when no band is in focus
+            // Salience scale, not four independent alphas:
+            //   kNodesPrimaryEmphasis > kNodesCalmEmphasis > kNodesUnfocusedEmphasis > kNodesIdleOpacity
+            // UI-A3 A/B (calm only; shipping stays A until screenshots):
+            //   A = 0.82  B = 0.70  C = 0.65
             const float emphasis = isPrimary
-                ? 1.0f
-                : (hasPrimaryFocus ? 0.60f : 0.82f);
+                ? kNodesPrimaryEmphasis
+                : (hasPrimaryFocus ? kNodesUnfocusedEmphasis : kNodesCalmEmphasis);
 
             // AI Pulse: check if this band has a pending AI correction
             // (frequency within ±1 semitone ≈ ratio < 0.06 in log2 domain)
@@ -3301,9 +3301,16 @@ private:
     // FabFilter-style node visibility: nodes dim (but stay visible) when
     // the cursor leaves the spectrum, and come back to full opacity when
     // it re-enters. Smooth transition driven by timerCallback.
-    // kNodesIdleOpacity = baseline when mouse is outside (never 0 — Marco's
-    // explicit requirement: "rimangono visibili"). Tune here to taste.
+    // These four values are one salience ladder. Do not edit one in isolation.
+    //   1.00 > kNodesCalmEmphasis > 0.60 > 0.35
+    // UI-A3 A/B candidates for kNodesCalmEmphasis: A=0.82 (shipping) B=0.70 C=0.65
+    static constexpr float kNodesPrimaryEmphasis = 1.00f;
+    static constexpr float kNodesCalmEmphasis = 0.82f;
+    static constexpr float kNodesUnfocusedEmphasis = 0.60f;
     static constexpr float kNodesIdleOpacity = 0.35f;
+    static_assert(kNodesPrimaryEmphasis > kNodesCalmEmphasis);
+    static_assert(kNodesCalmEmphasis > kNodesUnfocusedEmphasis);
+    static_assert(kNodesUnfocusedEmphasis > kNodesIdleOpacity);
     float nodesOpacity = kNodesIdleOpacity;         // current opacity [0..1]
     float nodesTargetOpacity = kNodesIdleOpacity;   // target: 1 when mouse in, idle when out
     bool  mouseInsideSpectrum = false;              // raw tracking flag
