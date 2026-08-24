@@ -255,8 +255,10 @@ public:
             if (qs.slider && qs.slider->isVisible())
             {
                 auto sb = qs.slider->getBounds().toFloat();
-                // The slider track center (value 0 is at center of range -1..1)
-                float centerX = sb.getX() + sb.getWidth() * 0.5f;
+                // Notch the bipolar 0 of the TRACK, not the label or value box.
+                const float trackW = juce::jmax(1.0f,
+                    sb.getWidth() - (float) qs.slider->getTextBoxWidth());
+                float centerX = sb.getX() + trackW * 0.5f;
                 float topY = sb.getY() + 4.0f;
                 float botY = sb.getBottom() - 4.0f;
                 g.setColour(ModernLookAndFeel::Colors::textMuted);
@@ -376,18 +378,25 @@ public:
             const int columnWidth =
                 (bounds.getWidth() - columnGap * (columnCount - 1)) / columnCount;
 
+            // UI-A.1: the gate is visual non-intersection of label vs track,
+            // not row≥18. Horizontal geometry first — do not reclaim chrome
+            // unless the track is too short at 1100×740.
+            // Each half: [label gutter][slider track = remainder][value].
+            constexpr int kAxisLabelW = 72;
+            constexpr int kAxisValueW = 42;
+
             for (int index = 0; index < sliderCount; ++index)
             {
                 auto& slider = qualitySliders[static_cast<size_t>(index)];
                 const int column = index / rowCount;
                 const int row = index % rowCount;
-                auto sliderBounds = juce::Rectangle<int>(
+                auto cell = juce::Rectangle<int>(
                     bounds.getX() + column * (columnWidth + columnGap),
                     bounds.getY() + row * sliderHeight,
                     columnWidth,
                     sliderHeight);
 
-                if (sliderBounds.getBottom() > bounds.getBottom())
+                if (cell.getBottom() > bounds.getBottom())
                 {
                     slider.slider->setVisible(false);
                     slider.label->setVisible(false);
@@ -395,11 +404,12 @@ public:
                 }
                 slider.slider->setVisible(true);
                 slider.label->setVisible(true);
-                slider.bounds = sliderBounds;
-                slider.slider->setBounds(slider.bounds.reduced(4));
-                slider.slider->setTextBoxStyle(juce::Slider::TextBoxRight, false, 45, 18);
-                auto labelBounds = slider.bounds.removeFromLeft(70);
+
+                auto labelBounds = cell.removeFromLeft(kAxisLabelW);
                 slider.label->setBounds(labelBounds);
+                slider.bounds = cell;
+                slider.slider->setBounds(cell);
+                slider.slider->setTextBoxStyle(juce::Slider::TextBoxRight, false, kAxisValueW, 18);
             }
         }
     }
