@@ -1,5 +1,9 @@
 # Ember Core / Motore v3 — Handoff AUTOSUFFICIENTE per agenti esterni
 
+> **2026-08-24 — plugin beta ≠ this file.** Product trunk is `feature/ember-core-unified`
+> (`docs/WORKSTREAMS.md`). This handoff is Motore v3 lab only. Do not merge v3/lab
+> into Assist D4. Do not treat REV8 / G1b as the shipping EQ branch.
+
 **Ultimo aggiornamento:** 2026-07-26 21:44 (UTC+2) — post official G1b tip / handoff pin
 **Destinatario:** agente esterno **senza terminale / senza git**.  
 **Questo file** = quadro + testo completo snapshot.
