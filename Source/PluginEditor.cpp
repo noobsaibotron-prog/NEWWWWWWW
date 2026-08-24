@@ -1331,9 +1331,11 @@ void AIEqualizerAudioProcessorEditor::resized()
     mixKnob.setVisible(true);
     mixKnob.setBounds(footer.removeFromLeft(46).reduced(0, 2));
 
-    // Auto Gain stays visible — placed in footer before BYPASS
+    // Auto Gain stays visible — placed in footer before BYPASS.
+    // 88px is enough for "AUTO GAIN" at the default toggle font; A.GAIN only
+    // if a later min-resize gate shows clipping (not assumed here).
     autoBtn.setVisible(true);
-    autoBtn.setBounds(footer.removeFromRight(52).reduced(0, 5));
+    autoBtn.setBounds(footer.removeFromRight(88).reduced(0, 5));
     footer.removeFromRight(6);
 
     // === BOTTOM PANEL — split: left=band controls (380px), right=context (flex) ===
