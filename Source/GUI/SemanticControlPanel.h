@@ -195,6 +195,13 @@ public:
         // UI-A1: PLAN response lives beside the request, not in the footer.
         // Chip copy is a 1:1 map of planner/apply outcomes; detail is the
         // existing planner/apply string. Idle has no chip and no text.
+        //
+        // MOV 09:05 freeze (Ableton SEMANTIC): UI-A locus PASS — CAN'T PLAN
+        // + "Couldn't understand command" under the request is truthful
+        // planner output, not a layout fail. Do not relocate the strip.
+        // UI-A.1 PASS — tracks must not run through AIR/WARMTH/PUNCH.
+        // APPLY unproven this take. Out of tranche: planner synonyms,
+        // chrome compression, GRAPH-GRID-G2/A3.
         {
             auto chipFont = juce::Font(juce::FontOptions().withHeight(11.5f));
             chipFont.setBold(true);

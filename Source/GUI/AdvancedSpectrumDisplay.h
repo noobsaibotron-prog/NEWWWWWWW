@@ -1889,6 +1889,10 @@ private:
         // Horizontal dB lines remain the EQ-grid set (+12, +6, 0, -6, -12).
         // Do not add analyzer-depth horizontals (GRAPH-GRID-A3) here.
         //
+        // MOV 09:05 freeze: GRAPH-GRID-A PASS (100/1k/10k faint verticals,
+        // 0 dB analyzer label, hover stronger than decades). Do not add
+        // G2 minor verticals or A3 analyzer horizontals.
+        //
         // Wave 5 verdict fix: previous alpha (0.3/0.5 on 0xFF242836) was too
         // faint against the dark spectrum background — grid lines above 0 dB
         // were effectively invisible. Bumped to 0.55/0.80 and switched ink to
