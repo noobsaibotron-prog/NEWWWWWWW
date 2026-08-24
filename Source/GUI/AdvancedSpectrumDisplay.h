@@ -1880,9 +1880,14 @@ private:
 
     void drawGrid(juce::Graphics& g)
     {
-        // Liquid Intelligence: vertical frequency grid lines REMOVED entirely.
-        // Only horizontal dB lines remain as subtle reference marks spanning
-        // the full positive + negative range (+12, +6, 0, -6, -12 dB).
+        // Liquid Intelligence: full frequency grid stays gone. GRAPH-GRID-A1
+        // restores only a decade backbone (100 / 1k / 10k) as peripheral
+        // orientation. Salience: hover/selected-frequency guide (α≈0.30) >
+        // these verticals (α≈0.10) > background. X from freqToX — the same
+        // log map used by nodes and Hz labels.
+        //
+        // Horizontal dB lines remain the EQ-grid set (+12, +6, 0, -6, -12).
+        // Do not add analyzer-depth horizontals (GRAPH-GRID-A3) here.
         //
         // Wave 5 verdict fix: previous alpha (0.3/0.5 on 0xFF242836) was too
         // faint against the dark spectrum background — grid lines above 0 dB
@@ -1903,6 +1908,15 @@ private:
                 g.setColour(juce::Colour(0xFF3A4050).withAlpha(0.55f));
 
             g.drawHorizontalLine((int)y, graphBounds.getX(), graphBounds.getRight());
+        }
+
+        g.setColour(juce::Colour(0xFF3A4050).withAlpha(0.10f));
+        const float decadeHz[] = { 100.0f, 1000.0f, 10000.0f };
+        for (float hz : decadeHz)
+        {
+            const float x = freqToX(hz);
+            if (x > graphBounds.getX() && x < graphBounds.getRight())
+                g.drawVerticalLine((int)x, graphBounds.getY(), graphBounds.getBottom());
         }
     }
 
@@ -2682,6 +2696,16 @@ private:
         }
     }
     
+    void drawAnalyzerDbLabel(juce::Graphics& g, float db) const
+    {
+        const float y = dbToY(db);
+        const bool isZero = std::abs(db) < 0.01f;
+        g.setColour(isZero ? ModernLookAndFeel::Colors::textSecondary.brighter(0.1f)
+                           : ModernLookAndFeel::Colors::bgLighter.brighter(0.1f));
+        g.drawText(juce::String((int) db), 4, (int) y - 6, 34, 12,
+                   juce::Justification::centredRight);
+    }
+
 public:
     void drawLabels(juce::Graphics& g)
     {
@@ -2689,14 +2713,13 @@ public:
         g.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
         
         for (float db = spectrumMinDb; db <= spectrumMaxDb; db += 12.0f)
-        {
-            float y = dbToY(db);
-            bool isZero = std::abs(db) < 0.01f;
-            g.setColour(isZero ? ModernLookAndFeel::Colors::textSecondary.brighter(0.1f)
-                               : ModernLookAndFeel::Colors::bgLighter.brighter(0.1f));
-            juce::String txt = juce::String((int)db);
-            g.drawText(txt, 4, (int)y - 6, 34, 12, juce::Justification::centredRight);
-        }
+            drawAnalyzerDbLabel(g, db);
+
+        // GRAPH-GRID-A2: -90 + 12n never lands on 0. Emit 0 in this same
+        // analyzer label system at dbToY(0) — the analyzer-scale position,
+        // not a second coordinate glued onto the EQ response zero line.
+        // Do not add a matching analyzer 0 grid line (existing EQ 0 stays).
+        drawAnalyzerDbLabel(g, 0.0f);
 
         if (isPianoRollEnabled())
         {
