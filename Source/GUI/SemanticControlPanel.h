@@ -587,6 +587,18 @@ private:
         data.slider->valueFromTextFunction = [](const juce::String& text) {
             return text.getDoubleValue() / 100.0;
         };
+        // P0-C: at 0 the control reads near-grey (neutral), not full accent
+        data.slider->onValueChange = [slider = data.slider.get(), accent = color]()
+        {
+            const float a = static_cast<float>(std::abs(slider->getValue()));
+            const float chroma = juce::jlimit(0.12f, 1.0f, 0.12f + a * 0.88f);
+            const auto grey = juce::Colour(0xFF8A8A96);
+            const auto live = accent.interpolatedWith(grey, 1.0f - chroma);
+            slider->setColour(juce::Slider::thumbColourId, live);
+            slider->setColour(juce::Slider::trackColourId, live.withAlpha(0.35f + 0.35f * a));
+            slider->setColour(juce::Slider::backgroundColourId, live.withAlpha(0.10f + 0.10f * a));
+        };
+        data.slider->onValueChange(); // apply neutral look at default 0
         addAndMakeVisible(*data.slider);
         
         data.label->setText(name, juce::dontSendNotification);
@@ -790,6 +802,8 @@ private:
             case Status::UnknownIntent:
                 setResponseStrip(ResponseChip::CantPlan, "Couldn't understand command");
                 invalidatePendingTextPlan();
+                // P0-C: do not leave a zombie prompt for 90s after a failed parse
+                commandInput.clear();
                 return;
 
             case Status::ContradictoryIntent:
@@ -800,6 +814,7 @@ private:
                                      ? juce::String("Contradictory request - goal conflicts with requested protection")
                                      : juce::String("Ambiguous command - clarify the direction"));
                 invalidatePendingTextPlan();
+                commandInput.clear();
                 return;
 
             case Status::InternalError:

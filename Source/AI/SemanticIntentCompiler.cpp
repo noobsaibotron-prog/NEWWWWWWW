@@ -24,10 +24,11 @@ struct Alias
 
 // Long phrases deliberately precede their shorter relatives. Word-boundary
 // checks prevent "bright" from matching inside "brighter".
-constexpr std::array<Alias, 87> kAliases {{
+constexpr std::array<Alias, 92> kAliases {{
     { "low end",       SemanticDimension::Weight,      +1, 0.68f },
     { "low-end",       SemanticDimension::Weight,      +1, 0.68f },
     { "bass weight",   SemanticDimension::Weight,      +1, 0.68f },
+    { "bass",          SemanticDimension::Weight,      +1, 0.66f , SemanticSpectralFocus::Bass},
     { "high end",      SemanticDimension::Brightness,  +1, 0.62f },
     { "top end",       SemanticDimension::Brightness,  +1, 0.62f },
 
@@ -82,6 +83,10 @@ constexpr std::array<Alias, 87> kAliases {{
     { "definito",      SemanticDimension::Clarity,     +1, 0.60f },
     { "impastato",     SemanticDimension::Clarity,     -1, 0.68f },
 
+    { "mid range",     SemanticDimension::Presence,    +1, 0.64f , SemanticSpectralFocus::Presence},
+    { "midrange",      SemanticDimension::Presence,    +1, 0.64f , SemanticSpectralFocus::Presence},
+    { "mids",          SemanticDimension::Presence,    +1, 0.64f , SemanticSpectralFocus::Presence},
+    { "mid",           SemanticDimension::Presence,    +1, 0.60f , SemanticSpectralFocus::Presence},
     { "presence",      SemanticDimension::Presence,    +1, 0.64f },
     { "present",       SemanticDimension::Presence,    +1, 0.62f },
     { "forward",       SemanticDimension::Presence,    +1, 0.62f },
