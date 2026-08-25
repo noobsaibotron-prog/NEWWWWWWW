@@ -1423,29 +1423,33 @@ private:
         menu.showMenuAsync(
             juce::PopupMenu::Options()
                 .withTargetComponent(this)
-                .withTargetScreenArea({ pos, { 1, 1 } }),
-            [this, bandIndex](int result)
+                .withTargetScreenArea({ localPointToGlobal(pos), { 1, 1 } }),
+            [safeThis = juce::Component::SafePointer<AdvancedSpectrumDisplay>(this), bandIndex](int result)
             {
+                if (safeThis == nullptr)
+                    return;
+
+                auto& self = *safeThis.getComponent();
                 // Menu closed (dismissed or selected) — release node visibility guard.
                 // If mouse is still inside spectrum, keep nodes visible; otherwise fade out.
-                bandContextMenuOpen = false;
-                if (!mouseInsideSpectrum)
-                    nodesTargetOpacity = kNodesIdleOpacity;
+                self.bandContextMenuOpen = false;
+                if (!self.mouseInsideSpectrum)
+                    self.nodesTargetOpacity = kNodesIdleOpacity;
 
                 if (result == 0) return; // dismissed without selection
 
                 if (result >= 100 && result < 107)
                 {
-                    executeBandContextAction(bandIndex,
+                    self.executeBandContextAction(bandIndex,
                         { BandRadialMenu::CommandType::setFilterType, result - 100 });
                 }
                 else switch (result)
                 {
-                    case 10: executeBandContextAction(bandIndex, { BandRadialMenu::CommandType::toggleEnabled, 0 }); break;
-                    case 11: executeBandContextAction(bandIndex, { BandRadialMenu::CommandType::toggleSolo, 0 }); break;
-                    case 20: executeBandContextAction(bandIndex, { BandRadialMenu::CommandType::resetGain, 0 }); break;
-                    case 21: executeBandContextAction(bandIndex, { BandRadialMenu::CommandType::resetBand, 0 }); break;
-                    case 30: executeBandContextAction(bandIndex, { BandRadialMenu::CommandType::deleteBand, 0 }); break;
+                    case 10: self.executeBandContextAction(bandIndex, { BandRadialMenu::CommandType::toggleEnabled, 0 }); break;
+                    case 11: self.executeBandContextAction(bandIndex, { BandRadialMenu::CommandType::toggleSolo, 0 }); break;
+                    case 20: self.executeBandContextAction(bandIndex, { BandRadialMenu::CommandType::resetGain, 0 }); break;
+                    case 21: self.executeBandContextAction(bandIndex, { BandRadialMenu::CommandType::resetBand, 0 }); break;
+                    case 30: self.executeBandContextAction(bandIndex, { BandRadialMenu::CommandType::deleteBand, 0 }); break;
                     default: break;
                 }
             });
