@@ -161,11 +161,6 @@ public:
         dynTriggerCombo.setColour(juce::ComboBox::outlineColourId, ModernLookAndFeel::Colors::bgLighter);
         addAndMakeVisible(dynTriggerCombo);
 
-        // DynEQ expand button ("..." opens overlay)
-        dynExpandBtn.setTooltip("Advanced DynEQ settings (Range, Knee)");
-        dynExpandBtn.onClick = [this] { if (onExpandDynEQRequested) onExpandDynEQRequested(); };
-        addAndMakeVisible(dynExpandBtn);
-
         // DynEQ knob labels (10px, uppercase, centered)
         auto makeDynLabel = [](juce::Label& lbl, const juce::String& text) {
             lbl.setText(text, juce::dontSendNotification);
@@ -179,20 +174,28 @@ public:
         makeDynLabel(ratLabel, "RAT");
         makeDynLabel(atkLabel, "ATK");
         makeDynLabel(relLabel, "REL");
+        makeDynLabel(rngLabel, "RNG");
+        makeDynLabel(kneLabel, "KNE");
         addAndMakeVisible(thrLabel);
         addAndMakeVisible(ratLabel);
         addAndMakeVisible(atkLabel);
         addAndMakeVisible(relLabel);
+        addAndMakeVisible(rngLabel);
+        addAndMakeVisible(kneLabel);
 
-        // DynEQ knobs (SmallBlue style, 10px textbox below)
+        // DynEQ knobs (SmallBlue style, 10px textbox below) — all in inspector (no graph overlay)
         thresholdKnob.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 50, 10);
         ratioKnob.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 50, 10);
         attackKnob.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 50, 10);
         releaseKnob.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 50, 10);
+        rangeKnob.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 50, 10);
+        kneeKnob.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 50, 10);
         addAndMakeVisible(thresholdKnob);
         addAndMakeVisible(ratioKnob);
         addAndMakeVisible(attackKnob);
         addAndMakeVisible(releaseKnob);
+        addAndMakeVisible(rangeKnob);
+        addAndMakeVisible(kneeKnob);
 
         // DynEQ APVTS attachments
         dynModeAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(parameters, prefix + "DynMode", dynModeCombo);
@@ -201,6 +204,8 @@ public:
         ratAtt = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(parameters, prefix + "Ratio", ratioKnob);
         atkAtt = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(parameters, prefix + "Attack", attackKnob);
         relAtt = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(parameters, prefix + "Release", releaseKnob);
+        rngAtt = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(parameters, prefix + "Range", rangeKnob);
+        kneAtt = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(parameters, prefix + "Knee", kneeKnob);
 
         updateSlopeVisibility();
         updateDynEQVisibility();
@@ -231,7 +236,8 @@ public:
         freqAtt.reset(); gainAtt.reset(); qAtt.reset();
         typeAtt.reset(); slopeAtt.reset();
         enableAtt.reset(); soloAtt.reset();
-        dynModeAtt.reset(); dynTriggerAtt.reset(); thrAtt.reset(); ratAtt.reset(); atkAtt.reset(); relAtt.reset();
+        dynModeAtt.reset(); dynTriggerAtt.reset();
+        thrAtt.reset(); ratAtt.reset(); atkAtt.reset(); relAtt.reset(); rngAtt.reset(); kneAtt.reset();
 
         bandIndex = newIndex;
         juce::String prefix = "band" + juce::String(bandIndex);
@@ -257,6 +263,8 @@ public:
         ratAtt = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(parameters, prefix + "Ratio", ratioKnob);
         atkAtt = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(parameters, prefix + "Attack", attackKnob);
         relAtt = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(parameters, prefix + "Release", releaseKnob);
+        rngAtt = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(parameters, prefix + "Range", rangeKnob);
+        kneAtt = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(parameters, prefix + "Knee", kneeKnob);
 
         typeCombo.addListener(this);
         updateSlopeVisibility();
@@ -451,43 +459,41 @@ public:
                 slopeLabel.setVisible(false);
             }
 
-            // DynEQ action/trigger row (22px) — two combos + "..." button
+            // DynEQ action/trigger row (22px) — inspector only, no expand overlay
             auto dynModeRow = bounds.removeFromTop(22);
-            const int actionWidth = (dynModeRow.getWidth() - 38) * 3 / 5;
+            const int actionWidth = dynModeRow.getWidth() * 3 / 5;
             dynModeCombo.setBounds(dynModeRow.removeFromLeft(actionWidth).reduced(2, 0));
-            dynTriggerCombo.setBounds(dynModeRow.removeFromLeft(dynModeRow.getWidth() - 36).reduced(2, 0));
-            dynModeRow.removeFromLeft(2);
-            dynExpandBtn.setBounds(dynModeRow.reduced(1));
+            dynTriggerCombo.setBounds(dynModeRow.reduced(2, 0));
             bounds.removeFromTop(2);
 
             // Bottom-up layout: DynEQ knobs (if active) + main knobs
             // Enable/Solo row already placed inline with type combo
 
-            // DynEQ knob row (56px: 10 label + 36 knob + 10 textbox) — from bottom
+            // DynEQ knob rows — all six params live here (no center modal)
             if (dynEQActive)
             {
-                auto dynRow = bounds.removeFromBottom(56);
-                dynKnobClusterBounds = dynRow;
-                const int dynKnobW = dynRow.getWidth() / 4;
-                const int dynLabelH = 10;
+                auto placeDynKnob = [](juce::Rectangle<int> cell, juce::Label& label, juce::Component& knob)
+                {
+                    const int dynLabelH = 10;
+                    label.setBounds(cell.removeFromTop(dynLabelH));
+                    knob.setBounds(cell);
+                };
 
-                auto thrArea = dynRow.removeFromLeft(dynKnobW);
-                thrLabel.setBounds(thrArea.removeFromTop(dynLabelH));
-                thresholdKnob.setBounds(thrArea);
+                auto dynRow2 = bounds.removeFromBottom(52);
+                auto dynRow1 = bounds.removeFromBottom(52);
+                dynKnobClusterBounds = dynRow1.getUnion(dynRow2);
 
-                auto ratArea = dynRow.removeFromLeft(dynKnobW);
-                ratLabel.setBounds(ratArea.removeFromTop(dynLabelH));
-                ratioKnob.setBounds(ratArea);
+                const int dynKnobW1 = dynRow1.getWidth() / 4;
+                placeDynKnob(dynRow1.removeFromLeft(dynKnobW1), thrLabel, thresholdKnob);
+                placeDynKnob(dynRow1.removeFromLeft(dynKnobW1), ratLabel, ratioKnob);
+                placeDynKnob(dynRow1.removeFromLeft(dynKnobW1), atkLabel, attackKnob);
+                placeDynKnob(dynRow1, relLabel, releaseKnob);
 
-                auto atkArea = dynRow.removeFromLeft(dynKnobW);
-                atkLabel.setBounds(atkArea.removeFromTop(dynLabelH));
-                attackKnob.setBounds(atkArea);
+                const int dynKnobW2 = dynRow2.getWidth() / 2;
+                placeDynKnob(dynRow2.removeFromLeft(dynKnobW2), rngLabel, rangeKnob);
+                placeDynKnob(dynRow2, kneLabel, kneeKnob);
 
-                auto relArea = dynRow;
-                relLabel.setBounds(relArea.removeFromTop(dynLabelH));
-                releaseKnob.setBounds(relArea);
-
-                bounds.removeFromBottom(2); // gap above DynEQ row
+                bounds.removeFromBottom(2); // gap above DynEQ rows
             }
             else
             {
@@ -544,11 +550,14 @@ private:
         ratioKnob.setVisible(dynEQActive);
         attackKnob.setVisible(dynEQActive);
         releaseKnob.setVisible(dynEQActive);
+        rangeKnob.setVisible(dynEQActive);
+        kneeKnob.setVisible(dynEQActive);
         thrLabel.setVisible(dynEQActive);
         ratLabel.setVisible(dynEQActive);
         atkLabel.setVisible(dynEQActive);
         relLabel.setVisible(dynEQActive);
-        dynExpandBtn.setVisible(dynEQActive);
+        rngLabel.setVisible(dynEQActive);
+        kneLabel.setVisible(dynEQActive);
         resized();
         repaint();
     }
@@ -574,14 +583,15 @@ private:
 
     // DynEQ mode selector (always visible)
     juce::ComboBox dynModeCombo, dynTriggerCombo;
-    juce::TextButton dynExpandBtn { "···" }; // opens overlay for Range/Knee
 
-    // DynEQ knobs (visible only when mode != Off)
+    // DynEQ knobs (visible only when mode != Off) — Range/Knee included (no overlay)
     PremiumKnob thresholdKnob { juce::String(), PremiumKnob::Style::SmallBlue };
     PremiumKnob ratioKnob     { juce::String(), PremiumKnob::Style::SmallBlue };
     PremiumKnob attackKnob    { juce::String(), PremiumKnob::Style::SmallBlue };
     PremiumKnob releaseKnob   { juce::String(), PremiumKnob::Style::SmallBlue };
-    juce::Label thrLabel, ratLabel, atkLabel, relLabel;
+    PremiumKnob rangeKnob     { juce::String(), PremiumKnob::Style::SmallBlue };
+    PremiumKnob kneeKnob      { juce::String(), PremiumKnob::Style::SmallBlue };
+    juce::Label thrLabel, ratLabel, atkLabel, relLabel, rngLabel, kneLabel;
 
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> freqAtt, gainAtt, qAtt;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> typeAtt, slopeAtt;
@@ -590,15 +600,11 @@ private:
     // DynEQ APVTS attachments
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> dynModeAtt;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> dynTriggerAtt;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> thrAtt, ratAtt, atkAtt, relAtt;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> thrAtt, ratAtt, atkAtt, relAtt, rngAtt, kneAtt;
 
     // Layout state
     juce::Rectangle<int> dynKnobClusterBounds;
     bool dynEQActive = false;
-
-public:
-    // Callback for opening advanced DynEQ overlay (Range/Knee)
-    std::function<void()> onExpandDynEQRequested;
 
 private:
 
