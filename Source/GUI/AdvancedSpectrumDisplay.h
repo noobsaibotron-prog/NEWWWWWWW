@@ -5,6 +5,7 @@
 #include "AnalyzerContextMenu.h"
 #include "BandRadialMenu.h"
 #include "ModernLookAndFeel.h"
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <limits>
@@ -63,11 +64,18 @@ public:
         freezeButton.setClickingTogglesState(true);
         freezeButton.onClick = [this]() {
             bool frozen = freezeButton.getToggleState();
-            const juce::SpinLock::ScopedLockType lock(spectrumDataLock);
-            if (frozen) {
-                frozenSpectrum = smoothedSpectrum;
+            if (frozen)
+            {
+                // Snapshot the displayed (lerped) frame, then stop live rebuilds.
+                if (!displayPre.empty())
+                    rebuildLiveSpectrumPaths(true);
+                const juce::SpinLock::ScopedLockType lock(spectrumDataLock);
+                frozenSpectrum = !displayPre.empty() ? displayPre : smoothedSpectrum;
                 isFrozen = true;
-            } else {
+            }
+            else
+            {
+                const juce::SpinLock::ScopedLockType lock(spectrumDataLock);
                 isFrozen = false;
             }
             refreshPeaks();
@@ -79,12 +87,14 @@ public:
         captureButton.onClick = [this]() {
             {
                 const juce::SpinLock::ScopedLockType lock(spectrumDataLock);
-                capturedSpectrum = smoothedSpectrum;
+                // Stable hop frame (t=1 / current inject), never an in-between lerp.
+                capturedSpectrum = !hopCurrPre.empty() ? hopCurrPre : smoothedSpectrum;
                 hasCaptured = true;
                 capturedPathDirty = true;
             }
             captureButton.setButtonText("CAPTURED!");
             startTimer(100);
+            currentTimerHz = 0; // next tick restores 60 Hz after the flash interval
         };
         addAndMakeVisible(captureButton);
 
@@ -454,16 +464,14 @@ public:
         }
 
         // ── Adaptive timer rate ──
-        // Multiple plugin instances share ONE message thread in JUCE.
-        // If this window isn't visible, drop to 5Hz to free budget for the active instance.
-        // If visible but idle, 30Hz is enough. 60Hz only during active interaction.
+        // P1-5 motion experiment: visible + unfrozen display interpolates toward 60 Hz
+        // between FFT hops. Hidden windows stay at 5 Hz. Frozen overlay does not
+        // need hop interpolation (30 Hz is enough for node fades).
         {
             const bool windowVisible = isShowing();
-            const bool interacting = isDraggingBand || hoverX >= 0
-                                  || bandRadialMenu.isOpen() || analyzerContextMenu.isOpen();
             const int desiredHz = !windowVisible ? 5
-                                : interacting    ? 60
-                                                 : 30;
+                                : isFrozen       ? 30
+                                                 : 60;
             if (desiredHz != currentTimerHz)
             {
                 currentTimerHz = desiredHz;
@@ -483,18 +491,39 @@ public:
 
         if (!isFrozen) {
             updateSmoothedSpectrum();
-            rebuildLiveSpectrumPaths();
             updateDynamicGRSmoothing();
-            // Repaint when new FFT data arrived (paths rebuilt) or during interaction
-            if (lastPreSpectrumVersion != prevRepaintPreVer || lastPostSpectrumVersion != prevRepaintPostVer
-                || isDraggingBand || hoverX >= 0)
+
+            bool rebuiltLive = false;
+            if (injectedSpectrumVersion != 0)
+            {
+                const bool hopChanged = ingestAndAdvanceSpectrumLerp();
+                const bool tMoved = std::abs(spectrumLerpT - lastRebuiltLerpT) > kLerpRebuildEpsilon
+                                 || ((spectrumLerpT >= 0.999f) != (lastRebuiltLerpT >= 0.999f));
+                const bool boundsChanged = (lastSpectrumBounds != graphBounds);
+                // Rebuild in-between hop frames from lerped columns even if FFT version is unchanged.
+                // Skip the ~6 ms path+image cost when t is holding at 1 waiting for the next hop.
+                if (isShowing() && (hopChanged || tMoved || boundsChanged || lastRebuiltLerpT < 0.0f))
+                {
+                    rebuildLiveSpectrumPaths(true);
+                    lastRebuiltLerpT = spectrumLerpT;
+                    rebuiltLive = true;
+                }
+            }
+            else
+            {
+                rebuildLiveSpectrumPaths(false);
+                rebuiltLive = (lastPreSpectrumVersion != prevRepaintPreVer
+                               || lastPostSpectrumVersion != prevRepaintPostVer);
+            }
+
+            if (rebuiltLive || isDraggingBand || hoverX >= 0)
             {
                 prevRepaintPreVer = lastPreSpectrumVersion;
                 prevRepaintPostVer = lastPostSpectrumVersion;
                 needsRepaint = true;
             }
-            // Throttle peak detection to ~10Hz (every 6th frame at 30Hz base)
-            if (++peakRefreshCounter >= 3)
+            // Throttle peak detection to ~10 Hz (every 6th frame at 60 Hz)
+            if (++peakRefreshCounter >= 6)
             {
                 peakRefreshCounter = 0;
                 refreshPeaks();
@@ -1156,7 +1185,8 @@ private:
 
     void refreshPeaks()
     {
-        const auto& source = (isFrozen && !frozenSpectrum.empty()) ? frozenSpectrum : smoothedSpectrum;
+        const auto& source = (isFrozen && !frozenSpectrum.empty()) ? frozenSpectrum
+                           : (!displayPre.empty() ? displayPre : smoothedSpectrum);
         if (source.size() < 5 || graphBounds.isEmpty())
         {
             detectedPeaks.clear();
@@ -1727,6 +1757,82 @@ private:
         }
     }
 
+    static void lerpPixelDb (const std::vector<float>& prev,
+                             const std::vector<float>& curr,
+                             float t,
+                             std::vector<float>& out)
+    {
+        const size_t n = curr.size();
+        if (n == 0)
+        {
+            out.clear();
+            return;
+        }
+        out.resize(n);
+        if (prev.size() != n || t >= 1.0f)
+        {
+            std::copy(curr.begin(), curr.end(), out.begin());
+            return;
+        }
+        if (t <= 0.0f)
+        {
+            std::copy(prev.begin(), prev.end(), out.begin());
+            return;
+        }
+        const float u = 1.0f - t;
+        for (size_t i = 0; i < n; ++i)
+            out[i] = prev[i] * u + curr[i] * t;
+    }
+
+    // P1-5: paint-thread hop interpolation. New inject → snap prev=curr, store curr, t=0.
+    // Otherwise advance t toward 1 over ~1 hop interval (last hop dt, clamped 16–50 ms).
+    bool ingestAndAdvanceSpectrumLerp()
+    {
+        const double nowMs = juce::Time::getMillisecondCounterHiRes();
+        bool hopChanged = false;
+
+        {
+            const juce::SpinLock::ScopedLockType lk(spectrumDataLock);
+            if (injectedSpectrumVersion != 0 && injectedSpectrumVersion != lastLerpHopVersion)
+            {
+                hopChanged = true;
+                lastLerpHopVersion = injectedSpectrumVersion;
+
+                const bool firstHop = hopCurrPre.empty();
+                hopPrevPre.assign(hopCurrPre.begin(), hopCurrPre.end());
+                hopCurrPre.assign(smoothedSpectrum.begin(), smoothedSpectrum.end());
+                hopPrevPost.assign(hopCurrPost.begin(), hopCurrPost.end());
+                hopCurrPost.assign(injectedPostSpectrum.begin(), injectedPostSpectrum.end());
+
+                const bool sizeMismatch = hopPrevPre.size() != hopCurrPre.size();
+                if (firstHop || hopPrevPre.empty() || sizeMismatch)
+                    hopPrevPre.assign(hopCurrPre.begin(), hopCurrPre.end());
+                if (hopPrevPost.empty() || hopPrevPost.size() != hopCurrPost.size())
+                    hopPrevPost.assign(hopCurrPost.begin(), hopCurrPost.end());
+
+                const double gapMs = (lastHopTimeMs > 0.0) ? (nowMs - lastHopTimeMs) : 0.0;
+                // Fresh hop: lerp from previous. First hop / resize / freeze-resume (>100 ms): snap.
+                spectrumLerpT = (firstHop || sizeMismatch || gapMs > 100.0) ? 1.0f : 0.0f;
+
+                if (lastHopTimeMs > 0.0)
+                    hopIntervalMs = juce::jlimit(kHopIntervalMinMs, kHopIntervalMaxMs, nowMs - lastHopTimeMs);
+                lastHopTimeMs = nowMs;
+            }
+        }
+
+        if (!hopChanged && lastDisplayTickMs > 0.0)
+        {
+            const double dtMs = nowMs - lastDisplayTickMs;
+            if (dtMs > 0.0)
+                spectrumLerpT = juce::jmin(1.0f, spectrumLerpT + static_cast<float>(dtMs / hopIntervalMs));
+        }
+        lastDisplayTickMs = nowMs;
+
+        lerpPixelDb(hopPrevPre, hopCurrPre, spectrumLerpT, displayPre);
+        lerpPixelDb(hopPrevPost, hopCurrPost, spectrumLerpT, displayPost);
+        return hopChanged;
+    }
+
     void updateSmoothedSpectrum()
     {
         // If metrological pipeline has injected newer data, use it directly.
@@ -1796,11 +1902,10 @@ private:
         }
     }
 
-    // Rebuild live spectrum paths only when new FFT data arrives.
-    // Display-side smoothing creates <0.1dB changes between FFT frames — visually imperceptible.
-    // Path building (4× pathBuilder.build + renderSpectrumToImage) costs ~6ms, so skipping
-    // unchanged frames saves significant message thread time during band drag.
-    void rebuildLiveSpectrumPaths()
+    // Rebuild live spectrum paths from the displayed (lerped) columns.
+    // Path building + renderSpectrumToImage costs ~6 ms, so the timer skips this
+    // when lerp t is holding and the FFT hop version is unchanged.
+    void rebuildLiveSpectrumPaths(bool forceRebuild = false)
     {
         if (graphBounds.isEmpty()) return;
 
@@ -1812,14 +1917,15 @@ private:
                                  : processor.getPostEQAnalyzer().getSpectrumVersion();
         const bool boundsChanged = (lastSpectrumBounds != graphBounds);
 
-        if (preVer == lastPreSpectrumVersion && postVer == lastPostSpectrumVersion && !boundsChanged)
+        if (!forceRebuild && preVer == lastPreSpectrumVersion && postVer == lastPostSpectrumVersion && !boundsChanged)
             return;
 
         lastPreSpectrumVersion = preVer;
         lastPostSpectrumVersion = postVer;
         lastSpectrumBounds = graphBounds;
 
-        const auto& preBuffer = smoothedSpectrum; // alias used in paint
+        const auto& preBuffer = !displayPre.empty() ? displayPre : smoothedSpectrum;
+        const auto& postSrc   = !displayPost.empty() ? displayPost : injectedPostSpectrum;
         const size_t usable = std::min(preBuffer.size(),
             static_cast<size_t>(std::max(0, static_cast<int>(graphBounds.getWidth()))));
 
@@ -1864,15 +1970,16 @@ private:
         {
             if (showPost && !isFrozen)
             {
-                const bool useInjectedPost = injectedSpectrumVersion != 0 && !injectedPostSpectrum.empty();
+                const bool useInjectedPost = !postSrc.empty()
+                    && (injectedSpectrumVersion != 0 || !displayPost.empty());
                 if (useInjectedPost && usable > 4)
                 {
-                    const size_t limit = std::min(usable, injectedPostSpectrum.size());
+                    const size_t limit = std::min(usable, postSrc.size());
                     smoothYBuffer.resize(limit);
                     for (size_t i = 0; i < limit; ++i)
                     {
                         float freq = xToFreq(graphBounds.getX() + static_cast<float>(i));
-                        smoothYBuffer[i] = dbToY(applyTilt(injectedPostSpectrum[i], freq));
+                        smoothYBuffer[i] = dbToY(applyTilt(postSrc[i], freq));
                     }
                     cachedPostLine.clear();
                     cachedPostFill.clear();
@@ -1916,16 +2023,17 @@ private:
         bool showDelta = isDeltaEnabled();
         if (showDelta && showPost && !isFrozen)
         {
-            const bool useInjectedPost = injectedSpectrumVersion != 0 && !injectedPostSpectrum.empty();
+            const bool useInjectedPost = !postSrc.empty()
+                && (injectedSpectrumVersion != 0 || !displayPost.empty());
             if (useInjectedPost && usable > 4)
             {
                 float zeroY = dbToY(0.0f);
-                const size_t limit = std::min(usable, injectedPostSpectrum.size());
+                const size_t limit = std::min(usable, std::min(postSrc.size(), preBuffer.size()));
                 smoothYBuffer.resize(limit);
                 for (size_t i = 0; i < limit; ++i)
                 {
                     float freq = xToFreq(graphBounds.getX() + static_cast<float>(i));
-                    float postDb = injectedPostSpectrum[i];
+                    float postDb = postSrc[i];
                     float preDb = preBuffer[i];
                     float delta = applyTilt(postDb, freq) - applyTilt(preDb, freq);
                     delta = juce::jlimit(-24.0f, 24.0f, delta);
@@ -1992,7 +2100,7 @@ private:
     }
 
     // Render cached spectrum paths (pre, post, delta, peak) into an offscreen image.
-    // Called only when paths are rebuilt (~12-47Hz), not every paint (~60Hz).
+    // Called when a hop arrives or lerp t moved; skipped while t holds at 1.
     // paint() then does a single drawImageAt() instead of 4× strokePath/fillPath.
     void renderSpectrumToImage()
     {
@@ -3486,6 +3594,20 @@ private:
     std::vector<float> injectedPostSpectrum;
     uint64_t injectedSpectrumVersion = 0;
     uint64_t lastInjectedVersion = 0;
+
+    // P1-5: previous/current hop columns + displayed lerp (same t for pre and post).
+    std::vector<float> hopPrevPre, hopCurrPre;
+    std::vector<float> hopPrevPost, hopCurrPost;
+    std::vector<float> displayPre, displayPost;
+    uint64_t lastLerpHopVersion = 0;
+    float spectrumLerpT = 1.0f;
+    float lastRebuiltLerpT = -1.0f;
+    double lastHopTimeMs = 0.0;
+    double lastDisplayTickMs = 0.0;
+    double hopIntervalMs = 21.0; // ~47 Hz default hop at 4096
+    static constexpr double kHopIntervalMinMs = 16.0;
+    static constexpr double kHopIntervalMaxMs = 50.0;
+    static constexpr float kLerpRebuildEpsilon = 0.05f;
 
     // Click detector overlay
     uint32_t     clickOverlayCount = 0;
