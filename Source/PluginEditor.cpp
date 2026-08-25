@@ -228,8 +228,8 @@ AIEqualizerAudioProcessorEditor::AIEqualizerAudioProcessorEditor(AIEqualizerAudi
             spectrum->repaint();
         repaint();
     });
-    // Phase 5: full DynamicEQPanel is now an on-demand overlay, hidden by
-    // default. Toggled visible via DynEQCompactBar::onExpandRequested.
+    // P0-B: full DynamicEQPanel is kept as a hidden child for meter wiring only.
+    // Dyn controls (including Range/Knee) live in BandControlPanel — never overlay the graph.
     addChildComponent(*dynamicEQPanel);
     
     // Dynamic EQ Master Panel (global controls)
@@ -242,21 +242,6 @@ AIEqualizerAudioProcessorEditor::AIEqualizerAudioProcessorEditor(AIEqualizerAudi
     // FIX 2: persistent selected band panel (avoid recreating on every selection)
     selectedBandPanel = std::make_unique<BandControlPanel>(0, processor.getAPVTS());
     addAndMakeVisible(*selectedBandPanel);
-
-    // Connect BandControlPanel "..." button to DynEQ advanced overlay (Range/Knee)
-    selectedBandPanel->onExpandDynEQRequested = [this] {
-        if (dynamicEQPanel)
-        {
-            const bool nowVisible = !dynamicEQPanel->isVisible();
-            dynamicEQPanel->setVisible(nowVisible);
-            if (nowVisible)
-            {
-                dynamicEQPanel->toFront(true);
-                const int w = 400, h = 300;
-                dynamicEQPanel->setBounds(getWidth()/2 - w/2, getHeight()/2 - h/2, w, h);
-            }
-        }
-    };
 
     // Output level meter (stereo VU with peak hold)
     addAndMakeVisible(outputMeter);
@@ -1381,18 +1366,10 @@ void AIEqualizerAudioProcessorEditor::resized()
         aiProblemPanel->setBounds(contextCol);
         semanticPanel->setBounds(contextCol);
 
-        // Phase 5: dynamicEQPanel is now an on-demand overlay. Only reposition
-        // when the user has toggled it visible via DynEQCompactBar; otherwise
-        // it stays hidden and its bounds are irrelevant.
-        if (dynamicEQPanel && dynamicEQPanel->isVisible())
-        {
-            const int w = 400;
-            const int h = 300;
-            dynamicEQPanel->setBounds(getWidth() / 2 - w / 2,
-                                       getHeight() / 2 - h / 2,
-                                       w, h);
-            dynamicEQPanel->toFront(true);
-        }
+        // P0-B: DynamicEQPanel stays hidden — Range/Knee live in BandControlPanel.
+        // Never recenter it over the spectrum graph.
+        if (dynamicEQPanel)
+            dynamicEQPanel->setVisible(false);
     }
 
     // Context panel always visible
@@ -1409,8 +1386,9 @@ void AIEqualizerAudioProcessorEditor::resized()
     }
     aiProblemPanel->setVisible(activeRightTab == 0);
     semanticPanel->setVisible(activeRightTab == 1);
-    // Phase 5: dynamicEQPanel visibility is now driven by DynEQCompactBar
-    // (default hidden at construction; toggled via onExpandRequested).
+    // Phase 5 / P0-B: Dynamic EQ edits live only in selectedBandPanel (inspector).
+    // The full DynamicEQPanel remains constructed for meter callbacks but never
+    // covers the spectrum.
 
     // --- Left column: band controls (mockup: 12px 16px padding) ---
     bandCol.reduce(16, 12);
