@@ -644,6 +644,7 @@ set(PLUGIN_SOURCES
     Source/GUI/ModernLookAndFeel.h
     Source/GUI/AdvancedSpectrumDisplay.h
     Source/GUI/BandRadialMenu.h
+    Source/GUI/AnalyzerContextMenu.h
     Source/GUI/EQBandControl.h
     Source/GUI/AIProblemPanel.h
     Source/GUI/BandControlPanel.h
@@ -1387,6 +1388,7 @@ if(HAVE_JUCE)
         Source/Tests/PluginExternalSidechainIntegrationTest.cpp
         Source/Tests/BandControlPanelTest.cpp
         Source/Tests/BandRadialMenuTest.cpp
+        Source/Tests/AnalyzerContextMenuTest.cpp
         Source/Tests/RBValidationTest.cpp
         Source/Tests/RB4BehavioralTest.cpp
         Source/Tests/RB2EquivalenceTest.cpp

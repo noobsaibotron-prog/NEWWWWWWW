@@ -2,6 +2,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <juce_audio_basics/juce_audio_basics.h>
 #include "../PluginProcessor.h"
+#include "AnalyzerContextMenu.h"
 #include "BandRadialMenu.h"
 #include "ModernLookAndFeel.h"
 #include <array>
@@ -107,6 +108,10 @@ public:
         // not a native popup, so its bubble animation stays clipped to and
         // visually integrated with the graph.
         addChildComponent(bandRadialMenu);
+
+        // Normal right-clicks on empty graph space use this animated,
+        // graph-local menu. Alt/Option keeps the native JUCE fallback.
+        addChildComponent(analyzerContextMenu);
     }
     
     ~AdvancedSpectrumDisplay() override { stopTimer(); }
@@ -426,11 +431,13 @@ public:
         showCapturedButton.setBounds(startX + (btnW + gap) * 2, startY, btnW + 10, btnH);
         clearButton.setBounds(startX + (btnW + gap) * 2 + btnW + 10 + gap, startY, 50, btnH);
         bandRadialMenu.setBounds(getLocalBounds());
+        analyzerContextMenu.setBounds(getLocalBounds());
     }
     
     void timerCallback() override
     {
         bandRadialMenu.advanceAnimation();
+        analyzerContextMenu.advanceAnimation();
 
         // SAFETY: Skip processing if processor not ready
         if (!processor.isProcessorReady())
@@ -445,7 +452,8 @@ public:
         // If visible but idle, 30Hz is enough. 60Hz only during active interaction.
         {
             const bool windowVisible = isShowing();
-            const bool interacting = isDraggingBand || hoverX >= 0 || bandRadialMenu.isOpen();
+            const bool interacting = isDraggingBand || hoverX >= 0
+                                  || bandRadialMenu.isOpen() || analyzerContextMenu.isOpen();
             const int desiredHz = !windowVisible ? 5
                                 : interacting    ? 60
                                                  : 30;
@@ -747,7 +755,10 @@ public:
             }
             else
             {
-                showContextMenu(e.getPosition());
+                if (e.mods.isAltDown())
+                    showClassicAnalyzerContextMenu(e.getPosition());
+                else
+                    showAnimatedAnalyzerContextMenu(e.position);
             }
             return;
         }
@@ -1423,7 +1434,7 @@ private:
         menu.showMenuAsync(
             juce::PopupMenu::Options()
                 .withTargetComponent(this)
-                .withTargetScreenArea({ localPointToGlobal(pos), { 1, 1 } }),
+                .withTargetScreenArea(AnalyzerContextMenu::nativePopupScreenArea(localPointToGlobal(pos))),
             [safeThis = juce::Component::SafePointer<AdvancedSpectrumDisplay>(this), bandIndex](int result)
             {
                 if (safeThis == nullptr)
@@ -1455,7 +1466,85 @@ private:
             });
     }
 
-    void showContextMenu(juce::Point<int> pos)
+    void executeAnalyzerContextAction(AnalyzerContextMenu::Command command)
+    {
+        switch (command.type)
+        {
+            case AnalyzerContextMenu::CommandType::togglePre:
+            {
+                auto* value = processor.getAPVTS().getRawParameterValue("showPreSpectrum");
+                setBoolParameter("showPreSpectrum", ! (value && value->load() > 0.5f));
+                break;
+            }
+            case AnalyzerContextMenu::CommandType::togglePost:
+            {
+                auto* value = processor.getAPVTS().getRawParameterValue("showPostSpectrum");
+                setBoolParameter("showPostSpectrum", ! (value && value->load() > 0.5f));
+                break;
+            }
+            case AnalyzerContextMenu::CommandType::toggleDelta:
+                setBoolParameter("showDeltaSpectrum", ! isDeltaEnabled());
+                break;
+            case AnalyzerContextMenu::CommandType::setResolution:
+                setChoiceParameter("analyzerResolution", command.value);
+                break;
+            case AnalyzerContextMenu::CommandType::setSpeed:
+                setChoiceParameter("analyzerSpeed", command.value);
+                break;
+            case AnalyzerContextMenu::CommandType::setTilt:
+                setFloatParameter("spectrumTilt", command.floatValue);
+                break;
+            case AnalyzerContextMenu::CommandType::togglePeakHold:
+                setBoolParameter("showPeakHold", ! isPeakHoldEnabled());
+                break;
+            case AnalyzerContextMenu::CommandType::togglePianoRoll:
+                setBoolParameter("pianoRollOverlay", ! isPianoRollEnabled());
+                break;
+        }
+    }
+
+    void showAnimatedAnalyzerContextMenu(juce::Point<float> pos)
+    {
+        AnalyzerContextMenu::State menuState;
+        if (auto* value = processor.getAPVTS().getRawParameterValue("showPreSpectrum"))
+            menuState.showPre = value->load() > 0.5f;
+        if (auto* value = processor.getAPVTS().getRawParameterValue("showPostSpectrum"))
+            menuState.showPost = value->load() > 0.5f;
+        menuState.showDelta = isDeltaEnabled();
+        menuState.peakHold = isPeakHoldEnabled();
+        menuState.pianoRoll = isPianoRollEnabled();
+        if (auto* value = processor.getAPVTS().getRawParameterValue("analyzerResolution"))
+            menuState.resolution = static_cast<int>(value->load());
+        if (auto* value = processor.getAPVTS().getRawParameterValue("analyzerSpeed"))
+            menuState.speed = static_cast<int>(value->load());
+        menuState.tiltDbPerOctave = getAnalyzerSlopeDbPerOct();
+
+        bandContextMenuOpen = true;
+        nodesTargetOpacity = 1.0f;
+        if (currentTimerHz != 60)
+        {
+            currentTimerHz = 60;
+            startTimerHz(60);
+        }
+        analyzerContextMenu.open(
+            pos,
+            graphBounds,
+            menuState,
+            [this](AnalyzerContextMenu::Command command)
+            {
+                executeAnalyzerContextAction(command);
+            },
+            [this]
+            {
+                bandContextMenuOpen = false;
+                if (! mouseInsideSpectrum)
+                    nodesTargetOpacity = kNodesIdleOpacity;
+                repaint();
+            });
+    }
+
+    // Platform-native accessibility fallback (Alt/Option-right-click).
+    void showClassicAnalyzerContextMenu(juce::Point<int> pos)
     {
         juce::PopupMenu menu;
 
@@ -1503,27 +1592,34 @@ private:
         menu.addItem(50, "Peak Hold", true, peakHoldOn);
         menu.addItem(40, "Piano Roll Overlay", true, pianoRoll);
 
-        menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(this).withTargetScreenArea({pos, {1, 1}}),
-            [this, showPre, showPost, showDelta, pianoRoll, peakHoldOn](int result)
+        menu.showMenuAsync(juce::PopupMenu::Options()
+                               .withTargetComponent(this)
+                               .withTargetScreenArea(AnalyzerContextMenu::nativePopupScreenArea(localPointToGlobal(pos))),
+            [safeThis = juce::Component::SafePointer<AdvancedSpectrumDisplay>(this),
+             showPre, showPost, showDelta, pianoRoll, peakHoldOn](int result)
             {
+                if (safeThis == nullptr)
+                    return;
+
+                auto& self = *safeThis.getComponent();
                 switch (result)
                 {
-                    case 1: setBoolParameter("showPreSpectrum", !showPre); break;
-                    case 2: setBoolParameter("showPostSpectrum", !showPost); break;
-                    case 3: setBoolParameter("showDeltaSpectrum", !showDelta); break;
-                    case 10: setChoiceParameter("analyzerResolution", 0); break;
-                    case 11: setChoiceParameter("analyzerResolution", 1); break;
-                    case 12: setChoiceParameter("analyzerResolution", 2); break;
-                    case 13: setChoiceParameter("analyzerResolution", 3); break;
-                    case 20: setChoiceParameter("analyzerSpeed", 0); break;
-                    case 21: setChoiceParameter("analyzerSpeed", 1); break;
-                    case 22: setChoiceParameter("analyzerSpeed", 2); break;
-                    case 30: setFloatParameter("spectrumTilt", 0.0f); break;
-                    case 31: setFloatParameter("spectrumTilt", 3.0f); break;
-                    case 32: setFloatParameter("spectrumTilt", 4.5f); break;
-                    case 33: setFloatParameter("spectrumTilt", 6.0f); break;
-                    case 40: setBoolParameter("pianoRollOverlay", !pianoRoll); break;
-                    case 50: setBoolParameter("showPeakHold", !peakHoldOn); break;
+                    case 1: self.setBoolParameter("showPreSpectrum", !showPre); break;
+                    case 2: self.setBoolParameter("showPostSpectrum", !showPost); break;
+                    case 3: self.setBoolParameter("showDeltaSpectrum", !showDelta); break;
+                    case 10: self.setChoiceParameter("analyzerResolution", 0); break;
+                    case 11: self.setChoiceParameter("analyzerResolution", 1); break;
+                    case 12: self.setChoiceParameter("analyzerResolution", 2); break;
+                    case 13: self.setChoiceParameter("analyzerResolution", 3); break;
+                    case 20: self.setChoiceParameter("analyzerSpeed", 0); break;
+                    case 21: self.setChoiceParameter("analyzerSpeed", 1); break;
+                    case 22: self.setChoiceParameter("analyzerSpeed", 2); break;
+                    case 30: self.setFloatParameter("spectrumTilt", 0.0f); break;
+                    case 31: self.setFloatParameter("spectrumTilt", 3.0f); break;
+                    case 32: self.setFloatParameter("spectrumTilt", 4.5f); break;
+                    case 33: self.setFloatParameter("spectrumTilt", 6.0f); break;
+                    case 40: self.setBoolParameter("pianoRollOverlay", !pianoRoll); break;
+                    case 50: self.setBoolParameter("showPeakHold", !peakHoldOn); break;
                     default: break;
                 }
             });
@@ -3452,6 +3548,7 @@ private:
     // the nodes while the user is still looking at the menu.
     bool bandContextMenuOpen = false;
     BandRadialMenu bandRadialMenu;
+    AnalyzerContextMenu analyzerContextMenu;
 
     // ── Tilt drag widget (bottom-left of spectrum) ──────────────────────
     // Click + drag up/down to continuously adjust spectrum tilt (dB/oct).
