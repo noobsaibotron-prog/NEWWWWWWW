@@ -139,6 +139,73 @@ public:
             expect(airPlan.valid && !airPlan.fit.bands.empty());
         }
 
+        beginTest("P1 studio vocabulary: treble/mids/boxy/scoop");
+        {
+            struct Case
+            {
+                const char* phrase;
+                SemanticDimension dimension;
+                bool positive;
+            };
+
+            const Case cases[] = {
+                { "add some treble", SemanticDimension::Brightness, true },
+                { "more highs", SemanticDimension::Brightness, true },
+                { "add some low mids", SemanticDimension::Warmth, true },
+                { "more upper mids", SemanticDimension::Presence, true },
+                { "more bite", SemanticDimension::Presence, true },
+                { "less boxy", SemanticDimension::Clarity, true },
+                { "scoop the mids", SemanticDimension::Presence, false },
+                { "less nasal", SemanticDimension::Presence, true },
+                { "less sibilance", SemanticDimension::Smoothness, true },
+                { "add some punch", SemanticDimension::Punch, true },
+                { "più medi", SemanticDimension::Presence, true },
+                { "più acuti", SemanticDimension::Brightness, true },
+                { "più gravi", SemanticDimension::Weight, true },
+            };
+
+            for (const auto& c : cases)
+            {
+                const auto intent = compiler.compile(c.phrase);
+                const auto* goal = findGoal(intent, c.dimension);
+                expect(intent.isValid() && intent.hasRecognizedContent && !intent.contradictory,
+                       juce::String(c.phrase) + " must compile valid");
+                expect(goal != nullptr,
+                       juce::String(c.phrase) + " must hit the expected dimension");
+                if (goal != nullptr)
+                {
+                    expect(c.positive ? goal->amount > 0.0f : goal->amount < 0.0f,
+                           juce::String(c.phrase) + " has the wrong polarity");
+                }
+            }
+
+            const auto highEnd = compiler.compile("more high end");
+            const auto* highEndGoal = findGoal(highEnd, SemanticDimension::Brightness);
+            expect(highEnd.isValid() && highEndGoal != nullptr);
+            if (highEndGoal != nullptr)
+                expect(highEndGoal->sourcePhrase == "high end",
+                       "highs must not steal the longer high end alias");
+
+            const auto scoop = compiler.compile("scoop the mids");
+            expect(findGoal(scoop, SemanticDimension::Presence) != nullptr);
+            expect(!scoop.contradictory, "scoop the mids must not fight mids");
+
+            const auto expensive = compiler.compile("make it expensive and purple");
+            expect(!expensive.hasRecognizedContent);
+            expect(expensive.goals.empty());
+
+            const auto cinematic = SemanticPlanner().plan("make it cinematic", kSampleRate);
+            expect(!cinematic.intent.hasRecognizedContent);
+            expect(!cinematic.valid, "cinematic must stay unknown, no guess");
+
+            for (const auto* phrase : { "add some treble", "scoop the mids", "less boxy" })
+            {
+                const auto plan = SemanticPlanner().plan(phrase, kSampleRate);
+                expect(plan.valid && !plan.fit.bands.empty(),
+                       juce::String(phrase) + " must PLAN with a non-empty fit");
+            }
+        }
+
         beginTest("Italian deterministic path");
         {
             const auto intent = compiler.compile("piu caldo senza impastato");
