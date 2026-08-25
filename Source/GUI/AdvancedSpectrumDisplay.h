@@ -5,6 +5,7 @@
 #include "AnalyzerContextMenu.h"
 #include "BandRadialMenu.h"
 #include "ModernLookAndFeel.h"
+#include "SpectrumHopLerp.h"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -66,11 +67,13 @@ public:
             bool frozen = freezeButton.getToggleState();
             if (frozen)
             {
-                // Snapshot the displayed (lerped) frame, then stop live rebuilds.
+                // Stable hop frame (t=1 / current inject), never an in-between lerp.
+                hopLerp.t = 1.0f;
+                hopLerp.lerpInto(displayPre, displayPost);
                 if (!displayPre.empty())
                     rebuildLiveSpectrumPaths(true);
                 const juce::SpinLock::ScopedLockType lock(spectrumDataLock);
-                frozenSpectrum = !displayPre.empty() ? displayPre : smoothedSpectrum;
+                frozenSpectrum = SpectrumHopLerp::stableHopFrame(hopLerp.currPre, smoothedSpectrum);
                 isFrozen = true;
             }
             else
@@ -88,7 +91,7 @@ public:
             {
                 const juce::SpinLock::ScopedLockType lock(spectrumDataLock);
                 // Stable hop frame (t=1 / current inject), never an in-between lerp.
-                capturedSpectrum = !hopCurrPre.empty() ? hopCurrPre : smoothedSpectrum;
+                capturedSpectrum = SpectrumHopLerp::stableHopFrame(hopLerp.currPre, smoothedSpectrum);
                 hasCaptured = true;
                 capturedPathDirty = true;
             }
@@ -497,15 +500,15 @@ public:
             if (injectedSpectrumVersion != 0)
             {
                 const bool hopChanged = ingestAndAdvanceSpectrumLerp();
-                const bool tMoved = std::abs(spectrumLerpT - lastRebuiltLerpT) > kLerpRebuildEpsilon
-                                 || ((spectrumLerpT >= 0.999f) != (lastRebuiltLerpT >= 0.999f));
+                const bool tMoved = std::abs(hopLerp.t - lastRebuiltLerpT) > kLerpRebuildEpsilon
+                                 || ((hopLerp.t >= 0.999f) != (lastRebuiltLerpT >= 0.999f));
                 const bool boundsChanged = (lastSpectrumBounds != graphBounds);
                 // Rebuild in-between hop frames from lerped columns even if FFT version is unchanged.
                 // Skip the ~6 ms path+image cost when t is holding at 1 waiting for the next hop.
                 if (isShowing() && (hopChanged || tMoved || boundsChanged || lastRebuiltLerpT < 0.0f))
                 {
                     rebuildLiveSpectrumPaths(true);
-                    lastRebuiltLerpT = spectrumLerpT;
+                    lastRebuiltLerpT = hopLerp.t;
                     rebuiltLive = true;
                 }
             }
@@ -1757,33 +1760,6 @@ private:
         }
     }
 
-    static void lerpPixelDb (const std::vector<float>& prev,
-                             const std::vector<float>& curr,
-                             float t,
-                             std::vector<float>& out)
-    {
-        const size_t n = curr.size();
-        if (n == 0)
-        {
-            out.clear();
-            return;
-        }
-        out.resize(n);
-        if (prev.size() != n || t >= 1.0f)
-        {
-            std::copy(curr.begin(), curr.end(), out.begin());
-            return;
-        }
-        if (t <= 0.0f)
-        {
-            std::copy(prev.begin(), prev.end(), out.begin());
-            return;
-        }
-        const float u = 1.0f - t;
-        for (size_t i = 0; i < n; ++i)
-            out[i] = prev[i] * u + curr[i] * t;
-    }
-
     // P1-5: paint-thread hop interpolation. New inject → snap prev=curr, store curr, t=0.
     // Otherwise advance t toward 1 over ~1 hop interval (last hop dt, clamped 16–50 ms).
     bool ingestAndAdvanceSpectrumLerp()
@@ -1798,38 +1774,18 @@ private:
                 hopChanged = true;
                 lastLerpHopVersion = injectedSpectrumVersion;
 
-                const bool firstHop = hopCurrPre.empty();
-                hopPrevPre.assign(hopCurrPre.begin(), hopCurrPre.end());
-                hopCurrPre.assign(smoothedSpectrum.begin(), smoothedSpectrum.end());
-                hopPrevPost.assign(hopCurrPost.begin(), hopCurrPost.end());
-                hopCurrPost.assign(injectedPostSpectrum.begin(), injectedPostSpectrum.end());
-
-                const bool sizeMismatch = hopPrevPre.size() != hopCurrPre.size();
-                if (firstHop || hopPrevPre.empty() || sizeMismatch)
-                    hopPrevPre.assign(hopCurrPre.begin(), hopCurrPre.end());
-                if (hopPrevPost.empty() || hopPrevPost.size() != hopCurrPost.size())
-                    hopPrevPost.assign(hopCurrPost.begin(), hopCurrPost.end());
-
-                const double gapMs = (lastHopTimeMs > 0.0) ? (nowMs - lastHopTimeMs) : 0.0;
-                // Fresh hop: lerp from previous. First hop / resize / freeze-resume (>100 ms): snap.
-                spectrumLerpT = (firstHop || sizeMismatch || gapMs > 100.0) ? 1.0f : 0.0f;
-
-                if (lastHopTimeMs > 0.0)
-                    hopIntervalMs = juce::jlimit(kHopIntervalMinMs, kHopIntervalMaxMs, nowMs - lastHopTimeMs);
+                const bool hadPreviousHop = lastHopTimeMs > 0.0;
+                const double gapMs = hadPreviousHop ? (nowMs - lastHopTimeMs) : 0.0;
+                hopLerp.ingestHop(smoothedSpectrum, injectedPostSpectrum, gapMs, hadPreviousHop);
                 lastHopTimeMs = nowMs;
             }
         }
 
         if (!hopChanged && lastDisplayTickMs > 0.0)
-        {
-            const double dtMs = nowMs - lastDisplayTickMs;
-            if (dtMs > 0.0)
-                spectrumLerpT = juce::jmin(1.0f, spectrumLerpT + static_cast<float>(dtMs / hopIntervalMs));
-        }
+            hopLerp.advance(nowMs - lastDisplayTickMs);
         lastDisplayTickMs = nowMs;
 
-        lerpPixelDb(hopPrevPre, hopCurrPre, spectrumLerpT, displayPre);
-        lerpPixelDb(hopPrevPost, hopCurrPost, spectrumLerpT, displayPost);
+        hopLerp.lerpInto(displayPre, displayPost);
         return hopChanged;
     }
 
@@ -3596,17 +3552,12 @@ private:
     uint64_t lastInjectedVersion = 0;
 
     // P1-5: previous/current hop columns + displayed lerp (same t for pre and post).
-    std::vector<float> hopPrevPre, hopCurrPre;
-    std::vector<float> hopPrevPost, hopCurrPost;
+    SpectrumHopLerp hopLerp;
     std::vector<float> displayPre, displayPost;
     uint64_t lastLerpHopVersion = 0;
-    float spectrumLerpT = 1.0f;
     float lastRebuiltLerpT = -1.0f;
     double lastHopTimeMs = 0.0;
     double lastDisplayTickMs = 0.0;
-    double hopIntervalMs = 21.0; // ~47 Hz default hop at 4096
-    static constexpr double kHopIntervalMinMs = 16.0;
-    static constexpr double kHopIntervalMaxMs = 50.0;
     static constexpr float kLerpRebuildEpsilon = 0.05f;
 
     // Click detector overlay
