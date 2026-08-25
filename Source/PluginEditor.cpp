@@ -369,10 +369,13 @@ void AIEqualizerAudioProcessorEditor::createHeader()
     
     phaseModeCombo.setJustificationType(juce::Justification::centredLeft);
     phaseModeCombo.setTextWhenNothingSelected("Select");
-    phaseModeCombo.addItem("Zero Latency", 1);
+    // Display labels only — APVTS phaseMode choices stay "Zero Latency"/…
+    // ComboBoxAttachment maps by item index, not text.
+    phaseModeCombo.addItem("Min Phase", 1);
     phaseModeCombo.addItem("Natural Phase", 2);
     phaseModeCombo.addItem("Linear Phase", 3);
-    phaseModeCombo.setTooltip("Processing phase mode");
+    phaseModeCombo.setTooltip(
+        "EQ phase topology: minimum, natural, or linear. Independent of the ZL/HQ lookahead pill.");
     addAndMakeVisible(phaseModeCombo);
     phaseModeAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
         processor.getAPVTS(), "phaseMode", phaseModeCombo);
@@ -488,7 +491,8 @@ void AIEqualizerAudioProcessorEditor::createControlPanel()
     addAndMakeVisible(qualityLabel);
     qualityLabel.setVisible(false);
 
-    qualityBtn.setTooltip("Quality Mode: HQ abilita 5ms di lookahead (piÃ¹ latenza), ZL = zero-latency");
+    qualityBtn.setTooltip(
+        "Dynamic EQ lookahead: ZL = none, HQ = 5 ms. Independent of the phase combo.");
     qualityBtn.setClickingTogglesState(true);
     qualityBtn.setComponentID("qualityToggle");
     qualityBtn.setColour(juce::TextButton::buttonColourId, ModernLookAndFeel::Colors::bgLight);

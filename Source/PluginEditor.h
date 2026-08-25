@@ -62,6 +62,7 @@ private:
 
     AIEqualizerAudioProcessor& processor;
     ModernLookAndFeel lookAndFeel;
+    juce::TooltipWindow tooltipWindow { this };
     
     // Layout
     // Wave 4A: headerH bumped 36 → 44 to give the 20px Bold logo + 20px Bold

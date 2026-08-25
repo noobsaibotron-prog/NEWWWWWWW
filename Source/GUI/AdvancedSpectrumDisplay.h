@@ -59,6 +59,7 @@ public:
         };
 
         setupToolbarBtn(freezeButton, "FREEZE");
+        freezeButton.setTooltip("Freeze the live analyzer display.");
         freezeButton.setClickingTogglesState(true);
         freezeButton.onClick = [this]() {
             bool frozen = freezeButton.getToggleState();
@@ -74,6 +75,7 @@ public:
         addAndMakeVisible(freezeButton);
 
         setupToolbarBtn(captureButton, "CAPTURE");
+        captureButton.setTooltip("Snapshot the current spectrum for SHOW CAPT. Not AI Capture.");
         captureButton.onClick = [this]() {
             {
                 const juce::SpinLock::ScopedLockType lock(spectrumDataLock);
@@ -86,12 +88,16 @@ public:
         };
         addAndMakeVisible(captureButton);
 
+        // 75x20 slot, 12px bold + 0.10 extra kerning: "SHOW CAPTURE" clips.
         showCapturedButton.setButtonText("SHOW CAPT");
+        showCapturedButton.setTooltip(
+            "Show the last captured spectrum as an orange dashed overlay. Use CAPTURE first.");
         showCapturedButton.setColour(juce::ToggleButton::textColourId, ModernLookAndFeel::Colors::textPrimary.withAlpha(0.73f));
         showCapturedButton.setColour(juce::ToggleButton::tickColourId, ModernLookAndFeel::Colors::accentYellow);
         addAndMakeVisible(showCapturedButton);
 
         setupToolbarBtn(clearButton, "CLEAR");
+        clearButton.setTooltip("Clear the captured overlay and unfreeze.");
         clearButton.setColour(juce::TextButton::textColourOffId, ModernLookAndFeel::Colors::textPrimary.withAlpha(0.53f));
         clearButton.onClick = [this]() {
             {
@@ -324,9 +330,10 @@ public:
             const float tiltVal = getAnalyzerSlopeDbPerOct();
             juce::String tiltText;
             if (tiltVal < 0.05f)
-                tiltText = "TILT: FLAT";
+                tiltText = juce::String(juce::CharPointer_UTF8("TONAL TILT \xc2\xb7 FLAT"));
             else
-                tiltText = "TILT: " + juce::String(tiltVal, 1) + " dB";
+                tiltText = juce::String(juce::CharPointer_UTF8("TONAL TILT \xc2\xb7 "))
+                           + juce::String(tiltVal, 1) + " dB/oct";
 
             const auto font = juce::Font(juce::FontOptions().withHeight(10.0f).withStyle("Bold"));
             g.setFont(font);
