@@ -901,6 +901,26 @@ if(AIEQ_MOTORE_V2_EXP AND AIEQ_MOTORE_V2_MODEL_JSON)
     endif()
 endif()
 
+# JUCE may ad-hoc sign the Mach-O before bundle resources have reached their
+# final location.  In that case the AU contains a signed executable but no
+# matching CodeResources file, and macOS/Ableton reject the otherwise valid
+# bundle during discovery.  Sign the completed bundle as the final post-build
+# operation so the signature always covers Info.plist and packaged models.
+if(APPLE)
+    find_program(AIEQ_CODESIGN_EXECUTABLE codesign REQUIRED)
+    foreach(_bundle_target AIEqualizerPro_VST3 AIEqualizerPro_AU)
+        if(TARGET ${_bundle_target})
+            add_custom_command(TARGET ${_bundle_target} POST_BUILD
+                COMMAND "${AIEQ_CODESIGN_EXECUTABLE}"
+                        --force --deep --sign -
+                        "$<TARGET_FILE_DIR:${_bundle_target}>/../.."
+                COMMENT "Ad-hoc signing completed ${_bundle_target} bundle"
+                VERBATIM
+            )
+        endif()
+    endforeach()
+endif()
+
 # Only add sources if target exists
 if(TARGET AIEqualizerPro)
     target_sources(AIEqualizerPro PRIVATE ${PLUGIN_SOURCES})
