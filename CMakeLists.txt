@@ -1383,6 +1383,8 @@ if(HAVE_JUCE)
         Source/Tests/SurgicalAutomationContractTest.cpp
         Source/Tests/HostSessionClickTest.cpp
         Source/Tests/DynEQRoutingOwnershipTest.cpp
+        Source/Tests/PluginExternalSidechainIntegrationTest.cpp
+        Source/Tests/BandControlPanelTest.cpp
         Source/Tests/RBValidationTest.cpp
         Source/Tests/RB4BehavioralTest.cpp
         Source/Tests/RB2EquivalenceTest.cpp
@@ -1443,6 +1445,7 @@ if(HAVE_JUCE)
     aieq_enable_motore_v2_for_target(AIEqualizerPro_IntegrationTests)
     target_link_libraries(AIEqualizerPro_IntegrationTests PRIVATE
         AIEqualizerPro
+        AIEQ_Assets
         juce::juce_core
         juce::juce_audio_basics
         juce::juce_audio_formats   # SemanticPerceptualGateTest: WAV corpus read/write, test-only

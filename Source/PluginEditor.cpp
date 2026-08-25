@@ -1440,6 +1440,14 @@ void AIEqualizerAudioProcessorEditor::timerCallback()
     if (!processor.isProcessorReady())
         return;
 
+    if (selectedBandPanel != nullptr)
+    {
+        selectedBandPanel->refreshRuntimeSemantics();
+        const auto availability = processor.getDynamicDetectorAvailability(selectedBand);
+        selectedBandPanel->setExternalDetectorAvailable(
+            availability == DynamicEQProcessor::DetectorAvailability::ExternalAvailable);
+    }
+
     // A3: keep the semantic panel's sample rate in sync with the host
     // (setSampleRate had no caller — the panel was stuck at 44100).
     if (semanticPanel != nullptr)
@@ -1649,13 +1657,8 @@ void AIEqualizerAudioProcessorEditor::updateBandPositions()
 
 void AIEqualizerAudioProcessorEditor::onBandChanged(int idx, const EQBandControl::BandParameters& p)
 {
-    AIEqualizerAudioProcessor::BandState s;
-    s.frequency = p.frequency;
-    s.gain = p.gain;
-    s.q = p.q;
-    s.type = p.filterType;
-    s.enabled = p.enabled;
-    processor.setBandState(idx, s);
+    processor.setBandGeometry(idx, p.frequency, p.gain, p.q,
+                              p.filterType, p.enabled);
     
     // Update selected band if this is a different band
     if (idx != selectedBand)
