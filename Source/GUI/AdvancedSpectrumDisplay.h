@@ -2081,24 +2081,16 @@ private:
 
         if (!isDraggingBand)
         {
-            // Wave 4A: wider, more diffuse glow halo (10 px @ 0.15 alpha) — the
-            // Liquid Intelligence mockup shows a clearly visible white aura
-            // around the curve, not a thin ethereal outline. The diffuse glow
-            // layer uses eqCurve.withAlpha(0.15f) for a soft, luminous bloom
-            // that reads as "AI light" rather than a hard stroke.
-            g.setColour(ModernLookAndFeel::Colors::eqCurve.withAlpha(0.15f));
-            g.strokePath(cachedEQCurve, juce::PathStrokeType(10.0f, juce::PathStrokeType::curved,
-                                                               juce::PathStrokeType::rounded));
-            // Second, tighter diffuse glow layer for extra definition
-            g.setColour(ModernLookAndFeel::Colors::eqCurve.withAlpha(0.22f));
-            g.strokePath(cachedEQCurve, juce::PathStrokeType(5.0f, juce::PathStrokeType::curved,
+            // P0-A: one soft glow only — drop the 10px + 5px double bloom so
+            // the composite curve stays below selected nodes in the hierarchy.
+            g.setColour(ModernLookAndFeel::Colors::eqCurve.withAlpha(0.10f));
+            g.strokePath(cachedEQCurve, juce::PathStrokeType(4.0f, juce::PathStrokeType::curved,
                                                                juce::PathStrokeType::rounded));
         }
 
-        // Wave 4A: whiter main stroke bumped 1.5 → 2.5 px for presence on HiDPI.
-        // Main opaque white curve sits above the diffuse glow layers.
+        // P0-A: thinner main stroke (was 2.5) — curve is level-1, nodes lead.
         g.setColour(ModernLookAndFeel::Colors::eqCurve.withAlpha(0.95f));
-        g.strokePath(cachedEQCurve, juce::PathStrokeType(2.5f, juce::PathStrokeType::curved,
+        g.strokePath(cachedEQCurve, juce::PathStrokeType(1.7f, juce::PathStrokeType::curved,
                                                            juce::PathStrokeType::rounded));
     }
 
@@ -2173,8 +2165,8 @@ private:
             const bool isActive = aiTooltip.visible
                                && aiTooltip.correctionIdx == static_cast<int>(i);
 
-            const float topA    = isActive ? 0.28f  : 0.10f;
-            const float bottomA = isActive ? 0.08f  : 0.025f;
+            const float topA    = isActive ? 0.20f  : 0.08f;
+            const float bottomA = isActive ? 0.06f  : 0.02f;
 
             const auto topColour    = base.withAlpha(topA);
             const auto bottomColour = base.withAlpha(bottomA);
@@ -2191,7 +2183,7 @@ private:
             if (!isActive)
             {
                 const float xC = juce::jlimit(graphLeft, graphRight, freqToX(freq));
-                g.setColour(base.withAlpha(0.22f));
+                g.setColour(base.withAlpha(0.14f));
                 g.drawLine(xC, graphTop, xC, graphBottom, 1.0f);
             }
 
@@ -2523,8 +2515,7 @@ private:
 
             // Salience scale, not four independent alphas:
             //   kNodesPrimaryEmphasis > kNodesCalmEmphasis > kNodesUnfocusedEmphasis > kNodesIdleOpacity
-            // UI-A3 A/B (calm only; shipping stays A until screenshots):
-            //   A = 0.82  B = 0.70  C = 0.65
+            // P0-A: calm ships at 0.70 (was 0.82) so dense 18–24 band scenes read.
             const float emphasis = isPrimary
                 ? kNodesPrimaryEmphasis
                 : (hasPrimaryFocus ? kNodesUnfocusedEmphasis : kNodesCalmEmphasis);
@@ -2603,21 +2594,21 @@ private:
             // === Node disc — Precise Premium (no permanent amber double-halo) ===
             juce::Rectangle<float> nodeBounds (x - radius, y - radius, radius * 2, radius * 2);
 
-            // Fill — softer than before, scales with emphasis
-            g.setColour(col.withAlpha(0.42f * nOp * emphasis));
+            // Fill — P0-A unselected ~0.22–0.32 after emphasis
+            g.setColour(col.withAlpha(0.28f * nOp * emphasis));
             g.fillEllipse(nodeBounds);
 
             // Inner highlight — gentler specular
-            g.setColour(col.brighter(0.20f).withAlpha(0.14f * nOp * emphasis));
+            g.setColour(col.brighter(0.20f).withAlpha(0.12f * nOp * emphasis));
             g.fillEllipse(nodeBounds.reduced(3.0f));
 
-            // Border ring — primary stays at full weight, others scale with emphasis
+            // Border ring — selected=1.0, hover~0.75, unselected 0.35–0.45
             float ringAlpha;
             float ringThickness;
             if (isDragging)                  { ringAlpha = 1.00f * nOp;            ringThickness = 2.5f; }
-            else if (isSelected)             { ringAlpha = 1.00f * nOp;            ringThickness = 2.5f; }
-            else if (isHovered)              { ringAlpha = 0.92f * nOp;            ringThickness = 2.0f; }
-            else                             { ringAlpha = 0.72f * nOp * emphasis; ringThickness = 1.5f; }
+            else if (isSelected)             { ringAlpha = 1.00f * nOp;            ringThickness = 2.0f; }
+            else if (isHovered)              { ringAlpha = 0.75f * nOp;            ringThickness = 1.8f; }
+            else                             { ringAlpha = 0.40f * nOp * emphasis; ringThickness = 1.5f; }
             g.setColour(col.withAlpha(ringAlpha));
             g.drawEllipse(nodeBounds, ringThickness);
         };
@@ -3330,10 +3321,10 @@ private:
     // it re-enters. Smooth transition driven by timerCallback.
     // These four values are one salience ladder. Do not edit one in isolation.
     //   1.00 > kNodesCalmEmphasis > 0.60 > 0.35
-    // UI-A3 A/B candidates for kNodesCalmEmphasis: A=0.82 (shipping) B=0.70 C=0.65
+    // P0-A: ship calm=0.70 so 18–24 idle nodes don't compete with selection
     static constexpr float kNodesPrimaryEmphasis = 1.00f;
-    static constexpr float kNodesCalmEmphasis = 0.82f;
-    static constexpr float kNodesUnfocusedEmphasis = 0.60f;
+    static constexpr float kNodesCalmEmphasis = 0.70f;
+    static constexpr float kNodesUnfocusedEmphasis = 0.50f;
     static constexpr float kNodesIdleOpacity = 0.35f;
     static_assert(kNodesPrimaryEmphasis > kNodesCalmEmphasis);
     static_assert(kNodesCalmEmphasis > kNodesUnfocusedEmphasis);
