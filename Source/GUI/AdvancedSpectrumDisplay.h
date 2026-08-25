@@ -2,6 +2,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <juce_audio_basics/juce_audio_basics.h>
 #include "../PluginProcessor.h"
+#include "BandRadialMenu.h"
 #include "ModernLookAndFeel.h"
 #include <array>
 #include <cmath>
@@ -33,6 +34,7 @@ public:
     explicit AdvancedSpectrumDisplay(AIEqualizerAudioProcessor& p) : processor(p)
     {
         setOpaque(false);
+        setWantsKeyboardFocus(true);
         startTimerHz(60);
         smoothedSpectrum.resize(512, spectrumMinDb);
         frozenSpectrum.resize(512, spectrumMinDb);
@@ -100,6 +102,11 @@ public:
             showCapturedButton.setToggleState(false, juce::dontSendNotification);
         };
         addAndMakeVisible(clearButton);
+
+        // Hidden until a band node is right-clicked.  It is a child overlay,
+        // not a native popup, so its bubble animation stays clipped to and
+        // visually integrated with the graph.
+        addChildComponent(bandRadialMenu);
     }
     
     ~AdvancedSpectrumDisplay() override { stopTimer(); }
@@ -418,10 +425,13 @@ public:
         captureButton.setBounds(startX + btnW + gap, startY, btnW, btnH);
         showCapturedButton.setBounds(startX + (btnW + gap) * 2, startY, btnW + 10, btnH);
         clearButton.setBounds(startX + (btnW + gap) * 2 + btnW + 10 + gap, startY, 50, btnH);
+        bandRadialMenu.setBounds(getLocalBounds());
     }
     
     void timerCallback() override
     {
+        bandRadialMenu.advanceAnimation();
+
         // SAFETY: Skip processing if processor not ready
         if (!processor.isProcessorReady())
         {
@@ -435,7 +445,7 @@ public:
         // If visible but idle, 30Hz is enough. 60Hz only during active interaction.
         {
             const bool windowVisible = isShowing();
-            const bool interacting = isDraggingBand || hoverX >= 0;
+            const bool interacting = isDraggingBand || hoverX >= 0 || bandRadialMenu.isOpen();
             const int desiredHz = !windowVisible ? 5
                                 : interacting    ? 60
                                                  : 30;
@@ -728,10 +738,12 @@ public:
                 selectedBandIndex = clickedBand;
                 if (onBandSelected)
                     onBandSelected(clickedBand);
-                // Keep nodes visible while the context menu is open
-                bandContextMenuOpen = true;
-                nodesTargetOpacity = 1.0f;
-                showBandContextMenu(e.getPosition(), clickedBand);
+                // Alt/Option preserves the native JUCE menu as a discoverable
+                // fallback.  The normal path is the in-graph radial menu.
+                if (e.mods.isAltDown())
+                    showClassicBandContextMenu(e.getPosition(), clickedBand);
+                else
+                    showBandRadialMenu(e.position, clickedBand);
             }
             else
             {
@@ -848,6 +860,12 @@ public:
     
     void mouseDrag(const juce::MouseEvent& e) override
     {
+        if (bandRadialMenu.isOpen() && bandRadialMenu.isMarkingGestureActive())
+        {
+            bandRadialMenu.updateMarkingGesture(e.position);
+            return;
+        }
+
         // Tilt drag: vertical movement adjusts dB/oct continuously
         if (isDraggingTilt)
         {
@@ -899,8 +917,17 @@ public:
         }
     }
     
-    void mouseUp(const juce::MouseEvent&) override
+    void mouseUp(const juce::MouseEvent& e) override
     {
+        // On macOS JUCE no longer reports rightButtonDown on the release event.
+        // The menu therefore owns the gesture explicitly instead of inferring
+        // it again from mouse-up modifiers.
+        if (bandRadialMenu.isOpen() && bandRadialMenu.isMarkingGestureActive())
+        {
+            bandRadialMenu.endMarkingGesture(e.position);
+            return;
+        }
+
         if (isDraggingTilt)
         {
             isDraggingTilt = false;
@@ -909,6 +936,26 @@ public:
         }
         isDraggingBand = false;
         draggedBandIndex = -1;
+    }
+
+    bool keyPressed(const juce::KeyPress& key) override
+    {
+        // Keyboard users retain the platform-native menu, whose semantics and
+        // accessibility are provided by JUCE.  The radial menu remains a fast
+        // pointer/marking-menu surface rather than replacing that fallback.
+        if (key.getKeyCode() == juce::KeyPress::F10Key && key.getModifiers().isShiftDown())
+        {
+            if (selectedBandIndex >= 0 && selectedBandIndex < processor.getNumActiveBands())
+            {
+                const auto state = processor.getBandState(selectedBandIndex);
+                showClassicBandContextMenu({ static_cast<int>(freqToX(state.frequency)),
+                                             static_cast<int>(gainToY(state.gain)) },
+                                           selectedBandIndex);
+                return true;
+            }
+        }
+
+        return false;
     }
     
     void mouseDoubleClick(const juce::MouseEvent& e) override
@@ -1257,14 +1304,95 @@ private:
         repaint();
     }
 
-    // ── Per-band right-click context menu (FabFilter / Sonible style) ───────
-    void showBandContextMenu(juce::Point<int> pos, int bandIndex)
+    void executeBandContextAction(int bandIndex, BandRadialMenu::Command command)
     {
         if (bandIndex < 0 || bandIndex >= processor.getNumActiveBands())
             return;
 
         auto state = processor.getBandState(bandIndex);
-        juce::Colour bandCol = bandColors[static_cast<size_t>(bandIndex)];
+        switch (command.type)
+        {
+            case BandRadialMenu::CommandType::setFilterType:
+                if (command.value >= 0 && command.value < 7)
+                {
+                    state.type = command.value;
+                    processor.setBandState(bandIndex, state);
+                }
+                break;
+
+            case BandRadialMenu::CommandType::toggleEnabled:
+                state.enabled = !state.enabled;
+                processor.setBandState(bandIndex, state);
+                break;
+
+            case BandRadialMenu::CommandType::toggleSolo:
+                state.solo = !state.solo;
+                processor.setBandState(bandIndex, state);
+                break;
+
+            case BandRadialMenu::CommandType::resetGain:
+                state.gain = 0.0f;
+                processor.setBandState(bandIndex, state);
+                break;
+
+            case BandRadialMenu::CommandType::resetBand:
+                state.gain = 0.0f;
+                state.q = 1.0f;
+                state.type = 2; // Peak
+                state.solo = false;
+                processor.setBandState(bandIndex, state);
+                break;
+
+            case BandRadialMenu::CommandType::deleteBand:
+                deleteBand(bandIndex);
+                break;
+        }
+
+        repaint();
+    }
+
+    void showBandRadialMenu(juce::Point<float> pointerPosition, int bandIndex)
+    {
+        if (bandIndex < 0 || bandIndex >= processor.getNumActiveBands())
+            return;
+
+        bandContextMenuOpen = true;
+        nodesTargetOpacity = 1.0f;
+
+        const auto state = processor.getBandState(bandIndex);
+        const juce::Point<float> nodeAnchor(freqToX(state.frequency), gainToY(state.gain));
+        const auto colour = bandColors[static_cast<size_t>(bandIndex)];
+
+        bandRadialMenu.open(
+            nodeAnchor,
+            graphBounds,
+            colour,
+            state.enabled,
+            state.solo,
+            [this, bandIndex](BandRadialMenu::Command command)
+            {
+                executeBandContextAction(bandIndex, command);
+            },
+            [this]
+            {
+                bandContextMenuOpen = false;
+                if (!mouseInsideSpectrum)
+                    nodesTargetOpacity = kNodesIdleOpacity;
+                repaint();
+            });
+        bandRadialMenu.beginMarkingGesture(pointerPosition);
+    }
+
+    // ── Platform-native fallback (Alt/Option-right-click or Shift+F10) ──────
+    void showClassicBandContextMenu(juce::Point<int> pos, int bandIndex)
+    {
+        if (bandIndex < 0 || bandIndex >= processor.getNumActiveBands())
+            return;
+
+        bandContextMenuOpen = true;
+        nodesTargetOpacity = 1.0f;
+
+        auto state = processor.getBandState(bandIndex);
 
         juce::PopupMenu menu;
 
@@ -1306,42 +1434,20 @@ private:
 
                 if (result == 0) return; // dismissed without selection
 
-                auto s = processor.getBandState(bandIndex);
-
                 if (result >= 100 && result < 107)
                 {
-                    // Filter type change
-                    s.type = result - 100;
-                    processor.setBandState(bandIndex, s);
+                    executeBandContextAction(bandIndex,
+                        { BandRadialMenu::CommandType::setFilterType, result - 100 });
                 }
                 else switch (result)
                 {
-                    case 10: // Toggle enable
-                        s.enabled = !s.enabled;
-                        processor.setBandState(bandIndex, s);
-                        break;
-                    case 11: // Toggle solo
-                        s.solo = !s.solo;
-                        processor.setBandState(bandIndex, s);
-                        break;
-                    case 20: // Reset gain
-                        s.gain = 0.0f;
-                        processor.setBandState(bandIndex, s);
-                        break;
-                    case 21: // Reset band to defaults
-                        s.gain = 0.0f;
-                        s.q = 1.0f;
-                        s.type = 2; // Peak
-                        s.solo = false;
-                        processor.setBandState(bandIndex, s);
-                        break;
-                    case 30: // Delete band
-                        deleteBand(bandIndex);
-                        break;
+                    case 10: executeBandContextAction(bandIndex, { BandRadialMenu::CommandType::toggleEnabled, 0 }); break;
+                    case 11: executeBandContextAction(bandIndex, { BandRadialMenu::CommandType::toggleSolo, 0 }); break;
+                    case 20: executeBandContextAction(bandIndex, { BandRadialMenu::CommandType::resetGain, 0 }); break;
+                    case 21: executeBandContextAction(bandIndex, { BandRadialMenu::CommandType::resetBand, 0 }); break;
+                    case 30: executeBandContextAction(bandIndex, { BandRadialMenu::CommandType::deleteBand, 0 }); break;
                     default: break;
                 }
-
-                repaint();
             });
     }
 
@@ -2624,7 +2730,7 @@ private:
 
         // Tooltip for selected band — FabFilter-style floating info panel
         // Visible only when nodes are visible AND not dragging
-        if (!isDraggingBand && nOp > 0.3f
+        if (!isDraggingBand && !bandRadialMenu.isOpen() && nOp > 0.3f
             && selectedBandIndex >= 0 && selectedBandIndex < maxBands)
         {
             auto state = processor.getBandState(selectedBandIndex);
@@ -3341,6 +3447,7 @@ private:
     // Without this, mouseExit fires when the popup appears, fading out
     // the nodes while the user is still looking at the menu.
     bool bandContextMenuOpen = false;
+    BandRadialMenu bandRadialMenu;
 
     // ── Tilt drag widget (bottom-left of spectrum) ──────────────────────
     // Click + drag up/down to continuously adjust spectrum tilt (dB/oct).
