@@ -119,6 +119,26 @@ public:
                 expect(weight->kind == SemanticConstraintKind::Preserve);
         }
 
+        beginTest("P0-C studio phrases: add bass / add mids / more air");
+        {
+            const auto bass = compiler.compile("add some bass");
+            const auto mids = compiler.compile("add some mids");
+            const auto air  = compiler.compile("more air");
+            expect(bass.isValid() && findGoal(bass, SemanticDimension::Weight) != nullptr,
+                   "add some bass must compile to +Weight");
+            expect(mids.isValid() && findGoal(mids, SemanticDimension::Presence) != nullptr,
+                   "add some mids must compile to +Presence");
+            expect(air.isValid() && findGoal(air, SemanticDimension::Brightness) != nullptr,
+                   "more air must compile to +Brightness");
+
+            const auto bassPlan = SemanticPlanner().plan("add some bass", kSampleRate);
+            const auto midsPlan = SemanticPlanner().plan("add some mids", kSampleRate);
+            const auto airPlan  = SemanticPlanner().plan("more air", kSampleRate);
+            expect(bassPlan.valid && !bassPlan.fit.bands.empty());
+            expect(midsPlan.valid && !midsPlan.fit.bands.empty());
+            expect(airPlan.valid && !airPlan.fit.bands.empty());
+        }
+
         beginTest("Italian deterministic path");
         {
             const auto intent = compiler.compile("piu caldo senza impastato");

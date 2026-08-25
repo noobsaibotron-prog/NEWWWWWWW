@@ -160,6 +160,8 @@ public:
     // Dynamic EQ metering (GUI-safe, independent of processing path)
     [[nodiscard]] DynamicEQProcessor::BandMeter getDynamicBandMeter(int bandIndex) const noexcept;
     [[nodiscard]] float getDynamicTotalGainReduction() const noexcept;
+    [[nodiscard]] DynamicEQProcessor::DetectorAvailability
+        getDynamicDetectorAvailability(int bandIndex) const noexcept;
     
     [[nodiscard]] AIEngine& getAIEngine() noexcept { return aiEngine; }
     [[nodiscard]] const AIEngine& getAIEngine() const noexcept { return aiEngine; }
@@ -313,6 +315,10 @@ public:
         int slope = 0;
         int dynMode = 0;
         int dynTrigger = DynamicEQProcessor::TriggerSide_Above;
+        int detectionMode = DynamicEQProcessor::DetectionMode_RMS;
+        int detectorSource = DynamicEQProcessor::DetectorSource_InternalWideband;
+        float sidechainFrequency = 1000.0f;
+        float sidechainQ = 1.0f;
         float dynThreshold = -24.0f;
         float dynRatio = 2.0f;
         float dynAttack = 10.0f;
@@ -333,6 +339,11 @@ public:
      * Changes are applied through APVTS for host automation support.
      */
     void setBandState(int bandIndex, const BandState& state);
+
+    // UI graph edits own only geometry.  Keeping this merge at processor level
+    // prevents legacy node gestures from resetting newer per-band state.
+    void setBandGeometry(int bandIndex, float frequency, float gain, float q,
+                         int type, bool enabled);
     
     [[nodiscard]] int getNumActiveBands() const noexcept { return numActiveBands.load(std::memory_order_relaxed); }
     void setNumActiveBands(int n) noexcept;
@@ -631,6 +642,22 @@ private:
     // High-Quality processors (Natural Phase path with oversampling)
     ParametricEQProcessor eqProcessorHQ;
     DynamicEQProcessor dynamicEQProcessorHQ;
+
+    // The optional external sidechain is a distinct input bus.  It must never
+    // be counted as a main-program channel or processed by the audible EQ.
+    // Natural phase upsamples it through an identical mono chain so detector
+    // and programme reach the HQ Dynamic EQ on the same time grid.  Linear
+    // phase uses the dedicated delay below to align the detector with the
+    // convolved programme before the intentional Dynamic EQ lookahead.
+    std::unique_ptr<juce::dsp::Oversampling<float>> sidechainOversampler2x;
+    std::unique_ptr<juce::dsp::Oversampling<float>> sidechainOversampler4x;
+    alignas(64) juce::AudioBuffer<float> sidechainInputScratch;
+    alignas(64) juce::AudioBuffer<float> linearAlignedSidechainBuffer;
+    alignas(64) juce::AudioBuffer<float> linearSidechainDelayBuffer;
+    int linearSidechainDelayWritePos = 0;
+    int linearSidechainDelayBufferSize = 0;
+    int linearPhasePreDynamicLatencySamples = 0;
+    bool externalSidechainWasAvailable = false; // audio-thread owned after prepare
 
     // Dynamic EQ metering cache (aggregated across processing paths)
     struct DynamicMeterCacheEntry
@@ -1113,6 +1140,10 @@ private:
         std::atomic<float>* solo = nullptr;
         std::atomic<float>* dynMode = nullptr;
         std::atomic<float>* dynTrigger = nullptr;
+        std::atomic<float>* detectionMode = nullptr;
+        std::atomic<float>* detectorSource = nullptr;
+        std::atomic<float>* sidechainFreq = nullptr;
+        std::atomic<float>* sidechainQ = nullptr;
         std::atomic<float>* dynThreshold = nullptr;
         std::atomic<float>* dynRatio = nullptr;
         std::atomic<float>* dynAttack = nullptr;

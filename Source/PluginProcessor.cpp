@@ -115,6 +115,10 @@ AIEqualizerAudioProcessor::AIEqualizerAudioProcessor()
         // never updated the SmoothedValues - causing the GR meter to freeze.
         eqParameterIDs.push_back(prefix + "DynMode");
         eqParameterIDs.push_back(prefix + "DynTrigger");
+        eqParameterIDs.push_back(prefix + "DetectionMode");
+        eqParameterIDs.push_back(prefix + "DetectorSource");
+        eqParameterIDs.push_back(prefix + "SidechainFreq");
+        eqParameterIDs.push_back(prefix + "SidechainQ");
         eqParameterIDs.push_back(prefix + "Threshold");
         eqParameterIDs.push_back(prefix + "Ratio");
         eqParameterIDs.push_back(prefix + "Attack");
@@ -145,8 +149,12 @@ AIEqualizerAudioProcessor::AIEqualizerAudioProcessor()
         auto initSlot = [](EQSlot& slot, const char* name) {
             slot.bands.fill(BandState());
             for (int i = 0; i < maxBands; ++i)
+            {
                 slot.bands[static_cast<size_t>(i)].frequency =
                     AIEQDSP::defaultBandFrequencies[static_cast<size_t>(i)];
+                slot.bands[static_cast<size_t>(i)].sidechainFrequency =
+                    AIEQDSP::defaultBandFrequencies[static_cast<size_t>(i)];
+            }
             slot.name = name;
         };
         initSlot(slotA, "A");
@@ -1116,6 +1124,49 @@ juce::AudioProcessorValueTreeState::ParameterLayout AIEqualizerAudioProcessor::c
             DynamicEQProcessor::TriggerSide_Above));
     }
 
+    // Append-only detector surface. Keep these four complete per-band blocks
+    // at the host-surface tail; inserting them into the historical band group
+    // would renumber existing automation parameters.
+    for (int i = 0; i < AIEqualizerAudioProcessor::maxBands; ++i)
+    {
+        const auto prefix = "band" + juce::String(i);
+        params.push_back(std::make_unique<juce::AudioParameterChoice>(
+            juce::ParameterID{prefix + "DetectionMode", 2},
+            "Band " + juce::String(i + 1) + " Detection Mode",
+            juce::StringArray{"Peak", "RMS"},
+            DynamicEQProcessor::DetectionMode_RMS));
+    }
+
+    for (int i = 0; i < AIEqualizerAudioProcessor::maxBands; ++i)
+    {
+        const auto prefix = "band" + juce::String(i);
+        params.push_back(std::make_unique<juce::AudioParameterChoice>(
+            juce::ParameterID{prefix + "DetectorSource", 2},
+            "Band " + juce::String(i + 1) + " Detector Source",
+            juce::StringArray{"Internal Wideband", "Internal Filtered",
+                              "External Wideband", "External Filtered"},
+            DynamicEQProcessor::DetectorSource_InternalWideband));
+    }
+
+    for (int i = 0; i < AIEqualizerAudioProcessor::maxBands; ++i)
+    {
+        const auto prefix = "band" + juce::String(i);
+        params.push_back(std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID{prefix + "SidechainFreq", 2},
+            "Band " + juce::String(i + 1) + " Sidechain Freq",
+            juce::NormalisableRange<float>(20.0f, 20000.0f, 1.0f, 0.25f),
+            AIEQDSP::defaultBandFrequencies[static_cast<size_t>(i)]));
+    }
+
+    for (int i = 0; i < AIEqualizerAudioProcessor::maxBands; ++i)
+    {
+        const auto prefix = "band" + juce::String(i);
+        params.push_back(std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID{prefix + "SidechainQ", 2},
+            "Band " + juce::String(i + 1) + " Sidechain Q",
+            juce::NormalisableRange<float>(0.1f, 10.0f, 0.01f, 0.5f), 1.0f));
+    }
+
     return {params.begin(), params.end()};
 }
 
@@ -1136,6 +1187,10 @@ void AIEqualizerAudioProcessor::cacheParameterPointers()
         cachedParams[i].solo = apvts.getRawParameterValue(prefix + "Solo");
         cachedParams[i].dynMode = apvts.getRawParameterValue(prefix + "DynMode");
         cachedParams[i].dynTrigger = apvts.getRawParameterValue(prefix + "DynTrigger");
+        cachedParams[i].detectionMode = apvts.getRawParameterValue(prefix + "DetectionMode");
+        cachedParams[i].detectorSource = apvts.getRawParameterValue(prefix + "DetectorSource");
+        cachedParams[i].sidechainFreq = apvts.getRawParameterValue(prefix + "SidechainFreq");
+        cachedParams[i].sidechainQ = apvts.getRawParameterValue(prefix + "SidechainQ");
         cachedParams[i].dynThreshold = apvts.getRawParameterValue(prefix + "Threshold");
         cachedParams[i].dynRatio = apvts.getRawParameterValue(prefix + "Ratio");
         cachedParams[i].dynAttack = apvts.getRawParameterValue(prefix + "Attack");
@@ -1197,19 +1252,20 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
                          + juce::String(static_cast<int>((LinearPhaseProcessor::usePartitioned
                              ? LinearPhaseProcessor::partSize : LinearPhaseProcessor::hopSize) * 1000.0 / sampleRate)) + " ms.");
     currentBlockSize = samplesPerBlock;
-    preparedNumInputChannels = getTotalNumInputChannels();
+    const int mainInputChannels = getChannelCountOfBus(true, 0);
+    preparedNumInputChannels = mainInputChannels;
     preallocatedMaxSamples = juce::jmax(samplesPerBlock * 4, 32768);
     blockClampEvents.store(0, std::memory_order_relaxed);
-    dryBuffer.setSize(getTotalNumInputChannels(), preallocatedMaxSamples, false, true, false);
+    dryBuffer.setSize(mainInputChannels, preallocatedMaxSamples, false, true, false);
     dryBuffer.clear();
     // Dry/wet delay lines for phase-aligned bypass crossfade (Maximum Latency Padding)
     dryDelayBufferSize = preallocatedMaxSamples + 8192;
-    dryDelayBuffer.setSize(getTotalNumInputChannels(), dryDelayBufferSize, false, true, false);
+    dryDelayBuffer.setSize(mainInputChannels, dryDelayBufferSize, false, true, false);
     dryDelayBuffer.clear();
     dryDelayWritePos = 0;
     dryDelayLength = 0;
     wetPaddingBufferSize = preallocatedMaxSamples + 8192;
-    wetPaddingDelayBuffer.setSize(getTotalNumInputChannels(), wetPaddingBufferSize, false, true, false);
+    wetPaddingDelayBuffer.setSize(mainInputChannels, wetPaddingBufferSize, false, true, false);
     wetPaddingDelayBuffer.clear();
     wetPaddingWritePos = 0;
     wetPaddingDelaySamples = 0;
@@ -1217,14 +1273,14 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     wetPadLastSamples = 0;
     wetPadRampStart   = 0;
     wetPadRampActive  = false;
-    phaseTransitionBuffer.setSize(getTotalNumInputChannels(), preallocatedMaxSamples, false, true, false);
+    phaseTransitionBuffer.setSize(mainInputChannels, preallocatedMaxSamples, false, true, false);
     phaseTransitionBuffer.clear();
-    oversamplingTransitionBuffer.setSize(getTotalNumInputChannels(), preallocatedMaxSamples, false, true, false);
+    oversamplingTransitionBuffer.setSize(mainInputChannels, preallocatedMaxSamples, false, true, false);
     oversamplingTransitionBuffer.clear();
-    msModeTransitionBuffer.setSize(getTotalNumInputChannels(), preallocatedMaxSamples, false, true, false);
+    msModeTransitionBuffer.setSize(mainInputChannels, preallocatedMaxSamples, false, true, false);
     msModeTransitionBuffer.clear();
     // Pre-allocate LP first-load crossfade buffer — NEVER allocate on audio thread
-    lpFirstLoadFallbackBuf.setSize(getTotalNumInputChannels(), preallocatedMaxSamples, false, true, false);
+    lpFirstLoadFallbackBuf.setSize(mainInputChannels, preallocatedMaxSamples, false, true, false);
     lpFirstLoadFallbackBuf.clear();
     phaseTransitionFromMode.store(-1, std::memory_order_relaxed);
     phaseTransitionSamplesRemaining.store(0, std::memory_order_relaxed);
@@ -1242,11 +1298,11 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     // === SOLO ACOUSTIC MONITOR SETUP ===
     soloMonitorFilterL.reset();
     soloMonitorFilterR.reset();
-    preProcessingInputCopy.setSize(getTotalNumInputChannels(), preallocatedMaxSamples, false, true, false);
+    preProcessingInputCopy.setSize(mainInputChannels, preallocatedMaxSamples, false, true, false);
     preProcessingInputCopy.clear();
-    soloOutputBuffer.setSize(getTotalNumInputChannels(), preallocatedMaxSamples, false, true, false);
+    soloOutputBuffer.setSize(mainInputChannels, preallocatedMaxSamples, false, true, false);
     soloOutputBuffer.clear();
-    soloWarmupBuffer.setSize(getTotalNumInputChannels(), preallocatedMaxSamples, false, true, false);
+    soloWarmupBuffer.setSize(mainInputChannels, preallocatedMaxSamples, false, true, false);
     soloWarmupBuffer.clear();
 
     auto toResolution = [](int idx) {
@@ -1278,8 +1334,8 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
 
     // 2. CRITICAL: Prepare shadow processor BEFORE updateEQFromParameters()
     //    This sets currentSampleRate and isPrepared flag needed by getMagnitudeForFrequency()
-    eqProcessorForIR.prepare(sampleRate, samplesPerBlock, getTotalNumInputChannels());
-    dynamicEQProcessorForIR.prepare(sampleRate, samplesPerBlock, getTotalNumInputChannels());
+    eqProcessorForIR.prepare(sampleRate, samplesPerBlock, mainInputChannels);
+    dynamicEQProcessorForIR.prepare(sampleRate, samplesPerBlock, mainInputChannels);
 
     // 3. Synchronize coefficients from APVTS to shadow processor
     updateEQFromParameters();
@@ -1353,8 +1409,8 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     aiFrontEndFrames.store(0, std::memory_order_relaxed);
     aiFrontEndMeanNs.store(0.0, std::memory_order_relaxed);
     aiFrontEndMaxNs.store(0, std::memory_order_relaxed);
-    eqProcessor.prepare(sampleRate, samplesPerBlock, getTotalNumInputChannels());
-    dynamicEQProcessor.prepare(sampleRate, samplesPerBlock, getTotalNumInputChannels());
+    eqProcessor.prepare(sampleRate, samplesPerBlock, mainInputChannels);
+    dynamicEQProcessor.prepare(sampleRate, samplesPerBlock, mainInputChannels);
 
     // NOTE: Shadow processors already prepared earlier (before updateEQFromParameters)
 
@@ -1365,7 +1421,7 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     dynamicEQProcessorSide.prepare(sampleRate, samplesPerBlock, 1);
 
     // M/S buffer
-    if (getTotalNumInputChannels() >= 2)
+    if (mainInputChannels >= 2)
     {
         msBuffer.setSize(2, preallocatedMaxSamples, false, false, true);
         msBuffer.clear();
@@ -1383,7 +1439,7 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
 
     // Always create both oversamplers so Auto mode can select at runtime without re-allocating.
     oversampler2x = std::make_unique<juce::dsp::Oversampling<float>>(
-        static_cast<size_t>(getTotalNumInputChannels()),
+        static_cast<size_t>(mainInputChannels),
         1,
         juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR,
         true);
@@ -1391,19 +1447,30 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     oversampler2x->initProcessing(static_cast<size_t>(samplesPerBlock));
 
     oversampler4x = std::make_unique<juce::dsp::Oversampling<float>>(
-        static_cast<size_t>(getTotalNumInputChannels()),
+        static_cast<size_t>(mainInputChannels),
         2,
         juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR,
         true);
     oversampler4x->reset();
     oversampler4x->initProcessing(static_cast<size_t>(samplesPerBlock));
 
+    // A separate mono oversampling chain keeps the external detector aligned
+    // with the programme without ever feeding it through the audible EQ.
+    sidechainOversampler2x = std::make_unique<juce::dsp::Oversampling<float>>(
+        1, 1, juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR, true);
+    sidechainOversampler2x->reset();
+    sidechainOversampler2x->initProcessing(static_cast<size_t>(samplesPerBlock));
+    sidechainOversampler4x = std::make_unique<juce::dsp::Oversampling<float>>(
+        1, 2, juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR, true);
+    sidechainOversampler4x->reset();
+    sidechainOversampler4x->initProcessing(static_cast<size_t>(samplesPerBlock));
+
     // HQ (NaturalPhase) processors: allocate DynEQ for the worst-case 4x capacity
     // outside the audio callback, then retune to the active rate without resizing.
     // "Off" intentionally shares the same 2x HQ path as 2x to keep the Natural-phase chain coherent.
     const int activeHqMultiplier = (osFactor == 2 ? 4 : 2); // 0,1 -> 2x ; 2 -> 4x ; 3(Auto) starts 2x
     constexpr int maxHqMultiplier = 4;
-    const int channels = getTotalNumInputChannels();
+    const int channels = mainInputChannels;
     const int maxHqBlockCapacity = preallocatedMaxSamples * maxHqMultiplier;
     const int activeHqBlockCapacity = preallocatedMaxSamples * activeHqMultiplier;
     const double activeHqSampleRate = sampleRate * static_cast<double>(activeHqMultiplier);
@@ -1426,14 +1493,16 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
 
     naturalPhaseLatency = static_cast<int>(oversampler2x->getLatencyInSamples());
     const int maxHQSamples = maxHqBlockCapacity;
-    naturalOversampledBuffer.setSize(getTotalNumInputChannels(), maxHQSamples, false, false, true);
+    naturalOversampledBuffer.setSize(mainInputChannels, maxHQSamples, false, false, true);
     naturalOversampledBuffer.clear();
+    sidechainInputScratch.setSize(1, preallocatedMaxSamples, false, false, true);
+    sidechainInputScratch.clear();
 
     // Linear-phase processors (double-buffer)
     juce::dsp::ProcessSpec spec;
     spec.sampleRate = sampleRate;
     spec.maximumBlockSize = static_cast<juce::uint32>(samplesPerBlock);
-    spec.numChannels = static_cast<juce::uint32>(getTotalNumInputChannels());
+    spec.numChannels = static_cast<juce::uint32>(mainInputChannels);
     for (auto& lp : linearPhaseProcessors)
     {
         lp = std::make_unique<LinearPhaseProcessor>();
@@ -1446,7 +1515,7 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     readyIRIndex.store(-1);
 
     // FIX: Pre-allocate crossfade buffer for smooth IR transitions
-    crossfadeBuffer.setSize(getTotalNumInputChannels(), preallocatedMaxSamples);
+    crossfadeBuffer.setSize(mainInputChannels, preallocatedMaxSamples);
     crossfadeBuffer.clear();
     crossfadeSamplesRemaining.store(0, std::memory_order_relaxed);
 
@@ -1473,10 +1542,24 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     primeBandSmoothers(sampleRate);
 
     // Linear-phase delay buffer for fallback alignment (no realloc in audio thread)
+    linearPhasePreDynamicLatencySamples = static_cast<int>(
+        LinearPhaseProcessor::usePartitioned
+            ? (LinearPhaseProcessor::partSize + LinearPhaseProcessor::irSize / 2)
+            : (LinearPhaseProcessor::hopSize + LinearPhaseProcessor::irSize / 2));
     const int lpDelaySamples = worstCaseLatencySamples + preallocatedMaxSamples;
-    linearPhaseDelayBuffer.setSize(getTotalNumInputChannels(), lpDelaySamples, false, false, true);
+    linearPhaseDelayBuffer.setSize(mainInputChannels, lpDelaySamples, false, false, true);
     linearPhaseDelayBuffer.clear();
     linearPhaseDelayWritePos = 0;
+    linearSidechainDelayBufferSize = linearPhasePreDynamicLatencySamples
+                                   + preallocatedMaxSamples + 1;
+    linearSidechainDelayBuffer.setSize(
+        1, linearSidechainDelayBufferSize, false, false, true);
+    linearSidechainDelayBuffer.clear();
+    linearAlignedSidechainBuffer.setSize(
+        1, preallocatedMaxSamples, false, false, true);
+    linearAlignedSidechainBuffer.clear();
+    linearSidechainDelayWritePos = 0;
+    externalSidechainWasAvailable = false;
 
     // Apply quality/latency mode to dynamic EQ lookahead
     // RB-4 FIX: prepare() already pre-allocates for max 20ms and setLookahead()
@@ -1501,7 +1584,7 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     dynamicCorrectionEngine.prepare(sampleRate, samplesPerBlock, getTotalNumOutputChannels());
 
     // Prepare lock-free capture service (replaces old mutex-based capture)
-    captureService.prepare(sampleRate, getTotalNumInputChannels(), samplesPerBlock);
+    captureService.prepare(sampleRate, mainInputChannels, samplesPerBlock);
 
     // Initialize bands if not already initialized
     if (eqProcessor.getNumBands() == 0)
@@ -1553,9 +1636,7 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
         // LP latency = block buffering (partSize) + zero-phase IR group delay (irSize/2).
         // The IR peak sits at tap irSize/2 = 2048, so the convolver output is delayed
         // by partSize + irSize/2 samples relative to the raw input.
-        const int lpLatency = static_cast<int>(LinearPhaseProcessor::usePartitioned
-                                               ? (LinearPhaseProcessor::partSize + LinearPhaseProcessor::irSize / 2)
-                                               : (LinearPhaseProcessor::hopSize  + LinearPhaseProcessor::irSize / 2));
+        const int lpLatency = linearPhasePreDynamicLatencySamples;
         int oversamplingLatency = naturalPhaseLatency;
         if (oversampler4x)
             oversamplingLatency = std::max(oversamplingLatency,
@@ -1631,10 +1712,16 @@ bool AIEqualizerAudioProcessor::isBusesLayoutSupported(const BusesLayout& layout
 }
 
 //==============================================================================
-void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
+void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& processBuffer,
                                               juce::MidiBuffer& /*midiMessages*/)
 {
     juce::ScopedNoDenormals noDenormals;
+
+    // JUCE flattens all buses into processBuffer.  Work exclusively on the
+    // main output view so a mono sidechain can never masquerade as the right
+    // programme channel (especially for mono-main + mono-SC layouts).
+    auto buffer = getBusBuffer(processBuffer, false, 0);
+    auto sidechainBus = getBusBuffer(processBuffer, true, 1);
 
     // Guard: if prepareToPlay has not completed yet (e.g. host calls processBlock
     // during plugin scan before prepareToPlay), pass audio through silently and return.
@@ -1644,8 +1731,8 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         return;
     }
 
-    auto totalNumInputChannels = getTotalNumInputChannels();
-    auto totalNumOutputChannels = getTotalNumOutputChannels();
+    const int totalNumInputChannels = buffer.getNumChannels();
+    const int totalNumOutputChannels = buffer.getNumChannels();
     const int inputBlockSamples = buffer.getNumSamples();
     const int blockSamples = juce::jmin(inputBlockSamples, preallocatedMaxSamples);
 
@@ -1657,6 +1744,11 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     {
         if (oversampler2x) oversampler2x->reset();
         if (oversampler4x) oversampler4x->reset();
+        if (sidechainOversampler2x) sidechainOversampler2x->reset();
+        if (sidechainOversampler4x) sidechainOversampler4x->reset();
+        linearSidechainDelayBuffer.clear();
+        linearAlignedSidechainBuffer.clear();
+        linearSidechainDelayWritePos = 0;
 
         for (auto& lp : linearPhaseProcessors)
         {
@@ -1690,7 +1782,7 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
             const double newHqRate  = currentSampleRate.load(std::memory_order_relaxed)
                                       * static_cast<double>(newOsMult);
             const int newHqBlock    = preallocatedMaxSamples * newOsMult;
-            const int numChs        = getTotalNumInputChannels();
+            const int numChs        = preparedNumInputChannels;
             if (!dynamicEQProcessorHQ.canReconfigureWithoutAllocation(newHqRate, newHqBlock, numChs))
             {
                 hqReconfigureFailures.fetch_add(1, std::memory_order_relaxed);
@@ -1746,6 +1838,54 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
        #endif
         buffer.clear();
         return;
+    }
+
+    const bool externalDetectorAvailable = sidechainBus.getNumChannels() > 0
+        && sidechainBus.getNumSamples() >= blockSamples;
+
+    // A host may connect/disconnect an optional bus without rebuilding the
+    // processor.  Never replay detector history from the previous connection.
+    // All operations are bounded and allocation-free on the audio thread.
+    if (externalDetectorAvailable != externalSidechainWasAvailable)
+    {
+        if (sidechainOversampler2x) sidechainOversampler2x->reset();
+        if (sidechainOversampler4x) sidechainOversampler4x->reset();
+        linearSidechainDelayBuffer.clear();
+        linearAlignedSidechainBuffer.clear();
+        linearSidechainDelayWritePos = 0;
+        externalSidechainWasAvailable = externalDetectorAvailable;
+    }
+    const juce::AudioBuffer<float>* externalDetectorRaw =
+        externalDetectorAvailable ? &sidechainBus : nullptr;
+
+    // Keep a continuously primed detector delay, including while bypassed, so
+    // entering Linear Phase cannot expose an empty/stale latency-sized region.
+    // A present-but-silent bus remains available by contract; absence alone
+    // selects nullptr and lets DynamicEQProcessor release toward neutral.
+    juce::AudioBuffer<float> linearAlignedDetectorView(
+        linearAlignedSidechainBuffer.getArrayOfWritePointers(), 1, blockSamples);
+    const juce::AudioBuffer<float>* externalDetectorLinear = nullptr;
+    if (externalDetectorAvailable
+        && linearSidechainDelayBufferSize > linearPhasePreDynamicLatencySamples
+        && linearAlignedSidechainBuffer.getNumSamples() >= blockSamples)
+    {
+        const float* source = sidechainBus.getReadPointer(0);
+        float* delay = linearSidechainDelayBuffer.getWritePointer(0);
+        float* aligned = linearAlignedSidechainBuffer.getWritePointer(0);
+        for (int sample = 0; sample < blockSamples; ++sample)
+        {
+            delay[(linearSidechainDelayWritePos + sample)
+                  % linearSidechainDelayBufferSize] = source[sample];
+            const int readPosition = (linearSidechainDelayWritePos + sample
+                                      - linearPhasePreDynamicLatencySamples
+                                      + linearSidechainDelayBufferSize)
+                                     % linearSidechainDelayBufferSize;
+            aligned[sample] = delay[readPosition];
+        }
+        linearSidechainDelayWritePos =
+            (linearSidechainDelayWritePos + blockSamples)
+            % linearSidechainDelayBufferSize;
+        externalDetectorLinear = &linearAlignedDetectorView;
     }
 
     auto loadParam = [](std::atomic<float>* ptr, float fallback) -> float
@@ -2241,7 +2381,7 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
 
             if (dynEqEnabledLocal)
             {
-                dynamicEQProcessor.process(targetBuffer);
+                dynamicEQProcessor.process(targetBuffer, externalDetectorRaw);
                 if (updateMeters)
                     updateDynamicMeterCacheFrom(dynamicEQProcessor);
             }
@@ -2282,7 +2422,35 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
 
             if (dynEqEnabledLocal)
             {
-                dynamicEQProcessorHQ.process(hqProcessBuffer);
+                bool detectorProcessed = false;
+                if (externalDetectorRaw != nullptr
+                    && sidechainInputScratch.getNumSamples() >= targetBuffer.getNumSamples())
+                {
+                    sidechainInputScratch.copyFrom(
+                        0, 0, *externalDetectorRaw, 0, 0,
+                        targetBuffer.getNumSamples());
+                    juce::dsp::AudioBlock<float> sidechainBlock(
+                        sidechainInputScratch.getArrayOfWritePointers(), 1,
+                        static_cast<size_t>(targetBuffer.getNumSamples()));
+                    auto* sidechainOversampler = osEffective == 2
+                        ? sidechainOversampler4x.get()
+                        : sidechainOversampler2x.get();
+                    if (sidechainOversampler != nullptr)
+                    {
+                        auto upsampledDetector =
+                            sidechainOversampler->processSamplesUp(sidechainBlock);
+                        float* detectorChannels[] = {
+                            upsampledDetector.getChannelPointer(0)
+                        };
+                        juce::AudioBuffer<float> detectorView(
+                            detectorChannels, 1,
+                            static_cast<int>(upsampledDetector.getNumSamples()));
+                        dynamicEQProcessorHQ.process(hqProcessBuffer, &detectorView);
+                        detectorProcessed = true;
+                    }
+                }
+                if (!detectorProcessed)
+                    dynamicEQProcessorHQ.process(hqProcessBuffer, nullptr);
                 if (updateMeters)
                     updateDynamicMeterCacheFrom(dynamicEQProcessorHQ);
             }
@@ -2306,7 +2474,7 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
             eqProcessor.process(processView);
             if (dynEqEnabledLocal)
             {
-                dynamicEQProcessor.process(processView);
+                dynamicEQProcessor.process(processView, externalDetectorRaw);
                 if (updateMeters)
                     updateDynamicMeterCacheFrom(dynamicEQProcessor);
             }
@@ -2354,7 +2522,9 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
 
             if (dynEqEnabledLocal)
             {
-                dynamicEQProcessor.process(targetBuffer);
+                dynamicEQProcessor.process(
+                    targetBuffer, irLoaded ? externalDetectorLinear
+                                           : externalDetectorRaw);
                 if (updateMeters)
                     updateDynamicMeterCacheFrom(dynamicEQProcessor);
             }
@@ -2366,7 +2536,7 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
 
             if (dynEqEnabledLocal)
             {
-                dynamicEQProcessor.process(targetBuffer);
+                dynamicEQProcessor.process(targetBuffer, externalDetectorRaw);
                 if (updateMeters)
                     updateDynamicMeterCacheFrom(dynamicEQProcessor);
             }
@@ -2499,7 +2669,7 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
                 juce::AudioBuffer<float> midView(midProcessBuffer.getArrayOfWritePointers(), 1, samples);
                 eqProcessorMid.process(midView);
                 if (dynEqEnabledLocal)
-                    dynamicEQProcessorMid.process(midView);
+                    dynamicEQProcessorMid.process(midView, externalDetectorRaw);
             }
 
             if (processSide)
@@ -2507,7 +2677,7 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
                 juce::AudioBuffer<float> sideView(sideProcessBuffer.getArrayOfWritePointers(), 1, samples);
                 eqProcessorSide.process(sideView);
                 if (dynEqEnabledLocal)
-                    dynamicEQProcessorSide.process(sideView);
+                    dynamicEQProcessorSide.process(sideView, externalDetectorRaw);
             }
 
             if (processMid)
@@ -2634,7 +2804,7 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
             eqProcessor.process(buffer);
             if (dynEqEnabledLocal)
             {
-                dynamicEQProcessor.process(buffer);
+                dynamicEQProcessor.process(buffer, externalDetectorRaw);
                 updateDynamicMeterCacheFrom(dynamicEQProcessor);
             }
         }
@@ -2703,7 +2873,7 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
             // 2. GR meter always showing 0 in LP mode
             if (dynEqEnabledLocal)
             {
-                dynamicEQProcessor.process(buffer);
+                dynamicEQProcessor.process(buffer, externalDetectorLinear);
                 updateDynamicMeterCacheFrom(dynamicEQProcessor);
             }
         }
@@ -2774,10 +2944,12 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
                         sideProcessBuffer.copyFrom(0, 0, msModeTransitionBuffer, 1, 0, samples);
                         juce::AudioBuffer<float> midView(midProcessBuffer.getArrayOfWritePointers(), 1, samples);
                         eqProcessorMid.process(midView);
-                        if (dynEqEnabledLocal) dynamicEQProcessorMid.process(midView);
+                        if (dynEqEnabledLocal)
+                            dynamicEQProcessorMid.process(midView, externalDetectorRaw);
                         juce::AudioBuffer<float> sideView(sideProcessBuffer.getArrayOfWritePointers(), 1, samples);
                         eqProcessorSide.process(sideView);
-                        if (dynEqEnabledLocal) dynamicEQProcessorSide.process(sideView);
+                        if (dynEqEnabledLocal)
+                            dynamicEQProcessorSide.process(sideView, externalDetectorRaw);
                         msModeTransitionBuffer.copyFrom(0, 0, midProcessBuffer, 0, 0, samples);
                         msModeTransitionBuffer.copyFrom(1, 0, sideProcessBuffer, 0, 0, samples);
                     }
@@ -3585,6 +3757,33 @@ float AIEqualizerAudioProcessor::getDynamicTotalGainReduction() const noexcept
     return dynamicTotalGR.load(std::memory_order_relaxed);
 }
 
+DynamicEQProcessor::DetectorAvailability
+AIEqualizerAudioProcessor::getDynamicDetectorAvailability(int bandIndex) const noexcept
+{
+    if (bandIndex < 0 || bandIndex >= maxBands)
+        return DynamicEQProcessor::DetectorAvailability::ExternalUnavailable;
+
+    const auto phase = currentPhaseMode.load(std::memory_order_relaxed);
+    const auto msMode = currentMSMode.load(std::memory_order_relaxed);
+    if (phase != PhaseMode::LinearPhase && msMode == MSMode::MSLinked)
+    {
+        const auto mid = dynamicEQProcessorMid.getDetectorAvailability(bandIndex);
+        const auto side = dynamicEQProcessorSide.getDetectorAvailability(bandIndex);
+        if (mid == DynamicEQProcessor::DetectorAvailability::ExternalUnavailable
+            || side == DynamicEQProcessor::DetectorAvailability::ExternalUnavailable)
+            return DynamicEQProcessor::DetectorAvailability::ExternalUnavailable;
+        if (mid == DynamicEQProcessor::DetectorAvailability::ExternalAvailable
+            || side == DynamicEQProcessor::DetectorAvailability::ExternalAvailable)
+            return DynamicEQProcessor::DetectorAvailability::ExternalAvailable;
+        return DynamicEQProcessor::DetectorAvailability::Internal;
+    }
+
+    if (phase == PhaseMode::NaturalPhase
+        && hqRuntimeReady.load(std::memory_order_acquire))
+        return dynamicEQProcessorHQ.getDetectorAvailability(bandIndex);
+    return dynamicEQProcessor.getDetectorAvailability(bandIndex);
+}
+
 void AIEqualizerAudioProcessor::resetDSPStateForBypassExit()
 {
     // Reset all IIR filter states to zero.  After extended bypass the
@@ -3604,6 +3803,11 @@ void AIEqualizerAudioProcessor::resetDSPStateForBypassExit()
     // Reset oversampler anti-aliasing filter state
     if (oversampler2x) oversampler2x->reset();
     if (oversampler4x) oversampler4x->reset();
+    if (sidechainOversampler2x) sidechainOversampler2x->reset();
+    if (sidechainOversampler4x) sidechainOversampler4x->reset();
+    linearSidechainDelayBuffer.clear();
+    linearAlignedSidechainBuffer.clear();
+    linearSidechainDelayWritePos = 0;
 
     // Reset LP convolver FDL — stale frequency-domain data from before
     // bypass would produce ghost audio on the first blocks after resume.
@@ -4112,6 +4316,24 @@ void AIEqualizerAudioProcessor::updateEQFromParameters()
         const int effectiveTrigger = dynMode == DynamicEQProcessor::DynamicMode_Gate
             ? DynamicEQProcessor::TriggerSide_Below
             : storedTrigger;
+        const int detectionMode = juce::jlimit(
+            DynamicEQProcessor::DetectionMode_Peak,
+            DynamicEQProcessor::DetectionMode_RMS,
+            static_cast<int>(std::round(loadParam(
+                p.detectionMode,
+                static_cast<float>(DynamicEQProcessor::DetectionMode_RMS)))));
+        const int detectorSource = juce::jlimit(
+            DynamicEQProcessor::DetectorSource_InternalWideband,
+            DynamicEQProcessor::DetectorSource_ExternalFiltered,
+            static_cast<int>(std::round(loadParam(
+                p.detectorSource,
+                static_cast<float>(DynamicEQProcessor::DetectorSource_InternalWideband)))));
+        const float sidechainFreq = juce::jlimit(
+            20.0f, 20000.0f,
+            loadParam(p.sidechainFreq,
+                      AIEQDSP::defaultBandFrequencies[static_cast<size_t>(i)]));
+        const float sidechainQ = juce::jlimit(0.1f, 10.0f,
+                                              loadParam(p.sidechainQ, 1.0f));
         float threshold = loadParam(p.dynThreshold, -20.0f);
         float ratio = loadParam(p.dynRatio, 2.0f);
         float attack = loadParam(p.dynAttack, 10.0f);
@@ -4135,6 +4357,13 @@ void AIEqualizerAudioProcessor::updateEQFromParameters()
         dynParams.enabled = bandOwnedByDynamicStage;
         dynParams.dynamicMode = dynMode;
         dynParams.triggerSide = effectiveTrigger;
+        dynParams.detection = detectionMode;
+        dynParams.detectorSource = detectorSource;
+        dynParams.sidechainEnabled =
+            detectorSource == DynamicEQProcessor::DetectorSource_InternalFiltered
+            || detectorSource == DynamicEQProcessor::DetectorSource_ExternalFiltered;
+        dynParams.sidechainFreq = sidechainFreq;
+        dynParams.sidechainQ = sidechainQ;
         dynParams.threshold = threshold;
         dynParams.ratio = ratio;
         dynParams.attackMs = attack;
@@ -4329,6 +4558,10 @@ void AIEqualizerAudioProcessor::loadStateFromSlot(ABState slot)
             currentState.curveMode != bandState.curveMode ||
             currentState.dynMode != bandState.dynMode ||
             currentState.dynTrigger != bandState.dynTrigger ||
+            currentState.detectionMode != bandState.detectionMode ||
+            currentState.detectorSource != bandState.detectorSource ||
+            std::abs(currentState.sidechainFrequency - bandState.sidechainFrequency) > 1.0f ||
+            std::abs(currentState.sidechainQ - bandState.sidechainQ) > 0.02f ||
             std::abs(currentState.dynThreshold - bandState.dynThreshold) > 0.05f ||
             std::abs(currentState.dynRatio - bandState.dynRatio) > 0.02f ||
             std::abs(currentState.dynAttack - bandState.dynAttack) > 0.1f ||
@@ -5108,6 +5341,10 @@ AIEqualizerAudioProcessor::applySemanticAdjustments(
             && a.curveMode == b.curveMode
             && a.dynMode == b.dynMode
             && a.dynTrigger == b.dynTrigger
+            && a.detectionMode == b.detectionMode
+            && a.detectorSource == b.detectorSource
+            && std::abs(a.sidechainFrequency - b.sidechainFrequency) <= 1.0f
+            && std::abs(a.sidechainQ - b.sidechainQ) <= 0.02f
             && std::abs(a.dynThreshold - b.dynThreshold) <= 0.05f
             && std::abs(a.dynRatio - b.dynRatio) <= 0.02f
             && std::abs(a.dynAttack - b.dynAttack) <= 0.05f
@@ -5460,6 +5697,33 @@ AIEqualizerAudioProcessor::BandState AIEqualizerAudioProcessor::getBandState(int
     else
         state.dynTrigger = DynamicEQProcessor::TriggerSide_Above;
 
+    if (auto* detectionParam = apvts.getRawParameterValue(prefix + "DetectionMode"))
+        state.detectionMode = juce::jlimit(
+            DynamicEQProcessor::DetectionMode_Peak,
+            DynamicEQProcessor::DetectionMode_RMS,
+            static_cast<int>(std::round(detectionParam->load())));
+    else
+        state.detectionMode = DynamicEQProcessor::DetectionMode_RMS;
+
+    if (auto* sourceParam = apvts.getRawParameterValue(prefix + "DetectorSource"))
+        state.detectorSource = juce::jlimit(
+            DynamicEQProcessor::DetectorSource_InternalWideband,
+            DynamicEQProcessor::DetectorSource_ExternalFiltered,
+            static_cast<int>(std::round(sourceParam->load())));
+    else
+        state.detectorSource = DynamicEQProcessor::DetectorSource_InternalWideband;
+
+    if (auto* sidechainFreqParam = apvts.getRawParameterValue(prefix + "SidechainFreq"))
+        state.sidechainFrequency = sidechainFreqParam->load();
+    else
+        state.sidechainFrequency =
+            AIEQDSP::defaultBandFrequencies[static_cast<size_t>(bandIndex)];
+
+    if (auto* sidechainQParam = apvts.getRawParameterValue(prefix + "SidechainQ"))
+        state.sidechainQ = sidechainQParam->load();
+    else
+        state.sidechainQ = 1.0f;
+
     if (auto* dynThresholdParam = apvts.getRawParameterValue(prefix + "Threshold"))
         state.dynThreshold = dynThresholdParam->load();
     else
@@ -5520,6 +5784,17 @@ bool AIEqualizerAudioProcessor::applyBandStateDelta(int bandIndex, const BandSta
         DynamicEQProcessor::TriggerSide_Above,
         DynamicEQProcessor::TriggerSide_Below,
         clampedState.dynTrigger);
+    clampedState.detectionMode = juce::jlimit(
+        DynamicEQProcessor::DetectionMode_Peak,
+        DynamicEQProcessor::DetectionMode_RMS,
+        clampedState.detectionMode);
+    clampedState.detectorSource = juce::jlimit(
+        DynamicEQProcessor::DetectorSource_InternalWideband,
+        DynamicEQProcessor::DetectorSource_ExternalFiltered,
+        clampedState.detectorSource);
+    clampedState.sidechainFrequency = juce::jlimit(
+        20.0f, 20000.0f, clampedState.sidechainFrequency);
+    clampedState.sidechainQ = juce::jlimit(0.1f, 10.0f, clampedState.sidechainQ);
     clampedState.dynThreshold = juce::jlimit(-60.0f, 0.0f, clampedState.dynThreshold);
     clampedState.dynRatio = juce::jlimit(1.0f, 20.0f, clampedState.dynRatio);
     clampedState.dynAttack = juce::jlimit(0.1f, 500.0f, clampedState.dynAttack);
@@ -5537,6 +5812,11 @@ bool AIEqualizerAudioProcessor::applyBandStateDelta(int bandIndex, const BandSta
     const bool curveModeChanged = currentState.curveMode != clampedState.curveMode;
     const bool dynModeChanged = currentState.dynMode != clampedState.dynMode;
     const bool dynTriggerChanged = currentState.dynTrigger != clampedState.dynTrigger;
+    const bool detectionModeChanged = currentState.detectionMode != clampedState.detectionMode;
+    const bool detectorSourceChanged = currentState.detectorSource != clampedState.detectorSource;
+    const bool sidechainFrequencyChanged =
+        std::abs(currentState.sidechainFrequency - clampedState.sidechainFrequency) > 1.0f;
+    const bool sidechainQChanged = std::abs(currentState.sidechainQ - clampedState.sidechainQ) > 0.02f;
     const bool dynThresholdChanged = std::abs(currentState.dynThreshold - clampedState.dynThreshold) > 0.05f;
     const bool dynRatioChanged = std::abs(currentState.dynRatio - clampedState.dynRatio) > 0.02f;
     const bool dynAttackChanged = std::abs(currentState.dynAttack - clampedState.dynAttack) > 0.1f;
@@ -5545,7 +5825,9 @@ bool AIEqualizerAudioProcessor::applyBandStateDelta(int bandIndex, const BandSta
     const bool dynKneeChanged = std::abs(currentState.dynKnee - clampedState.dynKnee) > 0.05f;
 
     const bool anyChanged = freqChanged || gainChanged || qChanged || typeChanged || enabledChanged || soloChanged ||
-                            slopeChanged || curveModeChanged || dynModeChanged || dynTriggerChanged || dynThresholdChanged || dynRatioChanged ||
+                            slopeChanged || curveModeChanged || dynModeChanged || dynTriggerChanged ||
+                            detectionModeChanged || detectorSourceChanged || sidechainFrequencyChanged || sidechainQChanged ||
+                            dynThresholdChanged || dynRatioChanged ||
                             dynAttackChanged || dynReleaseChanged || dynRangeChanged || dynKneeChanged;
     if (!anyChanged)
         return false;
@@ -5585,6 +5867,22 @@ bool AIEqualizerAudioProcessor::applyBandStateDelta(int bandIndex, const BandSta
         applyParam(apvts.getParameter(prefix + "DynTrigger"),
                    apvts.getParameter(prefix + "DynTrigger")->convertTo0to1(
                        static_cast<float>(clampedState.dynTrigger)));
+    if (detectionModeChanged)
+        applyParam(apvts.getParameter(prefix + "DetectionMode"),
+                   apvts.getParameter(prefix + "DetectionMode")->convertTo0to1(
+                       static_cast<float>(clampedState.detectionMode)));
+    if (detectorSourceChanged)
+        applyParam(apvts.getParameter(prefix + "DetectorSource"),
+                   apvts.getParameter(prefix + "DetectorSource")->convertTo0to1(
+                       static_cast<float>(clampedState.detectorSource)));
+    if (sidechainFrequencyChanged)
+        applyParam(apvts.getParameter(prefix + "SidechainFreq"),
+                   apvts.getParameter(prefix + "SidechainFreq")->convertTo0to1(
+                       clampedState.sidechainFrequency));
+    if (sidechainQChanged)
+        applyParam(apvts.getParameter(prefix + "SidechainQ"),
+                   apvts.getParameter(prefix + "SidechainQ")->convertTo0to1(
+                       clampedState.sidechainQ));
     if (dynThresholdChanged)
         applyParam(apvts.getParameter(prefix + "Threshold"), apvts.getParameter(prefix + "Threshold")->convertTo0to1(clampedState.dynThreshold));
     if (dynRatioChanged)
@@ -5605,6 +5903,43 @@ bool AIEqualizerAudioProcessor::applyBandStateDelta(int bandIndex, const BandSta
 void AIEqualizerAudioProcessor::setBandState(int bandIndex, const BandState& state)
 {
     juce::ignoreUnused(applyBandStateDelta(bandIndex, state, true));
+}
+
+void AIEqualizerAudioProcessor::setBandGeometry(int bandIndex, float frequency,
+                                                float gain, float q, int type,
+                                                bool enabled)
+{
+    auto* mm = juce::MessageManager::getInstance();
+    if (mm == nullptr || ! mm->isThisTheMessageThread()
+        || bandIndex < 0 || bandIndex >= maxBands)
+    {
+        jassertfalse;
+        return;
+    }
+
+    const auto prefix = "band" + juce::String(bandIndex);
+    auto write = [this](const juce::String& id, float plainValue)
+    {
+        if (auto* parameter = apvts.getParameter(id))
+        {
+            const float normalized = parameter->convertTo0to1(plainValue);
+            if (std::abs(parameter->getValue() - normalized) <= 1.0e-7f)
+                return;
+            parameter->beginChangeGesture();
+            parameter->setValueNotifyingHost(normalized);
+            parameter->endChangeGesture();
+        }
+    };
+
+    // Deliberately no BandState read/merge here: host automation may update an
+    // advanced parameter concurrently with a graph drag.  This operation owns
+    // exactly these five parameters and cannot overwrite anything else.
+    write(prefix + "Freq", juce::jlimit(20.0f, 20000.0f, frequency));
+    write(prefix + "Gain", juce::jlimit(-24.0f, 24.0f, gain));
+    write(prefix + "Q", juce::jlimit(0.1f, 10.0f, q));
+    write(prefix + "Type", static_cast<float>(juce::jlimit(0, 8, type)));
+    write(prefix + "Enabled", enabled ? 1.0f : 0.0f);
+    markParametersChanged();
 }
 
 //==============================================================================
@@ -5701,6 +6036,10 @@ void AIEqualizerAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
             bandTree.setProperty("curveMode", band.curveMode, nullptr);
             bandTree.setProperty("dynMode", band.dynMode, nullptr);
             bandTree.setProperty("dynTrigger", band.dynTrigger, nullptr);
+            bandTree.setProperty("detectionMode", band.detectionMode, nullptr);
+            bandTree.setProperty("detectorSource", band.detectorSource, nullptr);
+            bandTree.setProperty("sidechainFrequency", band.sidechainFrequency, nullptr);
+            bandTree.setProperty("sidechainQ", band.sidechainQ, nullptr);
             bandTree.setProperty("dynThreshold", band.dynThreshold, nullptr);
             bandTree.setProperty("dynRatio", band.dynRatio, nullptr);
             bandTree.setProperty("dynAttack", band.dynAttack, nullptr);
@@ -5855,6 +6194,33 @@ void AIEqualizerAudioProcessor::setStateInformation(const void* data, int sizeIn
                                 static_cast<int>(bandTree.getProperty("dynTrigger")));
                         else
                             band.dynTrigger = DynamicEQProcessor::TriggerSide_Above;
+                        if (bandTree.hasProperty("detectionMode"))
+                            band.detectionMode = juce::jlimit(
+                                DynamicEQProcessor::DetectionMode_Peak,
+                                DynamicEQProcessor::DetectionMode_RMS,
+                                static_cast<int>(bandTree.getProperty("detectionMode")));
+                        else
+                            band.detectionMode = DynamicEQProcessor::DetectionMode_RMS;
+                        if (bandTree.hasProperty("detectorSource"))
+                            band.detectorSource = juce::jlimit(
+                                DynamicEQProcessor::DetectorSource_InternalWideband,
+                                DynamicEQProcessor::DetectorSource_ExternalFiltered,
+                                static_cast<int>(bandTree.getProperty("detectorSource")));
+                        else
+                            band.detectorSource = DynamicEQProcessor::DetectorSource_InternalWideband;
+                        if (bandTree.hasProperty("sidechainFrequency"))
+                            band.sidechainFrequency = juce::jlimit(
+                                20.0f, 20000.0f,
+                                static_cast<float>(bandTree.getProperty("sidechainFrequency")));
+                        else
+                            band.sidechainFrequency =
+                                AIEQDSP::defaultBandFrequencies[static_cast<size_t>(i)];
+                        if (bandTree.hasProperty("sidechainQ"))
+                            band.sidechainQ = juce::jlimit(
+                                0.1f, 10.0f,
+                                static_cast<float>(bandTree.getProperty("sidechainQ")));
+                        else
+                            band.sidechainQ = 1.0f;
                         if (bandTree.hasProperty("dynThreshold"))
                             band.dynThreshold = static_cast<float>(bandTree.getProperty("dynThreshold"));
                         if (bandTree.hasProperty("dynRatio"))

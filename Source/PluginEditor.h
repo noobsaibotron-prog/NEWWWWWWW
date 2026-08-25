@@ -96,7 +96,7 @@ private:
     juce::Slider gainKnob;
     PremiumKnob sensitivityKnob { "SENS" }, strengthKnob { "STR" }, outKnob { "OUT" }, mixKnob { "MIX" };
     juce::Label gainValue, outValue, mixValue;
-    juce::ToggleButton autoBtn{"AUTO"};
+    juce::ToggleButton autoBtn{"AUTO GAIN"};
     juce::TextButton qualityBtn{"ZL"};
     juce::TextButton oversamplingBtn{"OFF"};  // cycles Off→2x→4x→Auto
     juce::ComboBox oversamplingCombo;         // hidden, keeps APVTS attachment

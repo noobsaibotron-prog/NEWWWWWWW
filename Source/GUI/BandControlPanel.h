@@ -72,9 +72,27 @@ public:
         addAndMakeVisible(qLabel);
 
         qKnob.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 66, 18);
+        qKnob.setComponentID("bandQControl");
         addAndMakeVisible(qKnob);
         qAtt = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
             parameters, prefix + "Q", qKnob);
+
+        // Surgical shelves deliberately use the authority-fixed Butterworth
+        // damping Q = 1/sqrt(2).  Keep the stored/automatable Q untouched so a
+        // later Peak or Legacy selection recovers it, but never present that
+        // inactive value as though it affected the shelf response.
+        qFixedValueLabel.setText("FIXED 0.707", juce::dontSendNotification);
+        qFixedValueLabel.setFont(juce::Font(juce::FontOptions().withHeight(9.0f).withStyle("Bold")));
+        qFixedValueLabel.setJustificationType(juce::Justification::centred);
+        qFixedValueLabel.setColour(juce::Label::textColourId,
+                                   ModernLookAndFeel::Colors::textSecondary);
+        qFixedValueLabel.setColour(juce::Label::backgroundColourId,
+                                   ModernLookAndFeel::Colors::bgDark.withAlpha(0.96f));
+        qFixedValueLabel.setTooltip(
+            "Surgical shelves use fixed Q = 1/sqrt(2) (0.707). The stored Q is preserved.");
+        qFixedValueLabel.setComponentID("surgicalShelfFixedQ");
+        qFixedValueLabel.setInterceptsMouseClicks(false, false);
+        addChildComponent(qFixedValueLabel);
 
         // Filter type selector
         typeLabel.setText("TYPE", juce::dontSendNotification);
@@ -95,10 +113,29 @@ public:
         typeCombo.setColour(juce::ComboBox::backgroundColourId, ModernLookAndFeel::Colors::bgDark);
         typeCombo.setColour(juce::ComboBox::textColourId, ModernLookAndFeel::Colors::textPrimary);
         typeCombo.setColour(juce::ComboBox::outlineColourId, ModernLookAndFeel::Colors::bgLighter);
+        typeCombo.setComponentID("filterTypeSelector");
         addAndMakeVisible(typeCombo);
         typeAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
             parameters, prefix + "Type", typeCombo);
         typeCombo.addListener(this);
+
+        // Curve topology selector. CurveMode is an append-only APVTS parameter
+        // already present in the host surface; this control only exposes that
+        // existing authority and therefore does not alter parameter ordering.
+        curveModeCombo.addItem("Legacy", 1);
+        curveModeCombo.addItem("Surgical", 2);
+        curveModeCombo.setColour(juce::ComboBox::backgroundColourId,
+                                 ModernLookAndFeel::Colors::bgDark);
+        curveModeCombo.setColour(juce::ComboBox::textColourId,
+                                 ModernLookAndFeel::Colors::textPrimary);
+        curveModeCombo.setColour(juce::ComboBox::outlineColourId,
+                                 ModernLookAndFeel::Colors::bgLighter);
+        curveModeCombo.setTooltip("Filter topology: compatible Legacy curves or premium Surgical TPT-SVF");
+        curveModeCombo.setComponentID("curveModeSelector");
+        addAndMakeVisible(curveModeCombo);
+        curveModeAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
+            parameters, prefix + "CurveMode", curveModeCombo);
+        curveModeCombo.addListener(this);
 
         // Slope selector (visible only for LowCut / HighCut)
         slopeLabel.setText("SLOPE", juce::dontSendNotification);
@@ -152,6 +189,7 @@ public:
         dynModeCombo.setColour(juce::ComboBox::textColourId, ModernLookAndFeel::Colors::textPrimary);
         dynModeCombo.setColour(juce::ComboBox::outlineColourId, ModernLookAndFeel::Colors::bgLighter);
         dynModeCombo.onChange = [this] { updateDynEQVisibility(); };
+        dynModeCombo.setComponentID("dynamicActionSelector");
         addAndMakeVisible(dynModeCombo);
 
         dynTriggerCombo.addItem("Above", 1);
@@ -159,12 +197,38 @@ public:
         dynTriggerCombo.setColour(juce::ComboBox::backgroundColourId, ModernLookAndFeel::Colors::bgPanel);
         dynTriggerCombo.setColour(juce::ComboBox::textColourId, ModernLookAndFeel::Colors::textPrimary);
         dynTriggerCombo.setColour(juce::ComboBox::outlineColourId, ModernLookAndFeel::Colors::bgLighter);
+        dynTriggerCombo.setComponentID("dynamicTriggerSelector");
         addAndMakeVisible(dynTriggerCombo);
 
-        // DynEQ expand button ("..." opens overlay)
-        dynExpandBtn.setTooltip("Advanced DynEQ settings (Range, Knee)");
-        dynExpandBtn.onClick = [this] { if (onExpandDynEQRequested) onExpandDynEQRequested(); };
-        addAndMakeVisible(dynExpandBtn);
+        // Detector controls are contextual: hidden while DynEQ is Off.  The
+        // source names mirror the append-only APVTS choice ordering exactly.
+        detectionModeCombo.addItem("Peak", 1);
+        detectionModeCombo.addItem("RMS", 2);
+        detectionModeCombo.setColour(juce::ComboBox::backgroundColourId, ModernLookAndFeel::Colors::bgPanel);
+        detectionModeCombo.setColour(juce::ComboBox::textColourId, ModernLookAndFeel::Colors::textPrimary);
+        detectionModeCombo.setColour(juce::ComboBox::outlineColourId, ModernLookAndFeel::Colors::bgLighter);
+        detectionModeCombo.setTooltip("Detector envelope: Peak amplitude or RMS power");
+        detectionModeCombo.setComponentID("detectionModeSelector");
+        addAndMakeVisible(detectionModeCombo);
+
+        detectorSourceCombo.addItem("Internal Wideband", 1);
+        detectorSourceCombo.addItem("Internal Filtered", 2);
+        detectorSourceCombo.addItem("External Wideband", 3);
+        detectorSourceCombo.addItem("External Filtered", 4);
+        detectorSourceCombo.setColour(juce::ComboBox::backgroundColourId, ModernLookAndFeel::Colors::bgPanel);
+        detectorSourceCombo.setColour(juce::ComboBox::textColourId, ModernLookAndFeel::Colors::textPrimary);
+        detectorSourceCombo.setColour(juce::ComboBox::outlineColourId, ModernLookAndFeel::Colors::bgLighter);
+        detectorSourceCombo.setTooltip("Signal that drives this band's dynamic detector");
+        detectorSourceCombo.setComponentID("detectorSourceSelector");
+        addAndMakeVisible(detectorSourceCombo);
+        detectorSourceCombo.addListener(this);
+
+        detectorAvailabilityLabel.setFont(
+            juce::Font(juce::FontOptions().withHeight(8.5f).withStyle("Bold")));
+        detectorAvailabilityLabel.setJustificationType(juce::Justification::centred);
+        detectorAvailabilityLabel.setComponentID("detectorAvailabilityStatus");
+        detectorAvailabilityLabel.setInterceptsMouseClicks(false, false);
+        addChildComponent(detectorAvailabilityLabel);
 
         // DynEQ knob labels (10px, uppercase, centered)
         auto makeDynLabel = [](juce::Label& lbl, const juce::String& text) {
@@ -179,31 +243,56 @@ public:
         makeDynLabel(ratLabel, "RAT");
         makeDynLabel(atkLabel, "ATK");
         makeDynLabel(relLabel, "REL");
+        makeDynLabel(rngLabel, "RNG");
+        makeDynLabel(kneLabel, "KNE");
+        makeDynLabel(scFreqLabel, "SC FREQ");
+        makeDynLabel(scQLabel, "SC Q");
         addAndMakeVisible(thrLabel);
         addAndMakeVisible(ratLabel);
         addAndMakeVisible(atkLabel);
         addAndMakeVisible(relLabel);
+        addAndMakeVisible(rngLabel);
+        addAndMakeVisible(kneLabel);
+        addAndMakeVisible(scFreqLabel);
+        addAndMakeVisible(scQLabel);
 
-        // DynEQ knobs (SmallBlue style, 10px textbox below)
+        // DynEQ knobs (SmallBlue style, 10px textbox below) — all in inspector (no graph overlay)
         thresholdKnob.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 50, 10);
         ratioKnob.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 50, 10);
         attackKnob.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 50, 10);
         releaseKnob.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 50, 10);
+        rangeKnob.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 50, 10);
+        kneeKnob.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 50, 10);
+        sidechainFreqKnob.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 56, 10);
+        sidechainQKnob.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 50, 10);
         addAndMakeVisible(thresholdKnob);
         addAndMakeVisible(ratioKnob);
         addAndMakeVisible(attackKnob);
         addAndMakeVisible(releaseKnob);
+        addAndMakeVisible(rangeKnob);
+        addAndMakeVisible(kneeKnob);
+        sidechainFreqKnob.setComponentID("sidechainFrequencyControl");
+        sidechainQKnob.setComponentID("sidechainQControl");
+        addAndMakeVisible(sidechainFreqKnob);
+        addAndMakeVisible(sidechainQKnob);
 
         // DynEQ APVTS attachments
         dynModeAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(parameters, prefix + "DynMode", dynModeCombo);
         dynTriggerAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(parameters, prefix + "DynTrigger", dynTriggerCombo);
+        detectionModeAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(parameters, prefix + "DetectionMode", detectionModeCombo);
+        detectorSourceAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(parameters, prefix + "DetectorSource", detectorSourceCombo);
         thrAtt = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(parameters, prefix + "Threshold", thresholdKnob);
         ratAtt = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(parameters, prefix + "Ratio", ratioKnob);
         atkAtt = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(parameters, prefix + "Attack", attackKnob);
         relAtt = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(parameters, prefix + "Release", releaseKnob);
+        rngAtt = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(parameters, prefix + "Range", rangeKnob);
+        kneAtt = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(parameters, prefix + "Knee", kneeKnob);
+        sidechainFreqAtt = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(parameters, prefix + "SidechainFreq", sidechainFreqKnob);
+        sidechainQAtt = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(parameters, prefix + "SidechainQ", sidechainQKnob);
 
         updateSlopeVisibility();
         updateDynEQVisibility();
+        refreshRuntimeSemantics();
 
         // Premium caching: buffer the entire panel as a GPU-backed image.
         // Child components (knobs) repaint independently without triggering
@@ -214,12 +303,24 @@ public:
     ~BandControlPanel() override
     {
         typeCombo.removeListener(this);
+        curveModeCombo.removeListener(this);
+        detectorSourceCombo.removeListener(this);
     }
 
     void comboBoxChanged(juce::ComboBox* combo) override
     {
         if (combo == &typeCombo)
             updateSlopeVisibility();
+
+        if (combo == &typeCombo || combo == &curveModeCombo)
+            updateQSemanticState();
+
+        if (combo == &detectorSourceCombo)
+        {
+            updateDetectorVisibility();
+            resized();
+            repaint();
+        }
     }
 
     void setBandIndex(int newIndex)
@@ -227,11 +328,15 @@ public:
         if (newIndex == bandIndex || newIndex < 0) return;
 
         typeCombo.removeListener(this);
+        curveModeCombo.removeListener(this);
+        detectorSourceCombo.removeListener(this);
 
         freqAtt.reset(); gainAtt.reset(); qAtt.reset();
-        typeAtt.reset(); slopeAtt.reset();
+        typeAtt.reset(); slopeAtt.reset(); curveModeAtt.reset();
         enableAtt.reset(); soloAtt.reset();
-        dynModeAtt.reset(); dynTriggerAtt.reset(); thrAtt.reset(); ratAtt.reset(); atkAtt.reset(); relAtt.reset();
+        dynModeAtt.reset(); dynTriggerAtt.reset(); detectionModeAtt.reset(); detectorSourceAtt.reset();
+        thrAtt.reset(); ratAtt.reset(); atkAtt.reset(); relAtt.reset(); rngAtt.reset(); kneAtt.reset();
+        sidechainFreqAtt.reset(); sidechainQAtt.reset();
 
         bandIndex = newIndex;
         juce::String prefix = "band" + juce::String(bandIndex);
@@ -247,20 +352,31 @@ public:
         qAtt     = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(parameters, prefix + "Q",       qKnob);
         typeAtt  = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(parameters, prefix + "Type",  typeCombo);
         slopeAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(parameters, prefix + "Slope", slopeCombo);
+        curveModeAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(parameters, prefix + "CurveMode", curveModeCombo);
         enableAtt= std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(parameters, prefix + "Enabled", enableBtn);
         soloAtt  = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(parameters, prefix + "Solo",    soloBtn);
 
         // DynEQ APVTS attachments
         dynModeAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(parameters, prefix + "DynMode", dynModeCombo);
         dynTriggerAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(parameters, prefix + "DynTrigger", dynTriggerCombo);
+        detectionModeAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(parameters, prefix + "DetectionMode", detectionModeCombo);
+        detectorSourceAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(parameters, prefix + "DetectorSource", detectorSourceCombo);
         thrAtt = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(parameters, prefix + "Threshold", thresholdKnob);
         ratAtt = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(parameters, prefix + "Ratio", ratioKnob);
         atkAtt = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(parameters, prefix + "Attack", attackKnob);
         relAtt = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(parameters, prefix + "Release", releaseKnob);
+        rngAtt = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(parameters, prefix + "Range", rangeKnob);
+        kneAtt = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(parameters, prefix + "Knee", kneeKnob);
+        sidechainFreqAtt = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(parameters, prefix + "SidechainFreq", sidechainFreqKnob);
+        sidechainQAtt = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(parameters, prefix + "SidechainQ", sidechainQKnob);
 
         typeCombo.addListener(this);
+        curveModeCombo.addListener(this);
+        detectorSourceCombo.addListener(this);
         updateSlopeVisibility();
         updateDynEQVisibility();
+        runtimeEligibilityInitialized = false;
+        refreshRuntimeSemantics();
     }
 
     void paint(juce::Graphics& g) override
@@ -379,6 +495,17 @@ public:
             // darker sub-panel backdrop is only drawn in the vertical layout.
             knobClusterBounds = {};
 
+            // Detector detail is an inspector-only surface. Compact rows keep
+            // the Curve selector, but must not retain stale bounds from a prior
+            // vertical layout when the editor is resized.
+            detectionModeCombo.setBounds({});
+            detectorSourceCombo.setBounds({});
+            detectorAvailabilityLabel.setBounds({});
+            sidechainFreqKnob.setBounds({});
+            sidechainQKnob.setBounds({});
+            scFreqLabel.setBounds({});
+            scQLabel.setBounds({});
+
             // === HORIZONTAL COMPACT LAYOUT ===
             bandLabel.setBounds(bounds.removeFromLeft(28));
             bounds.removeFromLeft(2);
@@ -390,6 +517,9 @@ public:
 
             typeLabel.setVisible(false);
             typeCombo.setBounds(bounds.removeFromLeft(90).reduced(0, 4));
+            bounds.removeFromLeft(2);
+
+            curveModeCombo.setBounds(bounds.removeFromLeft(78).reduced(0, 4));
             bounds.removeFromLeft(2);
 
             // Slope combo (compact: narrow, right after type)
@@ -420,6 +550,7 @@ public:
             qLabel.setVisible(true);
             qLabel.setBounds(qArea.removeFromTop(11));
             qKnob.setBounds(qArea);
+            qFixedValueLabel.setBounds(qArea.removeFromBottom(14));
             qKnob.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 50, 12);
         }
         else
@@ -429,10 +560,14 @@ public:
             bandLabel.setBounds(bounds.removeFromTop(16));
             bounds.removeFromTop(2);
 
-            // Type combo + ON/SOLO inline row (22px)
+            // Type + Curve topology + ON/SOLO inline row (22px). Keeping Curve
+            // on this row preserves vertical room for the six DynEQ controls.
             auto typeRow = bounds.removeFromTop(22);
             typeLabel.setVisible(false);
-            typeCombo.setBounds(typeRow.removeFromLeft(typeRow.getWidth() - 80).reduced(2, 0));
+            auto selectorArea = typeRow.removeFromLeft(typeRow.getWidth() - 80);
+            const int curveWidth = juce::jmin(100, selectorArea.getWidth() * 2 / 5);
+            typeCombo.setBounds(selectorArea.removeFromLeft(selectorArea.getWidth() - curveWidth).reduced(2, 0));
+            curveModeCombo.setBounds(selectorArea.reduced(2, 0));
             typeRow.removeFromLeft(2);
             enableBtn.setBounds(typeRow.removeFromLeft(38).reduced(1));
             typeRow.removeFromLeft(2);
@@ -451,43 +586,63 @@ public:
                 slopeLabel.setVisible(false);
             }
 
-            // DynEQ action/trigger row (22px) — two combos + "..." button
+            // DynEQ action/trigger row (22px) — inspector only, no expand overlay
             auto dynModeRow = bounds.removeFromTop(22);
-            const int actionWidth = (dynModeRow.getWidth() - 38) * 3 / 5;
+            const int actionWidth = dynModeRow.getWidth() * 3 / 5;
             dynModeCombo.setBounds(dynModeRow.removeFromLeft(actionWidth).reduced(2, 0));
-            dynTriggerCombo.setBounds(dynModeRow.removeFromLeft(dynModeRow.getWidth() - 36).reduced(2, 0));
-            dynModeRow.removeFromLeft(2);
-            dynExpandBtn.setBounds(dynModeRow.reduced(1));
+            dynTriggerCombo.setBounds(dynModeRow.reduced(2, 0));
             bounds.removeFromTop(2);
+
+            if (dynEQActive)
+            {
+                auto detectorRow = bounds.removeFromTop(22);
+                detectionModeCombo.setBounds(detectorRow.removeFromLeft(76).reduced(2, 0));
+                if (detectorAvailabilityLabel.isVisible())
+                    detectorAvailabilityLabel.setBounds(
+                        detectorRow.removeFromRight(62).reduced(2, 2));
+                detectorSourceCombo.setBounds(detectorRow.reduced(2, 0));
+                bounds.removeFromTop(2);
+            }
 
             // Bottom-up layout: DynEQ knobs (if active) + main knobs
             // Enable/Solo row already placed inline with type combo
 
-            // DynEQ knob row (56px: 10 label + 36 knob + 10 textbox) — from bottom
+            // DynEQ knob rows — all six params live here (no center modal)
             if (dynEQActive)
             {
-                auto dynRow = bounds.removeFromBottom(56);
-                dynKnobClusterBounds = dynRow;
-                const int dynKnobW = dynRow.getWidth() / 4;
-                const int dynLabelH = 10;
+                auto placeDynKnob = [](juce::Rectangle<int> cell, juce::Label& label, juce::Component& knob)
+                {
+                    const int dynLabelH = 10;
+                    label.setBounds(cell.removeFromTop(dynLabelH));
+                    knob.setBounds(cell);
+                };
 
-                auto thrArea = dynRow.removeFromLeft(dynKnobW);
-                thrLabel.setBounds(thrArea.removeFromTop(dynLabelH));
-                thresholdKnob.setBounds(thrArea);
+                auto dynRow2 = bounds.removeFromBottom(46);
+                auto dynRow1 = bounds.removeFromBottom(46);
+                dynKnobClusterBounds = dynRow1.getUnion(dynRow2);
 
-                auto ratArea = dynRow.removeFromLeft(dynKnobW);
-                ratLabel.setBounds(ratArea.removeFromTop(dynLabelH));
-                ratioKnob.setBounds(ratArea);
+                const int dynKnobW1 = dynRow1.getWidth() / 4;
+                placeDynKnob(dynRow1.removeFromLeft(dynKnobW1), thrLabel, thresholdKnob);
+                placeDynKnob(dynRow1.removeFromLeft(dynKnobW1), ratLabel, ratioKnob);
+                placeDynKnob(dynRow1.removeFromLeft(dynKnobW1), atkLabel, attackKnob);
+                placeDynKnob(dynRow1, relLabel, releaseKnob);
 
-                auto atkArea = dynRow.removeFromLeft(dynKnobW);
-                atkLabel.setBounds(atkArea.removeFromTop(dynLabelH));
-                attackKnob.setBounds(atkArea);
+                if (sidechainFilterVisible)
+                {
+                    const int dynKnobW2 = dynRow2.getWidth() / 4;
+                    placeDynKnob(dynRow2.removeFromLeft(dynKnobW2), rngLabel, rangeKnob);
+                    placeDynKnob(dynRow2.removeFromLeft(dynKnobW2), kneLabel, kneeKnob);
+                    placeDynKnob(dynRow2.removeFromLeft(dynKnobW2), scFreqLabel, sidechainFreqKnob);
+                    placeDynKnob(dynRow2, scQLabel, sidechainQKnob);
+                }
+                else
+                {
+                    const int dynKnobW2 = dynRow2.getWidth() / 2;
+                    placeDynKnob(dynRow2.removeFromLeft(dynKnobW2), rngLabel, rangeKnob);
+                    placeDynKnob(dynRow2, kneLabel, kneeKnob);
+                }
 
-                auto relArea = dynRow;
-                relLabel.setBounds(relArea.removeFromTop(dynLabelH));
-                releaseKnob.setBounds(relArea);
-
-                bounds.removeFromBottom(2); // gap above DynEQ row
+                bounds.removeFromBottom(2); // gap above DynEQ rows
             }
             else
             {
@@ -518,10 +673,40 @@ public:
             qLabel.setBounds(qArea.removeFromTop(labelH));
             qArea.removeFromTop(1);
             qKnob.setBounds(qArea);
+            qFixedValueLabel.setBounds(qArea.removeFromBottom(20));
         }
     }
 
     int getBandIndex() const { return bandIndex; }
+
+    // Message-thread bridge for runtime bus telemetry.  Only the selected
+    // source is stored in APVTS; DAW bus availability must never be serialized.
+    void setExternalDetectorAvailable(bool available)
+    {
+        if (externalDetectorAvailable == available)
+            return;
+
+        externalDetectorAvailable = available;
+        updateDetectorAvailabilityDisplay();
+    }
+
+    // Called by the editor heartbeat so host automation of the global DynEQ
+    // switch or per-band Enabled flag is reflected without adding GUI work to
+    // the audio-thread parameter listener.
+    void refreshRuntimeSemantics()
+    {
+        const auto* global = parameters.getRawParameterValue("dynEqEnabled");
+        const auto* enabled = parameters.getRawParameterValue(
+            "band" + juce::String(bandIndex) + "Enabled");
+        const bool eligible = global != nullptr && global->load() > 0.5f
+                           && enabled != nullptr && enabled->load() > 0.5f;
+        if (runtimeEligibilityInitialized && eligible == runtimeBandEnabled)
+            return;
+
+        runtimeEligibilityInitialized = true;
+        runtimeBandEnabled = eligible;
+        updateQSemanticState();
+    }
 
 private:
     void updateSlopeVisibility()
@@ -544,12 +729,89 @@ private:
         ratioKnob.setVisible(dynEQActive);
         attackKnob.setVisible(dynEQActive);
         releaseKnob.setVisible(dynEQActive);
+        rangeKnob.setVisible(dynEQActive);
+        kneeKnob.setVisible(dynEQActive);
         thrLabel.setVisible(dynEQActive);
         ratLabel.setVisible(dynEQActive);
         atkLabel.setVisible(dynEQActive);
         relLabel.setVisible(dynEQActive);
-        dynExpandBtn.setVisible(dynEQActive);
+        rngLabel.setVisible(dynEQActive);
+        kneLabel.setVisible(dynEQActive);
+        updateDetectorVisibility();
+        updateQSemanticState();
         resized();
+        repaint();
+    }
+
+    void updateDetectorVisibility()
+    {
+        detectionModeCombo.setVisible(dynEQActive);
+        detectorSourceCombo.setVisible(dynEQActive);
+
+        // Combo IDs are source index+1. Only Internal Filtered (2) and
+        // External Filtered (4) consume the sidechain filter controls.
+        const int sourceId = detectorSourceCombo.getSelectedId();
+        sidechainFilterVisible = dynEQActive && (sourceId == 2 || sourceId == 4);
+        sidechainFreqKnob.setVisible(sidechainFilterVisible);
+        sidechainQKnob.setVisible(sidechainFilterVisible);
+        scFreqLabel.setVisible(sidechainFilterVisible);
+        scQLabel.setVisible(sidechainFilterVisible);
+        updateDetectorAvailabilityDisplay();
+    }
+
+    void updateDetectorAvailabilityDisplay()
+    {
+        const int sourceId = detectorSourceCombo.getSelectedId();
+        const bool externalSelected = sourceId == 3 || sourceId == 4;
+        const bool show = dynEQActive && externalSelected;
+
+        detectorAvailabilityLabel.setVisible(show);
+        if (! show)
+            return;
+
+        detectorAvailabilityLabel.setText(
+            externalDetectorAvailable ? "SC READY" : "SC MISSING",
+            juce::dontSendNotification);
+        detectorAvailabilityLabel.setColour(
+            juce::Label::textColourId,
+            externalDetectorAvailable ? juce::Colour(0xff70d69a)
+                                      : juce::Colour(0xffff756f));
+        detectorAvailabilityLabel.setTooltip(
+            externalDetectorAvailable
+                ? "The DAW external sidechain bus is connected and driving this detector."
+                : "External detector selected, but the DAW sidechain bus is unavailable.");
+        resized();
+        repaint();
+    }
+
+    void updateQSemanticState()
+    {
+        // Combo IDs are 1-based: Low Shelf=2, High Shelf=4 and
+        // CurveMode Surgical=2. Peak Surgical intentionally retains user Q.
+        const int typeId = typeCombo.getSelectedId();
+        const bool isShelf = typeId == 2 || typeId == 4;
+        const bool dynamicOwnsBand = runtimeBandEnabled && dynEQActive
+            && (typeId == 2 || typeId == 3 || typeId == 4);
+        const bool isSurgical = curveModeCombo.getSelectedId() == 2;
+        const bool fixedShelfQ = isShelf && isSurgical && ! dynamicOwnsBand;
+
+        qKnob.setEnabled(!fixedShelfQ);
+        qKnob.setAlpha(fixedShelfQ ? 0.32f : 1.0f);
+        qLabel.setText(fixedShelfQ ? "Q FIXED"
+                                  : (dynamicOwnsBand && isShelf ? "Q DYN" : "Q"),
+                       juce::dontSendNotification);
+        qLabel.setColour(juce::Label::textColourId,
+                         fixedShelfQ ? ModernLookAndFeel::Colors::textMuted
+                                     : ModernLookAndFeel::Colors::textSecondary);
+        qFixedValueLabel.setVisible(fixedShelfQ);
+        curveModeCombo.setEnabled(! dynamicOwnsBand);
+        curveModeCombo.setAlpha(dynamicOwnsBand ? 0.42f : 1.0f);
+        curveModeCombo.setTooltip(
+            dynamicOwnsBand
+                ? "CurveMode controls the static EQ path. This band is currently owned by the dynamic EQ path."
+                : "Filter topology: compatible Legacy curves or premium Surgical TPT-SVF");
+        if (fixedShelfQ)
+            qFixedValueLabel.toFront(false);
         repaint();
     }
 
@@ -563,42 +825,49 @@ private:
     juce::Rectangle<int> knobClusterBounds;
 
     juce::Label bandLabel;
-    juce::Label freqLabel, gainLabel, qLabel, typeLabel, slopeLabel;
+    juce::Label freqLabel, gainLabel, qLabel, qFixedValueLabel, typeLabel, slopeLabel;
     // Phase 4 (completion): 3 filmstrip LargeAmber knobs for Freq / Gain / Q
     // Empty custom label — we use the external juce::Label next to each knob.
     PremiumKnob freqKnob { juce::String(), PremiumKnob::Style::LargeAmber };
     PremiumKnob gainKnob { juce::String(), PremiumKnob::Style::LargeAmber };
     PremiumKnob qKnob    { juce::String(), PremiumKnob::Style::LargeAmber };
-    juce::ComboBox typeCombo, slopeCombo;
+    juce::ComboBox typeCombo, slopeCombo, curveModeCombo;
     juce::TextButton enableBtn, soloBtn;
 
     // DynEQ mode selector (always visible)
-    juce::ComboBox dynModeCombo, dynTriggerCombo;
-    juce::TextButton dynExpandBtn { "···" }; // opens overlay for Range/Knee
+    juce::ComboBox dynModeCombo, dynTriggerCombo, detectionModeCombo, detectorSourceCombo;
 
-    // DynEQ knobs (visible only when mode != Off)
+    // DynEQ knobs (visible only when mode != Off) — Range/Knee included (no overlay)
     PremiumKnob thresholdKnob { juce::String(), PremiumKnob::Style::SmallBlue };
     PremiumKnob ratioKnob     { juce::String(), PremiumKnob::Style::SmallBlue };
     PremiumKnob attackKnob    { juce::String(), PremiumKnob::Style::SmallBlue };
     PremiumKnob releaseKnob   { juce::String(), PremiumKnob::Style::SmallBlue };
-    juce::Label thrLabel, ratLabel, atkLabel, relLabel;
+    PremiumKnob rangeKnob     { juce::String(), PremiumKnob::Style::SmallBlue };
+    PremiumKnob kneeKnob      { juce::String(), PremiumKnob::Style::SmallBlue };
+    PremiumKnob sidechainFreqKnob { juce::String(), PremiumKnob::Style::SmallBlue };
+    PremiumKnob sidechainQKnob    { juce::String(), PremiumKnob::Style::SmallBlue };
+    juce::Label thrLabel, ratLabel, atkLabel, relLabel, rngLabel, kneLabel, scFreqLabel, scQLabel;
+    juce::Label detectorAvailabilityLabel;
 
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> freqAtt, gainAtt, qAtt;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> typeAtt, slopeAtt;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> typeAtt, slopeAtt, curveModeAtt;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> enableAtt, soloAtt;
 
     // DynEQ APVTS attachments
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> dynModeAtt;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> dynTriggerAtt;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> thrAtt, ratAtt, atkAtt, relAtt;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> detectionModeAtt;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> detectorSourceAtt;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> thrAtt, ratAtt, atkAtt, relAtt, rngAtt, kneAtt;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> sidechainFreqAtt, sidechainQAtt;
 
     // Layout state
     juce::Rectangle<int> dynKnobClusterBounds;
     bool dynEQActive = false;
-
-public:
-    // Callback for opening advanced DynEQ overlay (Range/Knee)
-    std::function<void()> onExpandDynEQRequested;
+    bool sidechainFilterVisible = false;
+    bool externalDetectorAvailable = false;
+    bool runtimeBandEnabled = false;
+    bool runtimeEligibilityInitialized = false;
 
 private:
 

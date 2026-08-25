@@ -102,6 +102,23 @@ inline void ensureDynamicTriggers(juce::ValueTree& state)
                                       0.0f); // Above
 }
 
+// The detector controls were added as append-only host parameters after
+// DynTrigger. Older schema-v1 states are still valid, but must receive explicit
+// defaults so loading them cannot inherit stale values from the live instance.
+inline void ensureDynamicDetectorSurface(juce::ValueTree& state)
+{
+    for (int i = 0; i < bandCount; ++i)
+    {
+        const auto prefix = "band" + juce::String(i);
+        appendParameterValueIfMissing(state, prefix + "DetectionMode", 1.0f); // RMS
+        appendParameterValueIfMissing(state, prefix + "DetectorSource", 0.0f); // Internal wideband
+        appendParameterValueIfMissing(
+            state, prefix + "SidechainFreq",
+            AIEQDSP::defaultBandFrequencies[static_cast<size_t>(i)]);
+        appendParameterValueIfMissing(state, prefix + "SidechainQ", 1.0f);
+    }
+}
+
 // Normalises a candidate copy before it reaches APVTS::replaceState(). The
 // caller retains the original tree, so Reject is transactional by construction.
 [[nodiscard]] inline LoadKind prepareForLoad(juce::ValueTree& candidate)
@@ -110,7 +127,10 @@ inline void ensureDynamicTriggers(juce::ValueTree& state)
     if (kind == LoadKind::LegacyWithoutSchema)
         migrateLegacyCurveModes(candidate);
     if (kind != LoadKind::Reject)
+    {
         ensureDynamicTriggers(candidate);
+        ensureDynamicDetectorSurface(candidate);
+    }
     return kind;
 }
 

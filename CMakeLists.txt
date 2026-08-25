@@ -643,6 +643,7 @@ set(PLUGIN_SOURCES
     Source/GUI/LogScaleMapper.h
     Source/GUI/ModernLookAndFeel.h
     Source/GUI/AdvancedSpectrumDisplay.h
+    Source/GUI/BandRadialMenu.h
     Source/GUI/EQBandControl.h
     Source/GUI/AIProblemPanel.h
     Source/GUI/BandControlPanel.h
@@ -899,6 +900,26 @@ if(AIEQ_MOTORE_V2_EXP AND AIEQ_MOTORE_V2_MODEL_JSON)
     else()
         message(WARNING "AIEQ_MOTORE_V2_MODEL_JSON does not exist: ${AIEQ_MOTORE_V2_MODEL_JSON}")
     endif()
+endif()
+
+# JUCE may ad-hoc sign the Mach-O before bundle resources have reached their
+# final location.  In that case the AU contains a signed executable but no
+# matching CodeResources file, and macOS/Ableton reject the otherwise valid
+# bundle during discovery.  Sign the completed bundle as the final post-build
+# operation so the signature always covers Info.plist and packaged models.
+if(APPLE)
+    find_program(AIEQ_CODESIGN_EXECUTABLE codesign REQUIRED)
+    foreach(_bundle_target AIEqualizerPro_VST3 AIEqualizerPro_AU)
+        if(TARGET ${_bundle_target})
+            add_custom_command(TARGET ${_bundle_target} POST_BUILD
+                COMMAND "${AIEQ_CODESIGN_EXECUTABLE}"
+                        --force --deep --sign -
+                        "$<TARGET_FILE_DIR:${_bundle_target}>/../.."
+                COMMENT "Ad-hoc signing completed ${_bundle_target} bundle"
+                VERBATIM
+            )
+        endif()
+    endforeach()
 endif()
 
 # Only add sources if target exists
@@ -1363,6 +1384,9 @@ if(HAVE_JUCE)
         Source/Tests/SurgicalAutomationContractTest.cpp
         Source/Tests/HostSessionClickTest.cpp
         Source/Tests/DynEQRoutingOwnershipTest.cpp
+        Source/Tests/PluginExternalSidechainIntegrationTest.cpp
+        Source/Tests/BandControlPanelTest.cpp
+        Source/Tests/BandRadialMenuTest.cpp
         Source/Tests/RBValidationTest.cpp
         Source/Tests/RB4BehavioralTest.cpp
         Source/Tests/RB2EquivalenceTest.cpp
@@ -1423,6 +1447,7 @@ if(HAVE_JUCE)
     aieq_enable_motore_v2_for_target(AIEqualizerPro_IntegrationTests)
     target_link_libraries(AIEqualizerPro_IntegrationTests PRIVATE
         AIEqualizerPro
+        AIEQ_Assets
         juce::juce_core
         juce::juce_audio_basics
         juce::juce_audio_formats   # SemanticPerceptualGateTest: WAV corpus read/write, test-only

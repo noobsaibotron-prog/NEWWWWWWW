@@ -1,6 +1,7 @@
 #include <juce_core/juce_core.h>
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "../PluginProcessor.h"
+#include "../DSP/DefaultBandFrequencies.h"
 
 /**
  * Integration-style checks on plugin state, preset round-trip, bypass and oversampling/latency reporting.
@@ -21,6 +22,8 @@ public:
         testFactoryPresetUtf8RoundTrip();
         testDynamicABStateRoundTrip();
         testDynTriggerRoundTripAndLegacyPrecedence();
+        testDetectorSurfaceRoundTripAndMigration();
+        testGraphGeometryEditPreservesAdvancedState();
         testHostParameterSurfaceGoldenList();
         testCurveModeSchemaRoundTrip();
         testLegacyStateMigratesCurveMode();
@@ -37,6 +40,55 @@ private:
         juce::String id;
         int versionHint = 1;
     };
+
+    void testGraphGeometryEditPreservesAdvancedState()
+    {
+        beginTest("Graph geometry edit preserves every advanced per-band field");
+
+        AIEqualizerAudioProcessor proc;
+        proc.prepareToPlay(48000.0, 128);
+
+        auto state = proc.getBandState(0);
+        state.solo = true;
+        state.slope = 2;
+        state.curveMode = static_cast<int>(ParametricEQProcessor::CurveMode::Legacy);
+        state.dynMode = DynamicEQProcessor::DynamicMode_Compress;
+        state.dynTrigger = DynamicEQProcessor::TriggerSide_Below;
+        state.detectionMode = DynamicEQProcessor::DetectionMode_Peak;
+        state.detectorSource = DynamicEQProcessor::DetectorSource_ExternalFiltered;
+        state.sidechainFrequency = 4321.0f;
+        state.sidechainQ = 4.25f;
+        state.dynThreshold = -31.0f;
+        state.dynRatio = 7.0f;
+        state.dynAttack = 4.0f;
+        state.dynRelease = 222.0f;
+        state.dynRange = 17.0f;
+        state.dynKnee = 3.0f;
+        proc.setBandState(0, state);
+
+        proc.setBandGeometry(0, 2345.0f, -5.0f, 1.75f,
+                             static_cast<int>(ParametricEQProcessor::Peak), true);
+
+        const auto edited = proc.getBandState(0);
+        expectWithinAbsoluteError(edited.frequency, 2345.0f, 1.0f);
+        expectWithinAbsoluteError(edited.gain, -5.0f, 0.05f);
+        expectWithinAbsoluteError(edited.q, 1.75f, 0.02f);
+        expect(edited.solo);
+        expectEquals(edited.slope, 2);
+        expectEquals(edited.curveMode, state.curveMode);
+        expectEquals(edited.dynMode, state.dynMode);
+        expectEquals(edited.dynTrigger, state.dynTrigger);
+        expectEquals(edited.detectionMode, state.detectionMode);
+        expectEquals(edited.detectorSource, state.detectorSource);
+        expectWithinAbsoluteError(edited.sidechainFrequency, state.sidechainFrequency, 1.0f);
+        expectWithinAbsoluteError(edited.sidechainQ, state.sidechainQ, 0.02f);
+        expectWithinAbsoluteError(edited.dynThreshold, state.dynThreshold, 0.05f);
+        expectWithinAbsoluteError(edited.dynRatio, state.dynRatio, 0.02f);
+        expectWithinAbsoluteError(edited.dynAttack, state.dynAttack, 0.1f);
+        expectWithinAbsoluteError(edited.dynRelease, state.dynRelease, 0.5f);
+        expectWithinAbsoluteError(edited.dynRange, state.dynRange, 0.05f);
+        expectWithinAbsoluteError(edited.dynKnee, state.dynKnee, 0.05f);
+    }
 
     static std::vector<ExpectedParameter> expectedHostParameters()
     {
@@ -110,6 +162,15 @@ private:
         for (int band = 0; band < AIEqualizerAudioProcessor::maxBands; ++band)
             ids.push_back({ "band" + juce::String(band) + "DynTrigger", 2 });
 
+        for (int band = 0; band < AIEqualizerAudioProcessor::maxBands; ++band)
+            ids.push_back({ "band" + juce::String(band) + "DetectionMode", 2 });
+        for (int band = 0; band < AIEqualizerAudioProcessor::maxBands; ++band)
+            ids.push_back({ "band" + juce::String(band) + "DetectorSource", 2 });
+        for (int band = 0; band < AIEqualizerAudioProcessor::maxBands; ++band)
+            ids.push_back({ "band" + juce::String(band) + "SidechainFreq", 2 });
+        for (int band = 0; band < AIEqualizerAudioProcessor::maxBands; ++band)
+            ids.push_back({ "band" + juce::String(band) + "SidechainQ", 2 });
+
         return ids;
     }
 
@@ -151,20 +212,29 @@ private:
         if (! expected.empty())
         {
             const auto dynamicCorrectionsIndex = expected.size()
-                - 2u * static_cast<size_t>(AIEqualizerAudioProcessor::maxBands) - 1u;
+                - 6u * static_cast<size_t>(AIEqualizerAudioProcessor::maxBands) - 1u;
             expect(expected[dynamicCorrectionsIndex].id == "dynamicCorrections",
                    "CurveMode parameters must be appended after the old host surface");
             expect(expected[dynamicCorrectionsIndex
                             + static_cast<size_t>(AIEqualizerAudioProcessor::maxBands)].id
                        == "band23CurveMode",
                    "DynTrigger must be appended after the complete CurveMode block");
-            expect(expected.back().id == "band23DynTrigger",
-                   "DynTrigger append-only block must remain the host-surface tail");
+            const auto blockSize = static_cast<size_t>(AIEqualizerAudioProcessor::maxBands);
+            expect(expected[dynamicCorrectionsIndex + 2u * blockSize].id == "band23DynTrigger",
+                   "DetectionMode must follow the complete DynTrigger block");
+            expect(expected[dynamicCorrectionsIndex + 3u * blockSize].id == "band23DetectionMode",
+                   "DetectorSource must follow the complete DetectionMode block");
+            expect(expected[dynamicCorrectionsIndex + 4u * blockSize].id == "band23DetectorSource",
+                   "SidechainFreq must follow the complete DetectorSource block");
+            expect(expected[dynamicCorrectionsIndex + 5u * blockSize].id == "band23SidechainFreq",
+                   "SidechainQ must follow the complete SidechainFreq block");
+            expect(expected.back().id == "band23SidechainQ",
+                   "SidechainQ append-only block must remain the host-surface tail");
             if (! params.isEmpty())
             {
                 auto* withID = dynamic_cast<juce::AudioProcessorParameterWithID*>(params.getLast());
-                expect(withID != nullptr && withID->getParameterID() == "band23DynTrigger",
-                       "band23DynTrigger must remain the final createParameters() entry");
+                expect(withID != nullptr && withID->getParameterID() == "band23SidechainQ",
+                       "band23SidechainQ must remain the final createParameters() entry");
             }
         }
     }
@@ -268,6 +338,95 @@ private:
             expectEquals(live.dynamicMode, DynamicEQProcessor::DynamicMode_Gate);
             expectEquals(live.triggerSide, DynamicEQProcessor::TriggerSide_Below);
         }
+    }
+
+    void testDetectorSurfaceRoundTripAndMigration()
+    {
+        beginTest("Detector controls are append-only, reach DSP, round-trip, and migrate explicitly");
+
+        AIEqualizerAudioProcessor proc;
+        proc.prepareToPlay(48000.0, 64);
+        auto& apvts = proc.getAPVTS();
+
+        expectWithinAbsoluteError(apvts.getRawParameterValue("band0DetectionMode")->load(),
+                                  static_cast<float>(DynamicEQProcessor::DetectionMode_RMS), 0.01f);
+        expectWithinAbsoluteError(apvts.getRawParameterValue("band0DetectorSource")->load(),
+                                  static_cast<float>(DynamicEQProcessor::DetectorSource_InternalWideband), 0.01f);
+        expectWithinAbsoluteError(apvts.getRawParameterValue("band0SidechainFreq")->load(),
+                                  AIEQDSP::defaultBandFrequencies[0], 0.01f);
+        expectWithinAbsoluteError(apvts.getRawParameterValue("band0SidechainQ")->load(), 1.0f, 0.01f);
+
+        setChoice(apvts, "band0DetectionMode", DynamicEQProcessor::DetectionMode_Peak);
+        setChoice(apvts, "band0DetectorSource", DynamicEQProcessor::DetectorSource_ExternalFiltered);
+        setFloat(apvts, "band0SidechainFreq", 3210.0f);
+        setFloat(apvts, "band0SidechainQ", 3.25f);
+
+        juce::AudioBuffer<float> buffer(2, 64);
+        buffer.clear();
+        juce::MidiBuffer midi;
+        proc.processBlock(buffer, midi);
+        auto live = proc.getDynamicEQProcessor().getBandParams(0);
+        expectEquals(live.detection, DynamicEQProcessor::DetectionMode_Peak);
+        expectEquals(live.detectorSource, DynamicEQProcessor::DetectorSource_ExternalFiltered);
+        expect(live.sidechainEnabled, "Filtered source must enable the detector filter");
+        expectWithinAbsoluteError(live.sidechainFreq, 3210.0f, 0.01f);
+        expectWithinAbsoluteError(live.sidechainQ, 3.25f, 0.01f);
+
+        const auto band = proc.getBandState(0);
+        expectEquals(band.detectionMode, DynamicEQProcessor::DetectionMode_Peak);
+        expectEquals(band.detectorSource, DynamicEQProcessor::DetectorSource_ExternalFiltered);
+        expectWithinAbsoluteError(band.sidechainFrequency, 3210.0f, 0.01f);
+        expectWithinAbsoluteError(band.sidechainQ, 3.25f, 0.01f);
+
+        juce::MemoryBlock blob;
+        proc.getStateInformation(blob);
+        setChoice(apvts, "band0DetectionMode", DynamicEQProcessor::DetectionMode_RMS);
+        setChoice(apvts, "band0DetectorSource", DynamicEQProcessor::DetectorSource_InternalWideband);
+        setFloat(apvts, "band0SidechainFreq", 800.0f);
+        setFloat(apvts, "band0SidechainQ", 0.5f);
+        proc.setStateInformation(blob.getData(), static_cast<int>(blob.getSize()));
+
+        expectWithinAbsoluteError(apvts.getRawParameterValue("band0DetectionMode")->load(), 0.0f, 0.01f);
+        expectWithinAbsoluteError(apvts.getRawParameterValue("band0DetectorSource")->load(), 3.0f, 0.01f);
+        expectWithinAbsoluteError(apvts.getRawParameterValue("band0SidechainFreq")->load(), 3210.0f, 0.01f);
+        expectWithinAbsoluteError(apvts.getRawParameterValue("band0SidechainQ")->load(), 3.25f, 0.01f);
+
+        auto xml = proc.getXmlFromBinary(blob.getData(), static_cast<int>(blob.getSize()));
+        expect(xml != nullptr);
+        if (xml == nullptr)
+            return;
+
+        auto oldV1 = juce::ValueTree::fromXml(*xml);
+        for (int i = oldV1.getNumChildren(); --i >= 0;)
+        {
+            const auto child = oldV1.getChild(i);
+            if (! child.hasType("PARAM"))
+                continue;
+            const auto id = child.getProperty("id").toString();
+            if (id.endsWith("DetectionMode") || id.endsWith("DetectorSource")
+                || id.endsWith("SidechainFreq") || id.endsWith("SidechainQ"))
+                oldV1.removeChild(i, nullptr);
+        }
+
+        setChoice(apvts, "band0DetectionMode", DynamicEQProcessor::DetectionMode_Peak);
+        setChoice(apvts, "band0DetectorSource", DynamicEQProcessor::DetectorSource_ExternalFiltered);
+        setFloat(apvts, "band0SidechainFreq", 7777.0f);
+        setFloat(apvts, "band0SidechainQ", 7.0f);
+
+        juce::MemoryBlock oldV1Blob;
+        auto oldV1Xml = oldV1.createXml();
+        juce::AudioProcessor::copyXmlToBinary(*oldV1Xml, oldV1Blob);
+        proc.setStateInformation(oldV1Blob.getData(), static_cast<int>(oldV1Blob.getSize()));
+
+        expectWithinAbsoluteError(apvts.getRawParameterValue("band0DetectionMode")->load(), 1.0f, 0.01f,
+                                  "Missing DetectionMode inherited stale live state");
+        expectWithinAbsoluteError(apvts.getRawParameterValue("band0DetectorSource")->load(), 0.0f, 0.01f,
+                                  "Missing DetectorSource inherited stale live state");
+        expectWithinAbsoluteError(apvts.getRawParameterValue("band0SidechainFreq")->load(),
+                                  AIEQDSP::defaultBandFrequencies[0], 0.01f,
+                                  "Missing SidechainFreq inherited stale live state");
+        expectWithinAbsoluteError(apvts.getRawParameterValue("band0SidechainQ")->load(), 1.0f, 0.01f,
+                                  "Missing SidechainQ inherited stale live state");
     }
 
     void primeBands(AIEqualizerAudioProcessor& proc)
@@ -402,7 +561,9 @@ private:
             if (child.hasType("PARAM"))
             {
                 const auto id = child.getProperty("id").toString();
-                if (id.endsWith("CurveMode") || id.endsWith("DynTrigger"))
+                if (id.endsWith("CurveMode") || id.endsWith("DynTrigger")
+                    || id.endsWith("DetectionMode") || id.endsWith("DetectorSource")
+                    || id.endsWith("SidechainFreq") || id.endsWith("SidechainQ"))
                     preV1Preset.state.removeChild(i, nullptr);
             }
         }
@@ -422,6 +583,21 @@ private:
             expect(triggerParam != nullptr);
             if (triggerParam != nullptr)
                 expectWithinAbsoluteError(triggerParam->load(), 0.0f, 0.0f);
+            const auto prefix = "band" + juce::String(i);
+            auto* detection = apvts.getRawParameterValue(prefix + "DetectionMode");
+            auto* sourceParam = apvts.getRawParameterValue(prefix + "DetectorSource");
+            auto* scFreq = apvts.getRawParameterValue(prefix + "SidechainFreq");
+            auto* scQ = apvts.getRawParameterValue(prefix + "SidechainQ");
+            expect(detection != nullptr && sourceParam != nullptr && scFreq != nullptr && scQ != nullptr);
+            if (detection != nullptr)
+                expectWithinAbsoluteError(detection->load(), 1.0f, 0.01f);
+            if (sourceParam != nullptr)
+                expectWithinAbsoluteError(sourceParam->load(), 0.0f, 0.01f);
+            if (scFreq != nullptr)
+                expectWithinAbsoluteError(
+                    scFreq->load(), AIEQDSP::defaultBandFrequencies[static_cast<size_t>(i)], 0.01f);
+            if (scQ != nullptr)
+                expectWithinAbsoluteError(scQ->load(), 1.0f, 0.01f);
         }
 
         // Unsupported preset schemas must not partially alter the live APVTS.
@@ -511,6 +687,10 @@ private:
         band0.solo = false;
         band0.dynMode = 0;
         band0.dynTrigger = DynamicEQProcessor::TriggerSide_Above;
+        band0.detectionMode = DynamicEQProcessor::DetectionMode_RMS;
+        band0.detectorSource = DynamicEQProcessor::DetectorSource_InternalWideband;
+        band0.sidechainFrequency = 1000.0f;
+        band0.sidechainQ = 1.0f;
         band0.dynThreshold = 0.0f;
         band0.dynRatio = 2.0f;
         band0.dynAttack = 10.0f;
@@ -532,6 +712,10 @@ private:
         setBool(apvts, "dynAutoMakeup", true);
         band0.dynMode = 1;
         band0.dynTrigger = DynamicEQProcessor::TriggerSide_Below;
+        band0.detectionMode = DynamicEQProcessor::DetectionMode_Peak;
+        band0.detectorSource = DynamicEQProcessor::DetectorSource_ExternalFiltered;
+        band0.sidechainFrequency = 2500.0f;
+        band0.sidechainQ = 4.0f;
         band0.dynThreshold = -30.0f;
         band0.dynRatio = 8.0f;
         band0.dynAttack = 1.0f;
@@ -554,6 +738,14 @@ private:
             expectWithinAbsoluteError(p->load(), 0.0f, 0.01f);
         if (auto* p = restoredAPVTS.getRawParameterValue("band0DynTrigger"))
             expectWithinAbsoluteError(p->load(), 0.0f, 0.01f);
+        if (auto* p = restoredAPVTS.getRawParameterValue("band0DetectionMode"))
+            expectWithinAbsoluteError(p->load(), 1.0f, 0.01f);
+        if (auto* p = restoredAPVTS.getRawParameterValue("band0DetectorSource"))
+            expectWithinAbsoluteError(p->load(), 0.0f, 0.01f);
+        if (auto* p = restoredAPVTS.getRawParameterValue("band0SidechainFreq"))
+            expectWithinAbsoluteError(p->load(), 1000.0f, 0.01f);
+        if (auto* p = restoredAPVTS.getRawParameterValue("band0SidechainQ"))
+            expectWithinAbsoluteError(p->load(), 1.0f, 0.01f);
         if (auto* p = restoredAPVTS.getRawParameterValue("band0Threshold"))
             expectWithinAbsoluteError(p->load(), 0.0f, 0.05f);
         if (auto* p = restoredAPVTS.getRawParameterValue("band0Ratio"))
@@ -572,6 +764,14 @@ private:
             expectWithinAbsoluteError(p->load(), 1.0f, 0.01f);
         if (auto* p = restoredAPVTS.getRawParameterValue("band0DynTrigger"))
             expectWithinAbsoluteError(p->load(), 1.0f, 0.01f);
+        if (auto* p = restoredAPVTS.getRawParameterValue("band0DetectionMode"))
+            expectWithinAbsoluteError(p->load(), 0.0f, 0.01f);
+        if (auto* p = restoredAPVTS.getRawParameterValue("band0DetectorSource"))
+            expectWithinAbsoluteError(p->load(), 3.0f, 0.01f);
+        if (auto* p = restoredAPVTS.getRawParameterValue("band0SidechainFreq"))
+            expectWithinAbsoluteError(p->load(), 2500.0f, 0.01f);
+        if (auto* p = restoredAPVTS.getRawParameterValue("band0SidechainQ"))
+            expectWithinAbsoluteError(p->load(), 4.0f, 0.01f);
         if (auto* p = restoredAPVTS.getRawParameterValue("band0Threshold"))
             expectWithinAbsoluteError(p->load(), -30.0f, 0.05f);
         if (auto* p = restoredAPVTS.getRawParameterValue("band0Ratio"))

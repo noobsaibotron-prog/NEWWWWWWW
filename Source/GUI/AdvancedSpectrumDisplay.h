@@ -2,6 +2,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <juce_audio_basics/juce_audio_basics.h>
 #include "../PluginProcessor.h"
+#include "BandRadialMenu.h"
 #include "ModernLookAndFeel.h"
 #include <array>
 #include <cmath>
@@ -33,6 +34,7 @@ public:
     explicit AdvancedSpectrumDisplay(AIEqualizerAudioProcessor& p) : processor(p)
     {
         setOpaque(false);
+        setWantsKeyboardFocus(true);
         startTimerHz(60);
         smoothedSpectrum.resize(512, spectrumMinDb);
         frozenSpectrum.resize(512, spectrumMinDb);
@@ -100,6 +102,11 @@ public:
             showCapturedButton.setToggleState(false, juce::dontSendNotification);
         };
         addAndMakeVisible(clearButton);
+
+        // Hidden until a band node is right-clicked.  It is a child overlay,
+        // not a native popup, so its bubble animation stays clipped to and
+        // visually integrated with the graph.
+        addChildComponent(bandRadialMenu);
     }
     
     ~AdvancedSpectrumDisplay() override { stopTimer(); }
@@ -418,10 +425,13 @@ public:
         captureButton.setBounds(startX + btnW + gap, startY, btnW, btnH);
         showCapturedButton.setBounds(startX + (btnW + gap) * 2, startY, btnW + 10, btnH);
         clearButton.setBounds(startX + (btnW + gap) * 2 + btnW + 10 + gap, startY, 50, btnH);
+        bandRadialMenu.setBounds(getLocalBounds());
     }
     
     void timerCallback() override
     {
+        bandRadialMenu.advanceAnimation();
+
         // SAFETY: Skip processing if processor not ready
         if (!processor.isProcessorReady())
         {
@@ -435,7 +445,7 @@ public:
         // If visible but idle, 30Hz is enough. 60Hz only during active interaction.
         {
             const bool windowVisible = isShowing();
-            const bool interacting = isDraggingBand || hoverX >= 0;
+            const bool interacting = isDraggingBand || hoverX >= 0 || bandRadialMenu.isOpen();
             const int desiredHz = !windowVisible ? 5
                                 : interacting    ? 60
                                                  : 30;
@@ -728,10 +738,12 @@ public:
                 selectedBandIndex = clickedBand;
                 if (onBandSelected)
                     onBandSelected(clickedBand);
-                // Keep nodes visible while the context menu is open
-                bandContextMenuOpen = true;
-                nodesTargetOpacity = 1.0f;
-                showBandContextMenu(e.getPosition(), clickedBand);
+                // Alt/Option preserves the native JUCE menu as a discoverable
+                // fallback.  The normal path is the in-graph radial menu.
+                if (e.mods.isAltDown())
+                    showClassicBandContextMenu(e.getPosition(), clickedBand);
+                else
+                    showBandRadialMenu(e.position, clickedBand);
             }
             else
             {
@@ -848,6 +860,12 @@ public:
     
     void mouseDrag(const juce::MouseEvent& e) override
     {
+        if (bandRadialMenu.isOpen() && bandRadialMenu.isMarkingGestureActive())
+        {
+            bandRadialMenu.updateMarkingGesture(e.position);
+            return;
+        }
+
         // Tilt drag: vertical movement adjusts dB/oct continuously
         if (isDraggingTilt)
         {
@@ -899,8 +917,17 @@ public:
         }
     }
     
-    void mouseUp(const juce::MouseEvent&) override
+    void mouseUp(const juce::MouseEvent& e) override
     {
+        // On macOS JUCE no longer reports rightButtonDown on the release event.
+        // The menu therefore owns the gesture explicitly instead of inferring
+        // it again from mouse-up modifiers.
+        if (bandRadialMenu.isOpen() && bandRadialMenu.isMarkingGestureActive())
+        {
+            bandRadialMenu.endMarkingGesture(e.position);
+            return;
+        }
+
         if (isDraggingTilt)
         {
             isDraggingTilt = false;
@@ -909,6 +936,26 @@ public:
         }
         isDraggingBand = false;
         draggedBandIndex = -1;
+    }
+
+    bool keyPressed(const juce::KeyPress& key) override
+    {
+        // Keyboard users retain the platform-native menu, whose semantics and
+        // accessibility are provided by JUCE.  The radial menu remains a fast
+        // pointer/marking-menu surface rather than replacing that fallback.
+        if (key.getKeyCode() == juce::KeyPress::F10Key && key.getModifiers().isShiftDown())
+        {
+            if (selectedBandIndex >= 0 && selectedBandIndex < processor.getNumActiveBands())
+            {
+                const auto state = processor.getBandState(selectedBandIndex);
+                showClassicBandContextMenu({ static_cast<int>(freqToX(state.frequency)),
+                                             static_cast<int>(gainToY(state.gain)) },
+                                           selectedBandIndex);
+                return true;
+            }
+        }
+
+        return false;
     }
     
     void mouseDoubleClick(const juce::MouseEvent& e) override
@@ -1257,14 +1304,95 @@ private:
         repaint();
     }
 
-    // ── Per-band right-click context menu (FabFilter / Sonible style) ───────
-    void showBandContextMenu(juce::Point<int> pos, int bandIndex)
+    void executeBandContextAction(int bandIndex, BandRadialMenu::Command command)
     {
         if (bandIndex < 0 || bandIndex >= processor.getNumActiveBands())
             return;
 
         auto state = processor.getBandState(bandIndex);
-        juce::Colour bandCol = bandColors[static_cast<size_t>(bandIndex)];
+        switch (command.type)
+        {
+            case BandRadialMenu::CommandType::setFilterType:
+                if (command.value >= 0 && command.value < 7)
+                {
+                    state.type = command.value;
+                    processor.setBandState(bandIndex, state);
+                }
+                break;
+
+            case BandRadialMenu::CommandType::toggleEnabled:
+                state.enabled = !state.enabled;
+                processor.setBandState(bandIndex, state);
+                break;
+
+            case BandRadialMenu::CommandType::toggleSolo:
+                state.solo = !state.solo;
+                processor.setBandState(bandIndex, state);
+                break;
+
+            case BandRadialMenu::CommandType::resetGain:
+                state.gain = 0.0f;
+                processor.setBandState(bandIndex, state);
+                break;
+
+            case BandRadialMenu::CommandType::resetBand:
+                state.gain = 0.0f;
+                state.q = 1.0f;
+                state.type = 2; // Peak
+                state.solo = false;
+                processor.setBandState(bandIndex, state);
+                break;
+
+            case BandRadialMenu::CommandType::deleteBand:
+                deleteBand(bandIndex);
+                break;
+        }
+
+        repaint();
+    }
+
+    void showBandRadialMenu(juce::Point<float> pointerPosition, int bandIndex)
+    {
+        if (bandIndex < 0 || bandIndex >= processor.getNumActiveBands())
+            return;
+
+        bandContextMenuOpen = true;
+        nodesTargetOpacity = 1.0f;
+
+        const auto state = processor.getBandState(bandIndex);
+        const juce::Point<float> nodeAnchor(freqToX(state.frequency), gainToY(state.gain));
+        const auto colour = bandColors[static_cast<size_t>(bandIndex)];
+
+        bandRadialMenu.open(
+            nodeAnchor,
+            graphBounds,
+            colour,
+            state.enabled,
+            state.solo,
+            [this, bandIndex](BandRadialMenu::Command command)
+            {
+                executeBandContextAction(bandIndex, command);
+            },
+            [this]
+            {
+                bandContextMenuOpen = false;
+                if (!mouseInsideSpectrum)
+                    nodesTargetOpacity = kNodesIdleOpacity;
+                repaint();
+            });
+        bandRadialMenu.beginMarkingGesture(pointerPosition);
+    }
+
+    // ── Platform-native fallback (Alt/Option-right-click or Shift+F10) ──────
+    void showClassicBandContextMenu(juce::Point<int> pos, int bandIndex)
+    {
+        if (bandIndex < 0 || bandIndex >= processor.getNumActiveBands())
+            return;
+
+        bandContextMenuOpen = true;
+        nodesTargetOpacity = 1.0f;
+
+        auto state = processor.getBandState(bandIndex);
 
         juce::PopupMenu menu;
 
@@ -1295,53 +1423,35 @@ private:
         menu.showMenuAsync(
             juce::PopupMenu::Options()
                 .withTargetComponent(this)
-                .withTargetScreenArea({ pos, { 1, 1 } }),
-            [this, bandIndex](int result)
+                .withTargetScreenArea({ localPointToGlobal(pos), { 1, 1 } }),
+            [safeThis = juce::Component::SafePointer<AdvancedSpectrumDisplay>(this), bandIndex](int result)
             {
+                if (safeThis == nullptr)
+                    return;
+
+                auto& self = *safeThis.getComponent();
                 // Menu closed (dismissed or selected) — release node visibility guard.
                 // If mouse is still inside spectrum, keep nodes visible; otherwise fade out.
-                bandContextMenuOpen = false;
-                if (!mouseInsideSpectrum)
-                    nodesTargetOpacity = kNodesIdleOpacity;
+                self.bandContextMenuOpen = false;
+                if (!self.mouseInsideSpectrum)
+                    self.nodesTargetOpacity = kNodesIdleOpacity;
 
                 if (result == 0) return; // dismissed without selection
 
-                auto s = processor.getBandState(bandIndex);
-
                 if (result >= 100 && result < 107)
                 {
-                    // Filter type change
-                    s.type = result - 100;
-                    processor.setBandState(bandIndex, s);
+                    self.executeBandContextAction(bandIndex,
+                        { BandRadialMenu::CommandType::setFilterType, result - 100 });
                 }
                 else switch (result)
                 {
-                    case 10: // Toggle enable
-                        s.enabled = !s.enabled;
-                        processor.setBandState(bandIndex, s);
-                        break;
-                    case 11: // Toggle solo
-                        s.solo = !s.solo;
-                        processor.setBandState(bandIndex, s);
-                        break;
-                    case 20: // Reset gain
-                        s.gain = 0.0f;
-                        processor.setBandState(bandIndex, s);
-                        break;
-                    case 21: // Reset band to defaults
-                        s.gain = 0.0f;
-                        s.q = 1.0f;
-                        s.type = 2; // Peak
-                        s.solo = false;
-                        processor.setBandState(bandIndex, s);
-                        break;
-                    case 30: // Delete band
-                        deleteBand(bandIndex);
-                        break;
+                    case 10: self.executeBandContextAction(bandIndex, { BandRadialMenu::CommandType::toggleEnabled, 0 }); break;
+                    case 11: self.executeBandContextAction(bandIndex, { BandRadialMenu::CommandType::toggleSolo, 0 }); break;
+                    case 20: self.executeBandContextAction(bandIndex, { BandRadialMenu::CommandType::resetGain, 0 }); break;
+                    case 21: self.executeBandContextAction(bandIndex, { BandRadialMenu::CommandType::resetBand, 0 }); break;
+                    case 30: self.executeBandContextAction(bandIndex, { BandRadialMenu::CommandType::deleteBand, 0 }); break;
                     default: break;
                 }
-
-                repaint();
             });
     }
 
@@ -1880,9 +1990,18 @@ private:
 
     void drawGrid(juce::Graphics& g)
     {
-        // Liquid Intelligence: vertical frequency grid lines REMOVED entirely.
-        // Only horizontal dB lines remain as subtle reference marks spanning
-        // the full positive + negative range (+12, +6, 0, -6, -12 dB).
+        // Liquid Intelligence: full frequency grid stays gone. GRAPH-GRID-A1
+        // restores only a decade backbone (100 / 1k / 10k) as peripheral
+        // orientation. Salience: hover/selected-frequency guide (α≈0.30) >
+        // these verticals (α≈0.10) > background. X from freqToX — the same
+        // log map used by nodes and Hz labels.
+        //
+        // Horizontal dB lines remain the EQ-grid set (+12, +6, 0, -6, -12).
+        // Do not add analyzer-depth horizontals (GRAPH-GRID-A3) here.
+        //
+        // MOV 09:05 freeze: GRAPH-GRID-A PASS (100/1k/10k faint verticals,
+        // 0 dB analyzer label, hover stronger than decades). Do not add
+        // G2 minor verticals or A3 analyzer horizontals.
         //
         // Wave 5 verdict fix: previous alpha (0.3/0.5 on 0xFF242836) was too
         // faint against the dark spectrum background — grid lines above 0 dB
@@ -1903,6 +2022,15 @@ private:
                 g.setColour(juce::Colour(0xFF3A4050).withAlpha(0.55f));
 
             g.drawHorizontalLine((int)y, graphBounds.getX(), graphBounds.getRight());
+        }
+
+        g.setColour(juce::Colour(0xFF3A4050).withAlpha(0.10f));
+        const float decadeHz[] = { 100.0f, 1000.0f, 10000.0f };
+        for (float hz : decadeHz)
+        {
+            const float x = freqToX(hz);
+            if (x > graphBounds.getX() && x < graphBounds.getRight())
+                g.drawVerticalLine((int)x, graphBounds.getY(), graphBounds.getBottom());
         }
     }
 
@@ -2063,24 +2191,16 @@ private:
 
         if (!isDraggingBand)
         {
-            // Wave 4A: wider, more diffuse glow halo (10 px @ 0.15 alpha) — the
-            // Liquid Intelligence mockup shows a clearly visible white aura
-            // around the curve, not a thin ethereal outline. The diffuse glow
-            // layer uses eqCurve.withAlpha(0.15f) for a soft, luminous bloom
-            // that reads as "AI light" rather than a hard stroke.
-            g.setColour(ModernLookAndFeel::Colors::eqCurve.withAlpha(0.15f));
-            g.strokePath(cachedEQCurve, juce::PathStrokeType(10.0f, juce::PathStrokeType::curved,
-                                                               juce::PathStrokeType::rounded));
-            // Second, tighter diffuse glow layer for extra definition
-            g.setColour(ModernLookAndFeel::Colors::eqCurve.withAlpha(0.22f));
-            g.strokePath(cachedEQCurve, juce::PathStrokeType(5.0f, juce::PathStrokeType::curved,
+            // P0-A: one soft glow only — drop the 10px + 5px double bloom so
+            // the composite curve stays below selected nodes in the hierarchy.
+            g.setColour(ModernLookAndFeel::Colors::eqCurve.withAlpha(0.10f));
+            g.strokePath(cachedEQCurve, juce::PathStrokeType(4.0f, juce::PathStrokeType::curved,
                                                                juce::PathStrokeType::rounded));
         }
 
-        // Wave 4A: whiter main stroke bumped 1.5 → 2.5 px for presence on HiDPI.
-        // Main opaque white curve sits above the diffuse glow layers.
+        // P0-A: thinner main stroke (was 2.5) — curve is level-1, nodes lead.
         g.setColour(ModernLookAndFeel::Colors::eqCurve.withAlpha(0.95f));
-        g.strokePath(cachedEQCurve, juce::PathStrokeType(2.5f, juce::PathStrokeType::curved,
+        g.strokePath(cachedEQCurve, juce::PathStrokeType(1.7f, juce::PathStrokeType::curved,
                                                            juce::PathStrokeType::rounded));
     }
 
@@ -2155,8 +2275,8 @@ private:
             const bool isActive = aiTooltip.visible
                                && aiTooltip.correctionIdx == static_cast<int>(i);
 
-            const float topA    = isActive ? 0.28f  : 0.10f;
-            const float bottomA = isActive ? 0.08f  : 0.025f;
+            const float topA    = isActive ? 0.20f  : 0.08f;
+            const float bottomA = isActive ? 0.06f  : 0.02f;
 
             const auto topColour    = base.withAlpha(topA);
             const auto bottomColour = base.withAlpha(bottomA);
@@ -2173,7 +2293,7 @@ private:
             if (!isActive)
             {
                 const float xC = juce::jlimit(graphLeft, graphRight, freqToX(freq));
-                g.setColour(base.withAlpha(0.22f));
+                g.setColour(base.withAlpha(0.14f));
                 g.drawLine(xC, graphTop, xC, graphBottom, 1.0f);
             }
 
@@ -2503,13 +2623,12 @@ private:
             const bool isDragging = (isDraggingBand && i == draggedBandIndex);
             const bool isPrimary  = isDragging || isSelected || isHovered;
 
-            // Hero Graph Polish v1 — emphasis:
-            //   1.0  primary focus (dragged/hovered/selected)
-            //   0.60 other bands when a primary focus exists
-            //   0.82 calm default when no band is in focus
+            // Salience scale, not four independent alphas:
+            //   kNodesPrimaryEmphasis > kNodesCalmEmphasis > kNodesUnfocusedEmphasis > kNodesIdleOpacity
+            // P0-A: calm ships at 0.70 (was 0.82) so dense 18–24 band scenes read.
             const float emphasis = isPrimary
-                ? 1.0f
-                : (hasPrimaryFocus ? 0.60f : 0.82f);
+                ? kNodesPrimaryEmphasis
+                : (hasPrimaryFocus ? kNodesUnfocusedEmphasis : kNodesCalmEmphasis);
 
             // AI Pulse: check if this band has a pending AI correction
             // (frequency within ±1 semitone ≈ ratio < 0.06 in log2 domain)
@@ -2585,21 +2704,21 @@ private:
             // === Node disc — Precise Premium (no permanent amber double-halo) ===
             juce::Rectangle<float> nodeBounds (x - radius, y - radius, radius * 2, radius * 2);
 
-            // Fill — softer than before, scales with emphasis
-            g.setColour(col.withAlpha(0.42f * nOp * emphasis));
+            // Fill — P0-A unselected ~0.22–0.32 after emphasis
+            g.setColour(col.withAlpha(0.28f * nOp * emphasis));
             g.fillEllipse(nodeBounds);
 
             // Inner highlight — gentler specular
-            g.setColour(col.brighter(0.20f).withAlpha(0.14f * nOp * emphasis));
+            g.setColour(col.brighter(0.20f).withAlpha(0.12f * nOp * emphasis));
             g.fillEllipse(nodeBounds.reduced(3.0f));
 
-            // Border ring — primary stays at full weight, others scale with emphasis
+            // Border ring — selected=1.0, hover~0.75, unselected 0.35–0.45
             float ringAlpha;
             float ringThickness;
             if (isDragging)                  { ringAlpha = 1.00f * nOp;            ringThickness = 2.5f; }
-            else if (isSelected)             { ringAlpha = 1.00f * nOp;            ringThickness = 2.5f; }
-            else if (isHovered)              { ringAlpha = 0.92f * nOp;            ringThickness = 2.0f; }
-            else                             { ringAlpha = 0.72f * nOp * emphasis; ringThickness = 1.5f; }
+            else if (isSelected)             { ringAlpha = 1.00f * nOp;            ringThickness = 2.0f; }
+            else if (isHovered)              { ringAlpha = 0.75f * nOp;            ringThickness = 1.8f; }
+            else                             { ringAlpha = 0.40f * nOp * emphasis; ringThickness = 1.5f; }
             g.setColour(col.withAlpha(ringAlpha));
             g.drawEllipse(nodeBounds, ringThickness);
         };
@@ -2615,7 +2734,7 @@ private:
 
         // Tooltip for selected band — FabFilter-style floating info panel
         // Visible only when nodes are visible AND not dragging
-        if (!isDraggingBand && nOp > 0.3f
+        if (!isDraggingBand && !bandRadialMenu.isOpen() && nOp > 0.3f
             && selectedBandIndex >= 0 && selectedBandIndex < maxBands)
         {
             auto state = processor.getBandState(selectedBandIndex);
@@ -2682,6 +2801,16 @@ private:
         }
     }
     
+    void drawAnalyzerDbLabel(juce::Graphics& g, float db) const
+    {
+        const float y = dbToY(db);
+        const bool isZero = std::abs(db) < 0.01f;
+        g.setColour(isZero ? ModernLookAndFeel::Colors::textSecondary.brighter(0.1f)
+                           : ModernLookAndFeel::Colors::bgLighter.brighter(0.1f));
+        g.drawText(juce::String((int) db), 4, (int) y - 6, 34, 12,
+                   juce::Justification::centredRight);
+    }
+
 public:
     void drawLabels(juce::Graphics& g)
     {
@@ -2689,14 +2818,13 @@ public:
         g.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
         
         for (float db = spectrumMinDb; db <= spectrumMaxDb; db += 12.0f)
-        {
-            float y = dbToY(db);
-            bool isZero = std::abs(db) < 0.01f;
-            g.setColour(isZero ? ModernLookAndFeel::Colors::textSecondary.brighter(0.1f)
-                               : ModernLookAndFeel::Colors::bgLighter.brighter(0.1f));
-            juce::String txt = juce::String((int)db);
-            g.drawText(txt, 4, (int)y - 6, 34, 12, juce::Justification::centredRight);
-        }
+            drawAnalyzerDbLabel(g, db);
+
+        // GRAPH-GRID-A2: -90 + 12n never lands on 0. Emit 0 in this same
+        // analyzer label system at dbToY(0) — the analyzer-scale position,
+        // not a second coordinate glued onto the EQ response zero line.
+        // Do not add a matching analyzer 0 grid line (existing EQ 0 stays).
+        drawAnalyzerDbLabel(g, 0.0f);
 
         if (isPianoRollEnabled())
         {
@@ -3301,9 +3429,16 @@ private:
     // FabFilter-style node visibility: nodes dim (but stay visible) when
     // the cursor leaves the spectrum, and come back to full opacity when
     // it re-enters. Smooth transition driven by timerCallback.
-    // kNodesIdleOpacity = baseline when mouse is outside (never 0 — Marco's
-    // explicit requirement: "rimangono visibili"). Tune here to taste.
+    // These four values are one salience ladder. Do not edit one in isolation.
+    //   1.00 > kNodesCalmEmphasis > 0.60 > 0.35
+    // P0-A: ship calm=0.70 so 18–24 idle nodes don't compete with selection
+    static constexpr float kNodesPrimaryEmphasis = 1.00f;
+    static constexpr float kNodesCalmEmphasis = 0.70f;
+    static constexpr float kNodesUnfocusedEmphasis = 0.50f;
     static constexpr float kNodesIdleOpacity = 0.35f;
+    static_assert(kNodesPrimaryEmphasis > kNodesCalmEmphasis);
+    static_assert(kNodesCalmEmphasis > kNodesUnfocusedEmphasis);
+    static_assert(kNodesUnfocusedEmphasis > kNodesIdleOpacity);
     float nodesOpacity = kNodesIdleOpacity;         // current opacity [0..1]
     float nodesTargetOpacity = kNodesIdleOpacity;   // target: 1 when mouse in, idle when out
     bool  mouseInsideSpectrum = false;              // raw tracking flag
@@ -3316,6 +3451,7 @@ private:
     // Without this, mouseExit fires when the popup appears, fading out
     // the nodes while the user is still looking at the menu.
     bool bandContextMenuOpen = false;
+    BandRadialMenu bandRadialMenu;
 
     // ── Tilt drag widget (bottom-left of spectrum) ──────────────────────
     // Click + drag up/down to continuously adjust spectrum tilt (dB/oct).

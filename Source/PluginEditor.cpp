@@ -228,8 +228,8 @@ AIEqualizerAudioProcessorEditor::AIEqualizerAudioProcessorEditor(AIEqualizerAudi
             spectrum->repaint();
         repaint();
     });
-    // Phase 5: full DynamicEQPanel is now an on-demand overlay, hidden by
-    // default. Toggled visible via DynEQCompactBar::onExpandRequested.
+    // P0-B: full DynamicEQPanel is kept as a hidden child for meter wiring only.
+    // Dyn controls (including Range/Knee) live in BandControlPanel — never overlay the graph.
     addChildComponent(*dynamicEQPanel);
     
     // Dynamic EQ Master Panel (global controls)
@@ -242,21 +242,6 @@ AIEqualizerAudioProcessorEditor::AIEqualizerAudioProcessorEditor(AIEqualizerAudi
     // FIX 2: persistent selected band panel (avoid recreating on every selection)
     selectedBandPanel = std::make_unique<BandControlPanel>(0, processor.getAPVTS());
     addAndMakeVisible(*selectedBandPanel);
-
-    // Connect BandControlPanel "..." button to DynEQ advanced overlay (Range/Knee)
-    selectedBandPanel->onExpandDynEQRequested = [this] {
-        if (dynamicEQPanel)
-        {
-            const bool nowVisible = !dynamicEQPanel->isVisible();
-            dynamicEQPanel->setVisible(nowVisible);
-            if (nowVisible)
-            {
-                dynamicEQPanel->toFront(true);
-                const int w = 400, h = 300;
-                dynamicEQPanel->setBounds(getWidth()/2 - w/2, getHeight()/2 - h/2, w, h);
-            }
-        }
-    };
 
     // Output level meter (stereo VU with peak hold)
     addAndMakeVisible(outputMeter);
@@ -1331,9 +1316,11 @@ void AIEqualizerAudioProcessorEditor::resized()
     mixKnob.setVisible(true);
     mixKnob.setBounds(footer.removeFromLeft(46).reduced(0, 2));
 
-    // Auto Gain stays visible — placed in footer before BYPASS
+    // Auto Gain stays visible — placed in footer before BYPASS.
+    // 88px is enough for "AUTO GAIN" at the default toggle font; A.GAIN only
+    // if a later min-resize gate shows clipping (not assumed here).
     autoBtn.setVisible(true);
-    autoBtn.setBounds(footer.removeFromRight(52).reduced(0, 5));
+    autoBtn.setBounds(footer.removeFromRight(88).reduced(0, 5));
     footer.removeFromRight(6);
 
     // === BOTTOM PANEL — split: left=band controls (380px), right=context (flex) ===
@@ -1379,18 +1366,10 @@ void AIEqualizerAudioProcessorEditor::resized()
         aiProblemPanel->setBounds(contextCol);
         semanticPanel->setBounds(contextCol);
 
-        // Phase 5: dynamicEQPanel is now an on-demand overlay. Only reposition
-        // when the user has toggled it visible via DynEQCompactBar; otherwise
-        // it stays hidden and its bounds are irrelevant.
-        if (dynamicEQPanel && dynamicEQPanel->isVisible())
-        {
-            const int w = 400;
-            const int h = 300;
-            dynamicEQPanel->setBounds(getWidth() / 2 - w / 2,
-                                       getHeight() / 2 - h / 2,
-                                       w, h);
-            dynamicEQPanel->toFront(true);
-        }
+        // P0-B: DynamicEQPanel stays hidden — Range/Knee live in BandControlPanel.
+        // Never recenter it over the spectrum graph.
+        if (dynamicEQPanel)
+            dynamicEQPanel->setVisible(false);
     }
 
     // Context panel always visible
@@ -1407,8 +1386,9 @@ void AIEqualizerAudioProcessorEditor::resized()
     }
     aiProblemPanel->setVisible(activeRightTab == 0);
     semanticPanel->setVisible(activeRightTab == 1);
-    // Phase 5: dynamicEQPanel visibility is now driven by DynEQCompactBar
-    // (default hidden at construction; toggled via onExpandRequested).
+    // Phase 5 / P0-B: Dynamic EQ edits live only in selectedBandPanel (inspector).
+    // The full DynamicEQPanel remains constructed for meter callbacks but never
+    // covers the spectrum.
 
     // --- Left column: band controls (mockup: 12px 16px padding) ---
     bandCol.reduce(16, 12);
@@ -1459,6 +1439,14 @@ void AIEqualizerAudioProcessorEditor::timerCallback()
     // Bug K fix: guard against timer firing during processor teardown
     if (!processor.isProcessorReady())
         return;
+
+    if (selectedBandPanel != nullptr)
+    {
+        selectedBandPanel->refreshRuntimeSemantics();
+        const auto availability = processor.getDynamicDetectorAvailability(selectedBand);
+        selectedBandPanel->setExternalDetectorAvailable(
+            availability == DynamicEQProcessor::DetectorAvailability::ExternalAvailable);
+    }
 
     // A3: keep the semantic panel's sample rate in sync with the host
     // (setSampleRate had no caller — the panel was stuck at 44100).
@@ -1669,13 +1657,8 @@ void AIEqualizerAudioProcessorEditor::updateBandPositions()
 
 void AIEqualizerAudioProcessorEditor::onBandChanged(int idx, const EQBandControl::BandParameters& p)
 {
-    AIEqualizerAudioProcessor::BandState s;
-    s.frequency = p.frequency;
-    s.gain = p.gain;
-    s.q = p.q;
-    s.type = p.filterType;
-    s.enabled = p.enabled;
-    processor.setBandState(idx, s);
+    processor.setBandGeometry(idx, p.frequency, p.gain, p.q,
+                              p.filterType, p.enabled);
     
     // Update selected band if this is a different band
     if (idx != selectedBand)
