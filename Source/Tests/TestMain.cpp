@@ -28,6 +28,7 @@ public:
     struct Options
     {
         juce::String category;
+        juce::String nameContains;
         bool verbose = false;
         bool runAll = false;
     };
@@ -48,6 +49,8 @@ public:
             juce::String arg(argv[i]);
             if (arg.startsWith("--category="))
                 opts.category = arg.fromFirstOccurrenceOf("=", false, false);
+            else if (arg.startsWith("--name="))
+                opts.nameContains = arg.fromFirstOccurrenceOf("=", false, false);
             else if (arg == "--verbose" || arg == "-v")
                 opts.verbose = true;
             else if (arg == "--all")
@@ -111,7 +114,25 @@ public:
 
         Summary summary;
 
-        if (opts.category.isNotEmpty())
+        if (opts.nameContains.isNotEmpty())
+        {
+            juce::Array<juce::UnitTest*> tests;
+            for (auto* t : juce::UnitTest::getAllTests())
+                if (t != nullptr && t->getName().containsIgnoreCase(opts.nameContains))
+                    tests.add(t);
+
+            if (tests.isEmpty())
+            {
+                std::cout << "No tests matched --name=" << opts.nameContains << std::endl;
+                return 1;
+            }
+
+            std::cout << "Running tests matching: " << opts.nameContains << std::endl;
+            juce::UnitTestRunner runner;
+            runner.runTests(tests);
+            accumulateResults(runner, summary, opts.verbose);
+        }
+        else if (opts.category.isNotEmpty())
         {
             std::cout << "Running category: " << opts.category << std::endl;
             juce::UnitTestRunner runner;
