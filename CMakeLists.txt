@@ -774,6 +774,21 @@ if(HAVE_JUCE)
         set(_AIEQ_NAME "AI Equalizer Pro")
         set(_AIEQ_BUNDLE_ID "com.AIAudio.AIEqualizerPro")
     endif()
+    if(AIEQ_ENABLE_ANALYZER_AB_TELEMETRY)
+        # Throwaway listening identities for the A1/A2 experiment. These override
+        # SEMANTIC/shipping names so the artefacts can sit beside the installed
+        # SEMANTIC and never replace shipping AI Equalizer Pro.
+        if(AIEQ_ANALYZER_AB_A1_LATEST_HOP)
+            set(_AIEQ_CODE "AIA1")
+            set(_AIEQ_NAME "AI Equalizer Pro AB-A1")
+            set(_AIEQ_BUNDLE_ID "com.AIAudio.AIEqualizerProABA1")
+        else()
+            set(_AIEQ_CODE "AIA2")
+            set(_AIEQ_NAME "AI Equalizer Pro AB-A2")
+            set(_AIEQ_BUNDLE_ID "com.AIAudio.AIEqualizerProABA2")
+        endif()
+        message(STATUS "Analyzer A/B listening identity: ${_AIEQ_NAME} (${_AIEQ_CODE})")
+    endif()
     juce_add_plugin(AIEqualizerPro
         COMPANY_NAME "AIAudio"
         PLUGIN_MANUFACTURER_CODE AIAU

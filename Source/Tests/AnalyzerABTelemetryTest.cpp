@@ -17,6 +17,7 @@ public:
         testDeadlineBoundary();
         testRingOverwriteIsChronological();
         testReset();
+        testWriteDump();
     }
 
 private:
@@ -146,6 +147,29 @@ private:
         expectEquals(static_cast<juce::int64>(snapshot.totalTicksSeen), static_cast<juce::int64>(0));
         expectEquals(static_cast<juce::int64>(snapshot.totalRebuildsSeen), static_cast<juce::int64>(0));
         expectEquals(static_cast<juce::int64>(snapshot.totalRebuildDurationNs), static_cast<juce::int64>(0));
+    }
+
+    void testWriteDump()
+    {
+        beginTest("writeDump records p50/p95 and variant off the hot path");
+
+        Collector collector;
+        collector.beginTimerTick(config(48000, 4096, 2, true, false));
+        collector.recordRebuild(2'000'000);
+        collector.finishTimerTick(8'000'000);
+
+        const auto file = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                              .getChildFile("aieq-analyzer-ab-dump-test.txt");
+        file.deleteFile();
+        expect(writeDump(file.getFullPathName().toStdString(), collector.snapshot()),
+               "dump file is written");
+
+        const auto text = file.loadFileAsString();
+        expect(text.contains("variant " + juce::String(variantName(buildVariant()))));
+        expect(text.contains("timer_p50_ms 8"));
+        expect(text.contains("rebuild_p50_ms 2"));
+        expect(text.contains("ticks 1"));
+        file.deleteFile();
     }
 };
 

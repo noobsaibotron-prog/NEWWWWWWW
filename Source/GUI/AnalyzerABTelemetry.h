@@ -6,6 +6,8 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <fstream>
+#include <string>
 #include <vector>
 
 /**
@@ -265,4 +267,57 @@ private:
     Collector& collector;
     Clock::time_point start;
 };
+
+inline const char* variantName(Variant variant) noexcept
+{
+    switch (variant)
+    {
+        case Variant::A1_LATEST_HOP: return "A1_LATEST_HOP";
+        case Variant::A2_HOP_LERP:   return "A2_HOP_LERP";
+        case Variant::unknown:       break;
+    }
+    return "unknown";
+}
+
+inline bool writeDump(const std::string& path, const Snapshot& snapshot)
+{
+    if (path.empty())
+        return false;
+
+    std::ofstream out(path, std::ios::out | std::ios::trunc);
+    if (!out)
+        return false;
+
+    const auto summary = Collector::summarize(snapshot);
+    const Configuration configuration = snapshot.samples.empty()
+                                        ? Configuration{}
+                                        : snapshot.samples.back().configuration;
+
+    auto ms = [](uint64_t ns) {
+        return static_cast<double>(ns) / 1'000'000.0;
+    };
+
+    out << "variant " << variantName(configuration.variant) << '\n'
+        << "sampleRateHz " << configuration.sampleRateHz << '\n'
+        << "fftSize " << configuration.fftSize << '\n'
+        << "resolutionChoice " << static_cast<int>(configuration.resolutionChoice) << '\n'
+        << "timerHz " << configuration.timerHz << '\n'
+        << "visible " << (configuration.visible ? 1 : 0) << '\n'
+        << "frozen " << (configuration.frozen ? 1 : 0) << '\n'
+        << "injectedPipeline " << (configuration.injectedPipeline ? 1 : 0) << '\n'
+        << "glSpectrumActive " << (configuration.glSpectrumActive ? 1 : 0) << '\n'
+        << "ticks " << snapshot.totalTicksSeen << '\n'
+        << "rebuilds " << snapshot.totalRebuildsSeen << '\n'
+        << "overwrittenTicks " << snapshot.overwrittenTickCount << '\n'
+        << "deadlineMisses " << summary.deadlineMissCount << '\n'
+        << "timer_p50_ms " << ms(summary.timerP50Ns) << '\n'
+        << "timer_p95_ms " << ms(summary.timerP95Ns) << '\n'
+        << "timer_p99_ms " << ms(summary.timerP99Ns) << '\n'
+        << "timer_max_ms " << ms(summary.timerMaxNs) << '\n'
+        << "rebuild_p50_ms " << ms(summary.rebuildP50Ns) << '\n'
+        << "rebuild_p95_ms " << ms(summary.rebuildP95Ns) << '\n'
+        << "rebuild_p99_ms " << ms(summary.rebuildP99Ns) << '\n'
+        << "rebuild_max_ms " << ms(summary.rebuildMaxNs) << '\n';
+    return static_cast<bool>(out);
+}
 } // namespace aieq::gui::analyzer_ab

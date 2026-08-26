@@ -270,6 +270,15 @@ AIEqualizerAudioProcessorEditor::~AIEqualizerAudioProcessorEditor()
     // Stop timer FIRST — prevents callbacks from accessing half-destroyed components
     stopTimer();
 
+#if defined(AIEQ_ENABLE_ANALYZER_AB_TELEMETRY) && AIEQ_ENABLE_ANALYZER_AB_TELEMETRY
+    {
+        const auto dumpPath = juce::SystemStats::getEnvironmentVariable("AIEQ_ANALYZER_AB_DUMP", {});
+        if (dumpPath.isNotEmpty() && spectrum != nullptr)
+            aieq::gui::analyzer_ab::writeDump(dumpPath.toStdString(),
+                                              spectrum->getAnalyzerABTelemetrySnapshot());
+    }
+#endif
+
     // Join analysis thread before teardown to avoid use-after-free.
     if (analysisThread && analysisThread->joinable())
         analysisThread->join();
