@@ -47,9 +47,9 @@ private:
 
         const auto snapshot = collector.snapshot();
         expectEquals(static_cast<int>(snapshot.samples.size()), 1);
-        expectEquals(static_cast<int64>(snapshot.totalTicksSeen), static_cast<int64>(1));
-        expectEquals(static_cast<int64>(snapshot.totalRebuildsSeen), static_cast<int64>(2));
-        expectEquals(static_cast<int64>(snapshot.totalRebuildDurationNs), static_cast<int64>(5'000));
+        expectEquals(static_cast<juce::int64>(snapshot.totalTicksSeen), static_cast<juce::int64>(1));
+        expectEquals(static_cast<juce::int64>(snapshot.totalRebuildsSeen), static_cast<juce::int64>(2));
+        expectEquals(static_cast<juce::int64>(snapshot.totalRebuildDurationNs), static_cast<juce::int64>(5'000));
 
         const auto& sample = snapshot.samples.front();
         expectEquals(static_cast<int>(sample.configuration.variant), static_cast<int>(buildVariant()));
@@ -61,8 +61,8 @@ private:
         expect(!sample.configuration.frozen);
         expect(sample.configuration.injectedPipeline);
         expectEquals(static_cast<int>(sample.rebuildCount), 2);
-        expectEquals(static_cast<int64>(sample.rebuildDurationNs), static_cast<int64>(5'000));
-        expectEquals(static_cast<int64>(sample.timerDurationNs), static_cast<int64>(9'000));
+        expectEquals(static_cast<juce::int64>(sample.rebuildDurationNs), static_cast<juce::int64>(5'000));
+        expectEquals(static_cast<juce::int64>(sample.timerDurationNs), static_cast<juce::int64>(9'000));
     }
 
     void testDeterministicNearestRankSummary()
@@ -80,16 +80,16 @@ private:
         }
 
         const auto summary = Collector::summarize(collector.snapshot());
-        expectEquals(static_cast<int64>(summary.sampleCount), static_cast<int64>(100));
-        expectEquals(static_cast<int64>(summary.rebuildCount), static_cast<int64>(10));
-        expectEquals(static_cast<int64>(summary.timerP50Ns), static_cast<int64>(50'000'000));
-        expectEquals(static_cast<int64>(summary.timerP95Ns), static_cast<int64>(95'000'000));
-        expectEquals(static_cast<int64>(summary.timerP99Ns), static_cast<int64>(99'000'000));
-        expectEquals(static_cast<int64>(summary.timerMaxNs), static_cast<int64>(100'000'000));
-        expectEquals(static_cast<int64>(summary.rebuildP50Ns), static_cast<int64>(50'000));
-        expectEquals(static_cast<int64>(summary.rebuildP95Ns), static_cast<int64>(100'000));
-        expectEquals(static_cast<int64>(summary.rebuildP99Ns), static_cast<int64>(100'000));
-        expectEquals(static_cast<int64>(summary.rebuildMaxNs), static_cast<int64>(100'000));
+        expectEquals(static_cast<juce::int64>(summary.sampleCount), static_cast<juce::int64>(100));
+        expectEquals(static_cast<juce::int64>(summary.rebuildCount), static_cast<juce::int64>(10));
+        expectEquals(static_cast<juce::int64>(summary.timerP50Ns), static_cast<juce::int64>(50'000'000));
+        expectEquals(static_cast<juce::int64>(summary.timerP95Ns), static_cast<juce::int64>(95'000'000));
+        expectEquals(static_cast<juce::int64>(summary.timerP99Ns), static_cast<juce::int64>(99'000'000));
+        expectEquals(static_cast<juce::int64>(summary.timerMaxNs), static_cast<juce::int64>(100'000'000));
+        expectEquals(static_cast<juce::int64>(summary.rebuildP50Ns), static_cast<juce::int64>(50'000));
+        expectEquals(static_cast<juce::int64>(summary.rebuildP95Ns), static_cast<juce::int64>(100'000));
+        expectEquals(static_cast<juce::int64>(summary.rebuildP99Ns), static_cast<juce::int64>(100'000));
+        expectEquals(static_cast<juce::int64>(summary.rebuildMaxNs), static_cast<juce::int64>(100'000));
     }
 
     void testDeadlineBoundary()
@@ -104,7 +104,7 @@ private:
         collector.finishTimerTick(Collector::deadlineNs + 1);
 
         const auto summary = Collector::summarize(collector.snapshot());
-        expectEquals(static_cast<int64>(summary.deadlineMissCount), static_cast<int64>(1));
+        expectEquals(static_cast<juce::int64>(summary.deadlineMissCount), static_cast<juce::int64>(1));
     }
 
     void testRingOverwriteIsChronological()
@@ -121,14 +121,14 @@ private:
         }
 
         const auto snapshot = collector.snapshot();
-        expectEquals(static_cast<int64>(snapshot.totalTicksSeen),
-                     static_cast<int64>(Collector::capacity + extra));
-        expectEquals(static_cast<int64>(snapshot.overwrittenTickCount), static_cast<int64>(extra));
-        expectEquals(static_cast<int64>(snapshot.samples.size()), static_cast<int64>(Collector::capacity));
-        expectEquals(static_cast<int64>(snapshot.samples.front().sequence), static_cast<int64>(extra));
-        expectEquals(static_cast<int64>(snapshot.samples.front().timerDurationNs), static_cast<int64>(extra));
-        expectEquals(static_cast<int64>(snapshot.samples.back().sequence),
-                     static_cast<int64>(Collector::capacity + extra - 1));
+        expectEquals(static_cast<juce::int64>(snapshot.totalTicksSeen),
+                     static_cast<juce::int64>(Collector::capacity + extra));
+        expectEquals(static_cast<juce::int64>(snapshot.overwrittenTickCount), static_cast<juce::int64>(extra));
+        expectEquals(static_cast<juce::int64>(snapshot.samples.size()), static_cast<juce::int64>(Collector::capacity));
+        expectEquals(static_cast<juce::int64>(snapshot.samples.front().sequence), static_cast<juce::int64>(extra));
+        expectEquals(static_cast<juce::int64>(snapshot.samples.front().timerDurationNs), static_cast<juce::int64>(extra));
+        expectEquals(static_cast<juce::int64>(snapshot.samples.back().sequence),
+                     static_cast<juce::int64>(Collector::capacity + extra - 1));
     }
 
     void testReset()
@@ -143,9 +143,9 @@ private:
 
         const auto snapshot = collector.snapshot();
         expect(snapshot.samples.empty());
-        expectEquals(static_cast<int64>(snapshot.totalTicksSeen), static_cast<int64>(0));
-        expectEquals(static_cast<int64>(snapshot.totalRebuildsSeen), static_cast<int64>(0));
-        expectEquals(static_cast<int64>(snapshot.totalRebuildDurationNs), static_cast<int64>(0));
+        expectEquals(static_cast<juce::int64>(snapshot.totalTicksSeen), static_cast<juce::int64>(0));
+        expectEquals(static_cast<juce::int64>(snapshot.totalRebuildsSeen), static_cast<juce::int64>(0));
+        expectEquals(static_cast<juce::int64>(snapshot.totalRebuildDurationNs), static_cast<juce::int64>(0));
     }
 };
 
