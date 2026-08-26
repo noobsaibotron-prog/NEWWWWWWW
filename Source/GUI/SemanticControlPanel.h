@@ -6,6 +6,8 @@
 #include "../AI/SemanticEQEngine.h"
 #include "../AI/SemanticPlanningService.h"
 #include "ModernLookAndFeel.h"
+#include "SemanticIntentMap.h"
+#include <vector>
 #if AIEQ_GUI_DEBUG
 #include "../Utils/DebugLog.h"
 #endif
@@ -46,6 +48,7 @@ public:
         int rejectedBands = 0;
         bool atomicRejected = false;
         bool deferred = false;
+        std::vector<int> appliedBandSlots;
 
         [[nodiscard]] bool complete() const noexcept
         {
@@ -58,6 +61,9 @@ public:
     // structured feedback instead of silently dropping bands.
     std::function<TextApplyFeedback(
         const std::vector<SemanticEQEngine::SemanticEQAdjustment>&)> onTextPlanApply;
+
+    std::function<void(const EmberUI::SemanticIntentMapState&)> onIntentMapChanged;
+    std::function<void(bool)> onIntentMapHover;
 
     /** T5.3 - the source context to plan against, taken on the message thread
         at the instant PLAN is pressed and then frozen into the request. Left
@@ -426,6 +432,7 @@ public:
         bool needsRepaint = false;
 
         consumePlanningResult();
+        pollIntentMapHover();
 
         // Update morph progress
         if (semanticEngine.isMorphing())
@@ -701,6 +708,8 @@ private:
             if (adjustments.empty())
             {
                 setResponseStrip(ResponseChip::NoSafeMove, "No safe EQ move to apply");
+                publishIntentMap(EmberUI::buildSemanticIntentMapState(
+                    *pendingTextPlan, EmberUI::SemanticIntentMapPhase::NoSafeMove));
                 return;
             }
 
@@ -732,6 +741,17 @@ private:
                         + juce::String(feedback.requestedBands) + ")");
                     return;
                 }
+
+                auto map = EmberUI::buildSemanticIntentMapState(
+                    *pendingTextPlan, EmberUI::SemanticIntentMapPhase::Applied);
+                map.appliedBandSlots = feedback.appliedBandSlots;
+                const juce::String appliedDetail = "Applied: " + interpretation
+                    + intentMapSummarySuffix(map);
+                publishIntentMap(std::move(map));
+                invalidatePendingTextPlan(false);
+                commandInput.clear();
+                setResponseStrip(ResponseChip::Applied, appliedDetail);
+                return;
             }
             else
             {
@@ -742,11 +762,6 @@ private:
                                 "Apply unavailable — atomic Semantic endpoint not connected");
                 return;
             }
-
-            invalidatePendingTextPlan();
-            commandInput.clear();
-            setResponseStrip(ResponseChip::Applied, "Applied: " + interpretation);
-            return;
         }
 
         // PLAN. The fit costs 32-42 ms on this machine (measured 44.1/48/96 kHz),
@@ -771,6 +786,11 @@ private:
         planningText = text;
         planningUiState = AIEQPerceptual::SemanticPlanningUiState::Planning;
         applyButton.setButtonText("PLAN");
+        {
+            EmberUI::SemanticIntentMapState planning;
+            planning.phase = EmberUI::SemanticIntentMapPhase::Planning;
+            publishIntentMap(std::move(planning));
+        }
         setResponseStrip(ResponseChip::Planning, "Planning...");
     }
 
@@ -830,6 +850,8 @@ private:
                 else
                     setResponseStrip(ResponseChip::NoSafeMove, "No meaningful EQ move required");
                 invalidatePendingTextPlan();
+                publishIntentMap(EmberUI::buildSemanticIntentMapState(
+                    plan, EmberUI::SemanticIntentMapPhase::NoSafeMove));
                 return;
 
             case Status::Cancelled:
@@ -851,6 +873,10 @@ private:
         planStatus += describeSourceContext(plan);
         if (!plan.outcomeSummary.empty())
             planStatus += " | " + juce::String::fromUTF8(plan.outcomeSummary.c_str());
+        auto map = EmberUI::buildSemanticIntentMapState(
+            plan, EmberUI::SemanticIntentMapPhase::Ready);
+        planStatus += intentMapSummarySuffix(map);
+        publishIntentMap(std::move(map));
         setResponseStrip(ResponseChip::Ready, planStatus);
     }
 
@@ -908,7 +934,107 @@ private:
         return out;
     }
 
-    void invalidatePendingTextPlan()
+    static EmberUI::SemanticUiAxis uiAxisFromQuality (
+        SemanticEQEngine::SemanticQuality quality) noexcept
+    {
+        using Q = SemanticEQEngine::SemanticQuality;
+        using A = EmberUI::SemanticUiAxis;
+        switch (quality)
+        {
+            case Q::Air:        return A::Air;
+            case Q::Warmth:     return A::Warmth;
+            case Q::Punch:      return A::Punch;
+            case Q::Clarity:    return A::Clarity;
+            case Q::Body:       return A::Body;
+            case Q::Brilliance: return A::Brilliance;
+            case Q::Smoothness: return A::Smooth;
+            case Q::Weight:     return A::Weight;
+            default:            return A::Count;
+        }
+    }
+
+    juce::String intentMapSummarySuffix (const EmberUI::SemanticIntentMapState& map) const
+    {
+        juce::String out;
+        if (!map.focusRegions.empty())
+        {
+            const auto& focus = map.focusRegions.front();
+            out += " | Focus: "
+                + juce::String (EmberUI::semanticFocusDisplayName (focus.dimension, focus.focus));
+        }
+        if (!map.protectRegions.empty() && !map.protectRegions.front().sourcePhrase.empty())
+            out += " | Protect: "
+                + juce::String::fromUTF8 (map.protectRegions.front().sourcePhrase.c_str());
+        return out;
+    }
+
+    void publishIntentMap (EmberUI::SemanticIntentMapState state)
+    {
+        intentMapState = std::move (state);
+        refreshAxisPresentation();
+        if (onIntentMapChanged)
+            onIntentMapChanged (intentMapState);
+    }
+
+    void hideIntentMap()
+    {
+        if (intentMapState.phase == EmberUI::SemanticIntentMapPhase::Hidden
+            && !intentMapState.hasFocus()
+            && !intentMapState.hasProtection())
+            return;
+        publishIntentMap ({});
+    }
+
+    void refreshAxisPresentation()
+    {
+        const bool mapVisible = intentMapState.visible();
+        for (auto& qs : qualitySliders)
+        {
+            const auto axis = uiAxisFromQuality (qs.quality);
+            auto colour = qs.color;
+            if (mapVisible && axis != EmberUI::SemanticUiAxis::Count)
+            {
+                const auto role = intentMapState.axisRoles[static_cast<std::size_t> (axis)];
+                if (role == EmberUI::SemanticAxisRole::Primary)
+                    colour = qs.color.brighter (0.18f);
+                else if (role == EmberUI::SemanticAxisRole::Involved)
+                    colour = qs.color;
+                else
+                    colour = ModernLookAndFeel::Colors::textMuted;
+            }
+            qs.label->setColour (juce::Label::textColourId, colour);
+        }
+    }
+
+    void pollIntentMapHover()
+    {
+        bool hover = false;
+        if (intentMapState.visible())
+        {
+            const auto pos = getMouseXYRelative();
+            if (responseStripBounds.contains (pos))
+                hover = true;
+            for (const auto& qs : qualitySliders)
+            {
+                const auto axis = uiAxisFromQuality (qs.quality);
+                if (axis == EmberUI::SemanticUiAxis::Count)
+                    continue;
+                if (intentMapState.axisRoles[static_cast<std::size_t> (axis)]
+                    == EmberUI::SemanticAxisRole::Neutral)
+                    continue;
+                if ((qs.label != nullptr && qs.label->getBounds().contains (pos))
+                    || (qs.slider != nullptr && qs.slider->getBounds().contains (pos)))
+                    hover = true;
+            }
+        }
+        if (hover == intentMapHover)
+            return;
+        intentMapHover = hover;
+        if (onIntentMapHover)
+            onIntentMapHover (hover);
+    }
+
+    void invalidatePendingTextPlan(bool clearIntentMap = true)
     {
         pendingTextPlan.reset();
         pendingTextCommand.clear();
@@ -919,6 +1045,8 @@ private:
         pendingGeneration = 0;
         planningText.clear();
         applyButton.setButtonText("PLAN");
+        if (clearIntentMap)
+            hideIntentMap();
     }
     
     void resetAllSliders()
@@ -1133,6 +1261,8 @@ private:
     std::vector<std::unique_ptr<juce::TextButton>> presetButtons;
     std::optional<AIEQPerceptual::SemanticPlan> pendingTextPlan;
     juce::String pendingTextCommand;
+    EmberUI::SemanticIntentMapState intentMapState;
+    bool intentMapHover = false;
 
     // T3.2 async planning. The panel owns the UX state; the worker owns only
     // the computation. pendingGeneration is the epoch this panel is waiting for.

@@ -9,6 +9,7 @@
 #include "BandContextActions.h"
 #include "BandRadialMenu.h"
 #include "ModernLookAndFeel.h"
+#include "SemanticIntentMap.h"
 #include "SpectrumHopLerp.h"
 #include <algorithm>
 #include <array>
@@ -37,6 +38,35 @@ public:
     std::function<void(int)> onBandSelected;                          // Single click on band
     std::function<void(int, float, float)> onBandCreatedOrActivated;  // Double click: band index, freq, gain
     std::function<void(int, float, float, float)> onBandDragged;      // Drag: band, freq, gain, q
+
+    void setSemanticIntentMap (EmberUI::SemanticIntentMapState state)
+    {
+        const bool wasVisible = semanticIntentMap.visible();
+        semanticIntentMap = std::move (state);
+        if (semanticIntentMap.visible() && !wasVisible)
+            semanticIntentRevealMs = juce::Time::getMillisecondCounterHiRes();
+        if (!semanticIntentMap.visible())
+            semanticIntentAlpha = 0.0f;
+        repaint();
+    }
+
+    void setSemanticIntentMapPresentationEnabled (bool enabled)
+    {
+        if (semanticIntentMapPresentationEnabled == enabled)
+            return;
+        semanticIntentMapPresentationEnabled = enabled;
+        if (!enabled)
+            semanticIntentHover = false;
+        repaint();
+    }
+
+    void setSemanticIntentMapHover (bool hover)
+    {
+        if (semanticIntentHover == hover)
+            return;
+        semanticIntentHover = hover;
+        repaint();
+    }
 
     explicit AdvancedSpectrumDisplay(AIEqualizerAudioProcessor& p) : processor(p)
     {
@@ -312,6 +342,8 @@ public:
         }
         g.drawImageAt(gridCache, 0, 0);
 
+        drawSemanticIntentMap(g);
+
 #if AIEQ_GUI_DEBUG
         tBg = lap() - t0; t0 = lap();
 #endif
@@ -344,6 +376,7 @@ public:
         drawAIMarkers(g);
         drawAISuggestedCurve(g);  // Phase 7B: AI suggestion overlay (dashed, amber 0.60)
 
+        drawSemanticIntentBandLinks(g);
         drawEQBands(g);
 
         if (hoverX >= 0) drawHover(g);
@@ -585,6 +618,28 @@ public:
             // While dragging, nodes MUST be fully visible (override fade-out)
             if (isDraggingBand)
                 nodesOpacity = 1.0f;
+        }
+
+        {
+            float target = 0.0f;
+            if (semanticIntentMapPresentationEnabled && semanticIntentMap.visible())
+            {
+                const double ageMs = juce::Time::getMillisecondCounterHiRes()
+                    - semanticIntentRevealMs;
+                const bool holding = ageMs < 1500.0;
+                target = semanticIntentHover ? 1.0f : (holding ? 1.0f : 0.62f);
+            }
+            const float speed = (target > semanticIntentAlpha)
+                ? (semanticIntentHover ? 0.22f : 0.12f)
+                : 0.06f;
+            const float next = semanticIntentAlpha + (target - semanticIntentAlpha) * speed;
+            if (std::abs (next - semanticIntentAlpha) > 0.002f)
+            {
+                semanticIntentAlpha = next;
+                needsRepaint = true;
+            }
+            else
+                semanticIntentAlpha = target;
         }
 
         if (needsRepaint)
@@ -2373,6 +2428,99 @@ private:
                                                            juce::PathStrokeType::rounded));
     }
 
+    void drawSemanticIntentMap (juce::Graphics& g)
+    {
+        if (!semanticIntentMapPresentationEnabled
+            || !semanticIntentMap.visible()
+            || semanticIntentAlpha <= 0.001f)
+            return;
+
+        const float graphLeft   = graphBounds.getX();
+        const float graphRight  = graphBounds.getRight();
+        const float graphTop    = graphBounds.getY();
+        const float graphBottom = graphBounds.getBottom();
+        const float graphHeight = graphBounds.getHeight();
+        if (graphHeight <= 1.0f)
+            return;
+
+        auto fillRegion = [&] (float minHz, float maxHz, juce::Colour colour,
+                               float topA, float bottomA)
+        {
+            float xL = juce::jlimit (graphLeft, graphRight, freqToX (minHz));
+            float xH = juce::jlimit (graphLeft, graphRight, freqToX (maxHz));
+            if (xH - xL < 4.0f)
+            {
+                const float xC = 0.5f * (xL + xH);
+                xL = xC - 2.0f;
+                xH = xC + 2.0f;
+            }
+            auto zone = juce::Rectangle<float> (xL, graphTop, xH - xL, graphHeight);
+            juce::ColourGradient grad (colour.withAlpha (topA), zone.getX(), graphTop,
+                                       colour.withAlpha (bottomA), zone.getX(), graphBottom,
+                                       false);
+            g.setGradientFill (grad);
+            g.fillRect (zone);
+        };
+
+        const float a = semanticIntentAlpha;
+        for (const auto& focus : semanticIntentMap.focusRegions)
+        {
+            const float strength = juce::jlimit (0.35f, 1.0f, focus.strength);
+            const float top = (focus.primary ? 0.12f : 0.08f) * strength * a;
+            const float bot = (focus.primary ? 0.035f : 0.02f) * strength * a;
+            fillRegion (focus.minFrequencyHz, focus.maxFrequencyHz,
+                        ModernLookAndFeel::Colors::amber, top, bot);
+        }
+
+        for (const auto& protect : semanticIntentMap.protectRegions)
+        {
+            const float conf = juce::jlimit (0.4f, 1.0f, protect.confidence);
+            fillRegion (protect.minFrequencyHz, protect.maxFrequencyHz,
+                        juce::Colour (0xFF6A8AA8),
+                        0.055f * conf * a,
+                        0.018f * conf * a);
+        }
+    }
+
+    void drawSemanticIntentBandLinks (juce::Graphics& g)
+    {
+        if (!semanticIntentMapPresentationEnabled
+            || !semanticIntentMap.visible()
+            || semanticIntentAlpha <= 0.001f)
+            return;
+
+        const float a = semanticIntentAlpha;
+        const auto colour = ModernLookAndFeel::Colors::amber;
+
+        if (semanticIntentMap.phase == EmberUI::SemanticIntentMapPhase::Ready)
+        {
+            for (const auto& link : semanticIntentMap.bandLinks)
+            {
+                const float x = freqToX (link.frequencyHz);
+                const float y = gainToY (link.gainDb);
+                const float r = 7.0f + 3.0f * juce::jlimit (0.0f, 1.0f, link.contributionWeight);
+                g.setColour (colour.withAlpha (0.22f * a));
+                g.drawEllipse (x - r, y - r, r * 2.0f, r * 2.0f, 1.1f);
+            }
+        }
+        else if (semanticIntentMap.phase == EmberUI::SemanticIntentMapPhase::Applied)
+        {
+            for (int slot : semanticIntentMap.appliedBandSlots)
+            {
+                if (slot < 0 || slot >= processor.getNumActiveBands())
+                    continue;
+                const auto state = processor.getBandState (slot);
+                if (!state.enabled)
+                    continue;
+                const float x = freqToX (state.frequency);
+                const float y = gainToY (state.gain);
+                const float r = 11.0f;
+                g.setColour (colour.withAlpha (0.32f * a));
+                g.drawEllipse (x - r, y - r, r * 2.0f, r * 2.0f, 1.3f);
+            }
+        }
+    }
+
     void drawAIMarkers(juce::Graphics& g)
     {
         // Hero Graph Polish v1 — Subtle Idle:
@@ -3706,6 +3854,12 @@ private:
     // FIX 4: Off-screen grid + labels cache (static between resizes)
     juce::Image gridCache;
     bool gridCacheDirty = true;
+
+    EmberUI::SemanticIntentMapState semanticIntentMap;
+    bool semanticIntentMapPresentationEnabled = false;
+    bool semanticIntentHover = false;
+    float semanticIntentAlpha = 0.0f;
+    double semanticIntentRevealMs = 0.0;
 
     // FIX 2: Cached spectrum paths — rebuilt only when spectrum version changes
     // Wave 5: post now has a fill path too (for the luminous cyan base layer

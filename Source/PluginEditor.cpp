@@ -173,7 +173,19 @@ AIEqualizerAudioProcessorEditor::AIEqualizerAudioProcessorEditor(AIEqualizerAudi
         feedback.rejectedBands = result.rejectedBands;
         feedback.atomicRejected = result.atomicRejected;
         feedback.deferred = result.deferredToMessageThread;
+        feedback.appliedBandSlots = result.appliedBandSlots;
         return feedback;
+    };
+
+    semanticPanel->onIntentMapChanged = [this](const EmberUI::SemanticIntentMapState& state)
+    {
+        if (spectrum)
+            spectrum->setSemanticIntentMap(state);
+    };
+    semanticPanel->onIntentMapHover = [this](bool hover)
+    {
+        if (spectrum)
+            spectrum->setSemanticIntentMapHover(hover);
     };
 
     // A3 fix: feed the live pre-EQ analyzer spectrum (smoothed dB) and the real
@@ -1752,6 +1764,8 @@ void AIEqualizerAudioProcessorEditor::switchRightTab(int tab)
     // Context panel is always visible in bottom layout
     aiProblemPanel->setVisible(tab == 0);
     semanticPanel->setVisible(tab == 1);
+    if (spectrum)
+        spectrum->setSemanticIntentMapPresentationEnabled(tab == 1);
 
     // Update button styles — subtle amber glow when active (matches mockup context-tab.active)
     auto activeCol  = juce::Colour(0xFF232028).interpolatedWith(ModernLookAndFeel::Colors::amber, 0.08f);
