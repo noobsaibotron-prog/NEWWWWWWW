@@ -719,7 +719,17 @@ private:
     alignas(64) juce::AudioBuffer<float> oversamplingTransitionBuffer;
     std::atomic<int> phaseTransitionFromMode { -1 };
     std::atomic<int> phaseTransitionSamplesRemaining { 0 };
-    static constexpr int phaseTransitionCrossfadeSamples = 1024; // ~21ms @ 48kHz — longer fade needed for LP/Natural IIR state divergence
+    // The audible blend is deliberately short, but it starts only after the
+    // incoming path has accumulated one complete host-visible latency window.
+    // phaseTransitionTotalSamples is prepared per transition as
+    // 2 * maximumLatency + blend: the first part fills the incoming aligned
+    // delay line (and, on the first ZL -> latent switch, slews the outgoing
+    // path into the newly reported latency); only the final 1024 samples blend.
+    static constexpr int phaseTransitionCrossfadeSamples = 1024;
+    std::atomic<int> phaseTransitionTotalSamples { phaseTransitionCrossfadeSamples };
+    int phaseTransitionAudioFromMode = -1;
+    int phaseTransitionAudioToMode = -1;
+    int phaseTransitionInitialOldPadSamples = 0;
     std::atomic<int> oversamplingTransitionFromEffective { -1 };
     std::atomic<int> oversamplingTransitionSamplesRemaining { 0 };
     static constexpr int oversamplingTransitionCrossfadeSamples = 2048; // longer fade for 2x↔4x startup/warmup
@@ -758,22 +768,20 @@ private:
     int dryDelayLength = 0;
     int dryDelayBufferSize = 0;
 
-    // Wet output padding delay — compensates when actual DSP latency < worstCaseLatencySamples.
+    // Wet output padding delays. During a phase-mode transition the outgoing
+    // and incoming DSP paths need independent histories so each can first be
+    // aligned to the same host-visible latency and only then crossfaded.
     alignas(64) juce::AudioBuffer<float> wetPaddingDelayBuffer;
+    alignas(64) juce::AudioBuffer<float> phaseTransitionPaddingDelayBuffer;
     int wetPaddingWritePos = 0;
+    int phaseTransitionPaddingWritePos = 0;
+    bool alternateWetPaddingBufferActive = false;
     int wetPaddingDelaySamples = 0;
     int wetPaddingBufferSize = 0;
 
-    // Wet padding smoothing: ramp padSamples over the phase transition crossfade
-    // window to avoid abrupt read-position jumps when switching phase modes.
-    // Cat 2 Fix: ZL -> NaturalPhase (0->1) caused a ~15-sample discontinuity in
-    // the ring read position, producing a click of ~0.6 amplitude on a 1kHz sine.
-    // During a transition we fractional-read the ring buffer with a linear ramp
-    // from wetPadRampStart to padSamples; outside transitions the integer path
-    // is unchanged (zero overhead in the common case).
-    int wetPadLastSamples = 0;    // padSamples applied in the previous block
-    int wetPadRampStart   = 0;    // starting value for the active ramp
-    bool wetPadRampActive = false;
+    // Last padding used by the active ring. It seeds the outgoing-path latency
+    // slew when a zero-latency instance first adopts the padded latency plan.
+    int wetPadLastSamples = 0;
 
     // Pending A/B whole-chain crossfade: armed by message thread BEFORE parameter
     // changes, consumed by audio thread BEFORE updateEQFromParameters() so the

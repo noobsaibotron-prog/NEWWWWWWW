@@ -96,7 +96,7 @@ private:
                == ParametricEQProcessor::CurveMode::Surgical);
 
         // This request arrives during the Notch transition and must never be
-        // published before that 128-sample transition completes.
+        // published before the signed 1024-sample transition completes.
         setChoice(apvts, "band0Type", ParametricEQProcessor::HighShelf);
         setChoice(apvts, "band0CurveMode", 0);
         processSilence(processor, blockSize);
@@ -114,10 +114,17 @@ private:
         expect(processor.getEQProcessor().getBandCurveMode(0)
                == ParametricEQProcessor::CurveMode::Surgical);
 
-        processSilence(processor, blockSize);
+        // Two countdown blocks have elapsed (HighShelf, then BandPass). Keep
+        // processing until exactly one block remains and verify that the old
+        // topology is still the published authority at sample 1023.
+        constexpr int topologyFadeSamples = 1024;
+        constexpr int fadeBlocks = topologyFadeSamples / blockSize;
+        for (int elapsedBlocks = 2; elapsedBlocks < fadeBlocks - 1; ++elapsedBlocks)
+            processSilence(processor, blockSize);
         expectEquals(processor.getEQProcessor().getBandType(0),
                      static_cast<int>(ParametricEQProcessor::Notch));
 
+        // The final countdown block publishes only the latest request.
         processSilence(processor, blockSize);
         expectEquals(processor.getEQProcessor().getBandType(0),
                      static_cast<int>(ParametricEQProcessor::BandPass));

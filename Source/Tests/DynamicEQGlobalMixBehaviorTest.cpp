@@ -50,6 +50,14 @@ public:
             params.dynamicMode = DynamicEQProcessor::DynamicMode_Off;
             proc.setBandParams(0, params);
 
+            // setGlobalMix() is intentionally sample-ramped from the previous
+            // value over the first processed block. Prime and discard that
+            // transition here: this test measures the settled 0/50/100% mix
+            // law, while the dedicated DynEQ transition witness owns the
+            // no-click assertion for the ramp itself.
+            auto priming = makeTone();
+            proc.process(priming);
+
             auto buf = makeTone();
             auto dry = buf;
             proc.process(buf);

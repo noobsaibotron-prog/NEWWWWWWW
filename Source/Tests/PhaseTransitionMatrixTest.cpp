@@ -93,12 +93,14 @@ private:
         auto& apvts = processor.getAPVTS();
         configure (processor, apvts, from);
 
-        // Wet-pad / LP group delay is ~2176 samples. Switching before that fill
-        // records delay-line zeros, not the splice. Hold+fade after a Linear
-        // entry is another ~3200 samples. Warm and capture past both.
-        const int padWarmup = (4096 + blockSize - 1) / blockSize + 4;
-        const int postSwitch = (4096 + blockSize - 1) / blockSize
-            + (1024 + blockSize - 1) / blockSize + 8;
+        // The latency-aligned state machine uses two maximum-latency windows
+        // to establish the incoming history, then a 1024-sample audible blend.
+        // Keep both the initial configured mode and the measured switch well
+        // beyond that complete transition; otherwise a Natural/Linear "from"
+        // case would switch again while its setup transition was still active.
+        constexpr int completeTransitionWindow = 12288;
+        const int padWarmup = (completeTransitionWindow + blockSize - 1) / blockSize;
+        const int postSwitch = (completeTransitionWindow + blockSize - 1) / blockSize;
         const int kSwitch = padWarmup;
         const int kBlocks = kSwitch + postSwitch;
         juce::AudioBuffer<float> captured (2, kBlocks * blockSize);

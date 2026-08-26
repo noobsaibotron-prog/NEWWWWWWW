@@ -409,8 +409,10 @@ private:
         juce::MidiBuffer midi;
         int samplePos = 0;
 
-        // Warm up LP path
-        for (int b = 0; b < 40; ++b)
+        // Warm past the complete latency-aligned phase transition. At 48 kHz
+        // the transition is longer than the historical 40-block warm-up; a
+        // shorter warm-up contaminates this IR-swap test with the phase switch.
+        for (int b = 0; b < 96; ++b)
         {
             fillSine(buf, 440.0, 0.5f, samplePos);
             proc.processBlock(buf, midi);
@@ -487,8 +489,9 @@ private:
         juce::MidiBuffer midi;
         int samplePos = 0;
 
-        // Warm up LP path
-        for (int b = 0; b < 40; ++b)
+        // This test targets DynEQ, not the preceding phase-mode switch. Let the
+        // two latency histories fill and the phase blend finish first.
+        for (int b = 0; b < 96; ++b)
         {
             fillSine(buf, 1000.0, 0.5f, samplePos);
             proc.processBlock(buf, midi);
@@ -570,8 +573,8 @@ private:
         juce::MidiBuffer midi;
         int samplePos = 0;
 
-        // Warm up
-        for (int b = 0; b < 40; ++b)
+        // Isolate the simultaneous LP/DynEQ drag from the phase transition.
+        for (int b = 0; b < 96; ++b)
         {
             fillSine(buf, 440.0, 0.5f, samplePos);
             proc.processBlock(buf, midi);
