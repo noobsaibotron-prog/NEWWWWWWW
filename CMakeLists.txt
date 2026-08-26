@@ -1431,6 +1431,9 @@ if(HAVE_JUCE)
         Source/Tests/LatencyPlanTest.cpp
         Source/Tests/DryWetMixAlignmentTest.cpp
         Source/Tests/DryWetGainPipelineTest.cpp
+        Source/Tests/DynEQTransitionWitnessTest.cpp
+        Source/Tests/PhaseTransitionMatrixTest.cpp
+        Source/Tests/BandContextContinuityTest.cpp
         Source/Tests/LinearPhaseLatencyContractTest.cpp
         # Instantiates AIEqualizerAudioProcessor to exercise the real IR builder,
         # so it belongs to the target that links SharedCode.

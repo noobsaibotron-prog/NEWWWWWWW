@@ -6,6 +6,7 @@
 #if defined(AIEQ_ENABLE_ANALYZER_AB_TELEMETRY) && AIEQ_ENABLE_ANALYZER_AB_TELEMETRY
 #include "AnalyzerABTelemetry.h"
 #endif
+#include "BandContextActions.h"
 #include "BandRadialMenu.h"
 #include "ModernLookAndFeel.h"
 #include "SpectrumHopLerp.h"
@@ -1379,46 +1380,16 @@ private:
 
     void executeBandContextAction(int bandIndex, BandRadialMenu::Command command)
     {
-        if (bandIndex < 0 || bandIndex >= processor.getNumActiveBands())
+        const bool applied = aieq::gui::applyBandContextCommand(processor, bandIndex, command);
+        if (!applied)
             return;
 
-        auto state = processor.getBandState(bandIndex);
-        switch (command.type)
+        if (command.type == BandRadialMenu::CommandType::deleteBand)
         {
-            case BandRadialMenu::CommandType::setFilterType:
-                if (command.value >= 0 && command.value < 7)
-                {
-                    state.type = command.value;
-                    processor.setBandState(bandIndex, state);
-                }
-                break;
-
-            case BandRadialMenu::CommandType::toggleEnabled:
-                state.enabled = !state.enabled;
-                processor.setBandState(bandIndex, state);
-                break;
-
-            case BandRadialMenu::CommandType::toggleSolo:
-                state.solo = !state.solo;
-                processor.setBandState(bandIndex, state);
-                break;
-
-            case BandRadialMenu::CommandType::resetGain:
-                state.gain = 0.0f;
-                processor.setBandState(bandIndex, state);
-                break;
-
-            case BandRadialMenu::CommandType::resetBand:
-                state.gain = 0.0f;
-                state.q = 1.0f;
-                state.type = 2; // Peak
-                state.solo = false;
-                processor.setBandState(bandIndex, state);
-                break;
-
-            case BandRadialMenu::CommandType::deleteBand:
-                deleteBand(bandIndex);
-                break;
+            if (selectedBandIndex == bandIndex)
+                selectedBandIndex = -1;
+            if (onBandSelected)
+                onBandSelected(selectedBandIndex);
         }
 
         repaint();

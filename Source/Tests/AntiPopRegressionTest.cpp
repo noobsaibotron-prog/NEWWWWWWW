@@ -4,6 +4,7 @@
 #include <cmath>
 
 #include "../PluginProcessor.h"
+#include "Support/TestParameters.h"
 
 /**
  * AntiPopRegressionTest
@@ -58,25 +59,22 @@ private:
     //==========================================================================
     // Helpers
     //==========================================================================
-    static void setBool(juce::AudioProcessorValueTreeState& apvts,
-                        const juce::String& id, bool value)
+    void setBool(juce::AudioProcessorValueTreeState& apvts,
+                 const juce::String& id, bool value)
     {
-        if (auto* p = apvts.getParameter(id))
-            p->setValueNotifyingHost(value ? 1.0f : 0.0f);
+        aieq::test::setBool(*this, apvts, id, value);
     }
 
-    static void setChoice(juce::AudioProcessorValueTreeState& apvts,
-                          const juce::String& id, int index)
+    void setChoice(juce::AudioProcessorValueTreeState& apvts,
+                   const juce::String& id, int index)
     {
-        if (auto* p = apvts.getParameter(id))
-            p->setValueNotifyingHost(p->convertTo0to1(static_cast<float>(index)));
+        aieq::test::setChoice(*this, apvts, id, index);
     }
 
-    static void setFloat(juce::AudioProcessorValueTreeState& apvts,
-                         const juce::String& id, float value)
+    void setFloat(juce::AudioProcessorValueTreeState& apvts,
+                  const juce::String& id, float value)
     {
-        if (auto* p = apvts.getParameter(id))
-            p->setValueNotifyingHost(p->convertTo0to1(value));
+        aieq::test::setFloat(*this, apvts, id, value);
     }
 
     static void fillSine(juce::AudioBuffer<float>& buf, double freqHz,
@@ -270,7 +268,7 @@ private:
         auto& apvts = proc.getAPVTS();
 
         // Enable DynEQ, set band 0 to compress
-        setBool(apvts, "dynamicEQEnabled", true);
+        setBool(apvts, "dynEqEnabled", true);
         auto& dynProc = proc.getDynamicEQProcessor();
         DynamicEQProcessor::DynamicBandParams dp;
         dp.frequency = 1000.0f;
@@ -407,7 +405,7 @@ private:
         proc.forceLinearIRReady();
 
         // Enable DynEQ with compressor on band 0
-        setBool(apvts, "dynamicEQEnabled", true);
+        setBool(apvts, "dynEqEnabled", true);
         auto& dynProc = proc.getDynamicEQProcessor();
         DynamicEQProcessor::DynamicBandParams dp;
         dp.frequency = 1000.0f;
@@ -490,7 +488,7 @@ private:
         proc.forceLinearIRReady();
 
         // Enable DynEQ
-        setBool(apvts, "dynamicEQEnabled", true);
+        setBool(apvts, "dynEqEnabled", true);
         auto& dynProc = proc.getDynamicEQProcessor();
         DynamicEQProcessor::DynamicBandParams dp;
         dp.frequency = 1000.0f;
@@ -583,7 +581,7 @@ private:
         // into all DynEQ processors every block, so a direct setBandParams call
         // would be clobbered. The dynamic band shares band0Freq/Gain/Q with the
         // static band; dragging those IS the drag gesture under test.
-        setBool(apvts, "dynamicEQEnabled", true);
+        setBool(apvts, "dynEqEnabled", true);
         setBool(apvts, "band0Enabled", true);
         setChoice(apvts, "band0Type", 2);                                   // Peak
         setChoice(apvts, "band0DynMode", DynamicEQProcessor::DynamicMode_Compress);
@@ -690,7 +688,7 @@ private:
         setChoice(apvts, "phaseMode", 1);          // Natural Phase
         setChoice(apvts, "oversamplingFactor", 2); // 4x
 
-        setBool(apvts, "dynamicEQEnabled", true);
+        setBool(apvts, "dynEqEnabled", true);
         setBool(apvts, "band0Enabled", true);
         setChoice(apvts, "band0Type", 2);          // Peak
         setChoice(apvts, "band0DynMode", DynamicEQProcessor::DynamicMode_Compress);
