@@ -1394,6 +1394,7 @@ if(HAVE_JUCE)
         Source/Tests/RB2EquivalenceTest.cpp
         Source/Tests/SpectrumPipelineTest.cpp
         Source/Tests/SpectrumHopLerpTest.cpp
+        Source/Tests/AnalyzerABProtocolTest.cpp
         Source/Tests/RB4OfflineRenderTest.cpp
         Source/Tests/SemanticPerceptualGateTest.cpp
         Source/Tests/SpectralConfidenceCandidateProbe.cpp
