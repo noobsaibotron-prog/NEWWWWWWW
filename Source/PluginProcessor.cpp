@@ -3994,7 +3994,7 @@ bool AIEqualizerAudioProcessor::applySmoothedBandParams(int blockSamples, bool p
     constexpr double maxLog2SlewPerSecond = 100.0;
     constexpr double maxGainDbSlewPerSecond = 2400.0;
     constexpr double correctionRampSeconds = 0.08;
-    constexpr int topologyFadeSamples = 128;
+    constexpr int topologyFadeSamples = 1024;
 
     const int activeBandsLocal = numActiveBands.load(std::memory_order_relaxed);
     const int availableBands = std::min({ activeBandsLocal, maxBands,
