@@ -1617,7 +1617,9 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     lastProcessedParameterChangeCounter.store(parameterChangeCounter.load(std::memory_order_relaxed),
                                               std::memory_order_relaxed);
 
-    // FIX: Initialize smoothed output gain (50ms ramp time to prevent zippering)
+    // 50 ms ramps: auto-gain on the wet path, output trim on the mixed output.
+    smoothedAutoGain.reset(sampleRate, 0.05);
+    smoothedAutoGain.setCurrentAndTargetValue(1.0f);
     smoothedOutputGain.reset(sampleRate, 0.05);
     smoothedOutputGain.setCurrentAndTargetValue(1.0f);
 
@@ -3221,23 +3223,14 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& processBu
     dynamicCorrectionEngine.setEnabled(loadParam(cachedDynamicCorrections, 0.0f) > 0.5f);
     dynamicCorrectionEngine.process(buffer);
 
-    // Apply output gain (manual + auto-gain compensation) with SMOOTHING to prevent zippering
-    float totalGainDB = outputGainDB;
-
-    if (autoGainEnabledLocal)
-    {
-        // FIX: Use atomic load for thread-safe access
-        totalGainDB += autoGainCompensation.load(std::memory_order_relaxed);
-    }
-
-    // FIX: Use SmoothedValue to prevent zippering artifacts when gain changes
-    float targetGainLinear = juce::Decibels::decibelsToGain(totalGainDB);
-    smoothedOutputGain.setTargetValue(targetGainLinear);
-
-    // FIX: Use JUCE's optimized applyGain which handles stereo-linked gain correctly
-    // This is more efficient than manual sample-by-sample loop and prevents stereo image shift
+    // Wet-only auto-gain makeup, before padding/mix. Manual Output Gain is applied
+    // after the mix so trim still works at 0% wet and does not change the blend ratio.
+    const float autoGainDB = autoGainEnabledLocal
+        ? autoGainCompensation.load(std::memory_order_relaxed)
+        : 0.0f;
+    smoothedAutoGain.setTargetValue(juce::Decibels::decibelsToGain(autoGainDB));
     const int numSamples = buffer.getNumSamples();
-    smoothedOutputGain.applyGain(buffer, numSamples);
+    smoothedAutoGain.applyGain(buffer, numSamples);
 
     // ── Wet padding delay: align wet output with reported worst-case latency ──
     // LP convolver provides full latency naturally (partSize + irSize/2).
@@ -3390,10 +3383,16 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& processBu
         }
     }
 
-    // Checkpoint 4 — OUTPUT (after gain, pad, and dry/wet mix; before bypass)
+    // Manual output trim on the full mix (and on solo). Bypass still fades to
+    // delayed dry that never received this gain.
+    smoothedOutputGain.setTargetValue(juce::Decibels::decibelsToGain(outputGainDB));
+    smoothedOutputGain.applyGain(buffer, numSamples);
+
+    // Checkpoint 4 — OUTPUT (after auto-gain, pad, mix, output trim; before bypass)
     checkClicks(4);
 
-    // Bypass crossfade: blend processed+gained ↔ dry(ungained) to match steady-state behavior
+    // Bypass crossfade: blend processed+trimmed output ↔ dry (ungained) to match
+    // steady-state bypass, which copies the delayed dry reference.
     {
         int remaining = bypassCrossfadeRemaining.load(std::memory_order_relaxed);
         const auto bpPhase = bypassPhase.load(std::memory_order_relaxed);

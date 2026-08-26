@@ -949,7 +949,8 @@ private:
     std::atomic<float> postEQRMS { 0.0f };
     static constexpr float rmsSmoothing = 0.95f;
     
-    // Smoothed output gain (prevents zipper noise)
+    // Wet-only auto-gain makeup (before pad/mix). Manual output trim is after mix.
+    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> smoothedAutoGain;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> smoothedOutputGain;
     
     // Quality mode cache
