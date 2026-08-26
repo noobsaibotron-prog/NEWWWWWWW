@@ -41,7 +41,8 @@
 #include <atomic>
 #include <functional>
 #include <mutex>
-#include <thread>  // std::thread and std::stop flags are in <thread> in C++20
+#include <thread>
+#include <vector>
 
 #include "Core/LockFreeStructures.h"
 #include "Core/LockFreeAudioFIFO.h"
@@ -382,6 +383,7 @@ public:
         int rejectedBands = 0;
         bool atomicRejected = false;
         bool deferredToMessageThread = false;
+        std::vector<int> appliedBandSlots;
 
         [[nodiscard]] bool complete() const noexcept
         {

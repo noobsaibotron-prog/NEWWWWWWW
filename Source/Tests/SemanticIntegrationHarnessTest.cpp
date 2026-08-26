@@ -173,6 +173,9 @@ public:
                        + " atomicRejected=" + juce::String(r.atomicRejected ? 1 : 0));
 
             expect(r.complete(), "apply did not complete on an empty EQ");
+            expect(static_cast<int>(r.appliedBandSlots.size()) == r.appliedBands,
+                   "appliedBandSlots must list every slot actually written");
+            expect(!r.appliedBandSlots.empty(), "successful apply must report at least one slot");
             const auto applied = bandStateDigest(proc);
             expect(applied != before, "apply reported success but changed nothing");
 

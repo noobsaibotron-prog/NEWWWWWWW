@@ -5643,6 +5643,7 @@ AIEqualizerAudioProcessor::applySemanticAdjustments(
 
         semanticBandLastAppliedStates[slot] = state;
         ++result.appliedBands;
+        result.appliedBandSlots.push_back (slotIndex);
     }
 
     result.rejectedBands = result.requestedBands - result.appliedBands;
