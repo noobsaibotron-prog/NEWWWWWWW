@@ -26,6 +26,7 @@ public:
         testParameterChanges();
         testEdgeCases();
         testBypassFunctionality();
+        testResetPreservesTransferFunction();
         testDifferentSampleRates();
         testDifferentBufferSizes();
     }
@@ -381,6 +382,40 @@ private:
         const float bypassedRMS = measureRMS(buffer2);
         expectGreaterThan(boostedRMS, bypassedRMS);
         expectWithinAbsoluteError(bypassedRMS, inputRMS2, 0.01f);
+    }
+
+    void testResetPreservesTransferFunction()
+    {
+        beginTest("reset() clears delay lines but keeps the EQ curve");
+
+        ParametricEQProcessor proc;
+        proc.prepare(kDefaultSampleRate, kDefaultBlockSize, kDefaultChannels);
+        proc.setBandEnabled(proc.addBand(1000.0f, 12.0f, 1.0f, ParametricEQProcessor::Peak), true);
+
+        float boosted = 0.0f;
+        for (int i = 0; i < 8; ++i)
+        {
+            auto buffer = generateSineWave(1000.0f, kDefaultSampleRate, kDefaultBlockSize);
+            proc.process(buffer);
+            boosted = measureRMS(buffer);
+        }
+
+        proc.reset();
+
+        float afterReset = 0.0f;
+        float input = 0.0f;
+        for (int i = 0; i < 8; ++i)
+        {
+            auto buffer = generateSineWave(1000.0f, kDefaultSampleRate, kDefaultBlockSize);
+            input = measureRMS(buffer);
+            proc.process(buffer);
+            afterReset = measureRMS(buffer);
+        }
+
+        expectGreaterThan(boosted, input * 1.5f, "peak +12 dB must boost 1 kHz before reset");
+        expectGreaterThan(afterReset, input * 1.5f,
+                          "reset() must not require a parameter change to keep processing");
+        expectWithinAbsoluteError(afterReset, boosted, 0.05f);
     }
 
     void testEdgeCases()

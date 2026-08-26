@@ -2068,10 +2068,11 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& processBu
         else if (!bypassed && phase == BypassPhase::Bypassed)
         {
             // User disengaged bypass after steady-state → THE KEY FIX:
-            // Reset all DSP filter state (IIR, convolver FDL, oversamplers)
-            // before re-exposing the wet path.  Stale internal energy from
-            // the last block processed before bypass would otherwise mix with
-            // new input and produce a transient: y[0] = b0·x[0] + v1_stale.
+            // Reset all DSP filter *state* (IIR delay lines, convolver FDL,
+            // oversamplers) before re-exposing the wet path. Coefficients stay.
+            // Stale internal energy from the last block processed before bypass
+            // would otherwise mix with new input and produce a transient:
+            // y[0] = b0·x[0] + v1_stale.
             // After reset, filters start from zero — producing a smooth onset
             // that the 2400-sample crossfade fully masks.
             resetDSPStateForBypassExit();

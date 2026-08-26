@@ -96,20 +96,12 @@ void ParametricEQProcessor::resetRuntimeStateNoAllocation(double sampleRate,
 
 void ParametricEQProcessor::reset()
 {
+    // Delay-line energy only. Do not wipe coefficients or lastVersion:
+    // BiquadCoeffs{} is valid=false / b0=1 (passthrough). process() only
+    // rebuilds coeffs when params.version != lastVersion, so a wipe here
+    // left un-bypass as dry until the next band-parameter bump.
     for (int i = 0; i < getMaxBands(); ++i)
-    {
-        for (int s = 0; s < BandProcessingState::maxFilterStages; ++s)
-        {
-            bandStates[i].filtersL[s].reset();
-            bandStates[i].filtersR[s].reset();
-            bandStates[i].coefficients[s] = BiquadCoeffs{};
-        }
-        bandStates[i].tptStateL.reset();
-        bandStates[i].tptStateR.reset();
-        bandStates[i].tptCoefficients = AIEQDSP::TptSvfCoefficients{};
-        bandStates[i].useTpt = false;
-        bandStates[i].appliedVintage = false;
-    }
+        clearBandFilterState (i);
 }
 
 //==============================================================================

@@ -26,6 +26,7 @@ public:
         juce::ignoreUnused(mm);
 
         testBypassSteadyStateExitNoClick();
+        testBypassExitRestoresProcessingWithoutBandMove();
         testBypassRapidToggleNoClick();
         testDynEQThresholdDragNoClick();
         testLPIRRapidSwapNoClick();
@@ -199,6 +200,69 @@ private:
         logMessage("  bypass exit: maxDelta=" + juce::String(metrics.maxDelta, 4)
                    + " clicks=" + juce::String(metrics.clickCount)
                    + " peakAbs=" + juce::String(metrics.peakAbs, 4));
+    }
+
+    //==========================================================================
+    // Bypass exit must restore EQ without a subsequent band-parameter bump.
+    // reset() used to wipe biquad coeffs to unity and leave lastVersion
+    // unchanged, so process() never rebuilt until the user moved a band.
+    //==========================================================================
+    void testBypassExitRestoresProcessingWithoutBandMove()
+    {
+        beginTest("Bypass exit restores EQ without a subsequent band move");
+
+        AIEqualizerAudioProcessor proc;
+        prepareProcessor(proc);
+        auto& apvts = proc.getAPVTS();
+
+        setChoice(apvts, "numActiveBands", 0); // 1 band
+        setFloat(apvts, "band0Freq", 1000.0f);
+        setFloat(apvts, "band0Gain", 12.0f);
+        setFloat(apvts, "band0Q", 4.0f);
+        setChoice(apvts, "band0Type", 2); // Peak
+        setBool(apvts, "band0Enabled", true);
+        setFloat(apvts, "dryWet", 100.0f);
+        setFloat(apvts, "outputGain", 0.0f);
+        setBool(apvts, "autoGain", false);
+        setChoice(apvts, "phaseMode", 0);
+        setBool(apvts, "bypass", false);
+
+        juce::AudioBuffer<float> buf(2, kBlockSize);
+        juce::MidiBuffer midi;
+        int samplePos = 0;
+
+        auto processTone = [&]() -> float
+        {
+            fillSine(buf, 1000.0, 0.5f, samplePos);
+            proc.processBlock(buf, midi);
+            samplePos += kBlockSize;
+            return buf.getRMSLevel(0, 0, kBlockSize);
+        };
+
+        float boosted = 0.0f;
+        for (int b = 0; b < 40; ++b)
+            boosted = processTone();
+
+        setBool(apvts, "bypass", true);
+        float dry = 0.0f;
+        for (int b = 0; b < 100; ++b)
+            dry = processTone();
+
+        setBool(apvts, "bypass", false);
+        float restored = 0.0f;
+        for (int b = 0; b < 80; ++b)
+            restored = processTone();
+
+        expect(boosted > dry * 1.5f,
+               "pre-bypass peak must be louder than bypassed dry: boosted="
+               + juce::String(boosted, 4) + " dry=" + juce::String(dry, 4));
+        expect(restored > dry * 1.5f,
+               "un-bypass must restore EQ without moving a band: restored="
+               + juce::String(restored, 4) + " dry=" + juce::String(dry, 4)
+               + " boosted=" + juce::String(boosted, 4));
+        expect(std::abs(restored - boosted) < 0.05f,
+               "restored RMS should match pre-bypass: restored="
+               + juce::String(restored, 4) + " boosted=" + juce::String(boosted, 4));
     }
 
     //==========================================================================
