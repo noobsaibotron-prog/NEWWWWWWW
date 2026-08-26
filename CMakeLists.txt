@@ -1347,6 +1347,7 @@ if(HAVE_JUCE)
         Source/Tests/SparseParametricFitterTest.cpp
         Source/Tests/SparseParametricFitterPerformanceTest.cpp
         Source/Tests/SemanticIntentCompilerTest.cpp
+        Source/Tests/SemanticIntentMapTest.cpp
         Source/Tests/SpectralContextTest.cpp
         Source/Tests/SpectralContextAdversarialTest.cpp
         Source/Tests/SpectralContextConfidenceCalibrationTest.cpp
