@@ -23,8 +23,10 @@ struct SpectrumHopLerp
         interpolate
     };
 
-    // A2 remains the product default. A1 is enabled only by the explicit,
-    // developer-only CMake option AIEQ_ANALYZER_AB_A1_LATEST_HOP.
+    // A2 (interpolate) is the product default after listening A/B at 48 kHz
+    // and 96 kHz: A1 latest-hop looked stepped. Do not auto-disable lerp when
+    // FFT hop rate exceeds 60 Hz — the editor still injects at most 60 Hz, and
+    // A2 interpolates those injects. A1 is the explicit CMake option only.
 #if defined(AIEQ_ANALYZER_AB_A1_LATEST_HOP) && AIEQ_ANALYZER_AB_A1_LATEST_HOP
     static constexpr PresentationPolicy kBuildPresentationPolicy = PresentationPolicy::latestHop;
 #else

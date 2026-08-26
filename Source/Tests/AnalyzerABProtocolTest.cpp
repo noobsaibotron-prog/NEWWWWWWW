@@ -136,8 +136,9 @@ private:
             logMessage (juce::String (row.label)
                         + ": FFT hop/s=" + juce::String (produced, 3)
                         + "  visual inject <= " + juce::String (visual, 3)
-                        + " Hz  lerp-between-hops="
-                        + (faster ? "no, hops collapse per editor tick" : "yes"));
+                        + " Hz  FFT-hops-collapse="
+                        + (faster ? "yes, editor injects last hop only" : "no")
+                        + "  A2 still lerps between injects");
         }
 
         expect (kMaxHopsPerTick >= 2, "pipeline may drain multiple hops per editor tick");

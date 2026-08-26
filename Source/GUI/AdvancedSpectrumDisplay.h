@@ -488,9 +488,9 @@ public:
         }
 
         // ── Adaptive timer rate ──
-        // A/B analyzer experiment: visible + unfrozen stays at 60 Hz in both
-        // variants. A1 presents the latest FFT hop immediately; A2 enables
-        // SpectrumHopLerp at compile time. Hidden windows remain at 5 Hz.
+        // Visible + unfrozen stays at 60 Hz. Product presentation is A2 hop
+        // interpolation (listening A/B at 48 kHz and 96 kHz preferred it over
+        // A1 latest-hop). Hidden windows remain at 5 Hz.
         {
             const bool windowVisible = isShowing();
             const int desiredHz = !windowVisible ? 5

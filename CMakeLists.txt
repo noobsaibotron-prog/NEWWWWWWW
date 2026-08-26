@@ -686,9 +686,9 @@ option(AIEQ_MOTORE_V2_EXP "Build the Motore v2 EXP listening plugin (separate id
 # auditioned in a host alongside the installed shipping plug-in instead of
 # replacing it. Identity only; enables no extra engine.
 option(AIEQ_SEMANTIC_EXP "Build the Semantic listening plugin (separate identity)" OFF)
-# Developer-only analyzer A/B switch. OFF preserves the integrated A2 product
-# behaviour. ON changes only GUI presentation: the latest FFT hop is shown
-# immediately while the visible/unfrozen timer remains at 60 Hz.
+# Developer-only analyzer A1 switch. OFF is the product: A2 hop interpolation,
+# which won listening A/B at 48 kHz and 96 kHz. ON shows the latest hop
+# immediately; the visible/unfrozen timer stays at 60 Hz.
 option(AIEQ_ANALYZER_AB_A1_LATEST_HOP
     "Dev-only analyzer A1: 60 Hz timer with immediate latest-hop presentation"
     OFF)
