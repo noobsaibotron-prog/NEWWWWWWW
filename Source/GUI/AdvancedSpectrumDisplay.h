@@ -3,6 +3,9 @@
 #include <juce_audio_basics/juce_audio_basics.h>
 #include "../PluginProcessor.h"
 #include "AnalyzerContextMenu.h"
+#if defined(AIEQ_ENABLE_ANALYZER_AB_TELEMETRY) && AIEQ_ENABLE_ANALYZER_AB_TELEMETRY
+#include "AnalyzerABTelemetry.h"
+#endif
 #include "BandRadialMenu.h"
 #include "ModernLookAndFeel.h"
 #include "SpectrumHopLerp.h"
@@ -143,6 +146,19 @@ public:
     bool getHasCaptured() const { return hasCaptured; }
     const std::vector<float>& getCapturedSpectrum() const { return capturedSpectrum; }
     int getCurrentRefreshHz() const { return currentTimerHz; }
+
+#if defined(AIEQ_ENABLE_ANALYZER_AB_TELEMETRY) && AIEQ_ENABLE_ANALYZER_AB_TELEMETRY
+    /** Message-thread only. Copying/sorting is deliberately outside the timer path. */
+    aieq::gui::analyzer_ab::Snapshot getAnalyzerABTelemetrySnapshot() const
+    {
+        return analyzerABTelemetry.snapshot();
+    }
+
+    void resetAnalyzerABTelemetry() noexcept
+    {
+        analyzerABTelemetry.reset();
+    }
+#endif
     
     // Band selection API
     void setSelectedBand(int band) { selectedBandIndex = band; repaint(); }
@@ -456,6 +472,11 @@ public:
     
     void timerCallback() override
     {
+#if defined(AIEQ_ENABLE_ANALYZER_AB_TELEMETRY) && AIEQ_ENABLE_ANALYZER_AB_TELEMETRY
+        aieq::gui::analyzer_ab::ScopedTimerTick analyzerABTimerTick(
+            analyzerABTelemetry, makeAnalyzerABConfiguration());
+#endif
+
         bandRadialMenu.advanceAnimation();
         analyzerContextMenu.advanceAnimation();
 
@@ -1879,6 +1900,12 @@ private:
 
         if (!forceRebuild && preVer == lastPreSpectrumVersion && postVer == lastPostSpectrumVersion && !boundsChanged)
             return;
+
+#if defined(AIEQ_ENABLE_ANALYZER_AB_TELEMETRY) && AIEQ_ENABLE_ANALYZER_AB_TELEMETRY
+        // Starts only after the cache/empty-bounds reject paths: this measures
+        // actual path/image rebuild work, not cheap calls that intentionally no-op.
+        aieq::gui::analyzer_ab::ScopedRebuild analyzerABRebuild(analyzerABTelemetry);
+#endif
 
         lastPreSpectrumVersion = preVer;
         lastPostSpectrumVersion = postVer;
@@ -3544,6 +3571,28 @@ private:
         }
     }
 
+#if defined(AIEQ_ENABLE_ANALYZER_AB_TELEMETRY) && AIEQ_ENABLE_ANALYZER_AB_TELEMETRY
+    aieq::gui::analyzer_ab::Configuration makeAnalyzerABConfiguration() const noexcept
+    {
+        aieq::gui::analyzer_ab::Configuration configuration;
+        const auto sampleRate = processor.getSampleRate();
+        configuration.sampleRateHz = sampleRate > 0.0
+                                         ? static_cast<uint32_t>(std::lround(sampleRate)) : 0;
+
+        int resolutionChoice = 2;
+        if (auto* value = processor.getAPVTS().getRawParameterValue("analyzerResolution"))
+            resolutionChoice = juce::jlimit(0, 3, static_cast<int>(value->load()));
+        configuration.resolutionChoice = static_cast<int8_t>(resolutionChoice);
+        configuration.fftSize = static_cast<uint32_t>(1u << (10 + resolutionChoice));
+        configuration.timerHz = static_cast<uint16_t>(juce::jmax(0, currentTimerHz));
+        configuration.visible = isShowing();
+        configuration.frozen = isFrozen;
+        configuration.injectedPipeline = injectedSpectrumVersion != 0;
+        configuration.glSpectrumActive = glSpectrumActive;
+        return configuration;
+    }
+#endif
+
     AIEqualizerAudioProcessor& processor;
     juce::Rectangle<float> graphBounds;
     std::vector<float> smoothedSpectrum;
@@ -3563,6 +3612,10 @@ private:
     double lastHopTimeMs = 0.0;
     double lastDisplayTickMs = 0.0;
     static constexpr float kLerpRebuildEpsilon = 0.05f;
+
+#if defined(AIEQ_ENABLE_ANALYZER_AB_TELEMETRY) && AIEQ_ENABLE_ANALYZER_AB_TELEMETRY
+    aieq::gui::analyzer_ab::Collector analyzerABTelemetry;
+#endif
 
     // Click detector overlay
     uint32_t     clickOverlayCount = 0;

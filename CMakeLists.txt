@@ -643,6 +643,7 @@ set(PLUGIN_SOURCES
     Source/GUI/LogScaleMapper.h
     Source/GUI/ModernLookAndFeel.h
     Source/GUI/AdvancedSpectrumDisplay.h
+    Source/GUI/AnalyzerABTelemetry.h
     Source/GUI/BandRadialMenu.h
     Source/GUI/AnalyzerContextMenu.h
     Source/GUI/EQBandControl.h
@@ -701,6 +702,14 @@ if(AIEQ_ANALYZER_AB_A1_LATEST_HOP)
     endif()
 else()
     message(STATUS "Analyzer A/B variant: A2 hop interpolation (default)")
+endif()
+option(AIEQ_ENABLE_ANALYZER_AB_TELEMETRY
+       "Enable allocation-free GUI analyzer A/B timing telemetry (dev/test only)" OFF)
+if(AIEQ_ENABLE_ANALYZER_AB_TELEMETRY AND NOT AIEQ_SEMANTIC_EXP)
+    message(WARNING
+        "AIEQ_ENABLE_ANALYZER_AB_TELEMETRY is ON without AIEQ_SEMANTIC_EXP. "
+        "Build into a throwaway artefacts dir and do not install over shipping "
+        "AI Equalizer Pro.vst3.")
 endif()
 set(AIEQ_MOTORE_V2_MODEL_JSON "" CACHE FILEPATH
     "Optional Motore v2 RTNeural JSON copied into the EXP plugin bundle as motore_v2.json")
@@ -951,6 +960,15 @@ if(TARGET AIEqualizerPro)
         # PUBLIC keeps plugin and IntegrationTests on the same presentation policy.
         target_compile_definitions(AIEqualizerPro PUBLIC
             AIEQ_ANALYZER_AB_A1_LATEST_HOP=1)
+    endif()
+
+    if(AIEQ_ENABLE_ANALYZER_AB_TELEMETRY)
+        # PUBLIC keeps AdvancedSpectrumDisplay's class layout identical in the
+        # plugin library and test TUs that include its header. Shipping default
+        # remains OFF, so release builds carry no collector or clock reads.
+        target_compile_definitions(AIEqualizerPro PUBLIC
+            AIEQ_ENABLE_ANALYZER_AB_TELEMETRY=1)
+        message(STATUS "Analyzer A/B GUI telemetry: ENABLED (dev/test only)")
     endif()
 
     # Motore v2 (RTNeural) in the PLUGIN target — header-only, gated. When OFF
@@ -1418,6 +1436,7 @@ if(HAVE_JUCE)
         Source/Tests/SpectrumPipelineTest.cpp
         Source/Tests/SpectrumHopLerpTest.cpp
         Source/Tests/AnalyzerABProtocolTest.cpp
+        Source/Tests/AnalyzerABTelemetryTest.cpp
         Source/Tests/RB4OfflineRenderTest.cpp
         Source/Tests/SemanticPerceptualGateTest.cpp
         Source/Tests/SpectralConfidenceCandidateProbe.cpp
