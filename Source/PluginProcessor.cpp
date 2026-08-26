@@ -3031,18 +3031,10 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& processBu
             juce::jmax(0, msTransitionRemaining - blockSamples), std::memory_order_release);
     }
 
-    // Apply global dry/wet mix
-    if (needsDry)
-    {
-        const int chs = juce::jmin(buffer.getNumChannels(), dryBuffer.getNumChannels());
-        for (int ch = 0; ch < chs; ++ch)
-        {
-            auto* wetPtr = buffer.getWritePointer(ch);
-            const auto* dryPtr = dryBuffer.getReadPointer(ch);
-            for (int i = 0; i < blockSamples; ++i)
-                wetPtr[i] = dry * dryPtr[i] + wet * wetPtr[i];
-        }
-    }
+    // Global dry/wet mix is applied AFTER wet padding (below). Mixing here
+    // delayed dry by the pad a second time: at 100% wet the dry path is silent
+    // so PDC sounded aligned; lowering the mix introduced a pad-length flam.
+    // Solo / post-EQ meters / output gain stay on the wet path only.
 
     // === SOLO ACOUSTIC MONITOR ===
     constexpr bool enableSoloMonitor = true; // Enabled: allow band audition in Solo mode
@@ -3249,8 +3241,9 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& processBu
 
     // ── Wet padding delay: align wet output with reported worst-case latency ──
     // LP convolver provides full latency naturally (partSize + irSize/2).
-    // ZL and NaturalPhase modes need explicit padding so dry/wet are time-aligned
-    // for bypass crossfade and DAW PDC is correct.
+    // ZL and NaturalPhase modes need explicit padding so delayed dry (captured
+    // at block start with dryDelayLength = activeSamples) lines up with wet
+    // for dry/wet mix, bypass crossfade, and DAW PDC.
     //
     // Cat 2 Fix (phase 0->1 click): when phaseMode switches, padSamples changes
     // abruptly (e.g. 2176 -> 2161 for ZL->NaturalPhase with 2x oversampling).
@@ -3381,7 +3374,23 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& processBu
         wetPadLastSamples = padSamples;
     }
 
-    // Checkpoint 4 — OUTPUT (after gain, before bypass crossfade)
+    // Apply global dry/wet mix after padding so delayed dry and padded wet share
+    // the host-visible latency. Solo already replaced the wet buffer and must
+    // not be blended back with dry (same as the previous mix-then-overwrite
+    // order).
+    if (needsDry && !hasSolo)
+    {
+        const int chs = juce::jmin(buffer.getNumChannels(), dryBuffer.getNumChannels());
+        for (int ch = 0; ch < chs; ++ch)
+        {
+            auto* wetPtr = buffer.getWritePointer(ch);
+            const auto* dryPtr = dryBuffer.getReadPointer(ch);
+            for (int i = 0; i < blockSamples; ++i)
+                wetPtr[i] = dry * dryPtr[i] + wet * wetPtr[i];
+        }
+    }
+
+    // Checkpoint 4 — OUTPUT (after gain, pad, and dry/wet mix; before bypass)
     checkClicks(4);
 
     // Bypass crossfade: blend processed+gained ↔ dry(ungained) to match steady-state behavior
