@@ -1622,6 +1622,11 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     smoothedAutoGain.setCurrentAndTargetValue(1.0f);
     smoothedOutputGain.reset(sampleRate, 0.05);
     smoothedOutputGain.setCurrentAndTargetValue(1.0f);
+    // Match the 1024-sample phase/topology fades (~21 ms @ 48 kHz).
+    smoothedDynEqMix.reset(sampleRate, 1024.0 / juce::jmax(1.0, sampleRate));
+    smoothedDynEqMix.setCurrentAndTargetValue(
+        (cachedDynEqEnabled && cachedDynEqEnabled->load(std::memory_order_relaxed) > 0.5f)
+            ? 1.0f : 0.0f);
 
     // Pre-compute AI analysis cadence (~10 Hz)
     aiAnalysisIntervalSamples = juce::jmax(static_cast<int>(std::round(sampleRate * 0.1)), samplesPerBlock);
@@ -2001,7 +2006,16 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& processBu
     const int analyzerSpdParam = static_cast<int>(std::round(loadParam(cachedAnalyzerSpeed, static_cast<float>(analyzerSpeedCached))));
     const bool autoGainEnabledLocal = loadParam(cachedAutoGain, 0.0f) > 0.5f;
     autoGainEnabled.store(autoGainEnabledLocal, std::memory_order_relaxed);
-    const bool dynEqEnabledLocal = paramsSnapshot.dynamicEQEnabled;
+    const bool dynEqUserEnabled = paramsSnapshot.dynamicEQEnabled;
+    const float dynMixTarget = dynEqUserEnabled
+        ? juce::jlimit(0.0f, 1.0f, loadParam(cachedDynEqMix, 100.0f) / 100.0f)
+        : 0.0f;
+    smoothedDynEqMix.setTargetValue(dynMixTarget);
+    const float dynMixNow = smoothedDynEqMix.getCurrentValue();
+    smoothedDynEqMix.skip(blockSamples);
+    const bool dynEqEnabledLocal = dynEqUserEnabled
+        || smoothedDynEqMix.isSmoothing()
+        || dynMixNow > 1.0e-4f;
 
     // NOTE: do NOT clear the meter cache here - the GUI reads at 30Hz while processBlock
     // runs at ~86Hz. Clearing every block means the GUI almost always reads 0.
@@ -2214,6 +2228,11 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& processBu
         updateEQFromParameters();
         lastProcessedParameterChangeCounter.store(currentParamCounter, std::memory_order_relaxed);
     }
+
+    dynamicEQProcessor.setGlobalMix(dynMixNow);
+    dynamicEQProcessorHQ.setGlobalMix(dynMixNow);
+    dynamicEQProcessorMid.setGlobalMix(dynMixNow);
+    dynamicEQProcessorSide.setGlobalMix(dynMixNow);
 
     // Apply smoothed band params (anti-zippering) before processing
     const bool smoothedBandParamsApplied =

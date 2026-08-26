@@ -305,6 +305,7 @@ void DynamicEQProcessor::resetRuntimeStateNoAllocation(double sampleRate,
     }
 
     lastAppliedMakeupGain = 1.0f;
+    lastAppliedMix = globalMix.load(std::memory_order_relaxed);
 
     // Full-clear intentionally preserves the existing lookahead ring semantics.
     if (lookaheadBuffer.getNumSamples() > 0)
@@ -358,6 +359,7 @@ void DynamicEQProcessor::reset()
     lookaheadWritePos = 0;
 
     lastAppliedMakeupGain = 1.0f;
+    lastAppliedMix = globalMix.load(std::memory_order_relaxed);
 }
 
 //==============================================================================
@@ -498,12 +500,13 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer,
     // In practice this should never trigger with 8x headroom.
 
     const int safeSamples = juce::jmin(numSamples, dryBuffer.getNumSamples());
-    
-    if (mix < 0.999f)
+    const bool mixNeedsDry = lastAppliedMix < 0.999f || mix < 0.999f;
+
+    if (mixNeedsDry)
     {
         jassert(dryBuffer.getNumChannels() >= channels);
         jassert(dryBuffer.getNumSamples() >= numSamples);
-        
+
         for (int ch = 0; ch < channels; ++ch)
             dryBuffer.copyFrom(ch, 0, buffer, ch, 0, safeSamples);
     }
@@ -1026,20 +1029,27 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer,
     //==========================================================================
     // Apply global mix
     //==========================================================================
-    if (mix < 0.999f && dryBuffer.getNumSamples() > 0)
+    if (mixNeedsDry && dryBuffer.getNumSamples() > 0)
     {
+        const float mixStart = lastAppliedMix;
+        const float mixEnd = mix;
+        const float inv = safeSamples > 1 ? 1.0f / static_cast<float>(safeSamples - 1) : 1.0f;
         for (int ch = 0; ch < channels; ++ch)
         {
             float* wet = buffer.getWritePointer(ch);
             const float* dry = dryBuffer.getReadPointer(ch);
-            
+
             for (int s = 0; s < safeSamples; ++s)
-                wet[s] = dry[s] * (1.0f - mix) + wet[s] * mix;
-            
+            {
+                const float m = mixStart + (mixEnd - mixStart) * static_cast<float>(s) * inv;
+                wet[s] = dry[s] * (1.0f - m) + wet[s] * m;
+            }
+
             if (numSamples > safeSamples)
                 buffer.clear(ch, safeSamples, numSamples - safeSamples);
         }
     }
+    lastAppliedMix = mix;
     
     //==========================================================================
     // Auto makeup gain

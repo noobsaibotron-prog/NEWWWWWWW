@@ -952,6 +952,9 @@ private:
     // Wet-only auto-gain makeup (before pad/mix). Manual output trim is after mix.
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> smoothedAutoGain;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> smoothedOutputGain;
+    // Master DynEQ on/off reuses DynamicEQProcessor::setGlobalMix so OFF→ON
+    // does not insert a cold biquad at mix=1. Prepared in prepareToPlay.
+    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> smoothedDynEqMix;
     
     // Quality mode cache
     int qualityModeCached = 0;

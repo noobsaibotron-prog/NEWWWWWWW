@@ -341,6 +341,7 @@ private:
     // was a second source of crackle, distinct from the coefficient-rebuild
     // crackle, and is audible when meterGainReduction modulates quickly.
     float lastAppliedMakeupGain = 1.0f;
+    float lastAppliedMix = 1.0f;
     
     // Sample rate and block size
     std::atomic<double> currentSampleRate { 44100.0 };
