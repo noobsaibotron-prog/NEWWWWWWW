@@ -69,7 +69,7 @@ public:
             {
                 // Stable hop frame (t=1 / current inject), never an in-between lerp.
                 hopLerp.t = 1.0f;
-                hopLerp.lerpInto(displayPre, displayPost);
+                hopLerp.presentInto(displayPre, displayPost);
                 if (!displayPre.empty())
                     rebuildLiveSpectrumPaths(true);
                 const juce::SpinLock::ScopedLockType lock(spectrumDataLock);
@@ -467,9 +467,9 @@ public:
         }
 
         // ── Adaptive timer rate ──
-        // P1-5 motion experiment: visible + unfrozen display interpolates toward 60 Hz
-        // between FFT hops. Hidden windows stay at 5 Hz. Frozen overlay does not
-        // need hop interpolation (30 Hz is enough for node fades).
+        // A/B analyzer experiment: visible + unfrozen stays at 60 Hz in both
+        // variants. A1 presents the latest FFT hop immediately; A2 enables
+        // SpectrumHopLerp at compile time. Hidden windows remain at 5 Hz.
         {
             const bool windowVisible = isShowing();
             const int desiredHz = !windowVisible ? 5
@@ -500,15 +500,16 @@ public:
             if (injectedSpectrumVersion != 0)
             {
                 const bool hopChanged = ingestAndAdvanceSpectrumLerp();
-                const bool tMoved = std::abs(hopLerp.t - lastRebuiltLerpT) > kLerpRebuildEpsilon
-                                 || ((hopLerp.t >= 0.999f) != (lastRebuiltLerpT >= 0.999f));
+                const bool tMoved = SpectrumHopLerp::kInterpolationEnabled
+                                 && (std::abs(hopLerp.t - lastRebuiltLerpT) > kLerpRebuildEpsilon
+                                     || ((hopLerp.t >= 0.999f) != (lastRebuiltLerpT >= 0.999f)));
                 const bool boundsChanged = (lastSpectrumBounds != graphBounds);
                 // Rebuild in-between hop frames from lerped columns even if FFT version is unchanged.
                 // Skip the ~6 ms path+image cost when t is holding at 1 waiting for the next hop.
                 if (isShowing() && (hopChanged || tMoved || boundsChanged || lastRebuiltLerpT < 0.0f))
                 {
                     rebuildLiveSpectrumPaths(true);
-                    lastRebuiltLerpT = hopLerp.t;
+                    lastRebuiltLerpT = SpectrumHopLerp::kInterpolationEnabled ? hopLerp.t : 1.0f;
                     rebuiltLive = true;
                 }
             }
@@ -1760,8 +1761,8 @@ private:
         }
     }
 
-    // P1-5: paint-thread hop interpolation. New inject → snap prev=curr, store curr, t=0.
-    // Otherwise advance t toward 1 over ~1 hop interval (last hop dt, clamped 16–50 ms).
+    // A/B presentation policy. Both variants ingest the same current hop. A2
+    // advances t between hops; A1 presents currPre/currPost immediately.
     bool ingestAndAdvanceSpectrumLerp()
     {
         const double nowMs = juce::Time::getMillisecondCounterHiRes();
@@ -1781,11 +1782,14 @@ private:
             }
         }
 
-        if (!hopChanged && lastDisplayTickMs > 0.0)
-            hopLerp.advance(nowMs - lastDisplayTickMs);
+        if constexpr (SpectrumHopLerp::kInterpolationEnabled)
+        {
+            if (!hopChanged && lastDisplayTickMs > 0.0)
+                hopLerp.advance(nowMs - lastDisplayTickMs);
+        }
         lastDisplayTickMs = nowMs;
 
-        hopLerp.lerpInto(displayPre, displayPost);
+        hopLerp.presentInto(displayPre, displayPost);
         return hopChanged;
     }
 

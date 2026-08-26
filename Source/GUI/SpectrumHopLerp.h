@@ -17,6 +17,22 @@
 
 struct SpectrumHopLerp
 {
+    enum class PresentationPolicy
+    {
+        latestHop,
+        interpolate
+    };
+
+    // A2 remains the product default. A1 is enabled only by the explicit,
+    // developer-only CMake option AIEQ_ANALYZER_AB_A1_LATEST_HOP.
+#if defined(AIEQ_ANALYZER_AB_A1_LATEST_HOP) && AIEQ_ANALYZER_AB_A1_LATEST_HOP
+    static constexpr PresentationPolicy kBuildPresentationPolicy = PresentationPolicy::latestHop;
+#else
+    static constexpr PresentationPolicy kBuildPresentationPolicy = PresentationPolicy::interpolate;
+#endif
+    static constexpr bool kInterpolationEnabled =
+        kBuildPresentationPolicy == PresentationPolicy::interpolate;
+
     static constexpr double kHopIntervalMinMs = 16.0;
     static constexpr double kHopIntervalMaxMs = 50.0;
     static constexpr double kSnapGapMs = 100.0;
@@ -107,6 +123,26 @@ struct SpectrumHopLerp
     {
         lerpSpectrumColumns (prevPre, currPre, t, displayPre);
         lerpSpectrumColumns (prevPost, currPost, t, displayPost);
+    }
+
+    void presentInto (std::vector<float>& displayPre,
+                      std::vector<float>& displayPost,
+                      PresentationPolicy policy) const
+    {
+        if (policy == PresentationPolicy::interpolate)
+        {
+            lerpInto (displayPre, displayPost);
+        }
+        else
+        {
+            displayPre = currPre;
+            displayPost = currPost;
+        }
+    }
+
+    void presentInto (std::vector<float>& displayPre, std::vector<float>& displayPost) const
+    {
+        presentInto (displayPre, displayPost, kBuildPresentationPolicy);
     }
 
     void deltaInto (std::vector<float>& out) const

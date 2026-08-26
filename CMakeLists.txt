@@ -685,6 +685,23 @@ option(AIEQ_MOTORE_V2_EXP "Build the Motore v2 EXP listening plugin (separate id
 # auditioned in a host alongside the installed shipping plug-in instead of
 # replacing it. Identity only; enables no extra engine.
 option(AIEQ_SEMANTIC_EXP "Build the Semantic listening plugin (separate identity)" OFF)
+# Developer-only analyzer A/B switch. OFF preserves the integrated A2 product
+# behaviour. ON changes only GUI presentation: the latest FFT hop is shown
+# immediately while the visible/unfrozen timer remains at 60 Hz.
+option(AIEQ_ANALYZER_AB_A1_LATEST_HOP
+    "Dev-only analyzer A1: 60 Hz timer with immediate latest-hop presentation"
+    OFF)
+if(AIEQ_ANALYZER_AB_A1_LATEST_HOP)
+    message(STATUS "Analyzer A/B variant: A1 latest-hop (dev-only)")
+    if(NOT AIEQ_SEMANTIC_EXP)
+        message(WARNING
+            "AIEQ_ANALYZER_AB_A1_LATEST_HOP is ON without AIEQ_SEMANTIC_EXP. "
+            "Build into a throwaway artefacts dir and do not install over shipping "
+            "AI Equalizer Pro.vst3.")
+    endif()
+else()
+    message(STATUS "Analyzer A/B variant: A2 hop interpolation (default)")
+endif()
 set(AIEQ_MOTORE_V2_MODEL_JSON "" CACHE FILEPATH
     "Optional Motore v2 RTNeural JSON copied into the EXP plugin bundle as motore_v2.json")
 if(AIEQ_MOTORE_V2_EXP)
@@ -929,6 +946,12 @@ if(TARGET AIEqualizerPro)
 
     # Require C++20 at target level
     target_compile_features(AIEqualizerPro PRIVATE cxx_std_20)
+
+    if(AIEQ_ANALYZER_AB_A1_LATEST_HOP)
+        # PUBLIC keeps plugin and IntegrationTests on the same presentation policy.
+        target_compile_definitions(AIEqualizerPro PUBLIC
+            AIEQ_ANALYZER_AB_A1_LATEST_HOP=1)
+    endif()
 
     # Motore v2 (RTNeural) in the PLUGIN target — header-only, gated. When OFF
     # the plugin has zero RTNeural references (shipped byte-identical).

@@ -27,6 +27,8 @@ public:
         testHopResetPreviousEqualsCurrent();
         testTAdvancesWithDtAndClamps();
         testFreezeCaptureUsesStableHopFrame();
+        testPresentationPolicies();
+        testConfiguredBuildPolicy();
     }
 
 private:
@@ -169,6 +171,55 @@ private:
         std::vector<float> atOne;
         SpectrumHopLerp::lerpSpectrumColumns (hop.prevPre, hop.currPre, hop.t, atOne);
         expectCols (atOne, hop.currPre, "t==1 lerp equals current hop");
+    }
+
+    void testPresentationPolicies()
+    {
+        beginTest ("A1 presents latest hop immediately; A2 presents interpolated hop");
+
+        SpectrumHopLerp hop;
+        const auto oldPre = cols ({ -60.0f, -50.0f });
+        const auto oldPost = cols ({ -58.0f, -48.0f });
+        const auto newPre = cols ({ -30.0f, -20.0f });
+        const auto newPost = cols ({ -27.0f, -17.0f });
+
+        hop.ingestHop (oldPre, oldPost, 0.0, false);
+        hop.ingestHop (newPre, newPost, 21.0, true);
+        expectWithinAbsoluteError (hop.t, 0.0f, kEps,
+                                   "the interpolation state still records the hop boundary");
+
+        std::vector<float> a1Pre, a1Post, a2Pre, a2Post;
+        hop.presentInto (a1Pre, a1Post, SpectrumHopLerp::PresentationPolicy::latestHop);
+        hop.presentInto (a2Pre, a2Post, SpectrumHopLerp::PresentationPolicy::interpolate);
+
+        expectCols (a1Pre, newPre, "A1 pre is the newest hop, not prev");
+        expectCols (a1Post, newPost, "A1 post is the newest hop, not prev");
+        expect (a1Pre != oldPre, "A1 never displays the previous hop at t=0");
+        expectCols (a2Pre, oldPre, "A2 pre starts from the previous hop at t=0");
+        expectCols (a2Post, oldPost, "A2 post starts from the previous hop at t=0");
+    }
+
+    void testConfiguredBuildPolicy()
+    {
+        beginTest ("Configured A/B build policy selects exactly one presentation path");
+
+        SpectrumHopLerp hop;
+        const auto oldHop = cols ({ -60.0f, -50.0f });
+        const auto newHop = cols ({ -30.0f, -20.0f });
+        hop.ingestHop (oldHop, oldHop, 0.0, false);
+        hop.ingestHop (newHop, newHop, 21.0, true);
+
+        std::vector<float> shownPre, shownPost;
+        hop.presentInto (shownPre, shownPost);
+
+#if defined(AIEQ_ANALYZER_AB_A1_LATEST_HOP) && AIEQ_ANALYZER_AB_A1_LATEST_HOP
+        expect (! SpectrumHopLerp::kInterpolationEnabled, "A1 define disables interpolation");
+        expectCols (shownPre, newHop, "configured A1 presents current hop");
+#else
+        expect (SpectrumHopLerp::kInterpolationEnabled, "default build preserves A2 interpolation");
+        expectCols (shownPre, oldHop, "configured A2 presents previous hop at t=0");
+#endif
+        expectCols (shownPost, shownPre, "configured policy is shared by pre and post");
     }
 };
 
