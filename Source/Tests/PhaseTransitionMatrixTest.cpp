@@ -93,8 +93,14 @@ private:
         auto& apvts = processor.getAPVTS();
         configure (processor, apvts, from);
 
-        constexpr int kBlocks = 48;
-        constexpr int kSwitch = 24;
+        // Wet-pad / LP group delay is ~2176 samples. Switching before that fill
+        // records delay-line zeros, not the splice. Hold+fade after a Linear
+        // entry is another ~3200 samples. Warm and capture past both.
+        const int padWarmup = (4096 + blockSize - 1) / blockSize + 4;
+        const int postSwitch = (4096 + blockSize - 1) / blockSize
+            + (1024 + blockSize - 1) / blockSize + 8;
+        const int kSwitch = padWarmup;
+        const int kBlocks = kSwitch + postSwitch;
         juce::AudioBuffer<float> captured (2, kBlocks * blockSize);
         juce::AudioBuffer<float> block (2, blockSize);
         juce::MidiBuffer midi;
@@ -123,7 +129,9 @@ private:
 
         const auto audit = aieq::test::auditToneTransition (
             captured, juce::jmax (0, (kSwitch - 2) * blockSize),
-            10 * blockSize, sampleRate, kToneHz);
+            juce::jmin (captured.getNumSamples() - juce::jmax (0, (kSwitch - 2) * blockSize),
+                        postSwitch * blockSize),
+            sampleRate, kToneHz);
         logMessage (label + " secondDiffRatio=" + juce::String (audit.secondDiffRatio, 2)
                     + " quietBursts=" + juce::String (audit.quietBurstSamples)
                     + " dropout=" + juce::String (audit.dropoutSamples)
