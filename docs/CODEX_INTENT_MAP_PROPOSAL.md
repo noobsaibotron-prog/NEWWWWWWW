@@ -1,12 +1,20 @@
-# Ember Core — Balanced Intent Map (proposal branch)
+# Ember Core — Balanced Intent Map
 
-**Branch:** `exp/semantic-intent-map`  
-**Base:** `43129bdd` (`exp/audio-transition-hardening`, includes bypass-exit coefficient fix)  
-**Do not merge** onto the audio-hardening line until that line’s transition gates are accepted.
+**Integrated branch:** `integration/ember-core-ui-p1`
+**Audio-hardening base:** `38e88ae5`
 
-This is a GUI-only proposal for Codex to accept, cherry-pick, or reject. No FFT, analyzer cadence, filter DSP, or audio-callback behavior is intentionally changed. `appliedBandSlots` is filled on the **message thread** inside `applySemanticAdjustments()`.
+This is a GUI-only projection of an already-attested Semantic plan. No FFT,
+analyzer cadence, filter DSP, or audio-callback behavior is intentionally
+changed. `appliedBandSlots` is filled on the **message thread** inside
+`applySemanticAdjustments()`.
 
-## What shipped on this branch
+The map is deliberately a presentation summary, not an exhaustive scientific
+report: it displays at most the two strongest focus regions and the most
+relevant protection region. The 0.05 dB / 25%-of-peak focus threshold, visual
+ranking, opacity and reveal timing are UI heuristics only; they do not alter the
+plan, its constraints, its fitted bands, or APPLY eligibility.
+
+## Integrated behavior
 
 | Layer | Behavior |
 |---|---|
@@ -17,18 +25,15 @@ This is a GUI-only proposal for Codex to accept, cherry-pick, or reject. No FFT,
 | NoSafeMove | Graph unchanged (no focus/protect). |
 | Tabs | Intent Map presentation suppressed on AI DETECT; state is kept. |
 
-## Review questions
+## Remaining visual review questions
 
-1. Header-only ~400-line projection vs `.cpp`?
-2. `SemanticApplyResult::appliedBandSlots` vs a separate query?
-3. Suppress on AI DETECT: keep?
-4. Alphas quiet enough in Ableton?
-5. Response-strip `Focus:` / `Protect:` suffixes vs UI-A copy freeze?
-6. Candidate rings in v1, or regions+axes only?
+1. Are the focus/protect alphas quiet enough in Ableton?
+2. Keep the response-strip `Focus:` / `Protect:` suffixes?
+3. Keep candidate rings in READY, or show regions and axes only?
 
 ## Gates to run
 
 ```
 AIEqualizerPro_AI_Tests --name="Semantic Intent Map"
-AIEqualizerPro_IntegrationTests --name="Semantic integration"
+AIEqualizerPro_IntegrationTests --name="Semantic Integration Harness"
 ```
