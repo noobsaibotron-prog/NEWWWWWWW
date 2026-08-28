@@ -458,6 +458,11 @@ public:
         const std::vector<SemanticEQEngine::SemanticEQAdjustment>& adjustments,
         SemanticApplyPolicy policy = SemanticApplyPolicy::BestEffortLegacy);
 
+    /** True only while this slot is owned by the last committed Semantic APPLY
+        and the live BandState still matches semanticBandLastAppliedStates
+        under bandStatesEquivalent. Message-thread. Not persisted. */
+    [[nodiscard]] bool isSemanticManagedBand(int bandIndex) const noexcept;
+
     /** VPA-1.1: selector is CommittedA until preview transport exists.
         effectiveActiveBandCount then equals committed numActiveBands. */
     [[nodiscard]] EmberDSP::EffectiveDSPSource getEffectiveDSPSource() const noexcept;
@@ -669,6 +674,7 @@ private:
     void stampProjectionIdentity(SemanticApplyProjection& projection,
                                  std::uint64_t capturedProjectionBaseEpoch,
                                  std::uint64_t capturedAuditionContextEpoch) const noexcept;
+    void clearSemanticBandProvenance() noexcept;
     void populateEffectiveDSPState(EmberDSP::EffectiveDSPState& out,
                                    const std::array<BandState, maxBands>& bands,
                                    int activeCount,

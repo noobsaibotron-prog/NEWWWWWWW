@@ -3,6 +3,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "ModernLookAndFeel.h"
 #include "PremiumKnob.h"
+#include <functional>
 
 //==============================================================================
 class BandControlPanel : public juce::Component,
@@ -229,6 +230,18 @@ public:
         detectorAvailabilityLabel.setComponentID("detectorAvailabilityStatus");
         detectorAvailabilityLabel.setInterceptsMouseClicks(false, false);
         addChildComponent(detectorAvailabilityLabel);
+
+        semanticManagedLabel.setFont(
+            juce::Font(juce::FontOptions().withHeight(9.0f).withStyle("Bold")));
+        semanticManagedLabel.setJustificationType(juce::Justification::centred);
+        semanticManagedLabel.setColour(juce::Label::textColourId,
+                                       ModernLookAndFeel::Colors::textSecondary);
+        semanticManagedLabel.setText("Semantic-managed", juce::dontSendNotification);
+        semanticManagedLabel.setTooltip(
+            "This band still matches the last Semantic APPLY. A manual edit clears the label.");
+        semanticManagedLabel.setComponentID("semanticManagedStatus");
+        semanticManagedLabel.setInterceptsMouseClicks(false, false);
+        addChildComponent(semanticManagedLabel);
 
         // DynEQ knob labels (10px, uppercase, centered)
         auto makeDynLabel = [](juce::Label& lbl, const juce::String& text) {
@@ -501,6 +514,8 @@ public:
             detectionModeCombo.setBounds({});
             detectorSourceCombo.setBounds({});
             detectorAvailabilityLabel.setBounds({});
+            semanticManagedLabel.setBounds({});
+            semanticManagedLabel.setVisible(false);
             sidechainFreqKnob.setBounds({});
             sidechainQKnob.setBounds({});
             scFreqLabel.setBounds({});
@@ -557,7 +572,11 @@ public:
         {
             // === VERTICAL LAYOUT (Liquid Intelligence: 3 big LargeAmber knobs + DynEQ) ===
             bounds.removeFromTop(2);
-            bandLabel.setBounds(bounds.removeFromTop(16));
+            const int titleH = semanticManagedLabel.isVisible() ? 28 : 16;
+            auto titleCol = bounds.removeFromTop(titleH);
+            bandLabel.setBounds(titleCol.removeFromTop(16));
+            if (semanticManagedLabel.isVisible())
+                semanticManagedLabel.setBounds(titleCol);
             bounds.removeFromTop(2);
 
             // Type + Curve topology + ON/SOLO inline row (22px). Keeping Curve
@@ -690,11 +709,18 @@ public:
         updateDetectorAvailabilityDisplay();
     }
 
+    void setSemanticManagedQuery(std::function<bool(int)> query)
+    {
+        semanticManagedQuery = std::move(query);
+        updateSemanticManagedDisplay();
+    }
+
     // Called by the editor heartbeat so host automation of the global DynEQ
     // switch or per-band Enabled flag is reflected without adding GUI work to
     // the audio-thread parameter listener.
     void refreshRuntimeSemantics()
     {
+        updateSemanticManagedDisplay();
         const auto* global = parameters.getRawParameterValue("dynEqEnabled");
         const auto* enabled = parameters.getRawParameterValue(
             "band" + juce::String(bandIndex) + "Enabled");
@@ -784,6 +810,18 @@ private:
         repaint();
     }
 
+    void updateSemanticManagedDisplay()
+    {
+        const bool compact = getLocalBounds().getHeight() < 80;
+        const bool show = ! compact
+            && semanticManagedQuery
+            && semanticManagedQuery(bandIndex);
+        const bool wasVisible = semanticManagedLabel.isVisible();
+        semanticManagedLabel.setVisible(show);
+        if (wasVisible != show)
+            resized();
+    }
+
     void updateQSemanticState()
     {
         // Combo IDs are 1-based: Low Shelf=2, High Shelf=4 and
@@ -848,6 +886,8 @@ private:
     PremiumKnob sidechainQKnob    { juce::String(), PremiumKnob::Style::SmallBlue };
     juce::Label thrLabel, ratLabel, atkLabel, relLabel, rngLabel, kneLabel, scFreqLabel, scQLabel;
     juce::Label detectorAvailabilityLabel;
+    juce::Label semanticManagedLabel;
+    std::function<bool(int)> semanticManagedQuery;
 
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> freqAtt, gainAtt, qAtt;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> typeAtt, slopeAtt, curveModeAtt;

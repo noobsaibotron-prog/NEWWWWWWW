@@ -5814,6 +5814,31 @@ AIEqualizerAudioProcessor::applySemanticAdjustments(
     return result;
 }
 
+bool AIEqualizerAudioProcessor::isSemanticManagedBand(int bandIndex) const noexcept
+{
+    if (bandIndex < 0 || bandIndex >= maxBands)
+        return false;
+
+    const auto slot = static_cast<std::size_t>(bandIndex);
+    if (! semanticBandOwned[slot])
+        return false;
+
+    return bandStatesEquivalent(getBandState(bandIndex),
+                                semanticBandLastAppliedStates[slot]);
+}
+
+void AIEqualizerAudioProcessor::clearSemanticBandProvenance() noexcept
+{
+    for (auto& perQuality : semanticBandAssignments)
+        perQuality.fill(-1);
+    semanticBandOwned.fill(false);
+    semanticBandHasSnapshot.fill(false);
+    semanticBandOriginalStates = {};
+    semanticBandLastAppliedStates = {};
+    semanticOriginalActiveBandCount = -1;
+    semanticLastRequestedActiveBandCount = -1;
+}
+
 bool AIEqualizerAudioProcessor::isAuditionContextOnlyParameter(const juce::String& parameterID) noexcept
 {
     return parameterID == "dryWet"
@@ -6577,6 +6602,7 @@ void AIEqualizerAudioProcessor::setStateInformation(const void* data, int sizeIn
             // Schema classification happens before this point, so unsupported or
             // malformed future states leave both APVTS and A/B slots untouched.
             apvts.replaceState(candidateState);
+            clearSemanticBandProvenance();
 
             // FIX: Force parameter listeners to fire so the UI EQ curve updates.
             // replaceState() only swaps the tree without calling updateParameterConnectionsToChildTrees,

@@ -253,6 +253,8 @@ AIEqualizerAudioProcessorEditor::AIEqualizerAudioProcessorEditor(AIEqualizerAudi
     
     // FIX 2: persistent selected band panel (avoid recreating on every selection)
     selectedBandPanel = std::make_unique<BandControlPanel>(0, processor.getAPVTS());
+    selectedBandPanel->setSemanticManagedQuery(
+        [this](int bandIndex) { return processor.isSemanticManagedBand(bandIndex); });
     addAndMakeVisible(*selectedBandPanel);
 
     // Output level meter (stereo VU with peak hold)

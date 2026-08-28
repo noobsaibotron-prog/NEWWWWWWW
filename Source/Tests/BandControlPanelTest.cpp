@@ -165,6 +165,22 @@ public:
         expectEquals(source->getSelectedId(), 1); // Internal Wideband
         expect(! detection->isVisible());
         expect(! source->isVisible());
+
+        beginTest("Semantic-managed label is inspector-only and query-driven");
+        auto* provenance = childAs<juce::Label>(panel, "semanticManagedStatus");
+        expect(provenance != nullptr);
+        if (provenance == nullptr)
+            return;
+        expect(! provenance->isVisible());
+        const int current = panel.getBandIndex();
+        panel.setSemanticManagedQuery([current](int idx) { return idx == current; });
+        expect(provenance->isVisible());
+        expectEquals(provenance->getText(), juce::String("Semantic-managed"));
+        panel.setSemanticManagedQuery([](int) { return false; });
+        expect(! provenance->isVisible());
+        panel.setBounds(0, 0, 348, 48);
+        panel.setSemanticManagedQuery([current](int idx) { return idx == current; });
+        expect(! provenance->isVisible());
     }
 };
 
