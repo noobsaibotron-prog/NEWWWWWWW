@@ -2463,13 +2463,61 @@ private:
         };
 
         const float a = semanticIntentAlpha;
-        for (const auto& focus : semanticIntentMap.focusRegions)
+        if (!semanticIntentMap.focusEnvelopes.empty())
         {
-            const float strength = juce::jlimit (0.35f, 1.0f, focus.strength);
-            const float top = (focus.primary ? 0.12f : 0.08f) * strength * a;
-            const float bot = (focus.primary ? 0.035f : 0.02f) * strength * a;
-            fillRegion (focus.minFrequencyHz, focus.maxFrequencyHz,
-                        ModernLookAndFeel::Colors::amber, top, bot);
+            // Strength is visual depth from the graph floor, not EQ gain.
+            constexpr float kEnvelopeHeightFrac = 0.28f;
+            for (const auto& envelope : semanticIntentMap.focusEnvelopes)
+            {
+                if (envelope.samples.size() < 2)
+                    continue;
+
+                juce::Path path;
+                bool started = false;
+                float lastX = graphLeft;
+                for (const auto& sample : envelope.samples)
+                {
+                    const float x = juce::jlimit (graphLeft, graphRight,
+                                                  freqToX (sample.frequencyHz));
+                    const float depth = sample.withinDisplaySupport
+                        ? juce::jlimit (0.0f, 1.0f, sample.normalizedContribution)
+                        : 0.0f;
+                    const float y = graphBottom
+                        - depth * juce::jlimit (0.0f, 1.0f, envelope.strength)
+                          * graphHeight * kEnvelopeHeightFrac;
+                    if (!started)
+                    {
+                        path.startNewSubPath (x, graphBottom);
+                        path.lineTo (x, y);
+                        started = true;
+                    }
+                    else
+                    {
+                        path.lineTo (x, y);
+                    }
+                    lastX = x;
+                }
+                if (!started)
+                    continue;
+                path.lineTo (lastX, graphBottom);
+                path.closeSubPath();
+
+                const float fillA = (envelope.primary ? 0.16f : 0.10f)
+                    * juce::jlimit (0.35f, 1.0f, envelope.strength) * a;
+                g.setColour (ModernLookAndFeel::Colors::amber.withAlpha (fillA));
+                g.fillPath (path);
+            }
+        }
+        else
+        {
+            for (const auto& focus : semanticIntentMap.focusRegions)
+            {
+                const float strength = juce::jlimit (0.35f, 1.0f, focus.strength);
+                const float top = (focus.primary ? 0.12f : 0.08f) * strength * a;
+                const float bot = (focus.primary ? 0.035f : 0.02f) * strength * a;
+                fillRegion (focus.minFrequencyHz, focus.maxFrequencyHz,
+                            ModernLookAndFeel::Colors::amber, top, bot);
+            }
         }
 
         for (const auto& protect : semanticIntentMap.protectRegions)
