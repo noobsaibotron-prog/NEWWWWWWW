@@ -355,7 +355,11 @@ public:
             }
 
             isFrozen = true;
-            frozenProblems = ai.getPendingCorrections();
+            {
+                const auto snap = ai.getPendingListSnapshot();
+                frozenProblems = snap.corrections;
+                frozenEvidence = snap.evidence;
+            }
             transientVisualHolds.clear();     // diagnosis mode: no ghosts, data is static
             captureStripBtn.setEnabled(true);
             captureStripBtn.setButtonText(tr("BACK TO LIVE", "BACK TO LIVE"));
@@ -465,8 +469,11 @@ public:
         {
             const auto idx = static_cast<size_t>(rowNumber);
             const bool ghost = idx < problemIsGhost.size() && problemIsGhost[idx];
+            const EmberUI::PersistenceEvidence evidence = (idx < problemEvidence.size())
+                ? problemEvidence[idx]
+                : EmberUI::PersistenceEvidence{};
             rowComp->updateFromProblem(problems[idx], rowNumber, isRowSelected,
-                                       isRightToLeft(), disclosure.viewFor(rowNumber), ghost);
+                                       isRightToLeft(), disclosure.viewFor(rowNumber), ghost, evidence);
         }
 
         return rowComp;
@@ -541,7 +548,8 @@ public:
         if (row >= 0 && row < static_cast<int>(problems.size()))
         {
             juce::AccessibilityHandler::postAnnouncement(
-                tr("Selected row: ", "Selected row: ") + getRowAnnouncementFromCorrection(problems[static_cast<size_t>(row)]),
+                tr("Selected row: ", "Selected row: ")
+                    + getRowAnnouncementFromCorrection(problems[static_cast<size_t>(row)], evidenceForRow(row)),
                 juce::AccessibilityHandler::AnnouncementPriority::medium);
         }
     }
@@ -748,7 +756,8 @@ private:
         }
 
         void updateFromProblem(const AIEngine::Correction& p, int rowIndex, bool isSelected, bool rtlFlag,
-                               EmberUI::ProblemRowView view, bool isGhost = false)
+                               EmberUI::ProblemRowView view, bool isGhost = false,
+                               EmberUI::PersistenceEvidence evidence = {})
         {
             currentIndex = rowIndex;
             rtl = rtlFlag;
@@ -763,7 +772,7 @@ private:
             const int confidencePercent = static_cast<int>(p.confidence * 100.0f);
 
             setTitle(owner.getRowSummaryFromCorrection(p));
-            setDescription(owner.getRowAnnouncementFromCorrection(p));
+            setDescription(owner.getRowAnnouncementFromCorrection(p, evidence));
             setHelpText(owner.tr("Press Enter to apply or Space to preview on spectrum",
                                  "Press Enter to apply or Space to preview on spectrum"));
 
@@ -811,10 +820,20 @@ private:
             fixLabel.setTitle(owner.tr("Suggested fix", "Suggested fix"));
             fixLabel.setDescription(fixText);
 
-            const auto confidenceText = juce::String(confidencePercent) + "%";
+            const auto confidenceText = juce::String(EmberUI::formatCompactConfidence(confidencePercent, evidence));
             confidenceLabel.setText(confidenceText, juce::dontSendNotification);
             confidenceLabel.setTitle(owner.tr("Confidence", "Confidence"));
-            confidenceLabel.setDescription(owner.tr("AI confidence level", "AI confidence level") + ": " + confidenceText);
+            juce::String confidenceDesc = owner.tr("AI confidence level", "AI confidence level")
+                + ": " + juce::String(confidencePercent) + "%";
+            if (evidence.showsLiveStability())
+            {
+                confidenceDesc += ". " + owner.tr("Stable", "Stable") + " "
+                    + juce::String(evidence.hits) + " "
+                    + owner.tr("of", "of") + " "
+                    + juce::String(evidence.windowSize) + " "
+                    + owner.tr("live frames", "live frames");
+            }
+            confidenceLabel.setDescription(confidenceDesc);
 
             juce::String bandName = AIEngine::getBandName(p.frequency);
             juce::String bwDesc = p.suggestedQ > 5.0f ? owner.tr("Narrow surgical cut", "Narrow surgical cut")
@@ -929,13 +948,13 @@ private:
 
             if (! rtl)
             {
-                fixLabel.setBounds(xBase, 28, juce::jmax(40, contentW - 80 - stripW), 14);
-                confidenceLabel.setBounds(w - 90 - stripW, 28, 65, 14);
+                fixLabel.setBounds(xBase, 28, juce::jmax(40, contentW - 100 - stripW), 14);
+                confidenceLabel.setBounds(w - 108 - stripW, 28, 88, 14);
             }
             else
             {
-                confidenceLabel.setBounds(12 + stripW, 28, 65, 14);
-                fixLabel.setBounds(12 + stripW + 70, 28, juce::jmax(40, contentW - 80 - stripW), 14);
+                confidenceLabel.setBounds(12 + stripW, 28, 88, 14);
+                fixLabel.setBounds(12 + stripW + 92, 28, juce::jmax(40, contentW - 100 - stripW), 14);
             }
 
             auto placeStrip = [this](int x0)
@@ -1157,26 +1176,57 @@ private:
     {
         // Frozen diagnosis mode: display the captured snapshot, ignore live updates
         // (they otherwise overwrite capture results within ~100-200ms of playback).
-        auto raw = isFrozen ? frozenProblems : processor.getAIEngine().getPendingCorrections();
+        std::vector<AIEngine::Correction> raw;
+        std::vector<EmberUI::PersistenceEvidence> rawEvidence;
+        if (isFrozen)
+        {
+            raw = frozenProblems;
+            rawEvidence = frozenEvidence;
+        }
+        else
+        {
+            const auto snap = processor.getAIEngine().getPendingListSnapshot();
+            raw = snap.corrections;
+            rawEvidence = snap.evidence;
+        }
+        if (rawEvidence.size() != raw.size())
+            rawEvidence.assign(raw.size(), EmberUI::PersistenceEvidence{});
+
         const auto liveProblemCount = raw.size();
         if (! isFrozen)
             mergeTransientVisualHolds(raw);   // appends ghost entries AFTER the live ones
 
+        struct DisplayedRow
+        {
+            AIEngine::Correction correction;
+            EmberUI::PersistenceEvidence evidence;
+            bool ghost = false;
+        };
+
         // Ghost flag computed ONCE here (counter-exam fix A/B: never call isProblemLive()
         // per row — it locks + copies the corrections vector on every visible row).
         // Entries at index >= liveProblemCount were appended by mergeTransientVisualHolds
-        // and are therefore no longer live in the engine.
-        std::vector<std::pair<AIEngine::Correction, bool>> merged;
+        // and are therefore no longer live in the engine. Ghosts must not show a
+        // fabricated n/8 count.
+        std::vector<DisplayedRow> merged;
         merged.reserve(raw.size());
         for (size_t i = 0; i < raw.size(); ++i)
-            merged.emplace_back(raw[i], i >= liveProblemCount);
+        {
+            DisplayedRow row;
+            row.correction = raw[i];
+            row.ghost = i >= liveProblemCount;
+            row.evidence = (! row.ghost && i < rawEvidence.size())
+                ? rawEvidence[i]
+                : EmberUI::PersistenceEvidence{};
+            merged.push_back(std::move(row));
+        }
 
-        // Sort by priority (severity * confidence) for display — ghost flag travels with row
+        // Sort by priority (severity * confidence) for display — evidence/ghost travel with row
         std::sort(merged.begin(), merged.end(), [](const auto& a, const auto& b) {
-            float priorityA = a.first.severity * a.first.confidence;
-            float priorityB = b.first.severity * b.first.confidence;
+            float priorityA = a.correction.severity * a.correction.confidence;
+            float priorityB = b.correction.severity * b.correction.confidence;
             if (std::abs(priorityA - priorityB) < 0.01f)
-                return a.first.severity > b.first.severity;
+                return a.correction.severity > b.correction.severity;
             return priorityA > priorityB;
         });
 
@@ -1196,10 +1246,13 @@ private:
         problems.reserve(merged.size());
         problemIsGhost.clear();
         problemIsGhost.reserve(merged.size());
-        for (const auto& [corr, ghost] : merged)
+        problemEvidence.clear();
+        problemEvidence.reserve(merged.size());
+        for (const auto& row : merged)
         {
-            problems.push_back(corr);
-            problemIsGhost.push_back(ghost);
+            problems.push_back(row.correction);
+            problemIsGhost.push_back(row.ghost);
+            problemEvidence.push_back(row.evidence);
         }
         problemList.updateContent();
         {
@@ -1445,7 +1498,9 @@ private:
         {
             juce::AccessibilityHandler::postAnnouncement(
                 tr("Details expanded: ", "Details expanded: ")
-                    + getRowAnnouncementFromCorrection(problems[static_cast<size_t>(disclosure.expandedIndex)]),
+                    + getRowAnnouncementFromCorrection(
+                          problems[static_cast<size_t>(disclosure.expandedIndex)],
+                          evidenceForRow(disclosure.expandedIndex)),
                 juce::AccessibilityHandler::AnnouncementPriority::medium);
         }
         else
@@ -1518,7 +1573,8 @@ private:
         if (row >= 0 && row < static_cast<int>(problems.size()))
         {
             juce::AccessibilityHandler::postAnnouncement(
-                tr("Selected row: ", "Selected row: ") + getRowAnnouncementFromCorrection(problems[static_cast<size_t>(row)]),
+                tr("Selected row: ", "Selected row: ")
+                    + getRowAnnouncementFromCorrection(problems[static_cast<size_t>(row)], evidenceForRow(row)),
                 juce::AccessibilityHandler::AnnouncementPriority::medium);
         }
     }
@@ -1566,7 +1622,8 @@ private:
         return summary;
     }
 
-    juce::String getRowAnnouncementFromCorrection(const AIEngine::Correction& p) const
+    juce::String getRowAnnouncementFromCorrection(const AIEngine::Correction& p,
+                                                 const EmberUI::PersistenceEvidence& evidence = {}) const
     {
         juce::String announcement;
         announcement << AIEngine::getProblemTypeName(p.type) << " @ " << formatFreq(p.frequency) << ". ";
@@ -1574,12 +1631,26 @@ private:
                      << " (" << juce::String(static_cast<int>(p.severity * 100.0f)) << "%). ";
         announcement << tr("Confidence", "Confidence") << " "
                      << juce::String(static_cast<int>(p.confidence * 100.0f)) << "%. ";
+        if (evidence.showsLiveStability())
+        {
+            announcement << tr("Stable", "Stable") << " " << evidence.hits << " "
+                         << tr("of", "of") << " " << evidence.windowSize << " "
+                         << tr("live frames", "live frames") << ". ";
+        }
         const bool isCut = p.suggestedGain < 0;
         announcement << tr("Suggested", "Suggested") << " "
                      << (isCut ? tr("cut", "cut") : tr("boost", "boost")) << " "
                      << juce::String(p.suggestedGain, 1) << " dB, Q "
                      << juce::String(p.suggestedQ, 1) << ".";
         return announcement;
+    }
+
+    const EmberUI::PersistenceEvidence& evidenceForRow(int row) const noexcept
+    {
+        static const EmberUI::PersistenceEvidence empty;
+        if (row >= 0 && row < static_cast<int>(problemEvidence.size()))
+            return problemEvidence[static_cast<size_t>(row)];
+        return empty;
     }
     
     // Find and approve/reject correction by matching frequency, type, and gain
@@ -1647,6 +1718,7 @@ private:
     
     std::vector<AIEngine::Correction> problems;
     std::vector<bool> problemIsGhost;        // parallel to `problems`: true = exit-hold ghost
+    std::vector<EmberUI::PersistenceEvidence> problemEvidence; // parallel to `problems`
 
     // UX "Diagnosi Stabile" — capture strip + frozen diagnosis mode.
     // Message-thread-only state (timer + clicks): no atomics needed.
@@ -1655,6 +1727,7 @@ private:
     bool isFrozen { false };                 // panel shows frozenProblems, ignores live updates
     bool captureAwaitingResult { false };    // between STOP+ANALYZE and async results arrival
     std::vector<AIEngine::Correction> frozenProblems;
+    std::vector<EmberUI::PersistenceEvidence> frozenEvidence;
     struct TransientVisualHold
     {
         AIEngine::Correction correction;
@@ -1680,6 +1753,7 @@ private:
             // BACK TO LIVE: unfreeze and resume live updates
             isFrozen = false;
             frozenProblems.clear();
+            frozenEvidence.clear();
             captureStripBtn.setButtonText(tr("CAPTURE", "CAPTURE"));
             captureStripBtn.setColour(juce::TextButton::textColourOffId, ModernLookAndFeel::Colors::accentBlue);
             captureStripLabel.setText("", juce::dontSendNotification);
