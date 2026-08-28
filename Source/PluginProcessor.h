@@ -53,6 +53,7 @@
 #include "DSP/ParametricEQProcessor.h"
 #include "DSP/DynamicEQProcessor.h"
 #include "DSP/LinearPhaseProcessor.h"
+#include "DSP/EffectiveDSPState.h"
 #include "DSP/BoundedSlewLimiter.h"
 #include "Core/OSCParameterServer.h"
 #include "AI/AIEngine.h"
@@ -437,6 +438,16 @@ public:
     [[nodiscard]] SemanticApplyResult applySemanticAdjustments(
         const std::vector<SemanticEQEngine::SemanticEQAdjustment>& adjustments,
         SemanticApplyPolicy policy = SemanticApplyPolicy::BestEffortLegacy);
+
+    /** VPA-1.1: selector is CommittedA until preview transport exists.
+        effectiveActiveBandCount then equals committed numActiveBands. */
+    [[nodiscard]] EmberDSP::EffectiveDSPSource getEffectiveDSPSource() const noexcept;
+    [[nodiscard]] int getEffectiveActiveBandCount() const noexcept;
+    [[nodiscard]] std::uint64_t getProjectionBaseEpoch() const noexcept;
+    [[nodiscard]] std::uint64_t getAuditionContextEpoch() const noexcept;
+    [[nodiscard]] EmberDSP::EffectiveDSPState snapshotCommittedEffectiveDSPState() const;
+    [[nodiscard]] EmberDSP::EffectiveDSPState snapshotProjectedEffectiveDSPState(
+        const SemanticApplyProjection& projection) const;
     
     //==============================================================================
     // AI Corrections (message thread only)
@@ -612,6 +623,13 @@ private:
     void handleAsyncUpdate() override;
     [[nodiscard]] bool requiresPaddedLatencyPlan() const noexcept;
     void cacheParameterPointers();
+    [[nodiscard]] static bool isGainBearingDynFilterType(int filterType) noexcept;
+    [[nodiscard]] bool loadDynEqEnabledFromAPVTS() const noexcept;
+    void populateEffectiveDSPState(EmberDSP::EffectiveDSPState& out,
+                                   const std::array<BandState, maxBands>& bands,
+                                   int activeCount,
+                                   bool dynEqEnabled,
+                                   EmberDSP::EffectiveDSPSource source) const noexcept;
     bool runCapturedAudioAnalysis();
     void analyzeSpectrumSerialized(const std::vector<float>& spectrum, bool force = false);
     void aiAnalysisThreadFunc();
@@ -1236,6 +1254,19 @@ private:
     
     // Active bands count
     std::atomic<int> numActiveBands { 8 };
+    // VPA-1.1: DSP publish path reads this, not numActiveBands, so preview B
+    // can grow the audible band count without writing committed APVTS.
+    // Selector stays CommittedA; the two atomics are kept equal.
+    std::atomic<int> effectiveActiveBandCount { 8 };
+    std::atomic<std::uint8_t> effectiveDSPSource {
+        static_cast<std::uint8_t>(EmberDSP::EffectiveDSPSource::CommittedA) };
+    std::atomic<std::uint64_t> projectionBaseEpoch { 1 };
+    std::atomic<std::uint64_t> auditionContextEpoch { 1 };
+    std::atomic<std::uint64_t> effectiveDSPGeneration { 1 };
+
+    void syncEffectiveActiveBandCountFromCommitted() noexcept;
+    [[nodiscard]] EmberDSP::PackedBandDSPState packBandDSPState(
+        const BandState& state, bool enabledFiltered, bool ownedByDynamic) const noexcept;
     
     // Parameter IDs for listener registration
     std::vector<juce::String> eqParameterIDs;

@@ -19,6 +19,7 @@ namespace
     static_assert(AIEqualizerAudioProcessor::maxBands
                   == static_cast<int>(AIEQDSP::defaultBandFrequencies.size()));
     static_assert(AIEqualizerAudioProcessor::maxBands == AIEQStateSchema::bandCount);
+    static_assert(AIEqualizerAudioProcessor::maxBands == EmberDSP::kEffectiveDSPBandCount);
 
     // M/S encoding/decoding scale factor (1 / sqrt(2))
     // Used in both encodeStereoToMS() and decodeMSToStereo() to normalise
@@ -88,6 +89,10 @@ AIEqualizerAudioProcessor::AIEqualizerAudioProcessor()
     apvts.addParameterListener("msMode", this);
     apvts.addParameterListener("oversamplingFactor", this);
     apvts.addParameterListener("qualityMode", this);
+    apvts.addParameterListener("dryWet", this);
+    apvts.addParameterListener("outputGain", this);
+    apvts.addParameterListener("autoGain", this);
+    apvts.addParameterListener("dynamicCorrections", this);
     // AI knobs that are applied to the engine ONLY inside updateEQFromParameters()
     // (setSensitivity/setStrength at ~3349/3354). Without listeners, moving these
     // knobs never set parametersNeedUpdate, so updateEQFromParameters() was not called
@@ -875,6 +880,10 @@ AIEqualizerAudioProcessor::~AIEqualizerAudioProcessor()
     apvts.removeParameterListener("msMode", this);
     apvts.removeParameterListener("oversamplingFactor", this);
     apvts.removeParameterListener("qualityMode", this);
+    apvts.removeParameterListener("dryWet", this);
+    apvts.removeParameterListener("outputGain", this);
+    apvts.removeParameterListener("autoGain", this);
+    apvts.removeParameterListener("dynamicCorrections", this);
     for (const auto& id : eqParameterIDs)
         apvts.removeParameterListener(id, this);
 
@@ -1612,6 +1621,7 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
         }
         // If fewer than active bands were added (max limit), adjust numActiveBands
         numActiveBands.store(std::min(active, eqProcessor.getNumBands()), std::memory_order_relaxed);
+        syncEffectiveActiveBandCountFromCommitted();
     }
 
     // Reset RMS values (atomic)
@@ -3530,6 +3540,23 @@ void AIEqualizerAudioProcessor::parameterChanged(const juce::String& parameterID
     // Increment the general parameter change counter for host automation, etc.
     parameterChangeCounter.fetch_add(1, std::memory_order_relaxed);
 
+    // VPA-1.1 epochs: band geometry/count is the projection base; routing and
+    // mix context is the audition clock. Preview later must drop if either moves.
+    if (parameterID.startsWith("band") || parameterID == "numActiveBands")
+    {
+        projectionBaseEpoch.fetch_add(1, std::memory_order_relaxed);
+        effectiveDSPGeneration.fetch_add(1, std::memory_order_relaxed);
+    }
+    if (parameterID == "phaseMode" || parameterID == "qualityMode"
+        || parameterID == "dryWet" || parameterID == "outputGain"
+        || parameterID == "autoGain" || parameterID == "dynEqEnabled"
+        || parameterID == "dynamicCorrections" || parameterID == "msMode"
+        || parameterID == "oversamplingFactor")
+    {
+        auditionContextEpoch.fetch_add(1, std::memory_order_relaxed);
+        effectiveDSPGeneration.fetch_add(1, std::memory_order_relaxed);
+    }
+
     // --- OPTIMIZATION: Selective EQ Curve Counter Increment ---
     // Only increment the EQ curve counter if a parameter that visually affects
     // the curve has changed. This prevents the expensive EQ image rebuild
@@ -4054,7 +4081,7 @@ bool AIEqualizerAudioProcessor::applySmoothedBandParams(int blockSamples, bool p
     constexpr double correctionRampSeconds = 0.08;
     constexpr int topologyFadeSamples = 1024;
 
-    const int activeBandsLocal = numActiveBands.load(std::memory_order_relaxed);
+    const int activeBandsLocal = effectiveActiveBandCount.load(std::memory_order_relaxed);
     const int availableBands = std::min({ activeBandsLocal, maxBands,
                                           eqProcessor.getNumBands(),
                                           eqProcessorHQ.getNumBands(),
@@ -4255,21 +4282,6 @@ void AIEqualizerAudioProcessor::updateEQFromParameters()
         return ptr ? ptr->load() : fallback;
     };
 
-    auto isGainBearingDynFilterType = [](int filterType) noexcept
-    {
-        switch (filterType)
-        {
-            case ParametricEQProcessor::LowShelf:
-            case ParametricEQProcessor::Peak:
-            case ParametricEQProcessor::HighShelf:
-            case ParametricEQProcessor::VintageLowShelf:
-            case ParametricEQProcessor::VintageHighShelf:
-                return true;
-            default:
-                return false;
-        }
-    };
-
     // Update AI parameters (use cached pointers - NO hash map lookups in audio thread!)
     if (cachedAISensitivity)
     {
@@ -4318,6 +4330,7 @@ void AIEqualizerAudioProcessor::updateEQFromParameters()
                                          eqProcessorMid.getNumBands(), eqProcessorSide.getNumBands() });
     const int currentBands = numActiveBands.load(std::memory_order_relaxed);
     numActiveBands.store(juce::jlimit(1, availableBands, currentBands), std::memory_order_relaxed);
+    syncEffectiveActiveBandCountFromCommitted();
 
     const int bandsAvailable = std::min({ maxBands, eqProcessor.getNumBands(), eqProcessorHQ.getNumBands() });
     // FIX: Clamp to maxBands to prevent array out-of-bounds access
@@ -4802,6 +4815,7 @@ void AIEqualizerAudioProcessor::setNumActiveBands(int n) noexcept
     const int currentBands = numActiveBands.load(std::memory_order_relaxed);
     const int clampedBands = juce::jlimit(1, availableBands, currentBands);
     numActiveBands.store(clampedBands, std::memory_order_relaxed);
+    syncEffectiveActiveBandCountFromCommitted();
     for (int i = clampedBands; i < eqProcessor.getNumBands(); ++i)
         eqProcessor.setBandEnabled(i, false);
     for (int i = clampedBands; i < eqProcessorHQ.getNumBands(); ++i)
@@ -5762,6 +5776,161 @@ AIEqualizerAudioProcessor::applySemanticAdjustments(
     }
 
     return result;
+}
+
+bool AIEqualizerAudioProcessor::isGainBearingDynFilterType(int filterType) noexcept
+{
+    switch (filterType)
+    {
+        case ParametricEQProcessor::LowShelf:
+        case ParametricEQProcessor::Peak:
+        case ParametricEQProcessor::HighShelf:
+        case ParametricEQProcessor::VintageLowShelf:
+        case ParametricEQProcessor::VintageHighShelf:
+            return true;
+        default:
+            return false;
+    }
+}
+
+bool AIEqualizerAudioProcessor::loadDynEqEnabledFromAPVTS() const noexcept
+{
+    if (auto* raw = apvts.getRawParameterValue("dynEqEnabled"))
+        return raw->load() > 0.5f;
+    return true;
+}
+
+void AIEqualizerAudioProcessor::syncEffectiveActiveBandCountFromCommitted() noexcept
+{
+    if (effectiveDSPSource.load(std::memory_order_relaxed)
+        != static_cast<std::uint8_t>(EmberDSP::EffectiveDSPSource::CommittedA))
+        return;
+
+    effectiveActiveBandCount.store(numActiveBands.load(std::memory_order_relaxed),
+                                   std::memory_order_relaxed);
+}
+
+EmberDSP::PackedBandDSPState AIEqualizerAudioProcessor::packBandDSPState(
+    const BandState& state, bool enabledFiltered, bool ownedByDynamic) const noexcept
+{
+    EmberDSP::PackedBandDSPState packed;
+    packed.frequency = state.frequency;
+    packed.gain = state.gain;
+    packed.q = state.q;
+    packed.sidechainFrequency = state.sidechainFrequency;
+    packed.sidechainQ = state.sidechainQ;
+    packed.dynThreshold = state.dynThreshold;
+    packed.dynRatio = state.dynRatio;
+    packed.dynAttack = state.dynAttack;
+    packed.dynRelease = state.dynRelease;
+    packed.dynRange = state.dynRange;
+    packed.dynKnee = state.dynKnee;
+    packed.type = state.type;
+    packed.slope = state.slope;
+    packed.curveMode = state.curveMode;
+    packed.dynMode = state.dynMode;
+    packed.dynTrigger = state.dynMode == DynamicEQProcessor::DynamicMode_Gate
+        ? DynamicEQProcessor::TriggerSide_Below
+        : state.dynTrigger;
+    packed.detectionMode = state.detectionMode;
+    packed.detectorSource = state.detectorSource;
+    packed.enabled = enabledFiltered ? 1 : 0;
+    packed.solo = state.solo ? 1 : 0;
+    packed.bandOwnedByDynamicStage = ownedByDynamic ? 1 : 0;
+    packed.pad = 0;
+    return packed;
+}
+
+void AIEqualizerAudioProcessor::populateEffectiveDSPState(
+    EmberDSP::EffectiveDSPState& out,
+    const std::array<BandState, maxBands>& bands,
+    int activeCount,
+    bool dynEqEnabled,
+    EmberDSP::EffectiveDSPSource source) const noexcept
+{
+    const int clampedActive = juce::jlimit(0, maxBands, activeCount);
+    bool hasSolo = false;
+    for (int i = 0; i < clampedActive; ++i)
+    {
+        const auto& state = bands[static_cast<std::size_t>(i)];
+        if (state.enabled && state.solo)
+        {
+            hasSolo = true;
+            break;
+        }
+    }
+
+    out = EmberDSP::EffectiveDSPState {};
+    out.effectiveActiveBandCount = clampedActive;
+    out.dynEqEnabled = dynEqEnabled ? 1 : 0;
+    out.source = static_cast<std::uint8_t>(source);
+    out.generation = effectiveDSPGeneration.load(std::memory_order_relaxed);
+    out.projectionBaseEpoch = projectionBaseEpoch.load(std::memory_order_relaxed);
+    out.auditionContextEpoch = auditionContextEpoch.load(std::memory_order_relaxed);
+
+    for (int i = 0; i < maxBands; ++i)
+    {
+        const auto& state = bands[static_cast<std::size_t>(i)];
+        const bool enabled = state.enabled && i < clampedActive;
+        const bool enabledFiltered = enabled && (!hasSolo || state.solo);
+        const bool owned = dynEqEnabled
+            && enabledFiltered
+            && state.dynMode != DynamicEQProcessor::DynamicMode_Off
+            && (state.dynMode == DynamicEQProcessor::DynamicMode_Gate
+                || isGainBearingDynFilterType(state.type));
+        out.bands[static_cast<std::size_t>(i)] =
+            packBandDSPState(state, enabledFiltered, owned);
+    }
+}
+
+EmberDSP::EffectiveDSPSource AIEqualizerAudioProcessor::getEffectiveDSPSource() const noexcept
+{
+    return static_cast<EmberDSP::EffectiveDSPSource>(
+        effectiveDSPSource.load(std::memory_order_relaxed));
+}
+
+int AIEqualizerAudioProcessor::getEffectiveActiveBandCount() const noexcept
+{
+    return effectiveActiveBandCount.load(std::memory_order_relaxed);
+}
+
+std::uint64_t AIEqualizerAudioProcessor::getProjectionBaseEpoch() const noexcept
+{
+    return projectionBaseEpoch.load(std::memory_order_relaxed);
+}
+
+std::uint64_t AIEqualizerAudioProcessor::getAuditionContextEpoch() const noexcept
+{
+    return auditionContextEpoch.load(std::memory_order_relaxed);
+}
+
+EmberDSP::EffectiveDSPState
+AIEqualizerAudioProcessor::snapshotCommittedEffectiveDSPState() const
+{
+    std::array<BandState, maxBands> bands {};
+    for (int i = 0; i < maxBands; ++i)
+        bands[static_cast<std::size_t>(i)] = getBandState(i);
+
+    EmberDSP::EffectiveDSPState out;
+    populateEffectiveDSPState(out,
+                              bands,
+                              getNumActiveBands(),
+                              loadDynEqEnabledFromAPVTS(),
+                              EmberDSP::EffectiveDSPSource::CommittedA);
+    return out;
+}
+
+EmberDSP::EffectiveDSPState
+AIEqualizerAudioProcessor::snapshotProjectedEffectiveDSPState(
+    const SemanticApplyProjection& projection) const
+{
+    EmberDSP::EffectiveDSPState out;
+    populateEffectiveDSPState(out,
+                              projection.resultingBands,
+                              projection.resultingActiveBandCount,
+                              loadDynEqEnabledFromAPVTS(),
+                              EmberDSP::EffectiveDSPSource::ProjectedB);
+    return out;
 }
 
 //==============================================================================
