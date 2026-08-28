@@ -297,6 +297,8 @@ inline SemanticIntentMapState buildSemanticIntentMapState (
         float totalAbsDb = 0.0f;
         float score = 0.0f;
         bool valid = false;
+        std::vector<float> sampleFrequenciesHz;
+        std::vector<float> sampleMagnitudes;
     };
 
     std::vector<GoalVisual> visuals;
@@ -320,8 +322,9 @@ inline SemanticIntentMapState buildSemanticIntentMapState (
             visual.score = std::abs (representative->amount) * representative->confidence;
         }
 
-        std::vector<std::pair<float, float>> samples;
-        samples.reserve (plan.target.points.size());
+        std::vector<std::pair<float, float>> supported;
+        visual.sampleFrequenciesHz.reserve (plan.target.points.size());
+        visual.sampleMagnitudes.reserve (plan.target.points.size());
         for (const auto& point : plan.target.points)
         {
             float contributionAbs = 0.0f;
@@ -330,19 +333,21 @@ inline SemanticIntentMapState buildSemanticIntentMapState (
                 if (contribution.sourceId == sourceId)
                     contributionAbs += std::abs (contribution.deltaDb);
             }
+            visual.sampleFrequenciesHz.push_back (point.frequencyHz);
+            visual.sampleMagnitudes.push_back (contributionAbs);
+            visual.peakAbsDb = std::max (visual.peakAbsDb, contributionAbs);
             if (contributionAbs > 1.0e-5f)
             {
-                samples.emplace_back (point.frequencyHz, contributionAbs);
-                visual.peakAbsDb = std::max (visual.peakAbsDb, contributionAbs);
+                supported.emplace_back (point.frequencyHz, contributionAbs);
                 visual.totalAbsDb += contributionAbs;
             }
         }
 
-        if (visual.peakAbsDb <= 1.0e-5f || samples.empty())
+        if (visual.peakAbsDb <= 1.0e-5f || supported.empty())
             continue;
 
         const float threshold = std::max (0.05f, visual.peakAbsDb * 0.25f);
-        for (const auto& [frequency, magnitude] : samples)
+        for (const auto& [frequency, magnitude] : supported)
         {
             if (magnitude < threshold)
                 continue;
@@ -391,6 +396,28 @@ inline SemanticIntentMapState buildSemanticIntentMapState (
         region.sourcePhrase = v.sourcePhrase;
         region.primary = (i == 0);
         out.focusRegions.push_back (std::move (region));
+
+        SemanticFocusEnvelope envelope;
+        envelope.strength = out.focusRegions.back().strength;
+        envelope.dimension = v.dimension;
+        envelope.focus = v.focus;
+        envelope.sourceId = v.sourceId;
+        envelope.sourcePhrase = v.sourcePhrase;
+        envelope.primary = (i == 0);
+        const float peak = v.peakAbsDb;
+        const float threshold = std::max (0.05f, peak * 0.25f);
+        envelope.samples.reserve (v.sampleMagnitudes.size());
+        for (std::size_t s = 0; s < v.sampleMagnitudes.size(); ++s)
+        {
+            SemanticEnvelopeSample sample;
+            sample.frequencyHz = v.sampleFrequenciesHz[s];
+            sample.normalizedContribution = peak > 0.0f
+                ? std::clamp (v.sampleMagnitudes[s] / peak, 0.0f, 1.0f)
+                : 0.0f;
+            sample.withinDisplaySupport = v.sampleMagnitudes[s] >= threshold;
+            envelope.samples.push_back (sample);
+        }
+        out.focusEnvelopes.push_back (std::move (envelope));
     }
 
     float bestAxisScore = -1.0f;
