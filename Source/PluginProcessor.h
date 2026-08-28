@@ -40,6 +40,7 @@
 #include <array>
 #include <atomic>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <thread>
 #include <vector>
@@ -466,6 +467,27 @@ public:
     [[nodiscard]] EmberDSP::EffectiveDSPState snapshotCommittedEffectiveDSPState() const;
     [[nodiscard]] ProjectedDSPSnapshot snapshotProjectedEffectiveDSPState(
         const SemanticApplyProjection& projection) const;
+
+    enum class ProjectedDSPTransportOutcome : std::uint8_t
+    {
+        Idle = 0,
+        Accepted = 1,
+        RejectedUnpublishable = 2,
+        RejectedStaleGeneration = 3,
+        RejectedProjectionBaseEpoch = 4,
+        RejectedAuditionContextEpoch = 5
+    };
+
+    /** VPA-1.2: message/non-RT producer. Copies snapshot.state as-is
+        (previewGeneration is not regenerated). Unpublishable snapshots never
+        enter the mailbox. */
+    bool publishProjectedDSPState(const ProjectedDSPSnapshot& snapshot) noexcept;
+    [[nodiscard]] ProjectedDSPTransportOutcome getLastProjectedDSPTransportOutcome() const noexcept;
+    [[nodiscard]] std::uint64_t getLastAcceptedPreviewGeneration() const noexcept;
+    [[nodiscard]] std::uint64_t getLastObservedPreviewGeneration() const noexcept;
+    [[nodiscard]] std::uint32_t getProjectedDSPAcceptedCount() const noexcept;
+    [[nodiscard]] std::uint32_t getProjectedDSPRejectedCount() const noexcept;
+    [[nodiscard]] EmberDSP::EffectiveDSPState getLastAcceptedProjectedDSPState() const noexcept;
     
     //==============================================================================
     // AI Corrections (message thread only)
@@ -1288,6 +1310,24 @@ private:
     std::atomic<std::uint64_t> projectionBaseEpoch { 1 };
     std::atomic<std::uint64_t> auditionContextEpoch { 1 };
     mutable std::atomic<std::uint64_t> previewGenerationCounter { 1 };
+
+    // Heap-owned: four packed payloads would blow Debug stack frames that
+    // construct several AIEqualizerAudioProcessor locals in one function.
+    // Allocated in the constructor only — never from processBlock.
+    struct ProjectedDSPTransport
+    {
+        LatestValueMailbox<EmberDSP::EffectiveDSPState, 4> mailbox;
+        EmberDSP::EffectiveDSPState lastAccepted {};
+    };
+    std::unique_ptr<ProjectedDSPTransport> projectedDSPTransport;
+    std::atomic<std::uint8_t> lastProjectedDSPTransportOutcome {
+        static_cast<std::uint8_t>(ProjectedDSPTransportOutcome::Idle) };
+    std::atomic<std::uint64_t> lastAcceptedPreviewGeneration { 0 };
+    std::atomic<std::uint64_t> lastObservedPreviewGeneration { 0 };
+    std::atomic<std::uint32_t> projectedDSPAcceptedCount { 0 };
+    std::atomic<std::uint32_t> projectedDSPRejectedCount { 0 };
+
+    void consumeProjectedDSPMailbox() noexcept;
 
     void syncEffectiveActiveBandCountFromCommitted() noexcept;
     [[nodiscard]] EmberDSP::PackedBandDSPState packBandDSPState(

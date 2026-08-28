@@ -84,6 +84,7 @@ AIEqualizerAudioProcessor::AIEqualizerAudioProcessor()
     // Fresh instances are schema-v1 and default to Surgical. States without
     // this root property are treated as pre-v1 and migrated to Legacy on load.
     apvts.state.setProperty("stateSchemaVersion", kCurrentStateSchemaVersion, nullptr);
+    projectedDSPTransport = std::make_unique<ProjectedDSPTransport>();
 
     apvts.addParameterListener("phaseMode", this);
     apvts.addParameterListener("msMode", this);
@@ -1544,6 +1545,18 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     // prepare window, so reset cannot race a publish, and the host contract
     // keeps processBlock out during prepareToPlay.
     pendingFreqIR.reset();
+    if (projectedDSPTransport != nullptr)
+    {
+        projectedDSPTransport->mailbox.reset();
+        projectedDSPTransport->lastAccepted = {};
+    }
+    lastProjectedDSPTransportOutcome.store(
+        static_cast<std::uint8_t>(ProjectedDSPTransportOutcome::Idle),
+        std::memory_order_relaxed);
+    lastAcceptedPreviewGeneration.store(0, std::memory_order_relaxed);
+    lastObservedPreviewGeneration.store(0, std::memory_order_relaxed);
+    projectedDSPAcceptedCount.store(0, std::memory_order_relaxed);
+    projectedDSPRejectedCount.store(0, std::memory_order_relaxed);
 
     // EC-001/B4: no GUI-spectrum scratch/queue is needed. The AI worker owns
     // its persistent 2049-bin spectrum and sources it from PerceptualFrontEnd.
@@ -2245,6 +2258,10 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& processBu
         eqProcessorMid.beginWholeChainCrossfade(abSwitchCrossfadeSamples);
         eqProcessorSide.beginWholeChainCrossfade(abSwitchCrossfadeSamples);
     }
+
+    // VPA-1.2: consume independently of needsParamUpdate. Accepting a payload
+    // does not switch the selector to B and must not wait for a param update.
+    consumeProjectedDSPMailbox();
 
     // Update EQ parameters only when something actually changed
     const auto currentParamCounter = parameterChangeCounter.load(std::memory_order_acquire);
@@ -5996,6 +6013,108 @@ AIEqualizerAudioProcessor::snapshotProjectedEffectiveDSPState(
                               projection.projectionBaseEpoch,
                               projection.auditionContextEpoch);
     return result;
+}
+
+bool AIEqualizerAudioProcessor::publishProjectedDSPState(
+    const ProjectedDSPSnapshot& snapshot) noexcept
+{
+    auto* mm = juce::MessageManager::getInstance();
+    if (mm != nullptr && ! mm->isThisTheMessageThread())
+        return false;
+
+    if (! snapshot.publishable || snapshot.epochStale
+        || snapshot.state.previewGeneration == 0
+        || snapshot.state.source != static_cast<std::uint8_t>(EmberDSP::EffectiveDSPSource::ProjectedB))
+    {
+        lastProjectedDSPTransportOutcome.store(
+            static_cast<std::uint8_t>(ProjectedDSPTransportOutcome::RejectedUnpublishable),
+            std::memory_order_relaxed);
+        projectedDSPRejectedCount.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+
+    if (projectedDSPTransport == nullptr)
+        return false;
+
+    return projectedDSPTransport->mailbox.publish(snapshot.state);
+}
+
+void AIEqualizerAudioProcessor::consumeProjectedDSPMailbox() noexcept
+{
+    if (projectedDSPTransport == nullptr)
+        return;
+
+    auto view = projectedDSPTransport->mailbox.acquireLatest();
+    if (! view)
+        return;
+
+    const auto& payload = *view.payload;
+    lastObservedPreviewGeneration.store(payload.previewGeneration, std::memory_order_relaxed);
+
+    auto outcome = ProjectedDSPTransportOutcome::Accepted;
+    const auto lastAccepted = lastAcceptedPreviewGeneration.load(std::memory_order_relaxed);
+    if (payload.previewGeneration == 0
+        || (lastAccepted != 0 && payload.previewGeneration < lastAccepted))
+        outcome = ProjectedDSPTransportOutcome::RejectedStaleGeneration;
+    else if (payload.projectionBaseEpoch
+             != projectionBaseEpoch.load(std::memory_order_relaxed))
+        outcome = ProjectedDSPTransportOutcome::RejectedProjectionBaseEpoch;
+    else if (payload.auditionContextEpoch
+             != auditionContextEpoch.load(std::memory_order_relaxed))
+        outcome = ProjectedDSPTransportOutcome::RejectedAuditionContextEpoch;
+    else if (payload.source
+             != static_cast<std::uint8_t>(EmberDSP::EffectiveDSPSource::ProjectedB))
+        outcome = ProjectedDSPTransportOutcome::RejectedStaleGeneration;
+
+    if (outcome == ProjectedDSPTransportOutcome::Accepted)
+    {
+        projectedDSPTransport->lastAccepted = payload;
+        lastAcceptedPreviewGeneration.store(payload.previewGeneration, std::memory_order_relaxed);
+        projectedDSPAcceptedCount.fetch_add(1, std::memory_order_relaxed);
+    }
+    else
+    {
+        projectedDSPRejectedCount.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    lastProjectedDSPTransportOutcome.store(static_cast<std::uint8_t>(outcome),
+                                           std::memory_order_relaxed);
+    projectedDSPTransport->mailbox.release(view);
+}
+
+AIEqualizerAudioProcessor::ProjectedDSPTransportOutcome
+AIEqualizerAudioProcessor::getLastProjectedDSPTransportOutcome() const noexcept
+{
+    return static_cast<ProjectedDSPTransportOutcome>(
+        lastProjectedDSPTransportOutcome.load(std::memory_order_relaxed));
+}
+
+std::uint64_t AIEqualizerAudioProcessor::getLastAcceptedPreviewGeneration() const noexcept
+{
+    return lastAcceptedPreviewGeneration.load(std::memory_order_relaxed);
+}
+
+std::uint64_t AIEqualizerAudioProcessor::getLastObservedPreviewGeneration() const noexcept
+{
+    return lastObservedPreviewGeneration.load(std::memory_order_relaxed);
+}
+
+std::uint32_t AIEqualizerAudioProcessor::getProjectedDSPAcceptedCount() const noexcept
+{
+    return projectedDSPAcceptedCount.load(std::memory_order_relaxed);
+}
+
+std::uint32_t AIEqualizerAudioProcessor::getProjectedDSPRejectedCount() const noexcept
+{
+    return projectedDSPRejectedCount.load(std::memory_order_relaxed);
+}
+
+EmberDSP::EffectiveDSPState
+AIEqualizerAudioProcessor::getLastAcceptedProjectedDSPState() const noexcept
+{
+    return projectedDSPTransport != nullptr
+        ? projectedDSPTransport->lastAccepted
+        : EmberDSP::EffectiveDSPState {};
 }
 
 //==============================================================================
