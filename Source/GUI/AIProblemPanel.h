@@ -2,12 +2,16 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "../PluginProcessor.h"
 #include "ModernLookAndFeel.h"
+#include "ProblemRowDisclosure.h"
+
+#include <optional>
 
 //==============================================================================
 /**
  * AI Problem Panel - Enhanced v2.0
  * 
  * Clear, professional display of detected audio problems with:
+ * - Progressive disclosure: collapsed / selected / expanded
  * - Expandable problem cards with full details
  * - Click-to-highlight on spectrum integration
  * - Clear visual hierarchy and descriptions
@@ -67,11 +71,29 @@ public:
         problemList.setFocusContainerType(juce::Component::FocusContainerType::keyboardFocusContainer);
         problemList.setMouseMoveSelectsRows(false);
         problemList.setTitle(tr("Detected problems list", "Detected problems list"));
-        problemList.setDescription(tr("Use arrows to move, Enter to apply, Space to preview on spectrum",
-                                      "Use arrows to move, Enter to apply, Space to preview on spectrum"));
-        problemList.setTooltip(tr("Keyboard: Up/Down to navigate • Enter to apply • Space to highlight",
-                                  "Keyboard: Up/Down to navigate • Enter to apply • Space to highlight"));
+        problemList.setDescription(tr("Use arrows to move, Enter to apply, Space to preview, Right to expand details",
+                                      "Use arrows to move, Enter to apply, Space to preview, Right to expand details"));
+        problemList.setTooltip(tr("Keyboard: Up/Down to navigate • Enter to apply • Space to highlight • Right/Left to expand/collapse",
+                                  "Keyboard: Up/Down to navigate • Enter to apply • Space to highlight • Right/Left to expand/collapse"));
         addAndMakeVisible(problemList);
+
+        auto setupDetailLabel = [this](juce::Label& lbl, float height, juce::Colour colour, bool italic = false)
+        {
+            auto font = juce::Font(juce::FontOptions().withHeight(height));
+            if (italic)
+                font.setItalic(true);
+            lbl.setFont(font);
+            lbl.setColour(juce::Label::textColourId, colour);
+            lbl.setJustificationType(juce::Justification::centredLeft);
+            detailCard.addAndMakeVisible(lbl);
+        };
+        setupDetailLabel(detailExplanation, 11.0f, ModernLookAndFeel::Colors::textPrimary);
+        setupDetailLabel(detailCause, 10.0f, ModernLookAndFeel::Colors::textLabel);
+        setupDetailLabel(detailImpact, 10.0f, ModernLookAndFeel::Colors::textSecondary, true);
+        setupDetailLabel(detailBand, 9.0f, ModernLookAndFeel::Colors::textMuted);
+        setupDetailLabel(detailHint, 10.0f, ModernLookAndFeel::Colors::accentBlue);
+        detailCard.setVisible(false);
+        addAndMakeVisible(detailCard);
 
         // UX "Diagnosi Stabile": visible capture strip — surfaces the (previously hidden)
         // CaptureService with clear state feedback and a frozen-diagnosis mode.
@@ -200,6 +222,15 @@ public:
         // Border
         g.setColour(ModernLookAndFeel::Colors::bgLighter);
         g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(0.5f), 8.0f, 1.0f);
+
+        if (detailCard.isVisible())
+        {
+            auto r = detailCard.getBounds().toFloat();
+            g.setColour(ModernLookAndFeel::Colors::bgPanel);
+            g.fillRoundedRectangle(r, 6.0f);
+            g.setColour(ModernLookAndFeel::Colors::amber.withAlpha(0.28f));
+            g.drawRoundedRectangle(r, 6.0f, 1.0f);
+        }
     }
     
     void resized() override
@@ -274,6 +305,19 @@ public:
         redoBtn.setBounds(btnRow.reduced(1));
 
         bounds.removeFromBottom(1); // tiny gap above buttons
+
+        if (disclosure.hasExpansion())
+        {
+            bounds.removeFromBottom(2);
+            detailCard.setBounds(bounds.removeFromBottom(108));
+            detailCard.setVisible(true);
+            layoutDetailCard();
+        }
+        else
+        {
+            detailCard.setVisible(false);
+            detailCard.setBounds({});
+        }
 
         // Problem list fills rest
         problemList.setBounds(bounds);
@@ -421,7 +465,8 @@ public:
         {
             const auto idx = static_cast<size_t>(rowNumber);
             const bool ghost = idx < problemIsGhost.size() && problemIsGhost[idx];
-            rowComp->updateFromProblem(problems[idx], rowNumber, isRowSelected, isRightToLeft(), ghost);
+            rowComp->updateFromProblem(problems[idx], rowNumber, isRowSelected,
+                                       isRightToLeft(), disclosure.viewFor(rowNumber), ghost);
         }
 
         return rowComp;
@@ -447,7 +492,9 @@ public:
             menu.addItem(1, tr("Apply This Fix", "Apply This Fix"));
             menu.addItem(2, tr("Dismiss Problem", "Dismiss Problem"));
             menu.addSeparator();
-            menu.addItem(3, tr("Show Full Analysis...", "Show Full Analysis..."));
+            menu.addItem(3, disclosure.viewFor(row) == EmberUI::ProblemRowView::Expanded
+                              ? tr("Hide Details", "Hide Details")
+                              : tr("Show Details", "Show Details"));
             
             menu.showMenuAsync(juce::PopupMenu::Options(), [this, row, p](int result) {
                 if (result == 1) {
@@ -462,7 +509,7 @@ public:
                     removeTransientVisualHold(p);
                     updateProblemList();
                 } else if (result == 3) {
-                    showFullAnalysis(row);
+                    toggleExpandedRow(row);
                 }
             });
         }
@@ -489,6 +536,8 @@ public:
             h->notifyAccessibilityEvent(juce::AccessibilityEvent::rowSelectionChanged);
 
         const int row = problemList.getSelectedRow();
+        disclosure.select(row, static_cast<int>(problems.size()));
+        refreshDisclosurePresentation();
         if (row >= 0 && row < static_cast<int>(problems.size()))
         {
             juce::AccessibilityHandler::postAnnouncement(
@@ -544,6 +593,23 @@ public:
         if (key == juce::KeyPress::returnKey)
         {
             activateRow(current);
+            return true;
+        }
+
+        if (key == juce::KeyPress::rightKey)
+        {
+            if (! disclosure.hasExpansion() || disclosure.expandedIndex != current)
+                toggleExpandedRow(current);
+            return true;
+        }
+
+        if (key == juce::KeyPress::leftKey)
+        {
+            if (disclosure.hasExpansion())
+            {
+                disclosure.collapse();
+                refreshDisclosurePresentation();
+            }
             return true;
         }
 
@@ -623,6 +689,40 @@ private:
             setupLabel(hintLabel, juce::Font(juce::FontOptions().withHeight(10.0f)), ModernLookAndFeel::Colors::accentBlue); // Semantic hint accent
             hintLabel.setVisible(false);
 
+            auto styleAction = [](juce::TextButton& btn, const juce::String& text)
+            {
+                btn.setButtonText(text);
+                btn.setColour(juce::TextButton::buttonColourId, ModernLookAndFeel::Colors::bgLighter);
+                btn.setColour(juce::TextButton::textColourOffId, ModernLookAndFeel::Colors::textPrimary);
+                btn.setColour(juce::TextButton::textColourOnId, ModernLookAndFeel::Colors::textPrimary);
+            };
+            styleAction(listenBtn, "PRE");
+            styleAction(applyBtn, "APPLY");
+            styleAction(ignoreBtn, "SKIP");
+            styleAction(expandBtn, juce::String::fromUTF8("\xe2\x96\xbe")); // ▾
+            applyBtn.setColour(juce::TextButton::buttonColourId, ModernLookAndFeel::Colors::amber);
+            applyBtn.setColour(juce::TextButton::textColourOffId, juce::Colour(0xFF181A22));
+            applyBtn.setColour(juce::TextButton::textColourOnId, juce::Colour(0xFF181A22));
+
+            listenBtn.onClick = [this] { if (currentIndex >= 0) owner.highlightRow(currentIndex); };
+            applyBtn.onClick = [this] { if (currentIndex >= 0) owner.activateRow(currentIndex); };
+            ignoreBtn.onClick = [this] { if (currentIndex >= 0) owner.dismissRow(currentIndex); };
+            expandBtn.onClick = [this] { if (currentIndex >= 0) owner.toggleExpandedRow(currentIndex); };
+
+            listenBtn.setTitle(owner.tr("Preview on spectrum", "Preview on spectrum"));
+            applyBtn.setTitle(owner.tr("Apply this fix", "Apply this fix"));
+            ignoreBtn.setTitle(owner.tr("Dismiss problem", "Dismiss problem"));
+            expandBtn.setTitle(owner.tr("Expand details", "Expand details"));
+
+            addAndMakeVisible(listenBtn);
+            addAndMakeVisible(applyBtn);
+            addAndMakeVisible(ignoreBtn);
+            addAndMakeVisible(expandBtn);
+            listenBtn.setVisible(false);
+            applyBtn.setVisible(false);
+            ignoreBtn.setVisible(false);
+            expandBtn.setVisible(false);
+
             // Focus order within the row
             typeLabel.setExplicitFocusOrder(1);
             freqLabel.setExplicitFocusOrder(2);
@@ -647,11 +747,13 @@ private:
             addAndMakeVisible(hintLabel);
         }
 
-        void updateFromProblem(const AIEngine::Correction& p, int rowIndex, bool isSelected, bool rtlFlag, bool isGhost = false)
+        void updateFromProblem(const AIEngine::Correction& p, int rowIndex, bool isSelected, bool rtlFlag,
+                               EmberUI::ProblemRowView view, bool isGhost = false)
         {
             currentIndex = rowIndex;
             rtl = rtlFlag;
-            selected = isSelected;
+            selected = isSelected || view != EmberUI::ProblemRowView::Collapsed;
+            rowView = view;
             // UX "Diagnosi Stabile": ghost rows (visual exit hold, no longer live in the
             // engine) fade instead of vanishing. Flag pre-computed in updateProblemList().
             setAlpha(isGhost ? 0.45f : 1.0f);
@@ -728,7 +830,24 @@ private:
             hintLabel.setText(hintText, juce::dontSendNotification);
             hintLabel.setTitle(owner.tr("Row actions", "Row actions"));
             hintLabel.setDescription(hintText);
-            hintLabel.setVisible(selected);
+            hintLabel.setVisible(false);
+            explanationLabel.setVisible(false);
+            causeLabel.setVisible(false);
+            impactLabel.setVisible(false);
+            bandLabel.setVisible(false);
+
+            const bool showStrip = rowView != EmberUI::ProblemRowView::Collapsed;
+            listenBtn.setVisible(showStrip);
+            applyBtn.setVisible(showStrip);
+            ignoreBtn.setVisible(showStrip);
+            expandBtn.setVisible(showStrip);
+            const bool expanded = rowView == EmberUI::ProblemRowView::Expanded;
+            expandBtn.setButtonText(expanded
+                ? juce::String::fromUTF8("\xe2\x96\xb4")  // ▴
+                : juce::String::fromUTF8("\xe2\x96\xbe")); // ▾
+            expandBtn.setTitle(expanded
+                ? owner.tr("Collapse details", "Collapse details")
+                : owner.tr("Expand details", "Expand details"));
 
             auto justify = rtl ? juce::Justification::centredRight : juce::Justification::left;
             for (auto* lbl : { &typeLabel, &freqLabel, &sevLabel, &explanationLabel, &causeLabel,
@@ -776,15 +895,18 @@ private:
             const int badgeW = 70;
             const int xBase = 16;
 
-            auto place = [this](juce::Label& lbl, int x, int y, int width, int height)
+            auto place = [](juce::Label& lbl, int x, int y, int width, int height)
             {
                 lbl.setBounds(x, y, width, height);
             };
 
             // Compact 2-row layout (56px row height)
             // Row 1 (y=4): type + freq + severity badge
-            // Row 2 (y=28): fix suggestion (one line)
+            // Row 2 (y=28): concise suggested correction + confidence
+            // Selected: action strip on the right of row 2
             const int contentW = w - xBase - 10;
+            const bool showStrip = rowView != EmberUI::ProblemRowView::Collapsed;
+            const int stripW = showStrip ? 196 : 0;
 
             if (! rtl)
             {
@@ -799,15 +921,46 @@ private:
                 place(typeLabel, w - xBase - 80 - 120, 4, 120, 18);
             }
 
-            place(explanationLabel, xBase, 26, contentW, 16);
-
-            // Hide detailed rows in compact mode — tooltip has full detail
+            explanationLabel.setVisible(false);
             causeLabel.setVisible(false);
             impactLabel.setVisible(false);
-            fixLabel.setBounds(xBase, 42, contentW - 80, 14);
-            confidenceLabel.setBounds(w - 90, 42, 65, 14);
             bandLabel.setVisible(false);
             hintLabel.setVisible(false);
+
+            if (! rtl)
+            {
+                fixLabel.setBounds(xBase, 28, juce::jmax(40, contentW - 80 - stripW), 14);
+                confidenceLabel.setBounds(w - 90 - stripW, 28, 65, 14);
+            }
+            else
+            {
+                confidenceLabel.setBounds(12 + stripW, 28, 65, 14);
+                fixLabel.setBounds(12 + stripW + 70, 28, juce::jmax(40, contentW - 80 - stripW), 14);
+            }
+
+            auto placeStrip = [this](int x0)
+            {
+                constexpr int bw = 46;
+                constexpr int gap = 2;
+                listenBtn.setBounds(x0, 26, bw, 16);
+                applyBtn.setBounds(x0 + bw + gap, 26, bw, 16);
+                ignoreBtn.setBounds(x0 + 2 * (bw + gap), 26, bw, 16);
+                expandBtn.setBounds(x0 + 3 * (bw + gap), 26, 24, 16);
+            };
+            if (showStrip)
+            {
+                if (! rtl)
+                    placeStrip(w - 12 - 196);
+                else
+                    placeStrip(12);
+            }
+            else
+            {
+                listenBtn.setBounds({});
+                applyBtn.setBounds({});
+                ignoreBtn.setBounds({});
+                expandBtn.setBounds({});
+            }
         }
 
         juce::String getTooltip() override { return rowTooltip; }
@@ -827,6 +980,7 @@ private:
         AIProblemPanel& owner;
         bool rtl = false;
         bool selected = false;
+        EmberUI::ProblemRowView rowView = EmberUI::ProblemRowView::Collapsed;
         int currentIndex = -1;
         float confidenceValue = 0.0f;
         juce::Colour severityColour = juce::Colours::transparentBlack;
@@ -834,6 +988,7 @@ private:
 
         juce::Label typeLabel, freqLabel, sevLabel, explanationLabel, causeLabel, impactLabel,
                     fixLabel, confidenceLabel, bandLabel, hintLabel;
+        juce::TextButton listenBtn, applyBtn, ignoreBtn, expandBtn;
     };
 
     //==========================================================================
@@ -1029,6 +1184,14 @@ private:
         if (merged.size() > 50)
             merged.resize(50);
 
+        std::optional<AIEngine::Correction> keepSelected, keepExpanded;
+        if (disclosure.selectedIndex >= 0
+            && disclosure.selectedIndex < static_cast<int>(problems.size()))
+            keepSelected = problems[static_cast<size_t>(disclosure.selectedIndex)];
+        if (disclosure.expandedIndex >= 0
+            && disclosure.expandedIndex < static_cast<int>(problems.size()))
+            keepExpanded = problems[static_cast<size_t>(disclosure.expandedIndex)];
+
         problems.clear();
         problems.reserve(merged.size());
         problemIsGhost.clear();
@@ -1039,6 +1202,39 @@ private:
             problemIsGhost.push_back(ghost);
         }
         problemList.updateContent();
+        {
+            int newSel = -1;
+            int newExp = -1;
+            if (keepSelected.has_value())
+            {
+                for (int i = 0; i < static_cast<int>(problems.size()); ++i)
+                    if (isSameDisplayedProblem(problems[static_cast<size_t>(i)], *keepSelected))
+                    {
+                        newSel = i;
+                        break;
+                    }
+            }
+            if (keepExpanded.has_value())
+            {
+                for (int i = 0; i < static_cast<int>(problems.size()); ++i)
+                    if (isSameDisplayedProblem(problems[static_cast<size_t>(i)], *keepExpanded))
+                    {
+                        newExp = i;
+                        break;
+                    }
+            }
+            disclosure.restore(newSel, newExp, static_cast<int>(problems.size()));
+            if (newSel >= 0)
+            {
+                if (problemList.getSelectedRow() != newSel)
+                    problemList.selectRow(newSel, true);
+            }
+            else if (problemList.getSelectedRow() >= 0)
+            {
+                problemList.deselectAllRows();
+            }
+            refreshDisclosurePresentation();
+        }
         if (auto* h = problemList.getAccessibilityHandler())
             h->notifyAccessibilityEvent(juce::AccessibilityEvent::structureChanged);
         const int n = static_cast<int>(problems.size());
@@ -1227,6 +1423,91 @@ private:
         return fallback.isNotEmpty() ? juce::translate(key, fallback) : juce::translate(key);
     }
 
+    void dismissRow(int row)
+    {
+        if (row < 0 || row >= static_cast<int>(problems.size()))
+            return;
+        const auto p = problems[static_cast<size_t>(row)];
+        rejectCorrectionByMatch(p);
+        removeTransientVisualHold(p);
+        updateProblemList();
+    }
+
+    void toggleExpandedRow(int row)
+    {
+        if (row < 0 || row >= static_cast<int>(problems.size()))
+            return;
+        disclosure.toggleExpand(row, static_cast<int>(problems.size()));
+        if (disclosure.selectedIndex >= 0)
+            problemList.selectRow(disclosure.selectedIndex, true);
+        refreshDisclosurePresentation();
+        if (disclosure.hasExpansion())
+        {
+            juce::AccessibilityHandler::postAnnouncement(
+                tr("Details expanded: ", "Details expanded: ")
+                    + getRowAnnouncementFromCorrection(problems[static_cast<size_t>(disclosure.expandedIndex)]),
+                juce::AccessibilityHandler::AnnouncementPriority::medium);
+        }
+        else
+        {
+            juce::AccessibilityHandler::postAnnouncement(
+                tr("Details collapsed", "Details collapsed"),
+                juce::AccessibilityHandler::AnnouncementPriority::medium);
+        }
+    }
+
+    void refreshDisclosurePresentation()
+    {
+        fillDetailCard();
+        resized();
+        problemList.updateContent();
+        repaint();
+    }
+
+    void fillDetailCard()
+    {
+        if (! disclosure.hasExpansion()
+            || disclosure.expandedIndex < 0
+            || disclosure.expandedIndex >= static_cast<int>(problems.size()))
+        {
+            detailExplanation.setText({}, juce::dontSendNotification);
+            detailCause.setText({}, juce::dontSendNotification);
+            detailImpact.setText({}, juce::dontSendNotification);
+            detailBand.setText({}, juce::dontSendNotification);
+            detailHint.setText({}, juce::dontSendNotification);
+            return;
+        }
+
+        const auto& p = problems[static_cast<size_t>(disclosure.expandedIndex)];
+        detailExplanation.setText(getExplanation(p), juce::dontSendNotification);
+        detailCause.setText(tr("CAUSE:", "CAUSE:") + " " + getCause(p.type), juce::dontSendNotification);
+        detailImpact.setText(tr("SOUNDS:", "SOUNDS:") + " " + getImpact(p.type), juce::dontSendNotification);
+
+        juce::String bandName = AIEngine::getBandName(p.frequency);
+        juce::String bwDesc = p.suggestedQ > 5.0f ? tr("Narrow surgical cut", "Narrow surgical cut")
+                            : (p.suggestedQ > 2.0f ? tr("Focused correction", "Focused correction")
+                                                    : tr("Wide musical adjustment", "Wide musical adjustment"));
+        detailBand.setText(tr("Region:", "Region:") + " " + bandName + "  •  " + bwDesc,
+                           juce::dontSendNotification);
+        detailHint.setText(tr("Click to highlight on spectrum • Double-click to apply fix",
+                              "Click to highlight on spectrum • Double-click to apply fix"),
+                           juce::dontSendNotification);
+    }
+
+    void layoutDetailCard()
+    {
+        auto bounds = detailCard.getLocalBounds().reduced(8, 6);
+        auto justify = isRightToLeft() ? juce::Justification::centredRight
+                                       : juce::Justification::centredLeft;
+        for (auto* lbl : { &detailExplanation, &detailCause, &detailImpact, &detailBand, &detailHint })
+            lbl->setJustificationType(justify);
+        detailExplanation.setBounds(bounds.removeFromTop(22));
+        detailCause.setBounds(bounds.removeFromTop(18));
+        detailImpact.setBounds(bounds.removeFromTop(18));
+        detailBand.setBounds(bounds.removeFromTop(16));
+        detailHint.setBounds(bounds.removeFromTop(16));
+    }
+
     void focusListRow(int row)
     {
         problemList.selectRow(row);
@@ -1354,6 +1635,9 @@ private:
     
     juce::Label titleLabel, genreLabel, profileLabel, statusLabel;
     ProblemListBox problemList;
+    juce::Component detailCard;
+    juce::Label detailExplanation, detailCause, detailImpact, detailBand, detailHint;
+    EmberUI::ProblemRowDisclosure disclosure;
     juce::TextButton autoFixBtn, clearBtn, undoBtn, redoBtn;
     juce::TextButton unmaskingBtn;  // Multi-Track Unmasking toggle
     // GUI-4: the multi-track unmasking feature is DISABLED (requires multi-instance
