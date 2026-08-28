@@ -429,6 +429,24 @@ public:
         int capturedLastRequestedActiveBandCount = -1;
         bool clearActiveBandCountAnchors = false;
         bool needsHistorySnapshot = false;
+
+        /** Identity of the committed/context clocks this projection was built
+            against. snapshotProjectedEffectiveDSPState must copy these, not
+            load "now". epochStale means the clocks moved during the build. */
+        std::uint64_t projectionBaseEpoch = 0;
+        std::uint64_t auditionContextEpoch = 0;
+        std::uint64_t previewGeneration = 0;
+        bool epochStale = false;
+    };
+
+    /** Result of packing a held projection into an RT payload. publishable is
+        false when the projection's captured clocks no longer match the
+        processor (PA-I08) or the build itself observed a clock move. */
+    struct ProjectedDSPSnapshot
+    {
+        EmberDSP::EffectiveDSPState state {};
+        bool publishable = false;
+        bool epochStale = false;
     };
 
     [[nodiscard]] SemanticApplyProjection buildSemanticApplyProjection(
@@ -446,7 +464,7 @@ public:
     [[nodiscard]] std::uint64_t getProjectionBaseEpoch() const noexcept;
     [[nodiscard]] std::uint64_t getAuditionContextEpoch() const noexcept;
     [[nodiscard]] EmberDSP::EffectiveDSPState snapshotCommittedEffectiveDSPState() const;
-    [[nodiscard]] EmberDSP::EffectiveDSPState snapshotProjectedEffectiveDSPState(
+    [[nodiscard]] ProjectedDSPSnapshot snapshotProjectedEffectiveDSPState(
         const SemanticApplyProjection& projection) const;
     
     //==============================================================================
@@ -624,12 +642,19 @@ private:
     [[nodiscard]] bool requiresPaddedLatencyPlan() const noexcept;
     void cacheParameterPointers();
     [[nodiscard]] static bool isGainBearingDynFilterType(int filterType) noexcept;
+    [[nodiscard]] static bool isAuditionContextOnlyParameter(const juce::String& parameterID) noexcept;
     [[nodiscard]] bool loadDynEqEnabledFromAPVTS() const noexcept;
+    void stampProjectionIdentity(SemanticApplyProjection& projection,
+                                 std::uint64_t capturedProjectionBaseEpoch,
+                                 std::uint64_t capturedAuditionContextEpoch) const noexcept;
     void populateEffectiveDSPState(EmberDSP::EffectiveDSPState& out,
                                    const std::array<BandState, maxBands>& bands,
                                    int activeCount,
                                    bool dynEqEnabled,
-                                   EmberDSP::EffectiveDSPSource source) const noexcept;
+                                   EmberDSP::EffectiveDSPSource source,
+                                   std::uint64_t previewGeneration,
+                                   std::uint64_t projectionBaseEpochValue,
+                                   std::uint64_t auditionContextEpochValue) const noexcept;
     bool runCapturedAudioAnalysis();
     void analyzeSpectrumSerialized(const std::vector<float>& spectrum, bool force = false);
     void aiAnalysisThreadFunc();
@@ -1262,7 +1287,7 @@ private:
         static_cast<std::uint8_t>(EmberDSP::EffectiveDSPSource::CommittedA) };
     std::atomic<std::uint64_t> projectionBaseEpoch { 1 };
     std::atomic<std::uint64_t> auditionContextEpoch { 1 };
-    std::atomic<std::uint64_t> effectiveDSPGeneration { 1 };
+    mutable std::atomic<std::uint64_t> previewGenerationCounter { 1 };
 
     void syncEffectiveActiveBandCountFromCommitted() noexcept;
     [[nodiscard]] EmberDSP::PackedBandDSPState packBandDSPState(

@@ -51,8 +51,12 @@ struct EffectiveDSPState
     std::uint8_t dynEqEnabled = 1;
     std::uint8_t source = static_cast<std::uint8_t>(EffectiveDSPSource::CommittedA);
     std::uint8_t pad[2] {};
-    std::uint64_t generation = 0;
+    /** Monotonic id of this preview/plan payload. Distinct from the two epochs:
+        two plans against the same committed A must not share this value. */
+    std::uint64_t previewGeneration = 0;
+    /** Committed-A clock captured when the projection was built — not "now". */
     std::uint64_t projectionBaseEpoch = 0;
+    /** Mix/routing/prepare clock captured when the projection was built. */
     std::uint64_t auditionContextEpoch = 0;
 };
 

@@ -89,10 +89,13 @@ AIEqualizerAudioProcessor::AIEqualizerAudioProcessor()
     apvts.addParameterListener("msMode", this);
     apvts.addParameterListener("oversamplingFactor", this);
     apvts.addParameterListener("qualityMode", this);
+    // VPA-1.1b: these IDs bump auditionContextEpoch only. They must not enter
+    // the general parameterChanged path (parametersNeedUpdate / curve republish).
     apvts.addParameterListener("dryWet", this);
     apvts.addParameterListener("outputGain", this);
     apvts.addParameterListener("autoGain", this);
     apvts.addParameterListener("dynamicCorrections", this);
+    apvts.addParameterListener("dynAutoMakeup", this);
     // AI knobs that are applied to the engine ONLY inside updateEQFromParameters()
     // (setSensitivity/setStrength at ~3349/3354). Without listeners, moving these
     // knobs never set parametersNeedUpdate, so updateEQFromParameters() was not called
@@ -884,6 +887,7 @@ AIEqualizerAudioProcessor::~AIEqualizerAudioProcessor()
     apvts.removeParameterListener("outputGain", this);
     apvts.removeParameterListener("autoGain", this);
     apvts.removeParameterListener("dynamicCorrections", this);
+    apvts.removeParameterListener("dynAutoMakeup", this);
     for (const auto& id : eqParameterIDs)
         apvts.removeParameterListener(id, this);
 
@@ -1632,6 +1636,7 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     parametersNeedUpdate.store(true, std::memory_order_relaxed);
     lastProcessedParameterChangeCounter.store(parameterChangeCounter.load(std::memory_order_relaxed),
                                               std::memory_order_relaxed);
+    auditionContextEpoch.fetch_add(1, std::memory_order_relaxed);
 
     // 50 ms ramps: auto-gain on the wet path, output trim on the mixed output.
     smoothedAutoGain.reset(sampleRate, 0.05);
@@ -1877,6 +1882,7 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& processBu
         linearAlignedSidechainBuffer.clear();
         linearSidechainDelayWritePos = 0;
         externalSidechainWasAvailable = externalDetectorAvailable;
+        auditionContextEpoch.fetch_add(1, std::memory_order_relaxed);
     }
     const juce::AudioBuffer<float>* externalDetectorRaw =
         externalDetectorAvailable ? &sidechainBus : nullptr;
@@ -3537,25 +3543,26 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& processBu
 
 void AIEqualizerAudioProcessor::parameterChanged(const juce::String& parameterID, float newValue)
 {
+    // Mix/gain/context-only params must bump the audition clock without
+    // arming the pre-VPA EQ update/republish path (PA-I11).
+    if (isAuditionContextOnlyParameter(parameterID))
+    {
+        auditionContextEpoch.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+
     // Increment the general parameter change counter for host automation, etc.
     parameterChangeCounter.fetch_add(1, std::memory_order_relaxed);
 
-    // VPA-1.1 epochs: band geometry/count is the projection base; routing and
-    // mix context is the audition clock. Preview later must drop if either moves.
+    // VPA-1.1b: band geometry/count is the projection base; routing and mix
+    // context is a separate audition clock. previewGeneration is assigned per
+    // projection, not here.
     if (parameterID.startsWith("band") || parameterID == "numActiveBands")
-    {
         projectionBaseEpoch.fetch_add(1, std::memory_order_relaxed);
-        effectiveDSPGeneration.fetch_add(1, std::memory_order_relaxed);
-    }
     if (parameterID == "phaseMode" || parameterID == "qualityMode"
-        || parameterID == "dryWet" || parameterID == "outputGain"
-        || parameterID == "autoGain" || parameterID == "dynEqEnabled"
-        || parameterID == "dynamicCorrections" || parameterID == "msMode"
-        || parameterID == "oversamplingFactor")
-    {
+        || parameterID == "dynEqEnabled" || parameterID == "dynEqMix"
+        || parameterID == "msMode" || parameterID == "oversamplingFactor")
         auditionContextEpoch.fetch_add(1, std::memory_order_relaxed);
-        effectiveDSPGeneration.fetch_add(1, std::memory_order_relaxed);
-    }
 
     // --- OPTIMIZATION: Selective EQ Curve Counter Increment ---
     // Only increment the EQ curve counter if a parameter that visually affects
@@ -5416,6 +5423,18 @@ AIEqualizerAudioProcessor::buildSemanticApplyProjection(
     for (auto& perQuality : projection.assignments)
         perQuality.fill(-1);
 
+    const auto capturedProjectionBaseEpoch =
+        projectionBaseEpoch.load(std::memory_order_relaxed);
+    const auto capturedAuditionContextEpoch =
+        auditionContextEpoch.load(std::memory_order_relaxed);
+    auto finish = [&]() -> SemanticApplyProjection
+    {
+        stampProjectionIdentity(projection,
+                                capturedProjectionBaseEpoch,
+                                capturedAuditionContextEpoch);
+        return projection;
+    };
+
     std::array<BandState, maxBands> workingBands {};
     for (int slot = 0; slot < maxBands; ++slot)
         workingBands[static_cast<std::size_t>(slot)] = getBandState(slot);
@@ -5540,7 +5559,7 @@ AIEqualizerAudioProcessor::buildSemanticApplyProjection(
         projection.hasSnapshot = workingHasSnapshot;
         projection.originalStates = workingOriginal;
         projection.lastAppliedStates = workingLastApplied;
-        return projection;
+        return finish();
     }
 
     const bool hadOwnershipAtEntry = hasAnyOwnership();
@@ -5688,7 +5707,7 @@ AIEqualizerAudioProcessor::buildSemanticApplyProjection(
     projection.hasSnapshot = workingHasSnapshot;
     projection.originalStates = workingOriginal;
     projection.lastAppliedStates = workingLastApplied;
-    return projection;
+    return finish();
 }
 
 AIEqualizerAudioProcessor::SemanticApplyResult
@@ -5778,6 +5797,37 @@ AIEqualizerAudioProcessor::applySemanticAdjustments(
     return result;
 }
 
+bool AIEqualizerAudioProcessor::isAuditionContextOnlyParameter(const juce::String& parameterID) noexcept
+{
+    return parameterID == "dryWet"
+        || parameterID == "outputGain"
+        || parameterID == "autoGain"
+        || parameterID == "dynamicCorrections"
+        || parameterID == "dynAutoMakeup";
+}
+
+void AIEqualizerAudioProcessor::stampProjectionIdentity(
+    SemanticApplyProjection& projection,
+    std::uint64_t capturedProjectionBaseEpoch,
+    std::uint64_t capturedAuditionContextEpoch) const noexcept
+{
+    const auto baseNow = projectionBaseEpoch.load(std::memory_order_relaxed);
+    const auto contextNow = auditionContextEpoch.load(std::memory_order_relaxed);
+    projection.projectionBaseEpoch = capturedProjectionBaseEpoch;
+    projection.auditionContextEpoch = capturedAuditionContextEpoch;
+    if (baseNow != capturedProjectionBaseEpoch
+        || contextNow != capturedAuditionContextEpoch)
+    {
+        projection.epochStale = true;
+        projection.previewGeneration = 0;
+        return;
+    }
+
+    projection.epochStale = false;
+    projection.previewGeneration =
+        previewGenerationCounter.fetch_add(1, std::memory_order_relaxed) + 1;
+}
+
 bool AIEqualizerAudioProcessor::isGainBearingDynFilterType(int filterType) noexcept
 {
     switch (filterType)
@@ -5846,7 +5896,10 @@ void AIEqualizerAudioProcessor::populateEffectiveDSPState(
     const std::array<BandState, maxBands>& bands,
     int activeCount,
     bool dynEqEnabled,
-    EmberDSP::EffectiveDSPSource source) const noexcept
+    EmberDSP::EffectiveDSPSource source,
+    std::uint64_t previewGeneration,
+    std::uint64_t projectionBaseEpochValue,
+    std::uint64_t auditionContextEpochValue) const noexcept
 {
     const int clampedActive = juce::jlimit(0, maxBands, activeCount);
     bool hasSolo = false;
@@ -5864,9 +5917,9 @@ void AIEqualizerAudioProcessor::populateEffectiveDSPState(
     out.effectiveActiveBandCount = clampedActive;
     out.dynEqEnabled = dynEqEnabled ? 1 : 0;
     out.source = static_cast<std::uint8_t>(source);
-    out.generation = effectiveDSPGeneration.load(std::memory_order_relaxed);
-    out.projectionBaseEpoch = projectionBaseEpoch.load(std::memory_order_relaxed);
-    out.auditionContextEpoch = auditionContextEpoch.load(std::memory_order_relaxed);
+    out.previewGeneration = previewGeneration;
+    out.projectionBaseEpoch = projectionBaseEpochValue;
+    out.auditionContextEpoch = auditionContextEpochValue;
 
     for (int i = 0; i < maxBands; ++i)
     {
@@ -5916,21 +5969,33 @@ AIEqualizerAudioProcessor::snapshotCommittedEffectiveDSPState() const
                               bands,
                               getNumActiveBands(),
                               loadDynEqEnabledFromAPVTS(),
-                              EmberDSP::EffectiveDSPSource::CommittedA);
+                              EmberDSP::EffectiveDSPSource::CommittedA,
+                              0,
+                              projectionBaseEpoch.load(std::memory_order_relaxed),
+                              auditionContextEpoch.load(std::memory_order_relaxed));
     return out;
 }
 
-EmberDSP::EffectiveDSPState
+AIEqualizerAudioProcessor::ProjectedDSPSnapshot
 AIEqualizerAudioProcessor::snapshotProjectedEffectiveDSPState(
     const SemanticApplyProjection& projection) const
 {
-    EmberDSP::EffectiveDSPState out;
-    populateEffectiveDSPState(out,
+    ProjectedDSPSnapshot result;
+    const auto baseNow = projectionBaseEpoch.load(std::memory_order_relaxed);
+    const auto contextNow = auditionContextEpoch.load(std::memory_order_relaxed);
+    result.epochStale = projection.epochStale
+        || projection.projectionBaseEpoch != baseNow
+        || projection.auditionContextEpoch != contextNow;
+    result.publishable = ! result.epochStale;
+    populateEffectiveDSPState(result.state,
                               projection.resultingBands,
                               projection.resultingActiveBandCount,
                               loadDynEqEnabledFromAPVTS(),
-                              EmberDSP::EffectiveDSPSource::ProjectedB);
-    return out;
+                              EmberDSP::EffectiveDSPSource::ProjectedB,
+                              projection.previewGeneration,
+                              projection.projectionBaseEpoch,
+                              projection.auditionContextEpoch);
+    return result;
 }
 
 //==============================================================================

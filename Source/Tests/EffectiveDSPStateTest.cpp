@@ -208,11 +208,16 @@ public:
             expect (! projection.atomicRejected);
             expectEquals (static_cast<int> (projection.appliedBandSlots.size()), 1);
 
-            const auto projected = proc.snapshotProjectedEffectiveDSPState (projection);
+            const auto snapshot = proc.snapshotProjectedEffectiveDSPState (projection);
+            expect (snapshot.publishable, "fresh projection must be publishable");
+            expect (! snapshot.epochStale);
+            const auto& projected = snapshot.state;
             expectEquals ((int) projected.source,
                           (int) EmberDSP::EffectiveDSPSource::ProjectedB);
             expectEquals (projected.effectiveActiveBandCount,
                           projection.resultingActiveBandCount);
+            expect (projected.projectionBaseEpoch == projection.projectionBaseEpoch);
+            expect (projected.previewGeneration == projection.previewGeneration);
             expectEquals (committedDigest (proc), before,
                           "snapshotProjectedEffectiveDSPState mutated committed state");
 
@@ -238,7 +243,9 @@ public:
             };
             const auto projection = proc.buildSemanticApplyProjection (
                 adj, Policy::RequireCompletePlan);
-            const auto projected = proc.snapshotProjectedEffectiveDSPState (projection);
+            const auto snapshot = proc.snapshotProjectedEffectiveDSPState (projection);
+            expect (snapshot.publishable);
+            const auto& projected = snapshot.state;
             const auto result = proc.applySemanticAdjustments (
                 adj, Policy::RequireCompletePlan);
             expect (! result.atomicRejected);
@@ -287,6 +294,122 @@ public:
             expect (proc.getAuditionContextEpoch() > ctxAfterDryWet);
             expectEquals ((juce::int64) proc.getProjectionBaseEpoch(),
                           (juce::int64) base2);
+            proc.releaseResources();
+        }
+
+        beginTest ("7. old projection is stale after a later band edit");
+        {
+            Processor proc;
+            proc.prepareToPlay (kSr, kBlock);
+            restoreFactoryFreeHighSlots (*this, proc);
+            pumpAudio (proc);
+
+            const auto adj = std::vector<Adjustment> {
+                makeAdj (Quality::Air, 12000.0f, 1.8f)
+            };
+            const auto projection = proc.buildSemanticApplyProjection (
+                adj, Policy::RequireCompletePlan);
+            expect (! projection.epochStale);
+            expect (projection.projectionBaseEpoch == proc.getProjectionBaseEpoch());
+            const auto fresh = proc.snapshotProjectedEffectiveDSPState (projection);
+            expect (fresh.publishable);
+            expect (fresh.state.projectionBaseEpoch == projection.projectionBaseEpoch);
+
+            aieq::test::setFloat (*this, proc.getAPVTS(), "band0Gain", -3.0f);
+            expect (proc.getProjectionBaseEpoch() > projection.projectionBaseEpoch);
+
+            const auto stale = proc.snapshotProjectedEffectiveDSPState (projection);
+            expect (! stale.publishable, "held projection must not publish after A moves");
+            expect (stale.epochStale);
+            expect (stale.state.projectionBaseEpoch == projection.projectionBaseEpoch,
+                    "stale payload must keep the origin epoch, not stamp now");
+            expect (stale.state.projectionBaseEpoch != proc.getProjectionBaseEpoch());
+            proc.releaseResources();
+        }
+
+        beginTest ("8. two plans against the same A get distinct previewGeneration");
+        {
+            Processor proc;
+            proc.prepareToPlay (kSr, kBlock);
+            restoreFactoryFreeHighSlots (*this, proc);
+            pumpAudio (proc);
+
+            const auto first = proc.buildSemanticApplyProjection (
+                std::vector<Adjustment> { makeAdj (Quality::Air, 12000.0f, 1.8f) },
+                Policy::RequireCompletePlan);
+            const auto second = proc.buildSemanticApplyProjection (
+                std::vector<Adjustment> { makeAdj (Quality::Presence, 4000.0f, 1.5f) },
+                Policy::RequireCompletePlan);
+            expect (! first.epochStale);
+            expect (! second.epochStale);
+            expect (first.projectionBaseEpoch == second.projectionBaseEpoch);
+            expect (first.previewGeneration != 0);
+            expect (second.previewGeneration != 0);
+            expect (first.previewGeneration != second.previewGeneration,
+                    "plan identity must not collapse into the A epoch");
+            proc.releaseResources();
+        }
+
+        beginTest ("9. dynEq mix/makeup and prepareToPlay bump audition context");
+        {
+            Processor proc;
+            proc.prepareToPlay (kSr, kBlock);
+            pumpAudio (proc);
+
+            const auto ctx0 = proc.getAuditionContextEpoch();
+            const auto base0 = proc.getProjectionBaseEpoch();
+            aieq::test::setFloat (*this, proc.getAPVTS(), "dynEqMix", 30.0f);
+            expect (proc.getAuditionContextEpoch() > ctx0);
+            expectEquals ((juce::int64) proc.getProjectionBaseEpoch(),
+                          (juce::int64) base0);
+
+            const auto ctx1 = proc.getAuditionContextEpoch();
+            aieq::test::setBool (*this, proc.getAPVTS(), "dynAutoMakeup", true);
+            expect (proc.getAuditionContextEpoch() > ctx1);
+            expectEquals ((juce::int64) proc.getProjectionBaseEpoch(),
+                          (juce::int64) base0);
+
+            const auto ctx2 = proc.getAuditionContextEpoch();
+            proc.prepareToPlay (kSr, kBlock);
+            expect (proc.getAuditionContextEpoch() > ctx2,
+                    "prepareToPlay must invalidate the audition context");
+            proc.releaseResources();
+        }
+
+        beginTest ("10. mix listeners stay epoch-only and do not republish the EQ");
+        {
+            Processor proc;
+            proc.prepareToPlay (kSr, kBlock);
+            pumpAudio (proc);
+            pumpAudio (proc);
+
+            const auto param0 = proc.getParameterChangeCounter();
+            const auto curve0 = proc.getEQCurveChangeCounter();
+            const auto ctx0 = proc.getAuditionContextEpoch();
+            const auto base0 = proc.getProjectionBaseEpoch();
+
+            aieq::test::setFloat (*this, proc.getAPVTS(), "dryWet", 50.0f);
+            aieq::test::setFloat (*this, proc.getAPVTS(), "outputGain", -1.0f);
+            expect (proc.getAuditionContextEpoch() > ctx0);
+            expectEquals ((juce::int64) proc.getParameterChangeCounter(),
+                          (juce::int64) param0,
+                          "dryWet/outputGain must not bump parameterChangeCounter");
+            expectEquals ((juce::int64) proc.getEQCurveChangeCounter(),
+                          (juce::int64) curve0,
+                          "dryWet/outputGain must not bump eqCurveChangeCounter");
+            expectEquals ((juce::int64) proc.getProjectionBaseEpoch(),
+                          (juce::int64) base0);
+
+            pumpAudio (proc);
+            expectEquals ((juce::int64) proc.getParameterChangeCounter(),
+                          (juce::int64) param0);
+            expectEquals ((juce::int64) proc.getEQCurveChangeCounter(),
+                          (juce::int64) curve0,
+                          "mix edits must not republish the EQ curve from processBlock");
+            expect (proc.getEffectiveDSPSource()
+                        == EmberDSP::EffectiveDSPSource::CommittedA);
+            expectEquals (proc.getEffectiveActiveBandCount(),
+                          proc.getNumActiveBands());
             proc.releaseResources();
         }
     }
