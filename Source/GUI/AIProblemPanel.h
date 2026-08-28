@@ -64,6 +64,7 @@ public:
         
         // Problem list with custom row height
         problemList.setModel(this);
+        problemList.setComponentID("aiProblemList");
         problemList.setRowHeight(56);  // Compact rows — fits 3 problems in 170px visible area
         problemList.setColour(juce::ListBox::backgroundColourId, ModernLookAndFeel::Colors::bgDark);
         problemList.setColour(juce::ListBox::outlineColourId, ModernLookAndFeel::Colors::bgLighter);
@@ -94,6 +95,7 @@ public:
         setupDetailLabel(detailBand, 9.0f, ModernLookAndFeel::Colors::textMuted);
         setupDetailLabel(detailHint, 10.0f, ModernLookAndFeel::Colors::accentBlue);
         detailCard.setVisible(false);
+        detailCard.setComponentID("problemDetailCard");
         addAndMakeVisible(detailCard);
 
         // UX "Diagnosi Stabile": visible capture strip — surfaces the (previously hidden)
@@ -142,6 +144,7 @@ public:
                                      "Approve every suggested correction after confirmation"));
         autoFixBtn.onClick = [this]() { showAutoFixConfirmation(); };
         autoFixBtn.setExplicitFocusOrder(1);
+        autoFixBtn.setComponentID("problemFixAll");
         addAndMakeVisible(autoFixBtn);
         
         clearBtn.setButtonText(tr("CLEAR", "CLEAR"));
@@ -727,6 +730,10 @@ private:
             applyBtn.setTitle(owner.tr("Apply this fix", "Apply this fix"));
             ignoreBtn.setTitle(owner.tr("Dismiss problem", "Dismiss problem"));
             expandBtn.setTitle(owner.tr("Expand details", "Expand details"));
+            listenBtn.setComponentID("problemRowListen");
+            applyBtn.setComponentID("problemRowApply");
+            ignoreBtn.setComponentID("problemRowDismiss");
+            expandBtn.setComponentID("problemRowDetails");
 
             addAndMakeVisible(listenBtn);
             addAndMakeVisible(applyBtn);

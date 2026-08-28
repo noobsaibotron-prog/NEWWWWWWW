@@ -2,8 +2,10 @@
 
 #include <juce_core/juce_core.h>
 #include <juce_audio_processors/juce_audio_processors.h>
+#include <juce_gui_basics/juce_gui_basics.h>
 
 #include "../PluginProcessor.h"
+#include "../GUI/BandControlPanel.h"
 #include "Support/TestParameters.h"
 
 #include <vector>
@@ -204,6 +206,56 @@ public:
                 Policy::RequireCompletePlan);
             expect (result.atomicRejected);
             expectEquals (countManaged (proc), 0);
+        }
+
+        beginTest ("inspector label follows the editor query through APPLY, edit, and restore");
+        {
+            Processor proc;
+            proc.prepareToPlay (kSr, kBlock);
+            restoreFactoryFreeHighSlots (*this, proc);
+
+            BandControlPanel panel (0, proc.getAPVTS());
+            panel.setBounds (0, 0, 348, 250);
+            panel.setSemanticManagedQuery (
+                [&proc] (int bandIndex) { return proc.isSemanticManagedBand (bandIndex); });
+
+            auto* provenance = dynamic_cast<juce::Label*> (
+                panel.findChildWithID ("semanticManagedStatus"));
+            expect (provenance != nullptr);
+            if (provenance == nullptr)
+                return;
+            panel.refreshRuntimeSemantics();
+            expect (! provenance->isVisible(),
+                    "fresh inspector must not claim Semantic-managed");
+
+            const auto result = proc.applySemanticAdjustments (
+                { makeAdj (Quality::Air, 12000.0f, 1.8f) },
+                Policy::RequireCompletePlan);
+            expect (result.complete());
+            expectEquals (static_cast<int> (result.appliedBandSlots.size()), 1);
+            const int slot = result.appliedBandSlots.front();
+
+            panel.refreshRuntimeSemantics();
+            if (slot != 0)
+                expect (! provenance->isVisible(),
+                        "a different selected slot must not inherit the claim");
+
+            panel.setBandIndex (slot);
+            expect (provenance->isVisible());
+            expectEquals (provenance->getText(), juce::String ("Semantic-managed"));
+
+            const auto applied = proc.getBandState (slot);
+            auto diverged = applied;
+            diverged.gain += 1.5f;
+            proc.setBandState (slot, diverged);
+            panel.refreshRuntimeSemantics();
+            expect (! provenance->isVisible(),
+                    "material inspector edit must drop the label immediately");
+
+            proc.setBandState (slot, applied);
+            panel.refreshRuntimeSemantics();
+            expect (provenance->isVisible(),
+                    "restoring last APPLY state must show Semantic-managed again");
         }
     }
 };

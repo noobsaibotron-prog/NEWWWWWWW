@@ -1483,6 +1483,7 @@ if(HAVE_JUCE)
         Source/Tests/SemanticIntegrationHarnessTest.cpp
         Source/Tests/SemanticApplyProjectionTest.cpp
         Source/Tests/SemanticBandProvenanceTest.cpp
+        Source/Tests/AIProblemPanelGhostHostTest.cpp
         Source/Tests/EffectiveDSPStateTest.cpp
         Source/Tests/ProjectedDSPTransportTest.cpp
         Source/Tests/SpectralContextProductionWiringTest.cpp
