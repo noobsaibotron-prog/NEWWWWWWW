@@ -7,6 +7,7 @@
 #include "SemanticContextualizer.h"
 
 #include <string_view>
+#include <vector>
 
 namespace AIEQPerceptual
 {
@@ -29,6 +30,14 @@ public:
                                     double sampleRate,
                                     float intensity,
                                     const SpectralContext& context) const;
+
+    /** Phase 5 slice 1 - user Hz fences travel with the request, not the map.
+        Invalid ranges are dropped (fail closed). Empty is today's behaviour. */
+    [[nodiscard]] SemanticPlan plan(std::string_view text,
+                                    double sampleRate,
+                                    float intensity,
+                                    const SpectralContext& context,
+                                    const std::vector<SemanticProtectedRange>& protectedRanges) const;
 };
 
 [[nodiscard]] const char* semanticDimensionName(SemanticDimension dimension) noexcept;

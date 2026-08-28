@@ -267,7 +267,8 @@ inline const AIEQPerceptual::SemanticConstraint* constraintForSourceId (
 /** Pure UI projection of already-attested SemanticPlan data.
 
     Focus geometry comes from TargetPoint contributions. Protection comes from
-    ResponseBoundRegion. Axis highlights are emitted only for attested mappings.
+    ResponseBoundRegion (text Preserve/Avoid) and ProtectedRegion (user Hz
+    fences). Axis highlights are emitted only for attested mappings.
     No hard-coded "Air = 10 kHz" visual bands.
 */
 inline SemanticIntentMapState buildSemanticIntentMapState (
@@ -478,6 +479,26 @@ inline SemanticIntentMapState buildSemanticIntentMapState (
         region.sourcePhrase = bestBound->sourcePhrase;
         if (const auto* c = detail::constraintForSourceId (plan.intent, bestBound->sourceId))
             region.kind = c->kind;
+        out.protectRegions.push_back (std::move (region));
+    }
+
+    for (const auto& fence : plan.target.protectedRegions)
+    {
+        SemanticProtectRegion region;
+        region.minFrequencyHz = fence.minFrequencyHz;
+        region.maxFrequencyHz = fence.maxFrequencyHz;
+        region.sourceId = fence.sourceId;
+        region.sourcePhrase = fence.sourcePhrase;
+        region.kind = AIEQPerceptual::SemanticConstraintKind::ProtectRange;
+        region.confidence = 1.0f;
+        for (const auto& authored : plan.intent.protectedRanges)
+            if (authored.sourceId == fence.sourceId)
+            {
+                region.confidence = authored.confidence;
+                if (region.sourcePhrase.empty())
+                    region.sourcePhrase = authored.sourcePhrase;
+                break;
+            }
         out.protectRegions.push_back (std::move (region));
     }
 

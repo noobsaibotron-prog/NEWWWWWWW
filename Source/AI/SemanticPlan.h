@@ -38,6 +38,12 @@ struct SemanticPlan
     std::string interpretation;
     std::string outcomeSummary;
 
+    /** Set when a valid fit is empty *and* user Hz fences are on the target.
+        Distinct from a blank summary, which the panel reports as
+        "No meaningful EQ move required" (intensity ~0 / nothing to do). */
+    static constexpr const char* kProtectedRegionNoSafeMoveSummary =
+        "No safe correction available within the protected region constraints.";
+
     // T5.3 - what the source context did to this plan. Recorded rather than
     // inferred, so a caller can explain the decision and a test can assert on
     // it without re-deriving the policy.

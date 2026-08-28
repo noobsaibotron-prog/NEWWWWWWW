@@ -33,8 +33,11 @@
 
 #include <juce_core/juce_core.h>
 
+#include "SemanticIntent.h"
 #include "SemanticPlan.h"
 #include "SpectralContext.h"
+
+#include <vector>
 
 namespace AIEQPerceptual
 {
@@ -54,6 +57,10 @@ struct SemanticPlanningRequest
     // underneath it. A default-constructed context is invalid and contextualises
     // to identity, so an unwired caller degrades to text-only planning.
     SpectralContext spectralContext;
+
+    // Phase 5 slice 1 — captured on the message thread. The worker must not
+    // read live UI/APVTS; empty means no user Hz fence (today's behaviour).
+    std::vector<SemanticProtectedRange> protectedRanges;
 };
 
 /** An unusable command is still a valid planning OUTCOME. The UI has to be able
@@ -107,7 +114,8 @@ public:
     /** Replaces any pending request and supersedes any in-flight one. Returns
         the generation the caller must quote to recognise its own result. */
     std::uint64_t submit(std::string text, float intensity, double sampleRate,
-                         const SpectralContext& context = {});
+                         const SpectralContext& context = {},
+                         std::vector<SemanticProtectedRange> protectedRanges = {});
 
     /** Every event that changes planning inputs must call this — not merely
         clear a pending plan. Bumping the epoch is what makes an in-flight

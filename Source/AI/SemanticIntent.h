@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <string>
 #include <vector>
 
@@ -47,7 +48,12 @@ enum class SemanticConstraintKind : int
     AvoidDirection = 0,
 
     // Preserve the current tonal region around neutral. Example: "keep my sub".
-    Preserve
+    Preserve,
+
+    // User-authored frequency fence. Never produced by the text compiler.
+    // Lives on SemanticProtectedRange, not on SemanticConstraint, so the
+    // dimension/direction fields of Preserve/Avoid are not overloaded.
+    ProtectRange
 };
 
 /**
@@ -97,10 +103,44 @@ struct SemanticConstraint
     std::string sourcePhrase;
 };
 
+/** User-authored Hz fence. Symmetric |Δ| cap, not a semantic-axis Preserve.
+
+    Enters planning on SemanticPlanningRequest, is copied onto SemanticIntent,
+    then becomes PerceptualTarget::protectedRegions. Not a SemanticConstraint:
+    Preserve/Avoid have no frequency fields and must keep failing closed on
+    same-axis text fights.
+*/
+struct SemanticProtectedRange
+{
+    float minFrequencyHz = 20.0f;
+    float maxFrequencyHz = 20000.0f;
+    float maxAbsDeltaDb = 0.25f;
+    float confidence = 1.0f;
+    std::string sourcePhrase;
+    std::string sourceId;
+
+    [[nodiscard]] bool isValid() const noexcept
+    {
+        return std::isfinite(minFrequencyHz) && std::isfinite(maxFrequencyHz)
+            && std::isfinite(maxAbsDeltaDb) && std::isfinite(confidence)
+            && minFrequencyHz > 0.0f && maxFrequencyHz > minFrequencyHz
+            && maxAbsDeltaDb >= 0.0f
+            && confidence >= 0.0f && confidence <= 1.0f;
+    }
+};
+
+inline constexpr const char* kUserProtectSourceIdPrefix = "constraint:user-protect:";
+
+[[nodiscard]] inline std::string makeUserProtectSourceId(std::size_t index)
+{
+    return std::string(kUserProtectSourceIdPrefix) + std::to_string(index);
+}
+
 struct SemanticIntent
 {
     std::vector<SemanticGoal> goals;
     std::vector<SemanticConstraint> constraints;
+    std::vector<SemanticProtectedRange> protectedRanges;
 
     float confidence = 0.0f;
     bool contradictory = false;
@@ -133,6 +173,10 @@ struct SemanticIntent
                     && constraint.direction != -1 && constraint.direction != 1))
                 return false;
         }
+
+        for (const auto& range : protectedRanges)
+            if (!range.isValid())
+                return false;
 
         return std::isfinite(confidence) && confidence >= 0.0f && confidence <= 1.0f;
     }

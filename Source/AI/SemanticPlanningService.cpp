@@ -76,7 +76,8 @@ void SemanticPlanningService::stop()
 }
 
 std::uint64_t SemanticPlanningService::submit(std::string text, float intensity,
-                                              double sampleRate, const SpectralContext& context)
+                                              double sampleRate, const SpectralContext& context,
+                                              std::vector<SemanticProtectedRange> protectedRanges)
 {
     // Bump first: anything already in flight is stale from this instant, whether
     // or not the worker has noticed yet.
@@ -85,7 +86,8 @@ std::uint64_t SemanticPlanningService::submit(std::string text, float intensity,
     {
         const std::lock_guard<std::mutex> lock(mailboxMutex);
         pendingRequest = SemanticPlanningRequest { gen, std::move(text), intensity,
-                                                   sampleRate, context };
+                                                   sampleRate, context,
+                                                   std::move(protectedRanges) };
         completedResult.reset(); // an older answer must not survive a newer question
     }
 
@@ -183,7 +185,8 @@ void SemanticPlanningService::run()
         SemanticPlan plan = SemanticPlanner().plan(request.text,
                                                    request.sampleRate,
                                                    request.intensity,
-                                                   request.spectralContext);
+                                                   request.spectralContext,
+                                                   request.protectedRanges);
 
         if (threadShouldExit())
             return;

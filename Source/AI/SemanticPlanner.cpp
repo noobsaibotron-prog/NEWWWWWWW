@@ -234,12 +234,31 @@ SemanticPlan SemanticPlanner::plan(std::string_view text,
                                    float intensity,
                                    const SpectralContext& context) const
 {
+    return plan(text, sampleRate, intensity, context, {});
+}
+
+SemanticPlan SemanticPlanner::plan(std::string_view text,
+                                   double sampleRate,
+                                   float intensity,
+                                   const SpectralContext& context,
+                                   const std::vector<SemanticProtectedRange>& protectedRanges) const
+{
     SemanticPlan result;
     result.intent = SemanticIntentCompiler().compile(text);
 
     const float safeIntensity = std::clamp(intensity, 0.0f, 2.0f);
     for (auto& goal : result.intent.goals)
         goal.amount = std::clamp(goal.amount * safeIntensity, -1.0f, 1.0f);
+
+    for (const auto& range : protectedRanges)
+    {
+        if (! range.isValid())
+            continue;
+        auto copy = range;
+        if (copy.sourceId.empty())
+            copy.sourceId = makeUserProtectSourceId(result.intent.protectedRanges.size());
+        result.intent.protectedRanges.push_back(std::move(copy));
+    }
 
     result.interpretation = makeInterpretation(result.intent);
 
@@ -274,6 +293,8 @@ SemanticPlan SemanticPlanner::plan(std::string_view text,
     result.goalOutcomes = evaluateGoalOutcomes(
         result.intent, result.target, result.fit, sampleRate);
     result.outcomeSummary = makeOutcomeSummary(result.goalOutcomes);
+    if (result.fit.bands.empty() && ! result.target.protectedRegions.empty())
+        result.outcomeSummary = SemanticPlan::kProtectedRegionNoSafeMoveSummary;
     result.valid = true;
     return result;
 }

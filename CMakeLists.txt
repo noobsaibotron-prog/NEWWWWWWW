@@ -1351,6 +1351,7 @@ if(HAVE_JUCE)
         Source/Tests/SparseParametricFitterPerformanceTest.cpp
         Source/Tests/SemanticIntentCompilerTest.cpp
         Source/Tests/SemanticIntentMapTest.cpp
+        Source/Tests/SemanticProtectedRangeTest.cpp
         Source/Tests/ProblemRowDisclosureTest.cpp
         Source/Tests/PersistenceEvidenceTest.cpp
         Source/Tests/DisplayedProblemIdentityTest.cpp
@@ -1489,6 +1490,7 @@ if(HAVE_JUCE)
         Source/Tests/SpectralContextProductionWiringTest.cpp
         Source/Tests/SpectralContextAlwaysOnCostTest.cpp
         Source/Tests/SemanticPlanningContextTest.cpp
+        Source/Tests/SemanticProtectedRangeHostTest.cpp
         Source/Tests/AIHeadlessDetectionParityTest.cpp
         Source/Tests/AIHeadlessPositiveBackendWitnessTest.cpp
         Source/Tests/AICaptureDisabledWitnessTest.cpp

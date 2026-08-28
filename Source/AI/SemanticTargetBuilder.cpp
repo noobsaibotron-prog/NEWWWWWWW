@@ -294,6 +294,21 @@ PerceptualTarget SemanticTargetBuilder::build(const SemanticIntent& intent,
         addConstraintBounds(target, constraint, high,
                             options.preserveToleranceDb, options.avoidToleranceDb);
 
+    for (const auto& range : intent.protectedRanges)
+    {
+        if (! range.isValid())
+            continue;
+        ProtectedRegion region;
+        region.minFrequencyHz = std::max(20.0f, range.minFrequencyHz);
+        region.maxFrequencyHz = std::min(high, range.maxFrequencyHz);
+        if (region.maxFrequencyHz <= region.minFrequencyHz)
+            continue;
+        region.maxAbsDeltaDb = range.maxAbsDeltaDb;
+        region.sourceId = range.sourceId;
+        region.sourcePhrase = range.sourcePhrase;
+        target.protectedRegions.push_back(std::move(region));
+    }
+
     const int count = static_cast<int>(std::ceil(std::log2(high / low)
                                                  * options.pointsPerOctave));
     target.points.reserve(static_cast<std::size_t>(count + 1));
