@@ -197,6 +197,7 @@ void AIEngine::resetLiveDetectionState()
 {
     std::lock_guard<std::mutex> lock(correctionsWriteMutex);
     pendingCorrections.clear();
+    pendingEvidence.clear();
     detectionHistory.clear();
     analysisCounter = 0;
     newAnalysisAvailable.store(false, std::memory_order_relaxed);
@@ -338,9 +339,21 @@ void AIEngine::analyzeSpectrum(const std::vector<float>& spectrum, bool force)
     // and must surface its full result immediately — bypass persistence there
     // and reset the live history so the two paths never contaminate each other.
     if (force)
-        resetDetectionHistory();
+    {
+        std::lock_guard<std::mutex> lock(correctionsWriteMutex);
+        detectionHistory.clear();
+        EmberUI::PersistenceEvidence capture;
+        capture.source = EmberUI::PersistenceSource::Capture;
+        capture.historyReady = false;
+        capture.hits = 0;
+        capture.windowSize = 0;
+        capture.persistenceFraction = 0.0f;
+        pendingEvidence.assign(pendingCorrections.size(), capture);
+    }
     else
+    {
         applyTemporalPersistence();
+    }
 
     detectGenre();
     
@@ -676,6 +689,17 @@ std::vector<AIEngine::Correction> AIEngine::getPendingCorrections() const
     return pendingCorrections;
 }
 
+AIEngine::PendingListSnapshot AIEngine::getPendingListSnapshot() const
+{
+    std::lock_guard<std::mutex> lock(correctionsWriteMutex);
+    PendingListSnapshot snap;
+    snap.corrections = pendingCorrections;
+    snap.evidence = pendingEvidence;
+    if (snap.evidence.size() != snap.corrections.size())
+        snap.evidence.assign(snap.corrections.size(), EmberUI::PersistenceEvidence{});
+    return snap;
+}
+
 std::vector<AIEngine::Correction> AIEngine::getApprovedCorrections() const
 {
     return approvedCorrectionBuffers[activeCorrectionsIndex.load()];
@@ -702,6 +726,8 @@ void AIEngine::approveCorrection(int index)
     pendingCorrections[index].approved = true;
     approvedCorrectionBuffers[writeIndex].push_back(pendingCorrections[index]);
     pendingCorrections.erase(pendingCorrections.begin() + index);
+    if (index < static_cast<int>(pendingEvidence.size()))
+        pendingEvidence.erase(pendingEvidence.begin() + static_cast<std::ptrdiff_t>(index));
 
     // Update cached coefficients for inactive buffer then swap
     updateCachedCoefficients(writeIndex, approvedCorrectionBuffers[writeIndex]);
@@ -724,6 +750,7 @@ void AIEngine::approveAllCorrections()
         approvedCorrectionBuffers[writeIndex].push_back(c);
     }
     pendingCorrections.clear();
+    pendingEvidence.clear();
 
     updateCachedCoefficients(writeIndex, approvedCorrectionBuffers[writeIndex]);
     activeCorrectionsIndex.store(writeIndex);
@@ -735,13 +762,18 @@ void AIEngine::rejectCorrection(int index)
 {
     std::lock_guard<std::mutex> lock(correctionsWriteMutex);
     if (index >= 0 && index < static_cast<int>(pendingCorrections.size()))
+    {
         pendingCorrections.erase(pendingCorrections.begin() + index);
+        if (index < static_cast<int>(pendingEvidence.size()))
+            pendingEvidence.erase(pendingEvidence.begin() + static_cast<std::ptrdiff_t>(index));
+    }
 }
 
 void AIEngine::clearCorrections()
 {
     std::lock_guard<std::mutex> lock(correctionsWriteMutex);
     pendingCorrections.clear();
+    pendingEvidence.clear();
     detectionHistory.clear();  // drop temporal-persistence window too
     for (auto& buf : approvedCorrectionBuffers)
         buf.clear();
@@ -991,8 +1023,8 @@ void AIEngine::detectProblems()
 // averaged across the window, which also de-jitters their displayed values.
 namespace
 {
-    constexpr std::size_t kHistoryLen          = 8;     // ~0.8s at ~10 analyses/s
-    constexpr float       kPersistenceFraction = 0.6f;  // present in >=60% of window
+    constexpr std::size_t kHistoryLen          = AIEngine::kLivePersistenceHistoryLen;
+    constexpr float       kPersistenceFraction = AIEngine::kLivePersistenceFraction;
     constexpr float       kFreqMatchOctaves    = 0.25f; // quarter-octave match tolerance
 
     inline bool sameProblem (const AIEngine::Correction& a, const AIEngine::Correction& b)
@@ -1028,6 +1060,7 @@ void AIEngine::applyTemporalPersistence()
         // A 1/1 hit would otherwise pass the 0.6 fraction gate and surface
         // immediately. Do not skip the push — that would mute Assist forever.
         pendingCorrections.clear();
+        pendingEvidence.clear();
         return;
     }
 
@@ -1035,7 +1068,9 @@ void AIEngine::applyTemporalPersistence()
     // current spectrum does not show); each is kept only if temporally stable.
     const auto latest = detectionHistory.back();  // copy: we overwrite pendingCorrections below
     std::vector<Correction> stable;
+    std::vector<int> stableHits;
     stable.reserve(latest.size());
+    stableHits.reserve(latest.size());
 
     for (const auto& cand : latest)
     {
@@ -1076,9 +1111,19 @@ void AIEngine::applyTemporalPersistence()
         s.confidence    = confSum * inv;
         s.suggestedGain = gainSum * inv;
         stable.push_back(s);
+        stableHits.push_back(hits);
     }
 
     pendingCorrections.swap(stable);
+    pendingEvidence.resize(pendingCorrections.size());
+    for (size_t i = 0; i < pendingEvidence.size(); ++i)
+    {
+        pendingEvidence[i].hits = stableHits[i];
+        pendingEvidence[i].windowSize = static_cast<int>(kHistoryLen);
+        pendingEvidence[i].persistenceFraction = kPersistenceFraction;
+        pendingEvidence[i].historyReady = true;
+        pendingEvidence[i].source = EmberUI::PersistenceSource::Live;
+    }
 }
 
 void AIEngine::detectResonances(const std::vector<float>& frame, float threshold)

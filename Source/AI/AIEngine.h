@@ -7,6 +7,7 @@
 #include "NeuralNetworkWrapper.h"
 #include "AdaptiveAIEngine.h"
 #include "OnlineLearningSystem.h"
+#include "PersistenceEvidence.h"
 #include <vector>
 #include <atomic>
 #include <mutex>
@@ -221,9 +222,19 @@ public:
     SourceProfile getSourceProfile() const { return static_cast<SourceProfile>(sourceProfile.load(std::memory_order_relaxed)); }
     static juce::String getProfileName(SourceProfile profile);
     
+    static constexpr std::size_t kLivePersistenceHistoryLen = 8;
+    static constexpr float kLivePersistenceFraction = 0.6f;
+
+    struct PendingListSnapshot
+    {
+        std::vector<Correction> corrections;
+        std::vector<EmberUI::PersistenceEvidence> evidence;
+    };
+
     //==============================================================================
     // Corrections management
     std::vector<Correction> getPendingCorrections() const;
+    PendingListSnapshot getPendingListSnapshot() const;
     std::vector<Correction> getApprovedCorrections() const;
     std::vector<Correction> getApprovedCorrectionsForUI() const;
     
@@ -819,6 +830,7 @@ private:
     mutable std::mutex spectrumMutex;  // Only for internal updateSpectrumHistory access
     
     std::vector<Correction> pendingCorrections;
+    std::vector<EmberUI::PersistenceEvidence> pendingEvidence;
 
     // --- Temporal persistence (hysteresis) for live detection -----------------
     // The live analysis path overwrites pendingCorrections every analysis frame
