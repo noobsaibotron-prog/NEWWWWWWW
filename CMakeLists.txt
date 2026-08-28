@@ -1477,6 +1477,7 @@ if(HAVE_JUCE)
         Source/Tests/AIAnalysisSerializationTest.cpp
         Source/Tests/AIFrontEndWiringTest.cpp
         Source/Tests/SemanticIntegrationHarnessTest.cpp
+        Source/Tests/SemanticApplyProjectionTest.cpp
         Source/Tests/SpectralContextProductionWiringTest.cpp
         Source/Tests/SpectralContextAlwaysOnCostTest.cpp
         Source/Tests/SemanticPlanningContextTest.cpp

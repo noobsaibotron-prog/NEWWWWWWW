@@ -328,6 +328,10 @@ public:
         float dynKnee = 6.0f;
         int curveMode = static_cast<int>(ParametricEQProcessor::CurveMode::Surgical);
     };
+
+    /** Structural equality used by Semantic APPLY/reconciliation. VPA projection
+        and commit must use this contract — do not invent a second tolerance. */
+    [[nodiscard]] static bool bandStatesEquivalent(const BandState& a, const BandState& b) noexcept;
     
     /**
      * Get band state (thread-safe, uses version-counted atomics)
@@ -391,6 +395,44 @@ public:
                 && rejectedBands == 0 && appliedBands == requestedBands;
         }
     };
+
+    /** Deterministic model of what APPLY would commit. Message-thread only.
+        Preview (later VPA) and APPLY must consume this object — there is no
+        second allocator. Does not write APVTS, ownership, or history. */
+    struct SemanticApplyProjection
+    {
+        int requestedBands = 0;
+        int resolvableBands = 0;
+        int appliedBands = 0;
+        int rejectedBands = 0;
+        bool atomicRejected = false;
+        std::vector<int> resolvedSlots;
+        std::vector<int> appliedBandSlots;
+
+        std::array<BandState, maxBands> resultingBands {};
+        std::array<bool, maxBands> bandNeedsWrite {};
+        int resultingActiveBandCount = 0;
+        bool writeGrownActiveBandCount = false;
+        int grownActiveBandCount = 0;
+        bool writeRestoredActiveBandCount = false;
+        int restoredActiveBandCount = 0;
+
+        std::array<std::array<int, maxBands>, SemanticEQEngine::numQualities> assignments {};
+        std::array<bool, maxBands> owned {};
+        std::array<bool, maxBands> hasSnapshot {};
+        std::array<BandState, maxBands> originalStates {};
+        std::array<BandState, maxBands> lastAppliedStates {};
+
+        bool captureActiveBandCountAnchors = false;
+        int capturedOriginalActiveBandCount = -1;
+        int capturedLastRequestedActiveBandCount = -1;
+        bool clearActiveBandCountAnchors = false;
+        bool needsHistorySnapshot = false;
+    };
+
+    [[nodiscard]] SemanticApplyProjection buildSemanticApplyProjection(
+        const std::vector<SemanticEQEngine::SemanticEQAdjustment>& adjustments,
+        SemanticApplyPolicy policy = SemanticApplyPolicy::BestEffortLegacy) const;
 
     [[nodiscard]] SemanticApplyResult applySemanticAdjustments(
         const std::vector<SemanticEQEngine::SemanticEQAdjustment>& adjustments,

@@ -5368,6 +5368,315 @@ void AIEqualizerAudioProcessor::applySingleCorrection(const AIEngine::Correction
     }
 }
 
+bool AIEqualizerAudioProcessor::bandStatesEquivalent(const BandState& a, const BandState& b) noexcept
+{
+    return std::abs(a.frequency - b.frequency) <= 1.0f
+        && std::abs(a.gain - b.gain) <= 0.05f
+        && std::abs(a.q - b.q) <= 0.02f
+        && a.type == b.type
+        && a.enabled == b.enabled
+        && a.solo == b.solo
+        && a.slope == b.slope
+        && a.curveMode == b.curveMode
+        && a.dynMode == b.dynMode
+        && a.dynTrigger == b.dynTrigger
+        && a.detectionMode == b.detectionMode
+        && a.detectorSource == b.detectorSource
+        && std::abs(a.sidechainFrequency - b.sidechainFrequency) <= 1.0f
+        && std::abs(a.sidechainQ - b.sidechainQ) <= 0.02f
+        && std::abs(a.dynThreshold - b.dynThreshold) <= 0.05f
+        && std::abs(a.dynRatio - b.dynRatio) <= 0.02f
+        && std::abs(a.dynAttack - b.dynAttack) <= 0.05f
+        && std::abs(a.dynRelease - b.dynRelease) <= 0.05f
+        && std::abs(a.dynRange - b.dynRange) <= 0.05f
+        && std::abs(a.dynKnee - b.dynKnee) <= 0.05f;
+}
+
+AIEqualizerAudioProcessor::SemanticApplyProjection
+AIEqualizerAudioProcessor::buildSemanticApplyProjection(
+    const std::vector<SemanticEQEngine::SemanticEQAdjustment>& adjustments,
+    SemanticApplyPolicy policy) const
+{
+    SemanticApplyProjection projection;
+    projection.requestedBands = static_cast<int>(adjustments.size());
+    for (auto& perQuality : projection.assignments)
+        perQuality.fill(-1);
+
+    std::array<BandState, maxBands> workingBands {};
+    for (int slot = 0; slot < maxBands; ++slot)
+        workingBands[static_cast<std::size_t>(slot)] = getBandState(slot);
+
+    auto workingOwned = semanticBandOwned;
+    auto workingHasSnapshot = semanticBandHasSnapshot;
+    auto workingOriginal = semanticBandOriginalStates;
+    auto workingLastApplied = semanticBandLastAppliedStates;
+    auto workingAssignments = semanticBandAssignments;
+    int workingOriginalActive = semanticOriginalActiveBandCount;
+    int workingLastRequestedActive = semanticLastRequestedActiveBandCount;
+    const int entryActiveBands = getNumActiveBands();
+    int workingActiveBands = entryActiveBands;
+
+    auto hasAnyOwnership = [&]() noexcept
+    {
+        for (bool owned : workingOwned)
+            if (owned)
+                return true;
+        return false;
+    };
+
+    auto writeBand = [&](int slotIndex, const BandState& state)
+    {
+        const auto slot = static_cast<std::size_t>(slotIndex);
+        if (!bandStatesEquivalent(workingBands[slot], state))
+        {
+            projection.needsHistorySnapshot = true;
+            workingBands[slot] = state;
+            projection.bandNeedsWrite[slot] = true;
+        }
+    };
+
+    std::array<std::array<bool, kMaxSemanticBandSlots>,
+               SemanticEQEngine::numQualities> desiredAssignments {};
+    for (auto& perQuality : desiredAssignments)
+        perQuality.fill(false);
+
+    std::vector<int> requestedOrdinals(adjustments.size(), -1);
+    std::vector<int> requestedQualityIndices(adjustments.size(), -1);
+    std::array<int, SemanticEQEngine::numQualities> ordinalCounter {};
+    ordinalCounter.fill(0);
+
+    for (std::size_t i = 0; i < adjustments.size(); ++i)
+    {
+        const int qIdx = static_cast<int>(adjustments[i].sourceQuality);
+        if (qIdx < 0 || qIdx >= SemanticEQEngine::numQualities)
+            continue;
+
+        const int ordinal = ordinalCounter[static_cast<std::size_t>(qIdx)]++;
+        if (ordinal < 0 || ordinal >= kMaxSemanticBandSlots)
+            continue;
+
+        requestedQualityIndices[i] = qIdx;
+        requestedOrdinals[i] = ordinal;
+        desiredAssignments[static_cast<std::size_t>(qIdx)]
+                          [static_cast<std::size_t>(ordinal)] = true;
+    }
+
+    auto assignmentStillSemantic = [&](int owner) noexcept
+    {
+        if (owner < 0 || owner >= maxBands)
+            return false;
+        const auto slot = static_cast<std::size_t>(owner);
+        if (!workingOwned[slot])
+            return false;
+        return bandStatesEquivalent(workingBands[slot], workingLastApplied[slot]);
+    };
+
+    std::vector<EmberSemantic::SlotAvailability> preflightSlots;
+    preflightSlots.reserve(maxBands);
+    for (int slot = 0; slot < maxBands; ++slot)
+    {
+        const auto& state = workingBands[static_cast<std::size_t>(slot)];
+        preflightSlots.push_back({ state.enabled, state.solo });
+    }
+
+    std::vector<EmberSemantic::RequestedSemanticSlot> preflightRequests;
+    preflightRequests.reserve(adjustments.size());
+    for (std::size_t i = 0; i < adjustments.size(); ++i)
+        preflightRequests.push_back({ requestedQualityIndices[i], requestedOrdinals[i] });
+
+    std::vector<EmberSemantic::ExistingSemanticSlot> preflightExisting;
+    for (std::size_t q = 0; q < workingAssignments.size(); ++q)
+    {
+        for (std::size_t ordinal = 0; ordinal < workingAssignments[q].size(); ++ordinal)
+        {
+            const int owner = workingAssignments[q][ordinal];
+            if (owner < 0 || owner >= maxBands)
+                continue;
+
+            const auto slot = static_cast<std::size_t>(owner);
+            EmberSemantic::ExistingSemanticSlot existing;
+            existing.group = static_cast<int>(q);
+            existing.ordinal = static_cast<int>(ordinal);
+            existing.slot = owner;
+            existing.stillSemantic = assignmentStillSemantic(owner);
+            existing.hasSnapshot = workingHasSnapshot[slot];
+            if (existing.hasSnapshot)
+            {
+                const auto& original = workingOriginal[slot];
+                existing.originalState = { original.enabled, original.solo };
+            }
+            preflightExisting.push_back(existing);
+        }
+    }
+
+    const auto preflight = EmberSemantic::preflightSemanticSlots(
+        preflightSlots, preflightRequests, preflightExisting);
+    projection.resolvedSlots = preflight.resolvedSlots;
+    projection.resolvableBands = preflight.resolvableCount;
+
+    const int invalidOrUnresolved = projection.requestedBands - projection.resolvableBands;
+    if (policy == SemanticApplyPolicy::RequireCompletePlan && invalidOrUnresolved > 0)
+    {
+        projection.atomicRejected = true;
+        projection.rejectedBands = projection.requestedBands;
+        projection.resultingBands = workingBands;
+        projection.resultingActiveBandCount = workingActiveBands;
+        projection.assignments = workingAssignments;
+        projection.owned = workingOwned;
+        projection.hasSnapshot = workingHasSnapshot;
+        projection.originalStates = workingOriginal;
+        projection.lastAppliedStates = workingLastApplied;
+        return projection;
+    }
+
+    const bool hadOwnershipAtEntry = hasAnyOwnership();
+    if (!hadOwnershipAtEntry && !adjustments.empty())
+    {
+        projection.captureActiveBandCountAnchors = true;
+        projection.capturedOriginalActiveBandCount = entryActiveBands;
+        projection.capturedLastRequestedActiveBandCount = entryActiveBands;
+        workingOriginalActive = entryActiveBands;
+        workingLastRequestedActive = entryActiveBands;
+    }
+
+    for (std::size_t q = 0; q < workingAssignments.size(); ++q)
+    {
+        for (std::size_t ordinal = 0; ordinal < workingAssignments[q].size(); ++ordinal)
+        {
+            auto& owner = workingAssignments[q][ordinal];
+            if (owner < 0 || owner >= maxBands)
+            {
+                owner = -1;
+                continue;
+            }
+
+            const auto slot = static_cast<std::size_t>(owner);
+            if (!workingOwned[slot])
+            {
+                owner = -1;
+                continue;
+            }
+
+            const auto current = workingBands[slot];
+            const bool stillSemantic = bandStatesEquivalent(
+                current, workingLastApplied[slot]);
+
+            if (!stillSemantic)
+            {
+                workingOwned[slot] = false;
+                workingHasSnapshot[slot] = false;
+                owner = -1;
+                continue;
+            }
+
+            if (desiredAssignments[q][ordinal])
+                continue;
+
+            if (workingHasSnapshot[slot])
+            {
+                const auto& original = workingOriginal[slot];
+                if (!bandStatesEquivalent(current, original))
+                    writeBand(owner, original);
+            }
+
+            workingOwned[slot] = false;
+            workingHasSnapshot[slot] = false;
+            owner = -1;
+        }
+    }
+
+    int desiredActiveBands = workingActiveBands;
+
+    for (std::size_t i = 0; i < adjustments.size(); ++i)
+    {
+        const int qIdx = requestedQualityIndices[i];
+        const int ordinal = requestedOrdinals[i];
+        const int slotIndex = (i < projection.resolvedSlots.size())
+            ? projection.resolvedSlots[i] : -1;
+        if (qIdx < 0 || ordinal < 0 || slotIndex < 0 || slotIndex >= maxBands)
+            continue;
+
+        auto& owner = workingAssignments[static_cast<std::size_t>(qIdx)]
+                                        [static_cast<std::size_t>(ordinal)];
+        const auto slot = static_cast<std::size_t>(slotIndex);
+
+        const bool reusingSameOwnedSlot = owner == slotIndex && workingOwned[slot]
+            && bandStatesEquivalent(workingBands[slot], workingLastApplied[slot]);
+
+        if (!reusingSameOwnedSlot)
+        {
+            owner = slotIndex;
+            workingOriginal[slot] = workingBands[slot];
+            workingLastApplied[slot] = workingOriginal[slot];
+            workingHasSnapshot[slot] = true;
+            workingOwned[slot] = true;
+        }
+
+        desiredActiveBands = std::max(desiredActiveBands, slotIndex + 1);
+
+        const auto& adj = adjustments[i];
+        auto state = workingBands[slot];
+        const BandState previousState = state;
+        state.frequency = adj.frequency;
+        state.gain = adj.gain;
+        state.q = adj.q;
+        state.type = adj.filterType;
+        state.enabled = adj.enabled;
+        state.solo = false;
+        state.dynMode = 0;
+        state.dynTrigger = DynamicEQProcessor::TriggerSide_Above;
+
+        if (!bandStatesEquivalent(previousState, state))
+            writeBand(slotIndex, state);
+        else
+            workingBands[slot] = state;
+
+        workingLastApplied[slot] = state;
+        ++projection.appliedBands;
+        projection.appliedBandSlots.push_back(slotIndex);
+    }
+
+    projection.rejectedBands = projection.requestedBands - projection.appliedBands;
+
+    if (desiredActiveBands > workingActiveBands)
+    {
+        const int clamped = juce::jlimit(1, maxBands, desiredActiveBands);
+        projection.writeGrownActiveBandCount = true;
+        projection.grownActiveBandCount = clamped;
+        projection.needsHistorySnapshot = true;
+        workingActiveBands = clamped;
+        workingLastRequestedActive = clamped;
+    }
+
+    if (!hasAnyOwnership())
+    {
+        if (workingOriginalActive > 0
+            && workingLastRequestedActive > 0
+            && workingActiveBands == workingLastRequestedActive
+            && workingOriginalActive != workingLastRequestedActive)
+        {
+            const int restored = juce::jlimit(1, maxBands, workingOriginalActive);
+            projection.writeRestoredActiveBandCount = true;
+            projection.restoredActiveBandCount = restored;
+            projection.needsHistorySnapshot = true;
+            workingActiveBands = restored;
+        }
+
+        projection.clearActiveBandCountAnchors = true;
+        workingOriginalActive = -1;
+        workingLastRequestedActive = -1;
+    }
+
+    projection.resultingBands = workingBands;
+    projection.resultingActiveBandCount = workingActiveBands;
+    projection.assignments = workingAssignments;
+    projection.owned = workingOwned;
+    projection.hasSnapshot = workingHasSnapshot;
+    projection.originalStates = workingOriginal;
+    projection.lastAppliedStates = workingLastApplied;
+    return projection;
+}
+
 AIEqualizerAudioProcessor::SemanticApplyResult
 AIEqualizerAudioProcessor::applySemanticAdjustments(
     const std::vector<SemanticEQEngine::SemanticEQAdjustment>& adjustments,
@@ -5395,292 +5704,59 @@ AIEqualizerAudioProcessor::applySemanticAdjustments(
         return result;
     }
 
-    auto bandStatesEquivalent = [](const BandState& a, const BandState& b) noexcept
+    const auto projection = buildSemanticApplyProjection(adjustments, policy);
+    result.requestedBands = projection.requestedBands;
+    result.appliedBands = projection.appliedBands;
+    result.rejectedBands = projection.rejectedBands;
+    result.atomicRejected = projection.atomicRejected;
+    result.appliedBandSlots = projection.appliedBandSlots;
+
+    if (projection.atomicRejected)
+        return result;
+
+    if (projection.captureActiveBandCountAnchors)
     {
-        return std::abs(a.frequency - b.frequency) <= 1.0f
-            && std::abs(a.gain - b.gain) <= 0.05f
-            && std::abs(a.q - b.q) <= 0.02f
-            && a.type == b.type
-            && a.enabled == b.enabled
-            && a.solo == b.solo
-            && a.slope == b.slope
-            && a.curveMode == b.curveMode
-            && a.dynMode == b.dynMode
-            && a.dynTrigger == b.dynTrigger
-            && a.detectionMode == b.detectionMode
-            && a.detectorSource == b.detectorSource
-            && std::abs(a.sidechainFrequency - b.sidechainFrequency) <= 1.0f
-            && std::abs(a.sidechainQ - b.sidechainQ) <= 0.02f
-            && std::abs(a.dynThreshold - b.dynThreshold) <= 0.05f
-            && std::abs(a.dynRatio - b.dynRatio) <= 0.02f
-            && std::abs(a.dynAttack - b.dynAttack) <= 0.05f
-            && std::abs(a.dynRelease - b.dynRelease) <= 0.05f
-            && std::abs(a.dynRange - b.dynRange) <= 0.05f
-            && std::abs(a.dynKnee - b.dynKnee) <= 0.05f;
-    };
-
-    auto hasAnySemanticOwnership = [&]() noexcept
-    {
-        for (bool owned : semanticBandOwned)
-            if (owned)
-                return true;
-        return false;
-    };
-
-    // Translate the requested vector into stable (quality, ordinal) keys first.
-    // This also removes the historical artificial 4-band cap: the assignment
-    // table now spans maxBands per quality, while the global plugin band count
-    // remains the real physical budget.
-    std::array<std::array<bool, kMaxSemanticBandSlots>,
-               SemanticEQEngine::numQualities> desiredAssignments {};
-    for (auto& perQuality : desiredAssignments)
-        perQuality.fill(false);
-
-    std::vector<int> requestedOrdinals(adjustments.size(), -1);
-    std::vector<int> requestedQualityIndices(adjustments.size(), -1);
-    std::array<int, SemanticEQEngine::numQualities> ordinalCounter {};
-    ordinalCounter.fill(0);
-
-    for (std::size_t i = 0; i < adjustments.size(); ++i)
-    {
-        const int qIdx = static_cast<int>(adjustments[i].sourceQuality);
-        if (qIdx < 0 || qIdx >= SemanticEQEngine::numQualities)
-            continue;
-
-        const int ordinal = ordinalCounter[static_cast<std::size_t>(qIdx)]++;
-        if (ordinal < 0 || ordinal >= kMaxSemanticBandSlots)
-            continue;
-
-        requestedQualityIndices[i] = qIdx;
-        requestedOrdinals[i] = ordinal;
-        desiredAssignments[static_cast<std::size_t>(qIdx)]
-                          [static_cast<std::size_t>(ordinal)] = true;
+        semanticOriginalActiveBandCount = projection.capturedOriginalActiveBandCount;
+        semanticLastRequestedActiveBandCount = projection.capturedLastRequestedActiveBandCount;
     }
 
-    // Read-only preflight. Snapshot JUCE/APVTS-owned state into a pure model,
-    // then let the independently-tested allocator prove whether the complete
-    // typed plan can fit before any product state is mutated.
-    auto assignmentStillSemantic = [&](int owner) noexcept
-    {
-        if (owner < 0 || owner >= maxBands)
-            return false;
-        const auto slot = static_cast<std::size_t>(owner);
-        if (!semanticBandOwned[slot])
-            return false;
-        return bandStatesEquivalent(getBandState(owner), semanticBandLastAppliedStates[slot]);
-    };
+    if (projection.needsHistorySnapshot)
+        historyManager.pushUndoState("Semantic EQ Plan");
 
-    std::vector<EmberSemantic::SlotAvailability> preflightSlots;
-    preflightSlots.reserve(maxBands);
     for (int slot = 0; slot < maxBands; ++slot)
     {
-        const auto state = getBandState(slot);
-        preflightSlots.push_back({ state.enabled, state.solo });
+        if (projection.bandNeedsWrite[static_cast<std::size_t>(slot)])
+            setBandState(slot, projection.resultingBands[static_cast<std::size_t>(slot)]);
     }
 
-    std::vector<EmberSemantic::RequestedSemanticSlot> preflightRequests;
-    preflightRequests.reserve(adjustments.size());
-    for (std::size_t i = 0; i < adjustments.size(); ++i)
-        preflightRequests.push_back({ requestedQualityIndices[i], requestedOrdinals[i] });
+    semanticBandAssignments = projection.assignments;
+    semanticBandOwned = projection.owned;
+    semanticBandHasSnapshot = projection.hasSnapshot;
+    semanticBandOriginalStates = projection.originalStates;
+    semanticBandLastAppliedStates = projection.lastAppliedStates;
 
-    std::vector<EmberSemantic::ExistingSemanticSlot> preflightExisting;
-    for (std::size_t q = 0; q < semanticBandAssignments.size(); ++q)
-    {
-        for (std::size_t ordinal = 0; ordinal < semanticBandAssignments[q].size(); ++ordinal)
-        {
-            const int owner = semanticBandAssignments[q][ordinal];
-            if (owner < 0 || owner >= maxBands)
-                continue;
-
-            const auto slot = static_cast<std::size_t>(owner);
-            EmberSemantic::ExistingSemanticSlot existing;
-            existing.group = static_cast<int>(q);
-            existing.ordinal = static_cast<int>(ordinal);
-            existing.slot = owner;
-            existing.stillSemantic = assignmentStillSemantic(owner);
-            existing.hasSnapshot = semanticBandHasSnapshot[slot];
-            if (existing.hasSnapshot)
-            {
-                const auto& original = semanticBandOriginalStates[slot];
-                existing.originalState = { original.enabled, original.solo };
-            }
-            preflightExisting.push_back(existing);
-        }
-    }
-
-    const auto preflight = EmberSemantic::preflightSemanticSlots(
-        preflightSlots, preflightRequests, preflightExisting);
-    const auto& resolvedSlots = preflight.resolvedSlots;
-    const int resolvableCount = preflight.resolvableCount;
-
-    const int invalidOrUnresolved = result.requestedBands - resolvableCount;
-    if (policy == SemanticApplyPolicy::RequireCompletePlan && invalidOrUnresolved > 0)
-    {
-        result.atomicRejected = true;
-        result.rejectedBands = result.requestedBands;
-        return result;
-    }
-
-    bool semanticHistoryCaptured = false;
-    auto ensureSemanticHistorySnapshot = [&]()
-    {
-        if (!semanticHistoryCaptured)
-        {
-            historyManager.pushUndoState("Semantic EQ Plan");
-            semanticHistoryCaptured = true;
-        }
-    };
-
-    const bool hadOwnershipAtEntry = hasAnySemanticOwnership();
-    if (!hadOwnershipAtEntry && !adjustments.empty())
-    {
-        semanticOriginalActiveBandCount = getNumActiveBands();
-        semanticLastRequestedActiveBandCount = semanticOriginalActiveBandCount;
-    }
-
-    // First reconcile stale/manual-taken-over assignments and restore obsolete
-    // semantic slots BEFORE claiming the new plan. This makes the preflight and
-    // actual allocator equivalent and lets a new plan reuse slots released by
-    // the previous plan within the same undo transaction.
-    for (std::size_t q = 0; q < semanticBandAssignments.size(); ++q)
-    {
-        for (std::size_t ordinal = 0; ordinal < semanticBandAssignments[q].size(); ++ordinal)
-        {
-            auto& owner = semanticBandAssignments[q][ordinal];
-            if (owner < 0 || owner >= maxBands)
-            {
-                owner = -1;
-                continue;
-            }
-
-            const auto slot = static_cast<std::size_t>(owner);
-            if (!semanticBandOwned[slot])
-            {
-                owner = -1;
-                continue;
-            }
-
-            const auto current = getBandState(owner);
-            const bool stillSemantic = bandStatesEquivalent(
-                current, semanticBandLastAppliedStates[slot]);
-
-            if (!stillSemantic)
-            {
-                // Explicit user takeover: preserve the user's current state.
-                semanticBandOwned[slot] = false;
-                semanticBandHasSnapshot[slot] = false;
-                owner = -1;
-                continue;
-            }
-
-            if (desiredAssignments[q][ordinal])
-                continue;
-
-            if (semanticBandHasSnapshot[slot])
-            {
-                const auto& original = semanticBandOriginalStates[slot];
-                if (!bandStatesEquivalent(current, original))
-                {
-                    ensureSemanticHistorySnapshot();
-                    setBandState(owner, original);
-                }
-            }
-
-            semanticBandOwned[slot] = false;
-            semanticBandHasSnapshot[slot] = false;
-            owner = -1;
-        }
-    }
-
-    int desiredActiveBands = getNumActiveBands();
-
-    for (std::size_t i = 0; i < adjustments.size(); ++i)
-    {
-        const int qIdx = requestedQualityIndices[i];
-        const int ordinal = requestedOrdinals[i];
-        const int slotIndex = resolvedSlots[i];
-        if (qIdx < 0 || ordinal < 0 || slotIndex < 0 || slotIndex >= maxBands)
-            continue;
-
-        auto& owner = semanticBandAssignments[static_cast<std::size_t>(qIdx)]
-                                             [static_cast<std::size_t>(ordinal)];
-        const auto slot = static_cast<std::size_t>(slotIndex);
-
-        const bool reusingSameOwnedSlot = owner == slotIndex && semanticBandOwned[slot]
-            && bandStatesEquivalent(getBandState(slotIndex), semanticBandLastAppliedStates[slot]);
-
-        if (!reusingSameOwnedSlot)
-        {
-            // The preflight guarantees this slot is disabled/unclaimed after
-            // reconciliation. Snapshot it so Reset/next plan can restore the
-            // exact pre-semantic state.
-            owner = slotIndex;
-            semanticBandOriginalStates[slot] = getBandState(slotIndex);
-            semanticBandLastAppliedStates[slot] = semanticBandOriginalStates[slot];
-            semanticBandHasSnapshot[slot] = true;
-            semanticBandOwned[slot] = true;
-        }
-
-        desiredActiveBands = std::max(desiredActiveBands, slotIndex + 1);
-
-        const auto& adj = adjustments[i];
-        auto state = getBandState(slotIndex);
-        const BandState previousState = state;
-        state.frequency = adj.frequency;
-        state.gain = adj.gain;
-        state.q = adj.q;
-        state.type = adj.filterType;
-        state.enabled = adj.enabled;
-        state.solo = false;
-        state.dynMode = 0; // typed/legacy semantic static plan cannot inherit stale dynamics
-        state.dynTrigger = DynamicEQProcessor::TriggerSide_Above;
-
-        if (!bandStatesEquivalent(previousState, state))
-        {
-            ensureSemanticHistorySnapshot();
-            setBandState(slotIndex, state);
-        }
-
-        semanticBandLastAppliedStates[slot] = state;
-        ++result.appliedBands;
-        result.appliedBandSlots.push_back (slotIndex);
-    }
-
-    result.rejectedBands = result.requestedBands - result.appliedBands;
-
-    const bool needsActiveBandCountUpdate = desiredActiveBands > getNumActiveBands();
-    if (needsActiveBandCountUpdate)
+    auto writeActiveBandCount = [this](int count)
     {
         if (auto* param = apvts.getParameter("numActiveBands"))
         {
-            const int clamped = juce::jlimit(1, maxBands, desiredActiveBands);
-            ensureSemanticHistorySnapshot();
+            const int clamped = juce::jlimit(1, maxBands, count);
             param->beginChangeGesture();
             param->setValueNotifyingHost(param->convertTo0to1(static_cast<float>(clamped - 1)));
             param->endChangeGesture();
-            semanticLastRequestedActiveBandCount = clamped;
         }
+    };
+
+    if (projection.writeGrownActiveBandCount)
+    {
+        writeActiveBandCount(projection.grownActiveBandCount);
+        semanticLastRequestedActiveBandCount = projection.grownActiveBandCount;
     }
 
-    // Empty/reset plans release semantic ownership and restore the pre-semantic
-    // active-band count only if the user has not changed that control since.
-    if (!hasAnySemanticOwnership())
-    {
-        if (semanticOriginalActiveBandCount > 0
-            && semanticLastRequestedActiveBandCount > 0
-            && getNumActiveBands() == semanticLastRequestedActiveBandCount
-            && semanticOriginalActiveBandCount != semanticLastRequestedActiveBandCount)
-        {
-            if (auto* param = apvts.getParameter("numActiveBands"))
-            {
-                const int restored = juce::jlimit(1, maxBands, semanticOriginalActiveBandCount);
-                ensureSemanticHistorySnapshot();
-                param->beginChangeGesture();
-                param->setValueNotifyingHost(param->convertTo0to1(static_cast<float>(restored - 1)));
-                param->endChangeGesture();
-            }
-        }
+    if (projection.writeRestoredActiveBandCount)
+        writeActiveBandCount(projection.restoredActiveBandCount);
 
+    if (projection.clearActiveBandCountAnchors)
+    {
         semanticOriginalActiveBandCount = -1;
         semanticLastRequestedActiveBandCount = -1;
     }
