@@ -76,6 +76,34 @@ struct SemanticBandLink
     std::string sourceId;
 };
 
+/** One attested target-grid sample of a goal envelope.
+
+    normalizedContribution is local to this envelope (peak = 1). Zero-magnitude
+    samples are retained so disjoint lobes stay disjoint under linear interpolation.
+*/
+struct SemanticEnvelopeSample
+{
+    float frequencyHz = 1000.0f;
+    float normalizedContribution = 0.0f;
+    bool withinDisplaySupport = false;
+};
+
+/** Projection-only envelope for one selected GoalVisual.
+
+    Ranking/top-2 is owned by the same GoalVisual pass as focusRegions.
+    This is derived UI state and is not serialized.
+*/
+struct SemanticFocusEnvelope
+{
+    std::vector<SemanticEnvelopeSample> samples;
+    float strength = 0.0f;
+    AIEQPerceptual::SemanticDimension dimension = AIEQPerceptual::SemanticDimension::Brightness;
+    AIEQPerceptual::SemanticSpectralFocus focus = AIEQPerceptual::SemanticSpectralFocus::General;
+    std::string sourceId;
+    std::string sourcePhrase;
+    bool primary = false;
+};
+
 struct SemanticIntentMapState
 {
     SemanticIntentMapPhase phase = SemanticIntentMapPhase::Hidden;
@@ -84,6 +112,7 @@ struct SemanticIntentMapState
     std::vector<SemanticBandLink> bandLinks;
     std::array<SemanticAxisRole, static_cast<std::size_t>(SemanticUiAxis::Count)> axisRoles {};
     std::vector<int> appliedBandSlots;
+    std::vector<SemanticFocusEnvelope> focusEnvelopes;
     std::string interpretation;
     std::string outcomeSummary;
 
