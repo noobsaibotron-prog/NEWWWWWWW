@@ -3,6 +3,7 @@
 #include "../PluginProcessor.h"
 #include "ModernLookAndFeel.h"
 #include "ProblemRowDisclosure.h"
+#include "../AI/DisplayedProblemIdentity.h"
 
 #include <optional>
 
@@ -495,8 +496,11 @@ public:
         // Right-click context menu
         if (e.mods.isRightButtonDown())
         {
+            const auto ghostPolicy = EmberAI::ProblemRowGhostPolicy {
+                static_cast<size_t>(row) < problemIsGhost.size()
+                    && problemIsGhost[static_cast<size_t>(row)] };
             juce::PopupMenu menu;
-            menu.addItem(1, tr("Apply This Fix", "Apply This Fix"));
+            menu.addItem(1, tr("Apply This Fix", "Apply This Fix"), ghostPolicy.contextApplyEnabled());
             menu.addItem(2, tr("Dismiss Problem", "Dismiss Problem"));
             menu.addSeparator();
             menu.addItem(3, disclosure.viewFor(row) == EmberUI::ProblemRowView::Expanded
@@ -506,8 +510,9 @@ public:
             menu.showMenuAsync(juce::PopupMenu::Options(), [this, row, p](int result) {
                 if (result == 1) {
                     if (!canApplyNow()) return;
-                    if (! isProblemLive(p)) { removeTransientVisualHold(p); updateProblemList(); return; }
-                    // Apply ONLY this single correction, not all approved ones
+                    const auto policy = EmberAI::ProblemRowGhostPolicy { ! isProblemLive(p) };
+                    if (! policy.canApply() || ! policy.contextApplyEnabled())
+                        return;
                     processor.applySingleCorrection(p);
                     removeTransientVisualHold(p);
                     updateProblemList();
@@ -528,8 +533,9 @@ public:
         {
             if (!canApplyNow()) return;
             const auto& p = problems[row];
-            if (! isProblemLive(p)) { removeTransientVisualHold(p); updateProblemList(); return; }
-            // Apply ONLY this single correction, not all approved ones
+            const auto policy = EmberAI::ProblemRowGhostPolicy { ! isProblemLive(p) };
+            if (! policy.doubleClickApplies())
+                return;
             processor.applySingleCorrection(p);
             removeTransientVisualHold(p);
             updateProblemList();
@@ -860,6 +866,22 @@ private:
             applyBtn.setVisible(showStrip);
             ignoreBtn.setVisible(showStrip);
             expandBtn.setVisible(showStrip);
+            const auto policy = EmberAI::ProblemRowGhostPolicy { isGhost };
+            applyBtn.setEnabled(policy.canApply());
+            listenBtn.setEnabled(policy.canListen());
+            ignoreBtn.setEnabled(policy.canDismiss());
+            expandBtn.setEnabled(policy.canShowDetails());
+            if (isGhost)
+            {
+                applyBtn.setTooltip(owner.tr("Problem left the live list — play again to apply",
+                                             "Problem left the live list — play again to apply"));
+                applyBtn.setTitle(owner.tr("Apply unavailable", "Apply unavailable"));
+            }
+            else
+            {
+                applyBtn.setTooltip(owner.tr("Apply this fix", "Apply this fix"));
+                applyBtn.setTitle(owner.tr("Apply this fix", "Apply this fix"));
+            }
             const bool expanded = rowView == EmberUI::ProblemRowView::Expanded;
             expandBtn.setButtonText(expanded
                 ? juce::String::fromUTF8("\xe2\x96\xb4")  // ▴
@@ -1322,20 +1344,17 @@ private:
     {
         // UX "Diagnosi Stabile": every problem type benefits from the visual exit hold
         // (was Sibilance-only). Safety guards (isProblemLive before apply) are unchanged,
-        // so FIX on a ghost that vanished from the engine remains a safe no-op.
+        // so APPLY on a ghost that vanished from the engine stays disabled.
         return true;
     }
 
     static bool isSameDisplayedProblem(const AIEngine::Correction& a,
                                        const AIEngine::Correction& b) noexcept
     {
-        if (a.type != b.type)
-            return false;
-
-        const float freqRatio = std::abs(std::log2(a.frequency / juce::jmax(20.0f, b.frequency)));
-        const bool freqMatch = freqRatio < 0.05f;
-        const bool gainMatch = std::abs(a.suggestedGain - b.suggestedGain) < 0.5f;
-        return freqMatch && gainMatch;
+        // Must match the live persist ring. A tighter window (5% / 0.5 dB) split
+        // one stable problem into a live row plus a darkened ghost, dropped
+        // selection on every list refresh, and made APPLY/double-click a no-op.
+        return EmberAI::isSameDisplayedProblem(a, b);
     }
 
     void mergeTransientVisualHolds(std::vector<AIEngine::Correction>& raw)
@@ -1586,8 +1605,9 @@ private:
         if (!canApplyNow()) return;
 
         const auto& p = problems[row];
-        if (! isProblemLive(p)) { removeTransientVisualHold(p); updateProblemList(); return; }
-        // Apply ONLY this single correction, not all approved ones
+        const auto policy = EmberAI::ProblemRowGhostPolicy { ! isProblemLive(p) };
+        if (! policy.canApply())
+            return;
         processor.applySingleCorrection(p);
         removeTransientVisualHold(p);
         updateProblemList();
@@ -1663,14 +1683,7 @@ private:
         // Find matching correction in pendingCorrections
         for (int i = 0; i < static_cast<int>(pending.size()); ++i)
         {
-            const auto& p = pending[i];
-            // Match by frequency (within 1%), type, and similar gain
-            const float freqRatio = std::abs(std::log2(target.frequency / juce::jmax(20.0f, p.frequency)));
-            const bool freqMatch = freqRatio < 0.05f;  // Within ~5%
-            const bool typeMatch = (p.type == target.type);
-            const bool gainMatch = std::abs(p.suggestedGain - target.suggestedGain) < 0.5f;  // Within 0.5dB
-            
-            if (freqMatch && typeMatch && gainMatch)
+            if (isSameDisplayedProblem(pending[static_cast<size_t>(i)], target))
             {
                 ai.approveCorrection(i);
                 return;
@@ -1686,14 +1699,7 @@ private:
         // Find matching correction in pendingCorrections
         for (int i = 0; i < static_cast<int>(pending.size()); ++i)
         {
-            const auto& p = pending[i];
-            // Match by frequency (within 1%), type, and similar gain
-            const float freqRatio = std::abs(std::log2(target.frequency / juce::jmax(20.0f, p.frequency)));
-            const bool freqMatch = freqRatio < 0.05f;  // Within ~5%
-            const bool typeMatch = (p.type == target.type);
-            const bool gainMatch = std::abs(p.suggestedGain - target.suggestedGain) < 0.5f;  // Within 0.5dB
-            
-            if (freqMatch && typeMatch && gainMatch)
+            if (isSameDisplayedProblem(pending[static_cast<size_t>(i)], target))
             {
                 ai.rejectCorrection(i);
                 return;

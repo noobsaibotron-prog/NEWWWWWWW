@@ -224,6 +224,8 @@ public:
     
     static constexpr std::size_t kLivePersistenceHistoryLen = 8;
     static constexpr float kLivePersistenceFraction = 0.6f;
+    /** Same-problem match used by the live persist ring and the problem list. */
+    static constexpr float kLivePersistenceFreqMatchOctaves = 0.25f;
 
     struct PendingListSnapshot
     {

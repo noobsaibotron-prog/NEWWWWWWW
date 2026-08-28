@@ -1,4 +1,5 @@
 #include "AIEngine.h"
+#include "DisplayedProblemIdentity.h"
 #include <array>
 #include <cmath>
 #include <map>
@@ -1025,15 +1026,10 @@ namespace
 {
     constexpr std::size_t kHistoryLen          = AIEngine::kLivePersistenceHistoryLen;
     constexpr float       kPersistenceFraction = AIEngine::kLivePersistenceFraction;
-    constexpr float       kFreqMatchOctaves    = 0.25f; // quarter-octave match tolerance
 
     inline bool sameProblem (const AIEngine::Correction& a, const AIEngine::Correction& b)
     {
-        if (a.type != b.type)
-            return false;
-        if (a.frequency <= 0.0f || b.frequency <= 0.0f)
-            return false;
-        return std::abs (std::log2 (a.frequency / b.frequency)) <= kFreqMatchOctaves;
+        return EmberAI::isSameDisplayedProblem (a, b);
     }
 }
 

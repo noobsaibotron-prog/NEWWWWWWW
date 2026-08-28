@@ -650,6 +650,7 @@ set(PLUGIN_SOURCES
     Source/GUI/AIProblemPanel.h
     Source/GUI/ProblemRowDisclosure.h
     Source/AI/PersistenceEvidence.h
+    Source/AI/DisplayedProblemIdentity.h
     Source/GUI/BandControlPanel.h
     Source/GUI/DynamicEQPanel.h
     Source/GUI/SemanticControlPanel.h
@@ -1352,6 +1353,7 @@ if(HAVE_JUCE)
         Source/Tests/SemanticIntentMapTest.cpp
         Source/Tests/ProblemRowDisclosureTest.cpp
         Source/Tests/PersistenceEvidenceTest.cpp
+        Source/Tests/DisplayedProblemIdentityTest.cpp
         Source/Tests/SpectralContextTest.cpp
         Source/Tests/SpectralContextAdversarialTest.cpp
         Source/Tests/SpectralContextConfidenceCalibrationTest.cpp
