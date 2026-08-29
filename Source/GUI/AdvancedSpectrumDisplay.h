@@ -2521,14 +2521,17 @@ private:
             // The intent field is deliberately anchored to the graph floor: it
             // describes where Semantic intends to work, not an EQ response or a
             // gain prediction.  The filled body carries extent; the ridge carries
-            // shape; only the primary envelope receives a peak anchor.  Keeping
-            // those three roles separate makes overlapping intents readable
-            // without turning the graph into another spectrum trace.
+            // shape; the primary dot uses SemanticIntentAnchor::peakFrequencyHz
+            // only.  Missing or non-finite anchors leave the envelope visible
+            // without a dot.
             constexpr float kEnvelopeHeightFrac = 0.30f;
             constexpr float kRidgeVisibilityFloor = 0.002f;
-            for (const auto& envelope : semanticIntentMap.focusEnvelopes)
+            for (std::size_t envelopeIndex = 0;
+                 envelopeIndex < semanticIntentMap.focusEnvelopes.size();
+                 ++envelopeIndex)
             {
-                if (envelope.samples.size() < 2)
+                const auto& envelope = semanticIntentMap.focusEnvelopes[envelopeIndex];
+                if (envelope.samples.size() < 2 || ! std::isfinite (envelope.strength))
                     continue;
 
                 juce::Path fillPath;
@@ -2537,11 +2540,30 @@ private:
                 bool ridgeActive = false;
                 float firstX = graphLeft;
                 float lastX = graphLeft;
-                float peakDepth = 0.0f;
+                bool havePeakDot = false;
                 juce::Point<float> peakPoint { graphLeft, graphBottom };
                 const float strength = juce::jlimit (0.0f, 1.0f, envelope.strength);
                 if (strength <= 0.001f)
                     continue;
+
+                const EmberUI::SemanticIntentAnchor* peakAnchor = nullptr;
+                if (envelopeIndex < semanticIntentMap.intentAnchors.size()
+                    && semanticIntentMap.intentAnchors[envelopeIndex].sourceId == envelope.sourceId)
+                    peakAnchor = &semanticIntentMap.intentAnchors[envelopeIndex];
+                else
+                {
+                    for (const auto& candidate : semanticIntentMap.intentAnchors)
+                        if (candidate.sourceId == envelope.sourceId)
+                        {
+                            peakAnchor = &candidate;
+                            break;
+                        }
+                }
+                if (peakAnchor != nullptr
+                    && (! std::isfinite (peakAnchor->peakFrequencyHz)
+                        || peakAnchor->peakFrequencyHz <= 0.0f
+                        || ! std::isfinite (peakAnchor->strength)))
+                    peakAnchor = nullptr;
 
                 for (const auto& sample : envelope.samples)
                 {
@@ -2581,12 +2603,13 @@ private:
                     else
                         ridgeActive = false;
 
-                    const bool deeper = depth > peakDepth;
-                    const bool tied = !deeper && ! (depth < peakDepth);
-                    if (deeper || (tied && depth > 0.0f && x < peakPoint.x))
+                    if (peakAnchor != nullptr
+                        && sample.frequencyHz == peakAnchor->peakFrequencyHz)
                     {
-                        peakDepth = depth;
-                        peakPoint = { x, y };
+                        peakPoint = { juce::jlimit (graphLeft, graphRight,
+                                                     freqToX (peakAnchor->peakFrequencyHz)),
+                                      y };
+                        havePeakDot = depth > kRidgeVisibilityFloor;
                     }
                     lastX = x;
                 }
@@ -2633,7 +2656,7 @@ private:
                                                         juce::PathStrokeType::rounded));
                 }
 
-                if (envelope.primary && peakDepth > kRidgeVisibilityFloor)
+                if (envelope.primary && havePeakDot)
                 {
                     constexpr float r = 2.2f;
                     g.setColour (colour.withAlpha (0.16f * strengthAlpha * a));
