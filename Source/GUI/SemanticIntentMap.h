@@ -104,6 +104,26 @@ struct SemanticFocusEnvelope
     bool primary = false;
 };
 
+/** Scalar UI markers derived from one SemanticFocusEnvelope.
+
+    Peak, log-centroid and support bounds are computed from the attested
+    envelope samples (the planner target grid). This is derived UI state
+    and is not serialized. It is not a second resampled field.
+*/
+struct SemanticIntentAnchor
+{
+    float peakFrequencyHz = 0.0f;
+    float centroidFrequencyHz = 0.0f;
+    float lowerSupportHz = 0.0f;
+    float upperSupportHz = 0.0f;
+    float strength = 0.0f;
+    AIEQPerceptual::SemanticDimension dimension = AIEQPerceptual::SemanticDimension::Brightness;
+    AIEQPerceptual::SemanticSpectralFocus focus = AIEQPerceptual::SemanticSpectralFocus::General;
+    std::string sourceId;
+    std::string sourcePhrase;
+    bool primary = false;
+};
+
 struct SemanticIntentMapState
 {
     SemanticIntentMapPhase phase = SemanticIntentMapPhase::Hidden;
@@ -113,6 +133,7 @@ struct SemanticIntentMapState
     std::array<SemanticAxisRole, static_cast<std::size_t>(SemanticUiAxis::Count)> axisRoles {};
     std::vector<int> appliedBandSlots;
     std::vector<SemanticFocusEnvelope> focusEnvelopes;
+    std::vector<SemanticIntentAnchor> intentAnchors;
     std::string interpretation;
     std::string outcomeSummary;
 
@@ -261,6 +282,89 @@ inline const AIEQPerceptual::SemanticConstraint* constraintForSourceId (
             return &c;
     }
     return nullptr;
+}
+
+inline bool isPositiveFinite (float x) noexcept
+{
+    return std::isfinite (x) && x > 0.0f;
+}
+
+/** Fail-closed scalar markers from an attested envelope.
+
+    Peak: max normalizedContribution among withinDisplaySupport samples
+    with finite positive frequency and weight; ties keep the lower frequency.
+    Centroid: 2^(sum(w*log2(f))/sum(w)) over finite positive f and w.
+    Support: first/last such sample in envelope order.
+    Missing or non-finite support omits the anchor.
+*/
+inline std::optional<SemanticIntentAnchor> deriveSemanticIntentAnchor (
+    const SemanticFocusEnvelope& envelope)
+{
+    float peakContribution = -1.0f;
+    float peakFrequencyHz = 0.0f;
+    bool havePeak = false;
+
+    float lowerSupportHz = 0.0f;
+    float upperSupportHz = 0.0f;
+    bool haveSupport = false;
+
+    double weightSum = 0.0;
+    double weightedLog2 = 0.0;
+
+    for (const auto& sample : envelope.samples)
+    {
+        const float f = sample.frequencyHz;
+        const float w = sample.normalizedContribution;
+        const bool usableFreq = isPositiveFinite (f);
+        const bool usableWeight = isPositiveFinite (w);
+
+        if (usableFreq && usableWeight)
+        {
+            if (! haveSupport)
+            {
+                lowerSupportHz = f;
+                haveSupport = true;
+            }
+            upperSupportHz = f;
+            weightSum += static_cast<double> (w);
+            weightedLog2 += static_cast<double> (w) * std::log2 (static_cast<double> (f));
+        }
+
+        if (sample.withinDisplaySupport && usableFreq && usableWeight)
+        {
+            if (! havePeak
+                || w > peakContribution
+                || (w == peakContribution && f < peakFrequencyHz))
+            {
+                havePeak = true;
+                peakContribution = w;
+                peakFrequencyHz = f;
+            }
+        }
+    }
+
+    if (! havePeak || ! haveSupport || ! (weightSum > 0.0))
+        return std::nullopt;
+
+    const float centroidFrequencyHz = static_cast<float> (std::exp2 (weightedLog2 / weightSum));
+    if (! isPositiveFinite (peakFrequencyHz)
+        || ! isPositiveFinite (centroidFrequencyHz)
+        || ! isPositiveFinite (lowerSupportHz)
+        || ! isPositiveFinite (upperSupportHz))
+        return std::nullopt;
+
+    SemanticIntentAnchor anchor;
+    anchor.peakFrequencyHz = peakFrequencyHz;
+    anchor.centroidFrequencyHz = centroidFrequencyHz;
+    anchor.lowerSupportHz = lowerSupportHz;
+    anchor.upperSupportHz = upperSupportHz;
+    anchor.strength = envelope.strength;
+    anchor.dimension = envelope.dimension;
+    anchor.focus = envelope.focus;
+    anchor.sourceId = envelope.sourceId;
+    anchor.sourcePhrase = envelope.sourcePhrase;
+    anchor.primary = envelope.primary;
+    return anchor;
 }
 } // namespace detail
 
@@ -420,6 +524,10 @@ inline SemanticIntentMapState buildSemanticIntentMapState (
         }
         out.focusEnvelopes.push_back (std::move (envelope));
     }
+
+    for (const auto& envelope : out.focusEnvelopes)
+        if (auto anchor = detail::deriveSemanticIntentAnchor (envelope))
+            out.intentAnchors.push_back (std::move (*anchor));
 
     float bestAxisScore = -1.0f;
     std::optional<SemanticUiAxis> bestAxis;
