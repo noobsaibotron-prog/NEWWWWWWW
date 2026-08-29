@@ -2518,47 +2518,130 @@ private:
         const float a = semanticIntentAlpha;
         if (!semanticIntentMap.focusEnvelopes.empty())
         {
-            // Strength is visual depth from the graph floor, not EQ gain.
-            constexpr float kEnvelopeHeightFrac = 0.28f;
+            // The intent field is deliberately anchored to the graph floor: it
+            // describes where Semantic intends to work, not an EQ response or a
+            // gain prediction.  The filled body carries extent; the ridge carries
+            // shape; only the primary envelope receives a peak anchor.  Keeping
+            // those three roles separate makes overlapping intents readable
+            // without turning the graph into another spectrum trace.
+            constexpr float kEnvelopeHeightFrac = 0.30f;
+            constexpr float kRidgeVisibilityFloor = 0.002f;
             for (const auto& envelope : semanticIntentMap.focusEnvelopes)
             {
                 if (envelope.samples.size() < 2)
                     continue;
 
-                juce::Path path;
+                juce::Path fillPath;
+                juce::Path ridgePath;
                 bool started = false;
+                bool ridgeActive = false;
+                float firstX = graphLeft;
                 float lastX = graphLeft;
+                float peakDepth = 0.0f;
+                juce::Point<float> peakPoint { graphLeft, graphBottom };
+                const float strength = juce::jlimit (0.0f, 1.0f, envelope.strength);
+                if (strength <= 0.001f)
+                    continue;
+
                 for (const auto& sample : envelope.samples)
                 {
+                    if (!std::isfinite (sample.frequencyHz) || sample.frequencyHz <= 0.0f)
+                    {
+                        ridgeActive = false;
+                        continue;
+                    }
+
                     const float x = juce::jlimit (graphLeft, graphRight,
                                                   freqToX (sample.frequencyHz));
                     const float depth = sample.withinDisplaySupport
+                        && std::isfinite (sample.normalizedContribution)
                         ? juce::jlimit (0.0f, 1.0f, sample.normalizedContribution)
                         : 0.0f;
                     const float y = graphBottom
-                        - depth * juce::jlimit (0.0f, 1.0f, envelope.strength)
-                          * graphHeight * kEnvelopeHeightFrac;
+                        - depth * strength * graphHeight * kEnvelopeHeightFrac;
+
                     if (!started)
                     {
-                        path.startNewSubPath (x, graphBottom);
-                        path.lineTo (x, y);
+                        firstX = x;
+                        fillPath.startNewSubPath (x, graphBottom);
+                        fillPath.lineTo (x, y);
                         started = true;
                     }
                     else
+                        fillPath.lineTo (x, y);
+
+                    if (depth > kRidgeVisibilityFloor)
                     {
-                        path.lineTo (x, y);
+                        if (!ridgeActive)
+                            ridgePath.startNewSubPath (x, y);
+                        else
+                            ridgePath.lineTo (x, y);
+                        ridgeActive = true;
+                    }
+                    else
+                        ridgeActive = false;
+
+                    const bool deeper = depth > peakDepth;
+                    const bool tied = !deeper && ! (depth < peakDepth);
+                    if (deeper || (tied && depth > 0.0f && x < peakPoint.x))
+                    {
+                        peakDepth = depth;
+                        peakPoint = { x, y };
                     }
                     lastX = x;
                 }
                 if (!started)
                     continue;
-                path.lineTo (lastX, graphBottom);
-                path.closeSubPath();
+                fillPath.lineTo (lastX, graphBottom);
+                fillPath.lineTo (firstX, graphBottom);
+                fillPath.closeSubPath();
 
-                const float fillA = (envelope.primary ? 0.16f : 0.10f)
-                    * juce::jlimit (0.35f, 1.0f, envelope.strength) * a;
-                g.setColour (ModernLookAndFeel::Colors::amber.withAlpha (fillA));
-                g.fillPath (path);
+                const auto colour = ModernLookAndFeel::Colors::amber;
+                const float strengthAlpha = juce::jlimit (0.35f, 1.0f, strength);
+                const float topA = (envelope.primary ? 0.18f : 0.105f)
+                    * strengthAlpha * a;
+                const float bottomA = (envelope.primary ? 0.018f : 0.010f)
+                    * strengthAlpha * a;
+                const float envelopeTop = graphBottom
+                    - graphHeight * kEnvelopeHeightFrac * std::max (strength, 0.05f);
+
+                {
+                    juce::Graphics::ScopedSaveState state (g);
+                    juce::ColourGradient body (colour.withAlpha (topA), graphLeft, envelopeTop,
+                                               colour.withAlpha (bottomA), graphLeft, graphBottom,
+                                               false);
+                    g.setGradientFill (body);
+                    g.fillPath (fillPath);
+                }
+
+                if (!ridgePath.isEmpty())
+                {
+                    if (envelope.primary)
+                    {
+                        g.setColour (colour.withAlpha (0.055f * strengthAlpha * a));
+                        g.strokePath (ridgePath,
+                                      juce::PathStrokeType (4.0f,
+                                                            juce::PathStrokeType::curved,
+                                                            juce::PathStrokeType::rounded));
+                    }
+
+                    g.setColour (colour.withAlpha ((envelope.primary ? 0.42f : 0.22f)
+                                                   * strengthAlpha * a));
+                    g.strokePath (ridgePath,
+                                  juce::PathStrokeType (envelope.primary ? 1.15f : 0.85f,
+                                                        juce::PathStrokeType::curved,
+                                                        juce::PathStrokeType::rounded));
+                }
+
+                if (envelope.primary && peakDepth > kRidgeVisibilityFloor)
+                {
+                    constexpr float r = 2.2f;
+                    g.setColour (colour.withAlpha (0.16f * strengthAlpha * a));
+                    g.fillEllipse (peakPoint.x - r * 2.0f, peakPoint.y - r * 2.0f,
+                                   r * 4.0f, r * 4.0f);
+                    g.setColour (colour.withAlpha (0.78f * strengthAlpha * a));
+                    g.fillEllipse (peakPoint.x - r, peakPoint.y - r, r * 2.0f, r * 2.0f);
+                }
             }
         }
         else
