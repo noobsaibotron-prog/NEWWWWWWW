@@ -294,12 +294,15 @@ inline bool isPositiveFinite (float x) noexcept
     Peak: max normalizedContribution among withinDisplaySupport samples
     with finite positive frequency and weight; ties keep the lower frequency.
     Centroid: 2^(sum(w*log2(f))/sum(w)) over finite positive f and w.
-    Support: first/last such sample in envelope order.
-    Missing or non-finite support omits the anchor.
+    Support: min/max frequency among those samples (order-independent).
+    Missing, non-finite support, or non-finite strength omits the anchor.
 */
 inline std::optional<SemanticIntentAnchor> deriveSemanticIntentAnchor (
     const SemanticFocusEnvelope& envelope)
 {
+    if (! std::isfinite (envelope.strength))
+        return std::nullopt;
+
     float peakContribution = -1.0f;
     float peakFrequencyHz = 0.0f;
     bool havePeak = false;
@@ -323,9 +326,14 @@ inline std::optional<SemanticIntentAnchor> deriveSemanticIntentAnchor (
             if (! haveSupport)
             {
                 lowerSupportHz = f;
+                upperSupportHz = f;
                 haveSupport = true;
             }
-            upperSupportHz = f;
+            else
+            {
+                lowerSupportHz = std::min (lowerSupportHz, f);
+                upperSupportHz = std::max (upperSupportHz, f);
+            }
             weightSum += static_cast<double> (w);
             weightedLog2 += static_cast<double> (w) * std::log2 (static_cast<double> (f));
         }
@@ -343,7 +351,8 @@ inline std::optional<SemanticIntentAnchor> deriveSemanticIntentAnchor (
         }
     }
 
-    if (! havePeak || ! haveSupport || ! (weightSum > 0.0))
+    if (! havePeak || ! haveSupport || ! (weightSum > 0.0)
+        || ! (lowerSupportHz <= upperSupportHz))
         return std::nullopt;
 
     const float centroidFrequencyHz = static_cast<float> (std::exp2 (weightedLog2 / weightSum));

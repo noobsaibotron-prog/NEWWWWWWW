@@ -85,9 +85,14 @@ AttestedAnchorExpect attestedAnchorExpect (const SemanticPlan& plan, const std::
             if (! out.valid)
             {
                 out.lowerHz = f;
+                out.upperHz = f;
                 out.valid = true;
             }
-            out.upperHz = f;
+            else
+            {
+                out.lowerHz = std::min (out.lowerHz, f);
+                out.upperHz = std::max (out.upperHz, f);
+            }
             weightSum += static_cast<double> (w);
             weightedLog2 += static_cast<double> (w) * std::log2 (static_cast<double> (f));
         }
@@ -556,6 +561,48 @@ public:
                 (1.0 * std::log2 (500.0) + 0.5 * std::log2 (4000.0)) / 1.5);
             expectWithinAbsoluteError (mixedAnchor.centroidFrequencyHz,
                                       static_cast<float> (expectedCentroid), 1.0e-3f);
+        }
+
+        beginTest ("support bounds are min/max Hz and ignore sample order");
+        {
+            const auto plan = makeMagnitudePlan (
+                SemanticDimension::Brightness, SemanticSpectralFocus::Air, 0.9f,
+                { 4000.0f, 2000.0f, 500.0f },
+                { 0.4f, 0.0f, 0.8f });
+            const auto state = buildSemanticIntentMapState (plan);
+            expectEquals ((int) state.intentAnchors.size(), 1);
+            const auto& anchor = state.intentAnchors.front();
+            expectWithinAbsoluteError (anchor.lowerSupportHz, 500.0f, 1.0e-4f);
+            expectWithinAbsoluteError (anchor.upperSupportHz, 4000.0f, 1.0e-4f);
+            expect (anchor.lowerSupportHz <= anchor.upperSupportHz);
+            expectWithinAbsoluteError (anchor.peakFrequencyHz, 500.0f, 1.0e-4f);
+        }
+
+        beginTest ("non-finite envelope strength omits the anchor fail-closed");
+        {
+            const auto plan = makeMagnitudePlan (
+                SemanticDimension::Warmth, SemanticSpectralFocus::LowMid, 0.9f,
+                { 250.0f, 500.0f, 1000.0f },
+                { 0.4f, 0.8f, 0.3f });
+            const auto state = buildSemanticIntentMapState (plan);
+            expectEquals ((int) state.focusEnvelopes.size(), 1);
+            expectEquals ((int) state.intentAnchors.size(), 1);
+            expect (std::isfinite (state.intentAnchors.front().strength));
+
+            auto poisoned = state.focusEnvelopes.front();
+            poisoned.strength = std::numeric_limits<float>::quiet_NaN();
+            expect (! detail::deriveSemanticIntentAnchor (poisoned).has_value(),
+                    "NaN strength must not leak into the renderer");
+
+            poisoned.strength = std::numeric_limits<float>::infinity();
+            expect (! detail::deriveSemanticIntentAnchor (poisoned).has_value(),
+                    "Inf strength must not leak into the renderer");
+
+            poisoned.strength = 0.6f;
+            const auto restored = detail::deriveSemanticIntentAnchor (poisoned);
+            expect (restored.has_value());
+            if (restored.has_value())
+                expectWithinAbsoluteError (restored->strength, 0.6f, 1.0e-6f);
         }
     }
 
