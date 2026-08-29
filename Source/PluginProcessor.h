@@ -470,7 +470,7 @@ public:
     void setUserProtectedRanges(std::vector<AIEQPerceptual::SemanticProtectedRange> ranges);
     bool addUserProtectedRange(AIEQPerceptual::SemanticProtectedRange range);
     bool removeUserProtectedRangeContaining(float frequencyHz);
-    void clearUserProtectedRanges() noexcept;
+    void clearUserProtectedRanges();
     [[nodiscard]] std::vector<AIEQPerceptual::SemanticProtectedRange> getUserProtectedRanges() const;
 
     /** VPA-1.1: selector is CommittedA until preview transport exists.
@@ -1008,7 +1008,11 @@ private:
     std::array<BandState, maxBands> semanticBandLastAppliedStates {};
     int semanticOriginalActiveBandCount = -1;
     int semanticLastRequestedActiveBandCount = -1;
+    // Host state restore may clear these while an open editor is painting or
+    // taking a PLAN snapshot. This lock is never acquired by processBlock.
+    mutable std::mutex userProtectedRangesMutex;
     std::vector<AIEQPerceptual::SemanticProtectedRange> userProtectedRanges;
+    std::size_t nextUserProtectedRangeId = 0;
     
     //==============================================================================
     // Utilities

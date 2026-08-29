@@ -529,6 +529,14 @@ public:
     void textEditorEscapeKeyPressed(juce::TextEditor&) override {}
     void textEditorFocusLost(juce::TextEditor&) override {}
 
+    /** A user safety fence changed after a PLAN snapshot. The reviewed or
+        in-flight plan is no longer authoritative and must not remain APPLYable. */
+    void userProtectedRangesChanged()
+    {
+        invalidatePendingTextPlan();
+        clearResponseStrip();
+    }
+
 private:
     //==========================================================================
     // UI-A1 chips are labels for existing planner/apply outcomes, not new copy.

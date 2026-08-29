@@ -75,6 +75,8 @@ public:
             disableAllBands (proc);
             AdvancedSpectrumDisplay display (proc);
             layoutDisplay (display);
+            int changeNotifications = 0;
+            display.onUserProtectedRangesChanged = [&] { ++changeNotifications; };
             const auto graph = display.getGraphBoundsF();
             expect (graph.getWidth() > 100.0f);
 
@@ -93,6 +95,7 @@ public:
 
             const auto ranges = proc.getUserProtectedRanges();
             expectEquals ((int) ranges.size(), 1);
+            expectEquals (changeNotifications, 1);
             if (! ranges.empty())
             {
                 expectWithinAbsoluteError (ranges.front().minFrequencyHz, 8000.0f, 400.0f);
@@ -110,6 +113,8 @@ public:
             disableAllBands (proc);
             AdvancedSpectrumDisplay display (proc);
             layoutDisplay (display);
+            int changeNotifications = 0;
+            display.onUserProtectedRangesChanged = [&] { ++changeNotifications; };
             const auto graph = display.getGraphBoundsF();
             const auto from = juce::Point<float> (hzToX (graph, 200.0f), graph.getCentreY());
             const auto to   = juce::Point<float> (hzToX (graph, 2000.0f), graph.getCentreY());
@@ -118,6 +123,7 @@ public:
             display.mouseUp (makeEvent (display, to, plainLeft(), from, true));
             expect (proc.getUserProtectedRanges().empty());
             expect (! display.isDraggingProtect);
+            expectEquals (changeNotifications, 0);
         }
 
         beginTest ("Cmd/Ctrl+drag on a node still moves the band, not the fence");
@@ -134,6 +140,8 @@ public:
 
             AdvancedSpectrumDisplay display (proc);
             layoutDisplay (display);
+            int changeNotifications = 0;
+            display.onUserProtectedRangesChanged = [&] { ++changeNotifications; };
             const auto graph = display.getGraphBoundsF();
             const auto node = juce::Point<float> (hzToX (graph, 1000.0f), graph.getCentreY());
             const auto dragged = juce::Point<float> (node.x + 80.0f, node.y);
@@ -147,6 +155,7 @@ public:
 
             expect (proc.getUserProtectedRanges().empty());
             expect (proc.getBandState (0).frequency > 1000.0f);
+            expectEquals (changeNotifications, 0);
         }
 
         beginTest ("Cmd/Ctrl+click on an existing fence removes it");
@@ -161,11 +170,14 @@ public:
 
             AdvancedSpectrumDisplay display (proc);
             layoutDisplay (display);
+            int changeNotifications = 0;
+            display.onUserProtectedRangesChanged = [&] { ++changeNotifications; };
             const auto graph = display.getGraphBoundsF();
             const auto click = juce::Point<float> (hzToX (graph, 12000.0f), graph.getCentreY());
             display.mouseDown (makeEvent (display, click, commandLeft(), click, false));
             display.mouseUp (makeEvent (display, click, commandLeft(), click, false));
             expect (proc.getUserProtectedRanges().empty());
+            expectEquals (changeNotifications, 1);
         }
 
         beginTest ("tiny Cmd/Ctrl+click on empty graph is a no-op");
@@ -180,6 +192,30 @@ public:
             display.mouseDown (makeEvent (display, click, commandLeft(), click, false));
             display.mouseUp (makeEvent (display, click, commandLeft(), click, false));
             expect (proc.getUserProtectedRanges().empty());
+        }
+
+        beginTest ("Escape cancels an in-progress fence without publishing a change");
+        {
+            Processor proc;
+            proc.prepareToPlay (kSr, kBlock);
+            disableAllBands (proc);
+            AdvancedSpectrumDisplay display (proc);
+            layoutDisplay (display);
+            int changeNotifications = 0;
+            display.onUserProtectedRangesChanged = [&] { ++changeNotifications; };
+            const auto graph = display.getGraphBoundsF();
+            const auto from = juce::Point<float> (hzToX (graph, 500.0f), graph.getCentreY());
+            const auto to   = juce::Point<float> (hzToX (graph, 5000.0f), graph.getCentreY());
+
+            display.mouseDown (makeEvent (display, from, commandLeft(), from, false));
+            display.mouseDrag (makeEvent (display, to, commandLeft(), from, true));
+            expect (display.isDraggingProtect);
+            expect (display.keyPressed (juce::KeyPress (juce::KeyPress::escapeKey)));
+            expect (! display.isDraggingProtect);
+            display.mouseUp (makeEvent (display, to, commandLeft(), from, true));
+
+            expect (proc.getUserProtectedRanges().empty());
+            expectEquals (changeNotifications, 0);
         }
     }
 };

@@ -5860,22 +5860,60 @@ AIEQPerceptual::SemanticProtectedRange sanitizeUserProtectedRange(
 void AIEqualizerAudioProcessor::setUserProtectedRanges(
     std::vector<AIEQPerceptual::SemanticProtectedRange> ranges)
 {
+    const std::lock_guard<std::mutex> lock(userProtectedRangesMutex);
     userProtectedRanges.clear();
+
     for (auto& range : ranges)
-        (void) addUserProtectedRange(std::move(range));
+    {
+        if (userProtectedRanges.size() >= static_cast<std::size_t>(kMaxUserProtectedRanges))
+            break;
+
+        auto copy = sanitizeUserProtectedRange(std::move(range));
+        if (! copy.isValid())
+            continue;
+
+        const auto sourceIdExists = [&] (const std::string& sourceId)
+        {
+            return std::any_of(userProtectedRanges.begin(), userProtectedRanges.end(),
+                               [&] (const auto& existing) { return existing.sourceId == sourceId; });
+        };
+        if (copy.sourceId.empty() || sourceIdExists(copy.sourceId))
+        {
+            do
+            {
+                copy.sourceId = AIEQPerceptual::makeUserProtectSourceId(nextUserProtectedRangeId++);
+            }
+            while (sourceIdExists(copy.sourceId));
+        }
+
+        userProtectedRanges.push_back(std::move(copy));
+    }
 }
 
 bool AIEqualizerAudioProcessor::addUserProtectedRange(
     AIEQPerceptual::SemanticProtectedRange range)
 {
+    const std::lock_guard<std::mutex> lock(userProtectedRangesMutex);
     if (userProtectedRanges.size() >= static_cast<std::size_t>(kMaxUserProtectedRanges))
         return false;
 
     auto copy = sanitizeUserProtectedRange(std::move(range));
     if (! copy.isValid())
         return false;
-    if (copy.sourceId.empty())
-        copy.sourceId = AIEQPerceptual::makeUserProtectSourceId(userProtectedRanges.size());
+    const auto sourceIdExists = [&] (const std::string& sourceId)
+    {
+        return std::any_of(userProtectedRanges.begin(), userProtectedRanges.end(),
+                           [&] (const auto& existing) { return existing.sourceId == sourceId; });
+    };
+    if (copy.sourceId.empty() || sourceIdExists(copy.sourceId))
+    {
+        do
+        {
+            copy.sourceId = AIEQPerceptual::makeUserProtectSourceId(nextUserProtectedRangeId++);
+        }
+        while (sourceIdExists(copy.sourceId));
+    }
+
     userProtectedRanges.push_back(std::move(copy));
     return true;
 }
@@ -5885,6 +5923,7 @@ bool AIEqualizerAudioProcessor::removeUserProtectedRangeContaining(float frequen
     if (! std::isfinite(frequencyHz))
         return false;
 
+    const std::lock_guard<std::mutex> lock(userProtectedRangesMutex);
     for (auto it = userProtectedRanges.begin(); it != userProtectedRanges.end(); ++it)
     {
         if (frequencyHz >= it->minFrequencyHz && frequencyHz <= it->maxFrequencyHz)
@@ -5896,14 +5935,16 @@ bool AIEqualizerAudioProcessor::removeUserProtectedRangeContaining(float frequen
     return false;
 }
 
-void AIEqualizerAudioProcessor::clearUserProtectedRanges() noexcept
+void AIEqualizerAudioProcessor::clearUserProtectedRanges()
 {
+    const std::lock_guard<std::mutex> lock(userProtectedRangesMutex);
     userProtectedRanges.clear();
 }
 
 std::vector<AIEQPerceptual::SemanticProtectedRange>
 AIEqualizerAudioProcessor::getUserProtectedRanges() const
 {
+    const std::lock_guard<std::mutex> lock(userProtectedRangesMutex);
     return userProtectedRanges;
 }
 

@@ -164,6 +164,11 @@ AIEqualizerAudioProcessorEditor::AIEqualizerAudioProcessorEditor(AIEqualizerAudi
     {
         return processor.getUserProtectedRanges();
     };
+    spectrum->onUserProtectedRangesChanged = [this]()
+    {
+        if (semanticPanel)
+            semanticPanel->userProtectedRangesChanged();
+    };
 
     semanticPanel->onTextPlanApply = [this](
         const std::vector<SemanticEQEngine::SemanticEQAdjustment>& adjustments)

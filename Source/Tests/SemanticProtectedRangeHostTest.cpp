@@ -10,6 +10,8 @@
 #include "../GUI/SemanticIntentMap.h"
 #include "Support/TestParameters.h"
 
+#include <set>
+#include <thread>
 #include <vector>
 
 namespace
@@ -116,6 +118,69 @@ public:
                     "restore must drop user Hz fences rather than reconstruct them");
         }
 
+        beginTest ("add-remove-add keeps user protect source IDs unique");
+        {
+            Processor proc;
+            proc.prepareToPlay (kSr, kBlock);
+            for (int i = 0; i < 3; ++i)
+            {
+                auto range = airFence();
+                range.minFrequencyHz = 100.0f + 200.0f * static_cast<float> (i);
+                range.maxFrequencyHz = range.minFrequencyHz + 100.0f;
+                expect (proc.addUserProtectedRange (range));
+            }
+
+            const auto before = proc.getUserProtectedRanges();
+            expectEquals ((int) before.size(), 3);
+            expect (proc.removeUserProtectedRangeContaining (350.0f));
+
+            auto replacement = airFence();
+            replacement.minFrequencyHz = 2000.0f;
+            replacement.maxFrequencyHz = 3000.0f;
+            expect (proc.addUserProtectedRange (replacement));
+
+            const auto after = proc.getUserProtectedRanges();
+            std::set<std::string> ids;
+            for (const auto& range : after)
+                ids.insert (range.sourceId);
+            expectEquals ((int) after.size(), 3);
+            expectEquals ((int) ids.size(), (int) after.size(),
+                          "traceability IDs must not be reused after erasing a middle range");
+        }
+
+        beginTest ("host/message snapshots remain valid during concurrent RAM fence changes");
+        {
+            Processor proc;
+            proc.prepareToPlay (kSr, kBlock);
+            std::atomic<bool> stop { false };
+            std::atomic<bool> malformed { false };
+
+            std::thread reader ([&]
+            {
+                while (! stop.load())
+                {
+                    const auto snapshot = proc.getUserProtectedRanges();
+                    if (snapshot.size() > static_cast<std::size_t> (Processor::kMaxUserProtectedRanges))
+                        malformed.store (true);
+                    for (const auto& range : snapshot)
+                        if (! range.isValid())
+                            malformed.store (true);
+                }
+            });
+
+            for (int i = 0; i < 500; ++i)
+            {
+                proc.clearUserProtectedRanges();
+                auto range = airFence();
+                range.minFrequencyHz = 100.0f + static_cast<float> (i % 100);
+                range.maxFrequencyHz = range.minFrequencyHz + 100.0f;
+                expect (proc.addUserProtectedRange (range));
+            }
+            stop.store (true);
+            reader.join();
+            expect (! malformed.load());
+        }
+
         beginTest ("PLAN snapshots processor fences only through the panel callback");
         {
             Processor proc;
@@ -186,6 +251,31 @@ public:
                     }
                 }
                 expect (sawUser, "wired PLAN must project the processor fence");
+            }
+        }
+
+        beginTest ("changing a safety fence invalidates a reviewed PLAN before APPLY");
+        {
+            SemanticEQEngine engine;
+            SemanticControlPanel panel (engine);
+            panel.setSampleRate (kSr);
+            auto* input = dynamic_cast<juce::TextEditor*> (
+                panel.findChildWithID ("semanticCommandInput"));
+            auto* planButton = dynamic_cast<juce::TextButton*> (
+                panel.findChildWithID ("semanticPlanButton"));
+            expect (input != nullptr && planButton != nullptr);
+            if (input != nullptr && planButton != nullptr)
+            {
+                input->setText ("more air", juce::dontSendNotification);
+                planButton->onClick();
+                EmberUI::SemanticIntentMapState lastMap;
+                panel.onIntentMapChanged = [&] (const auto& state) { lastMap = state; };
+                expect (waitForPlanMap (panel, lastMap, EmberUI::SemanticIntentMapPhase::Ready));
+                expect (planButton->getButtonText() == "APPLY");
+
+                panel.userProtectedRangesChanged();
+                expect (planButton->getButtonText() == "PLAN");
+                expect (lastMap.phase == EmberUI::SemanticIntentMapPhase::Hidden);
             }
         }
 

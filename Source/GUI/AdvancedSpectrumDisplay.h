@@ -39,6 +39,7 @@ public:
     std::function<void(int)> onBandSelected;                          // Single click on band
     std::function<void(int, float, float)> onBandCreatedOrActivated;  // Double click: band index, freq, gain
     std::function<void(int, float, float, float)> onBandDragged;      // Drag: band, freq, gain, q
+    std::function<void()> onUserProtectedRangesChanged;
 
     void setSemanticIntentMap (EmberUI::SemanticIntentMapState state)
     {
@@ -1083,17 +1084,21 @@ public:
             const float spanPx = std::abs(x1 - x0);
             isDraggingProtect = false;
 
+            bool changed = false;
             if (spanPx < kMinProtectDragPx)
             {
-                (void) processor.removeUserProtectedRangeContaining(xToFreq(x0));
+                changed = processor.removeUserProtectedRangeContaining(xToFreq(x0));
             }
             else
             {
                 AIEQPerceptual::SemanticProtectedRange range;
                 range.minFrequencyHz = xToFreq(std::min(x0, x1));
                 range.maxFrequencyHz = xToFreq(std::max(x0, x1));
-                (void) processor.addUserProtectedRange(std::move(range));
+                changed = processor.addUserProtectedRange(std::move(range));
             }
+
+            if (changed && onUserProtectedRangesChanged)
+                onUserProtectedRangesChanged();
 
             repaint();
             return;
@@ -1105,6 +1110,13 @@ public:
 
     bool keyPressed(const juce::KeyPress& key) override
     {
+        if (key == juce::KeyPress::escapeKey && isDraggingProtect)
+        {
+            isDraggingProtect = false;
+            repaint();
+            return true;
+        }
+
         // Keyboard users retain the platform-native menu, whose semantics and
         // accessibility are provided by JUCE.  The radial menu remains a fast
         // pointer/marking-menu surface rather than replacing that fallback.
