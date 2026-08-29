@@ -1457,6 +1457,7 @@ if(HAVE_JUCE)
         Source/Tests/PluginExternalSidechainIntegrationTest.cpp
         Source/Tests/BandControlPanelTest.cpp
         Source/Tests/BandRadialMenuTest.cpp
+        Source/Tests/BandDragMouseUpTest.cpp
         Source/Tests/AnalyzerContextMenuTest.cpp
         Source/Tests/RBValidationTest.cpp
         Source/Tests/RB4BehavioralTest.cpp

@@ -1061,6 +1061,13 @@ public:
     
     void mouseUp(const juce::MouseEvent& e) override
     {
+        // Always end a band-drag session first. The radial marking path, the
+        // tilt-drag path, and the protect-fence path all return early; leaving
+        // isDraggingBand set made mouseDown refuse a new drag while mouseDrag
+        // still moved the original band (left-drag + right-click chord).
+        isDraggingBand = false;
+        draggedBandIndex = -1;
+
         // On macOS JUCE no longer reports rightButtonDown on the release event.
         // The menu therefore owns the gesture explicitly instead of inferring
         // it again from mouse-up modifiers.
@@ -1103,9 +1110,6 @@ public:
             repaint();
             return;
         }
-
-        isDraggingBand = false;
-        draggedBandIndex = -1;
     }
 
     bool keyPressed(const juce::KeyPress& key) override
