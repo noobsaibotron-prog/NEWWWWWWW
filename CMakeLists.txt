@@ -1491,6 +1491,7 @@ if(HAVE_JUCE)
         Source/Tests/SpectralContextAlwaysOnCostTest.cpp
         Source/Tests/SemanticPlanningContextTest.cpp
         Source/Tests/SemanticProtectedRangeHostTest.cpp
+        Source/Tests/SemanticProtectedRangeGestureTest.cpp
         Source/Tests/AIHeadlessDetectionParityTest.cpp
         Source/Tests/AIHeadlessPositiveBackendWitnessTest.cpp
         Source/Tests/AICaptureDisabledWitnessTest.cpp

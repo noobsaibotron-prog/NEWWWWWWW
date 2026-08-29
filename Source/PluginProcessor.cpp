@@ -5839,6 +5839,74 @@ void AIEqualizerAudioProcessor::clearSemanticBandProvenance() noexcept
     semanticLastRequestedActiveBandCount = -1;
 }
 
+namespace
+{
+AIEQPerceptual::SemanticProtectedRange sanitizeUserProtectedRange(
+    AIEQPerceptual::SemanticProtectedRange range)
+{
+    if (range.maxFrequencyHz < range.minFrequencyHz)
+        std::swap(range.minFrequencyHz, range.maxFrequencyHz);
+    range.minFrequencyHz = juce::jlimit(20.0f, 20000.0f, range.minFrequencyHz);
+    range.maxFrequencyHz = juce::jlimit(20.0f, 20000.0f, range.maxFrequencyHz);
+    if (! std::isfinite(range.maxAbsDeltaDb) || range.maxAbsDeltaDb < 0.0f)
+        range.maxAbsDeltaDb = 0.25f;
+    if (! std::isfinite(range.confidence))
+        range.confidence = 1.0f;
+    range.confidence = juce::jlimit(0.0f, 1.0f, range.confidence);
+    return range;
+}
+}
+
+void AIEqualizerAudioProcessor::setUserProtectedRanges(
+    std::vector<AIEQPerceptual::SemanticProtectedRange> ranges)
+{
+    userProtectedRanges.clear();
+    for (auto& range : ranges)
+        (void) addUserProtectedRange(std::move(range));
+}
+
+bool AIEqualizerAudioProcessor::addUserProtectedRange(
+    AIEQPerceptual::SemanticProtectedRange range)
+{
+    if (userProtectedRanges.size() >= static_cast<std::size_t>(kMaxUserProtectedRanges))
+        return false;
+
+    auto copy = sanitizeUserProtectedRange(std::move(range));
+    if (! copy.isValid())
+        return false;
+    if (copy.sourceId.empty())
+        copy.sourceId = AIEQPerceptual::makeUserProtectSourceId(userProtectedRanges.size());
+    userProtectedRanges.push_back(std::move(copy));
+    return true;
+}
+
+bool AIEqualizerAudioProcessor::removeUserProtectedRangeContaining(float frequencyHz)
+{
+    if (! std::isfinite(frequencyHz))
+        return false;
+
+    for (auto it = userProtectedRanges.begin(); it != userProtectedRanges.end(); ++it)
+    {
+        if (frequencyHz >= it->minFrequencyHz && frequencyHz <= it->maxFrequencyHz)
+        {
+            userProtectedRanges.erase(it);
+            return true;
+        }
+    }
+    return false;
+}
+
+void AIEqualizerAudioProcessor::clearUserProtectedRanges() noexcept
+{
+    userProtectedRanges.clear();
+}
+
+std::vector<AIEQPerceptual::SemanticProtectedRange>
+AIEqualizerAudioProcessor::getUserProtectedRanges() const
+{
+    return userProtectedRanges;
+}
+
 bool AIEqualizerAudioProcessor::isAuditionContextOnlyParameter(const juce::String& parameterID) noexcept
 {
     return parameterID == "dryWet"
@@ -6603,6 +6671,7 @@ void AIEqualizerAudioProcessor::setStateInformation(const void* data, int sizeIn
             // malformed future states leave both APVTS and A/B slots untouched.
             apvts.replaceState(candidateState);
             clearSemanticBandProvenance();
+            clearUserProtectedRanges();
 
             // FIX: Force parameter listeners to fire so the UI EQ curve updates.
             // replaceState() only swaps the tree without calling updateParameterConnectionsToChildTrees,

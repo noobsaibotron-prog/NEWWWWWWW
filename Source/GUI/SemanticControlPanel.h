@@ -71,6 +71,10 @@ public:
         invalid context already means downstream. */
     std::function<std::optional<AIEQPerceptual::SpectralContext>()> onRequestSpectralContext;
 
+    /** Message-thread snapshot of user Hz fences at PLAN. Unset means none.
+        The panel must not read the processor or the graph. */
+    std::function<std::vector<AIEQPerceptual::SemanticProtectedRange>()> onRequestProtectedRanges;
+
     // Supplies the current smoothed dB spectrum (analyzer format: numBins,
     // dB values) for the engine's context-aware mapping. Wired by the editor;
     // when unset the engine falls back to context-neutral behaviour (A3 fix —
@@ -127,10 +131,12 @@ public:
         commandInput.setColour(juce::TextEditor::outlineColourId, ModernLookAndFeel::Colors::bgLighter);
         commandInput.setColour(juce::TextEditor::focusedOutlineColourId, ModernLookAndFeel::Colors::accentYellow);
         commandInput.addListener(this);
+        commandInput.setComponentID("semanticCommandInput");
         addAndMakeVisible(commandInput);
         
         // Apply button for text input
         applyButton.setButtonText("PLAN");
+        applyButton.setComponentID("semanticPlanButton");
         applyButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xFF2D5A27));
         applyButton.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
         applyButton.onClick = [this]() { applyTextCommand(); };
@@ -779,10 +785,15 @@ private:
             if (auto snapshot = onRequestSpectralContext())
                 contextSnapshot = *snapshot;
 
+        std::vector<AIEQPerceptual::SemanticProtectedRange> protectedSnapshot;
+        if (onRequestProtectedRanges)
+            protectedSnapshot = onRequestProtectedRanges();
+
         pendingGeneration = planningService.submit(text.toStdString(),
                                                    semanticEngine.getIntensity(),
                                                    currentSampleRate,
-                                                   contextSnapshot);
+                                                   contextSnapshot,
+                                                   std::move(protectedSnapshot));
         planningText = text;
         planningUiState = AIEQPerceptual::SemanticPlanningUiState::Planning;
         applyButton.setButtonText("PLAN");

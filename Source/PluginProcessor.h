@@ -463,6 +463,16 @@ public:
         under bandStatesEquivalent. Message-thread. Not persisted. */
     [[nodiscard]] bool isSemanticManagedBand(int bandIndex) const noexcept;
 
+    /** User-authored Hz fences for Semantic planning. Message-thread. RAM only:
+        session restore fail-closes rather than reconstructing them. The graph
+        writes here; PLAN snapshots the copy into SemanticPlanningRequest. */
+    static constexpr int kMaxUserProtectedRanges = 8;
+    void setUserProtectedRanges(std::vector<AIEQPerceptual::SemanticProtectedRange> ranges);
+    bool addUserProtectedRange(AIEQPerceptual::SemanticProtectedRange range);
+    bool removeUserProtectedRangeContaining(float frequencyHz);
+    void clearUserProtectedRanges() noexcept;
+    [[nodiscard]] std::vector<AIEQPerceptual::SemanticProtectedRange> getUserProtectedRanges() const;
+
     /** VPA-1.1: selector is CommittedA until preview transport exists.
         effectiveActiveBandCount then equals committed numActiveBands. */
     [[nodiscard]] EmberDSP::EffectiveDSPSource getEffectiveDSPSource() const noexcept;
@@ -998,6 +1008,7 @@ private:
     std::array<BandState, maxBands> semanticBandLastAppliedStates {};
     int semanticOriginalActiveBandCount = -1;
     int semanticLastRequestedActiveBandCount = -1;
+    std::vector<AIEQPerceptual::SemanticProtectedRange> userProtectedRanges;
     
     //==============================================================================
     // Utilities

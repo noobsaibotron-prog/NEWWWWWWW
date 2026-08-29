@@ -32,6 +32,7 @@
 class AdvancedSpectrumDisplay : public juce::Component, public juce::Timer
 {
     friend class EQGraphFluidityTest; // Performance test access
+    friend class SemanticProtectedRangeGestureTest;
 public:
     // Callbacks for band interaction
     std::function<void(float)> onFrequencySelected;
@@ -305,6 +306,7 @@ public:
         g.reduceClipRegion(getLocalBounds());
 
         auto bounds = getLocalBounds().toFloat();
+        refreshGraphBounds();
 
         // === PREMIUM BACKGROUND — subtle vertical gradient ===
         {
@@ -315,11 +317,6 @@ public:
             g.setGradientFill(bgGrad);
             g.fillRoundedRectangle(bounds, 4.0f);
         }
-
-        // Graph area
-        graphBounds = bounds.reduced(45, 25);
-        graphBounds.removeFromBottom(22);
-        graphBounds.removeFromLeft(5);
 
         // Subtle inner shadow at top of graph area
         {
@@ -343,6 +340,7 @@ public:
         g.drawImageAt(gridCache, 0, 0);
 
         drawSemanticIntentMap(g);
+        drawUserProtectedRanges(g);
 
 #if AIEQ_GUI_DEBUG
         tBg = lap() - t0; t0 = lap();
@@ -502,6 +500,7 @@ public:
         clearButton.setBounds(startX + (btnW + gap) * 2 + btnW + 10 + gap, startY, 50, btnH);
         bandRadialMenu.setBounds(getLocalBounds());
         analyzerContextMenu.setBounds(getLocalBounds());
+        refreshGraphBounds();
     }
     
     void timerCallback() override
@@ -972,6 +971,13 @@ public:
 
             repaint();
         }
+        else if (isProtectModifier(e))
+        {
+            isDraggingProtect = true;
+            protectDragStartX = e.position.x;
+            protectDragCurrentX = e.position.x;
+            repaint();
+        }
         else
         {
             if (hoveredPeakIndex >= 0 && hoveredPeakIndex < static_cast<int>(detectedPeaks.size()))
@@ -1001,6 +1007,13 @@ public:
             const float sensitivity = 0.04f; // dB/oct per pixel
             float newTilt = juce::jlimit(0.0f, 8.0f, tiltDragStartValue + deltaY * sensitivity);
             setFloatParameter("spectrumTilt", newTilt);
+            repaint();
+            return;
+        }
+
+        if (isDraggingProtect)
+        {
+            protectDragCurrentX = e.position.x;
             repaint();
             return;
         }
@@ -1062,6 +1075,30 @@ public:
             repaint();
             return;
         }
+
+        if (isDraggingProtect)
+        {
+            const float x0 = protectDragStartX;
+            const float x1 = protectDragCurrentX;
+            const float spanPx = std::abs(x1 - x0);
+            isDraggingProtect = false;
+
+            if (spanPx < kMinProtectDragPx)
+            {
+                (void) processor.removeUserProtectedRangeContaining(xToFreq(x0));
+            }
+            else
+            {
+                AIEQPerceptual::SemanticProtectedRange range;
+                range.minFrequencyHz = xToFreq(std::min(x0, x1));
+                range.maxFrequencyHz = xToFreq(std::max(x0, x1));
+                (void) processor.addUserProtectedRange(std::move(range));
+            }
+
+            repaint();
+            return;
+        }
+
         isDraggingBand = false;
         draggedBandIndex = -1;
     }
@@ -2530,6 +2567,39 @@ private:
         }
     }
 
+    void drawUserProtectedRanges (juce::Graphics& g)
+    {
+        if (graphBounds.isEmpty())
+            return;
+
+        auto fillFence = [&] (float minHz, float maxHz, bool draft)
+        {
+            float xL = juce::jlimit (graphBounds.getX(), graphBounds.getRight(), freqToX (minHz));
+            float xH = juce::jlimit (graphBounds.getX(), graphBounds.getRight(), freqToX (maxHz));
+            if (xH < xL)
+                std::swap (xL, xH);
+            if (xH - xL < 2.0f)
+                return;
+
+            auto zone = juce::Rectangle<float> (xL, graphBounds.getY(),
+                                                xH - xL, graphBounds.getHeight());
+            const auto colour = juce::Colour (0xFF3D6A7A);
+            g.setColour (colour.withAlpha (draft ? 0.16f : 0.10f));
+            g.fillRect (zone);
+            g.setColour (colour.withAlpha (draft ? 0.60f : 0.42f));
+            g.fillRect (juce::Rectangle<float> (xL, zone.getY(), 1.5f, zone.getHeight()));
+            g.fillRect (juce::Rectangle<float> (xH - 1.5f, zone.getY(), 1.5f, zone.getHeight()));
+        };
+
+        for (const auto& range : processor.getUserProtectedRanges())
+            fillFence (range.minFrequencyHz, range.maxFrequencyHz, false);
+
+        if (isDraggingProtect)
+            fillFence (xToFreq (std::min (protectDragStartX, protectDragCurrentX)),
+                       xToFreq (std::max (protectDragStartX, protectDragCurrentX)),
+                       true);
+    }
+
     void drawSemanticIntentBandLinks (juce::Graphics& g)
     {
         if (!semanticIntentMapPresentationEnabled
@@ -3372,6 +3442,18 @@ public:
     }
 
     // Conversions
+    void refreshGraphBounds()
+    {
+        graphBounds = getLocalBounds().toFloat().reduced(45, 25);
+        graphBounds.removeFromBottom(22);
+        graphBounds.removeFromLeft(5);
+    }
+
+    [[nodiscard]] static bool isProtectModifier(const juce::MouseEvent& e)
+    {
+        return e.mods.isCommandDown() && !e.mods.isAltDown() && !e.mods.isPopupMenu();
+    }
+
     float freqToX(float f) const {
         float logMin = std::log10(20.0f), logMax = std::log10(20000.0f);
         float p = (std::log10(juce::jlimit(20.0f, 20000.0f, f)) - logMin) / (logMax - logMin);
@@ -3818,6 +3900,10 @@ private:
     int selectedBandIndex = 0;      // Currently selected band
     int hoveredBandIndex = -1;      // Band under mouse cursor
     bool isDraggingBand = false;    // Currently dragging a band
+    bool isDraggingProtect = false; // Cmd/Ctrl+drag empty graph → user Hz fence
+    float protectDragStartX = 0.0f;
+    float protectDragCurrentX = 0.0f;
+    static constexpr float kMinProtectDragPx = 8.0f;
     juce::Point<float> dragStartPos;
     float dragStartFreq = 0.0f;
     float dragStartGain = 0.0f;

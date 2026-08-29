@@ -160,6 +160,10 @@ AIEqualizerAudioProcessorEditor::AIEqualizerAudioProcessorEditor(AIEqualizerAudi
     {
         return processor.getSpectralContextSnapshot();
     };
+    semanticPanel->onRequestProtectedRanges = [this]()
+    {
+        return processor.getUserProtectedRanges();
+    };
 
     semanticPanel->onTextPlanApply = [this](
         const std::vector<SemanticEQEngine::SemanticEQAdjustment>& adjustments)
