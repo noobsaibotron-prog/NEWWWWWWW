@@ -1079,31 +1079,7 @@ private:
         bool dynEqEnabled = true;
         float dynEqMix = 100.0f;
         bool dynAutoMakeup = false;
-        int numActiveBands = 8;
         juce::String name;
-
-        // RAM-only Semantic claim for this comparison slot. Not serialized:
-        // session restore still fail-closes via clearSemanticBandProvenance().
-        std::array<std::array<int, kMaxSemanticBandSlots>,
-                   SemanticEQEngine::numQualities> semanticAssignments {};
-        std::array<bool, maxBands> semanticOwned {};
-        std::array<bool, maxBands> semanticHasSnapshot {};
-        std::array<BandState, maxBands> semanticOriginalStates {};
-        std::array<BandState, maxBands> semanticLastAppliedStates {};
-        int semanticOriginalActiveBandCount = -1;
-        int semanticLastRequestedActiveBandCount = -1;
-
-        void clearSemanticProvenance() noexcept
-        {
-            for (auto& perQuality : semanticAssignments)
-                perQuality.fill(-1);
-            semanticOwned.fill(false);
-            semanticHasSnapshot.fill(false);
-            semanticOriginalStates = {};
-            semanticLastAppliedStates = {};
-            semanticOriginalActiveBandCount = -1;
-            semanticLastRequestedActiveBandCount = -1;
-        }
     };
     
     // slotMutex_ guards ALL reads/writes to slotA..D and their fields.
@@ -1112,8 +1088,6 @@ private:
     mutable std::recursive_mutex slotMutex_;
     EQSlot slotA, slotB, slotC, slotD;
     std::atomic<ABState> currentABState { ABState::A };
-    void captureSemanticProvenanceToSlot(EQSlot& slot) const noexcept;
-    void restoreSemanticProvenanceFromSlot(const EQSlot& slot) noexcept;
     
     //==============================================================================
     // Auto-Gain (all atomic for thread-safety)

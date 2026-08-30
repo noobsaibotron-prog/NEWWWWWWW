@@ -245,9 +245,8 @@ class PerceptualTest1_LPCrackling : public juce::UnitTest
 {
 public:
     PerceptualTest1_LPCrackling()
-        // KnownDebt (non-blocking): ZL→LP silent hole (~76) is gone after
-        // deferred-IR alignment (now dropout=1). LP→ZL still records 1 click
-        // (maxDelta≈0.36) — host latency does not contract live (R3).
+        // KnownDebt (non-blocking): Linear-phase switches that still expose
+        // residual clicks when host latency cannot contract live (R3).
         // Scorecard KnownDebt-DSP. TEST 2/4/5 stay blocking.
         : juce::UnitTest("Perceptual TEST 1 — LP Crackling", "KnownDebt") {}
 
@@ -471,9 +470,8 @@ class PerceptualTest3_PhaseClick : public juce::UnitTest
 {
 public:
     PerceptualTest3_PhaseClick()
-        // KnownDebt category retained for scorecard continuity. The ~82-sample
-        // silent hole is gone on this protocol (clicks=0, dropout=1). Remaining
-        // LP→ZL click lives in TEST 1 / R3, not this cycle.
+        // KnownDebt category retained for scorecard continuity. Covers a full
+        // ZL/Natural/Linear cycle; live latency reduction remains R3.
         : juce::UnitTest("Perceptual TEST 3 — Phase Mode Click", "KnownDebt") {}
 
     void runTest() override

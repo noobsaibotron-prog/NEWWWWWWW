@@ -5,15 +5,14 @@
 #include "Support/TestParameters.h"
 #include "Support/ToneTransitionAudit.h"
 
-#include <array>
 #include <cmath>
 #include <memory>
 
 /**
  * Deferred Linear entry: request Linear while the IR is pinned unavailable,
- * then inject a production-shaped (centred) IR. The current skipCrossfade
- * drain + lpFirstLoadCrossfade path must fail these gates; after the pending
- * + finishAligned fix they must pass.
+ * then inject a production-shaped (centred) IR. The skipCrossfade drain +
+ * unaligned first-load blend must fail these gates; after the pending +
+ * finishAligned fix they must pass.
  *
  * Tolerances are declared before any capture is observed.
  */
@@ -33,18 +32,30 @@ public:
             for (int blockSize : blocks)
                 runDeferredZlToLinear (sr, blockSize, false);
 
-        beginTest ("Startup requested Linear with IR unavailable, then centred ready");
-        runStartupInLinear (48000.0, 128);
+        beginTest ("Linear requested after prepareToPlay with IR unavailable");
+        runLinearAfterPrepare (48000.0, 128);
+
+        beginTest ("Startup Linear loaded before prepareToPlay");
+        runTrueStartupInLinear (48000.0, 128);
 
         beginTest ("Return to ZL while Linear entry is still pending");
         runReturnToZlWhilePending (48000.0, 128);
 
-        beginTest ("Deferred ZL→LP with DynEQ on and qualityMode=1");
+        beginTest ("Natural pending cancelled to Natural @48k/128");
+        runNaturalPendingTo (48000.0, 128, 1, "Natural pending cancelled to Natural @48k/128");
+
+        beginTest ("Natural pending then ZL @48k/128");
+        runNaturalPendingTo (48000.0, 128, 0, "Natural pending then ZL @48k/128");
+
+        // Product-default DynEQ+HQ: full ToneTransitionAudit gates. Restoring
+        // a second dynamicEQProcessor.process on the same instance in one
+        // finishAligned quantum reintroduces the ~17-sample hole and must fail.
         runDeferredZlToLinear (48000.0, 128, true);
+        runDeferredZlToLinear (96000.0, 128, true);
     }
 
 private:
-    // ── Pre-registered gates (do not edit after seeing a result) ──────────
+    // Pre-registered gates (do not edit after seeing a result)
     static constexpr double kToneHz = 997.0;
     static constexpr float kAmp = 0.25f;
     static constexpr int kObserveSamples = 12288;
@@ -163,7 +174,8 @@ private:
 
     void configureIdle (AIEqualizerAudioProcessor& processor,
                         juce::AudioProcessorValueTreeState& apvts,
-                        bool dynEqOn)
+                        bool dynEqOn,
+                        int phaseMode = 0)
     {
         processor.setNumActiveBands (1);
         AIEqualizerAudioProcessor::BandState band;
@@ -185,7 +197,7 @@ private:
         aieq::test::setChoice (*this, apvts, "msMode", 0);
         aieq::test::setChoice (*this, apvts, "numActiveBands", 0);
         aieq::test::setChoice (*this, apvts, "oversamplingFactor", 0);
-        aieq::test::setChoice (*this, apvts, "phaseMode", 0);
+        aieq::test::setChoice (*this, apvts, "phaseMode", phaseMode);
     }
 
     void fillTone (juce::AudioBuffer<float>& block, double sampleRate,
@@ -203,7 +215,7 @@ private:
 
     void runDeferredZlToLinear (double sampleRate, int blockSize, bool dynEqOn)
     {
-        const juce::String label = juce::String ("ZL→LP deferred")
+        const juce::String label = juce::String ("ZL->LP deferred")
             + (dynEqOn ? " DynEQ+HQ" : "")
             + " @" + juce::String (sampleRate, 0) + "/" + juce::String (blockSize);
         beginTest (label);
@@ -244,28 +256,11 @@ private:
         const int postStart = juce::jmax (0, captured.getNumSamples() - kRefRmsSamples);
         const auto extra = auditRange (captured, auditStart, auditLen,
                                        sampleRate, preStart, postStart);
-        if (dynEqOn)
-        {
-            // Observational R4 probe: the same DynEQ instance is processed on
-            // both aligned-transition legs. Do not widen the R1/R2 pad/IR
-            // state machine to paper over HQ/envelope residuals, and do not
-            // relax the nominal-latency gates. Finite output is still required.
-            expect (! extra.tone.hasNaN, label + ": NaN");
-            expect (! extra.tone.hasInf, label + ": Inf");
-            logMessage (label + " R4 residual (not gated): secondDiffRatio="
-                        + juce::String (extra.tone.secondDiffRatio, 2)
-                        + " quietBursts=" + juce::String (extra.tone.quietBurstSamples)
-                        + " dropout=" + juce::String (extra.tone.dropoutSamples)
-                        + " exactZeroRun=" + juce::String (extra.exactZeroRun));
-        }
-        else
-        {
-            expectDeferredClean (extra, label);
-        }
+        expectDeferredClean (extra, label);
         processor->releaseResources();
     }
 
-    void runStartupInLinear (double sampleRate, int blockSize)
+    void runLinearAfterPrepare (double sampleRate, int blockSize)
     {
         auto processor = std::make_unique<AIEqualizerAudioProcessor>();
         processor->prepareToPlay (sampleRate, blockSize);
@@ -296,7 +291,42 @@ private:
         const auto extra = auditRange (captured, 0, captured.getNumSamples(),
                                        sampleRate, 0,
                                        juce::jmax (0, captured.getNumSamples() - kRefRmsSamples));
-        expectDeferredClean (extra, "startup Linear deferred @48k/128");
+        expectDeferredClean (extra, "Linear after prepare deferred @48k/128");
+        processor->releaseResources();
+    }
+
+    void runTrueStartupInLinear (double sampleRate, int blockSize)
+    {
+        auto processor = std::make_unique<AIEqualizerAudioProcessor>();
+        auto& apvts = processor->getAPVTS();
+        aieq::test::setChoice (*this, apvts, "phaseMode", 2);
+        processor->prepareToPlay (sampleRate, blockSize);
+        processor->forceLinearIRUnavailable();
+        configureIdle (*processor, apvts, false, 2);
+
+        const int pendingBlocks = (kObserveSamples + blockSize - 1) / blockSize;
+        const int postReadyBlocks = pendingBlocks;
+        const int readyBlock = pendingBlocks;
+        const int totalBlocks = readyBlock + postReadyBlocks;
+
+        juce::AudioBuffer<float> captured (2, totalBlocks * blockSize);
+        juce::AudioBuffer<float> block (2, blockSize);
+        juce::MidiBuffer midi;
+
+        for (int b = 0; b < totalBlocks; ++b)
+        {
+            if (b == readyBlock)
+                processor->forceLinearIRReadyCentered();
+            fillTone (block, sampleRate, b * blockSize);
+            processor->processBlock (block, midi);
+            for (int ch = 0; ch < 2; ++ch)
+                captured.copyFrom (ch, b * blockSize, block, ch, 0, blockSize);
+        }
+
+        const auto extra = auditRange (captured, 0, captured.getNumSamples(),
+                                       sampleRate, 0,
+                                       juce::jmax (0, captured.getNumSamples() - kRefRmsSamples));
+        expectDeferredClean (extra, "true startup Linear before prepare @48k/128");
         processor->releaseResources();
     }
 
@@ -338,6 +368,53 @@ private:
             juce::jmax (0, auditStart - kRefRmsSamples),
             juce::jmax (0, captured.getNumSamples() - kRefRmsSamples));
         expectDeferredClean (extra, "pending Linear cancelled to ZL @48k/128");
+        processor->releaseResources();
+    }
+
+    void runNaturalPendingTo (double sampleRate, int blockSize, int destPhase,
+                              const juce::String& label)
+    {
+        auto processor = std::make_unique<AIEqualizerAudioProcessor>();
+        processor->prepareToPlay (sampleRate, blockSize);
+        auto& apvts = processor->getAPVTS();
+        configureIdle (*processor, apvts, false);
+
+        const int settleBlocks = (kObserveSamples + blockSize - 1) / blockSize;
+        const int pendingBlocks = settleBlocks / 2;
+        const int naturalBlock = settleBlocks;
+        const int requestBlock = naturalBlock + settleBlocks;
+        const int destBlock = requestBlock + pendingBlocks;
+        const int totalBlocks = destBlock + settleBlocks;
+
+        juce::AudioBuffer<float> captured (2, totalBlocks * blockSize);
+        juce::AudioBuffer<float> block (2, blockSize);
+        juce::MidiBuffer midi;
+
+        for (int b = 0; b < totalBlocks; ++b)
+        {
+            if (b == naturalBlock)
+                aieq::test::setChoice (*this, apvts, "phaseMode", 1);
+            if (b == requestBlock)
+            {
+                processor->forceLinearIRUnavailable();
+                aieq::test::setChoice (*this, apvts, "phaseMode", 2);
+            }
+            if (b == destBlock)
+                aieq::test::setChoice (*this, apvts, "phaseMode", destPhase);
+
+            fillTone (block, sampleRate, b * blockSize);
+            processor->processBlock (block, midi);
+            for (int ch = 0; ch < 2; ++ch)
+                captured.copyFrom (ch, b * blockSize, block, ch, 0, blockSize);
+        }
+
+        const int auditStart = requestBlock * blockSize;
+        const auto extra = auditRange (
+            captured, auditStart, captured.getNumSamples() - auditStart,
+            sampleRate,
+            juce::jmax (0, auditStart - kRefRmsSamples),
+            juce::jmax (0, captured.getNumSamples() - kRefRmsSamples));
+        expectDeferredClean (extra, label);
         processor->releaseResources();
     }
 };

@@ -163,13 +163,7 @@ AIEqualizerAudioProcessor::AIEqualizerAudioProcessor()
                     AIEQDSP::defaultBandFrequencies[static_cast<size_t>(i)];
                 slot.bands[static_cast<size_t>(i)].sidechainFrequency =
                     AIEQDSP::defaultBandFrequencies[static_cast<size_t>(i)];
-                // Match APVTS factory: only the first 8 bands are enabled.
-                // BandState.enabled defaults true, which used to occupy every
-                // unused A/B slot and left Semantic BestEffort with nothing to write.
-                slot.bands[static_cast<size_t>(i)].enabled = (i < 8);
             }
-            slot.numActiveBands = 8;
-            slot.clearSemanticProvenance();
             slot.name = name;
         };
         initSlot(slotA, "A");
@@ -2438,6 +2432,22 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& processBu
                        || deferLinearAlignedBlendThisBlock)
         ? static_cast<PhaseMode>(linearPhaseEntryFromMode.load(std::memory_order_acquire))
         : requestedPhaseMode;
+    // Stereo ZL/LP: static EQ (and aligned blend) first, then one DynamicEQ
+    // on the audible wet. Running DynEQ before the wet pad writes lookahead-
+    // delayed samples into the pad ring; a later ZL<->Linear dual-path that
+    // stores pre-DynEQ candidates in the same ring then reads a ~lookahead
+    // discontinuity. Natural and M/S keep their own DynEQ instances.
+    // Stereo ZL/LP: static EQ then one DynamicEQ after the host pad, so the
+    // pad ring never stores lookahead-delayed samples. After leaving Mid/Side/
+    // MSLinked, keep DynEQ on the pre-pad stereo path: those modes use different
+    // DynEQ instances/order, and flipping to after-pad at the fade boundary
+    // reintroduces a lookahead step.
+    const auto previousMSModeForDynEq = static_cast<MSMode>(
+        previousMSModeForCrossfade.load(std::memory_order_acquire));
+    const bool dynEqAfterHostPad = dynEqEnabledLocal
+        && msModeSnapshot == MSMode::Stereo
+        && previousMSModeForDynEq == MSMode::Stereo
+        && mode != PhaseMode::NaturalPhase;
 
     auto resolveNaturalOsEffective = [&]()
     {
@@ -2582,7 +2592,8 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& processBu
     auto processStereoForPhaseMode = [&](juce::AudioBuffer<float>& targetBuffer,
                                          PhaseMode targetMode,
                                          bool updateMeters,
-                                         int forcedNaturalOsEffective = 0)
+                                         int forcedNaturalOsEffective = 0,
+                                         bool applyDynamicEQ = true)
     {
         if (targetMode == PhaseMode::NaturalPhase)
         {
@@ -2618,7 +2629,7 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& processBu
                 eqProcessor.process(targetBuffer);
             }
 
-            if (dynEqEnabledLocal)
+            if (applyDynamicEQ && dynEqEnabledLocal)
             {
                 dynamicEQProcessor.process(
                     targetBuffer, irLoaded ? externalDetectorLinear
@@ -2632,7 +2643,7 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& processBu
             // ZeroLatency mode
             eqProcessor.process(targetBuffer);
 
-            if (dynEqEnabledLocal)
+            if (applyDynamicEQ && dynEqEnabledLocal)
             {
                 dynamicEQProcessor.process(targetBuffer, externalDetectorRaw);
                 if (updateMeters)
@@ -2858,7 +2869,8 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& processBu
             if (skipCrossfade)
             {
                 // Both paths would use eqProcessor — process once to preserve filter state.
-                processStereoForPhaseMode(buffer, PhaseMode::ZeroLatency, true);
+                processStereoForPhaseMode(buffer, PhaseMode::ZeroLatency, true, 0,
+                                          !dynEqAfterHostPad);
                 if (!linearPhaseEntryPending.load(std::memory_order_acquire))
                 {
                     const int remaining = juce::jmax(0, transitionRemaining - blockSamples);
@@ -2873,16 +2885,27 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& processBu
                 for (int ch = 0; ch < chs; ++ch)
                     phaseTransitionBuffer.copyFrom(ch, 0, buffer, ch, 0, blockSamples);
 
-                // Process main buffer through new (current) mode
-                processStereoForPhaseMode(buffer, mode, true);
+                // Static phase candidates only: the same DynamicEQProcessor must
+                // not advance detector/lookahead twice in one quantum.
+                processStereoForPhaseMode(buffer, mode, false, 0, false);
 
-                // Process transition buffer through old mode
                 juce::AudioBuffer<float> oldModeView(phaseTransitionBuffer.getArrayOfWritePointers(),
                                                       buffer.getNumChannels(),
                                                       blockSamples);
-                processStereoForPhaseMode(oldModeView, transitionFromMode, false);
+                processStereoForPhaseMode(oldModeView, transitionFromMode, false, 0, false);
                 finishAlignedPhaseTransitionBlock(
                     buffer, oldModeView, mode, transitionFromMode, transitionRemaining);
+                if (dynEqEnabledLocal)
+                {
+                    const bool useLinearDetector =
+                        linearIRLoaded[0].load(std::memory_order_acquire)
+                        && (mode == PhaseMode::LinearPhase
+                            || transitionFromMode == PhaseMode::LinearPhase);
+                    dynamicEQProcessor.process(
+                        buffer, useLinearDetector ? externalDetectorLinear
+                                                  : externalDetectorRaw);
+                    updateDynamicMeterCacheFrom(dynamicEQProcessor);
+                }
             }
         }
     }
@@ -3003,7 +3026,7 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& processBu
             }
             else
             {
-                processStereoForPhaseMode(buffer, mode, true);
+                processStereoForPhaseMode(buffer, mode, true, 0, !dynEqAfterHostPad);
             }
         }
     } // end if mode != LinearPhase
@@ -3022,7 +3045,7 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& processBu
         if (!irLoaded)
         {
             eqProcessor.process(buffer);
-            if (dynEqEnabledLocal)
+            if (dynEqEnabledLocal && !dynEqAfterHostPad)
             {
                 dynamicEQProcessor.process(buffer, externalDetectorRaw);
                 updateDynamicMeterCacheFrom(dynamicEQProcessor);
@@ -3044,7 +3067,7 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& processBu
                 eqProcessor.process(buffer);
             }
 
-            if (dynEqEnabledLocal)
+            if (dynEqEnabledLocal && !dynEqAfterHostPad)
             {
                 dynamicEQProcessor.process(buffer, externalDetectorLinear);
                 updateDynamicMeterCacheFrom(dynamicEQProcessor);
@@ -3477,6 +3500,17 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& processBu
         }
     }
 
+    if (dynEqAfterHostPad && !phaseTransitionOutputAlreadyPadded)
+    {
+        const bool useLinearDetector =
+            linearIRLoaded[0].load(std::memory_order_acquire)
+            && mode == PhaseMode::LinearPhase;
+        dynamicEQProcessor.process(
+            buffer, useLinearDetector ? externalDetectorLinear
+                                      : externalDetectorRaw);
+        updateDynamicMeterCacheFrom(dynamicEQProcessor);
+    }
+
     // Apply global dry/wet mix after padding so delayed dry and padded wet share
     // the host-visible latency. Solo already replaced the wet buffer and must
     // not be blended back with dry (same as the previous mix-then-overwrite
@@ -3656,19 +3690,21 @@ void AIEqualizerAudioProcessor::parameterChanged(const juce::String& parameterID
             }
             else if (pendingEntry && newMode != PhaseMode::LinearPhase)
             {
+                const auto pendingFrom = static_cast<PhaseMode>(
+                    linearPhaseEntryFromMode.load(std::memory_order_acquire));
                 cancelLinearPhaseEntryPending();
-                if (newMode == PhaseMode::ZeroLatency)
+                if (newMode == pendingFrom)
                 {
                     phaseTransitionFromMode.store(-1, std::memory_order_release);
                     phaseTransitionSamplesRemaining.store(0, std::memory_order_release);
                     // Keep pendingLatencyAdoptionRemaining running: host latency
                     // does not contract live (reductionDeferred). Continue the
-                    // bounded pad slew toward the still-active plan. No fake fade.
+                    // bounded pad slew toward the still-active plan.
                 }
                 else
                 {
                     pendingLatencyAdoptionRemaining.store(0, std::memory_order_release);
-                    armAlignedPhaseTransition(PhaseMode::ZeroLatency);
+                    armAlignedPhaseTransition(pendingFrom);
                 }
             }
             else
@@ -4708,9 +4744,6 @@ void AIEqualizerAudioProcessor::saveCurrentStateToSlot(ABState slot)
         targetSlot->dynAutoMakeup = dynAutoMakeupParam->load() > 0.5f;
     else
         targetSlot->dynAutoMakeup = false;
-
-    targetSlot->numActiveBands = getNumActiveBands();
-    captureSemanticProvenanceToSlot(*targetSlot);
 }
 
 void AIEqualizerAudioProcessor::loadStateFromSlot(ABState slot)
@@ -4840,24 +4873,6 @@ void AIEqualizerAudioProcessor::loadStateFromSlot(ABState slot)
             }
         }
     }
-
-    if (auto* param = apvts.getParameter("numActiveBands"))
-    {
-        const int desired = juce::jlimit(1, maxBands, sourceSlot->numActiveBands);
-        if (auto* raw = apvts.getRawParameterValue("numActiveBands"); raw != nullptr)
-        {
-            const int current = static_cast<int>(std::round(raw->load())) + 1;
-            if (current != desired)
-            {
-                param->beginChangeGesture();
-                param->setValueNotifyingHost(param->convertTo0to1(static_cast<float>(desired - 1)));
-                param->endChangeGesture();
-                anyMaterialChange = true;
-            }
-        }
-    }
-
-    restoreSemanticProvenanceFromSlot(*sourceSlot);
 
     // NOTE: crossfade snapshot is armed in setABState() BEFORE loadStateFromSlot()
     // is called, so the audio thread snapshots old state before seeing new coefficients.
@@ -5951,28 +5966,6 @@ void AIEqualizerAudioProcessor::clearSemanticBandProvenance() noexcept
     semanticBandLastAppliedStates = {};
     semanticOriginalActiveBandCount = -1;
     semanticLastRequestedActiveBandCount = -1;
-}
-
-void AIEqualizerAudioProcessor::captureSemanticProvenanceToSlot(EQSlot& slot) const noexcept
-{
-    slot.semanticAssignments = semanticBandAssignments;
-    slot.semanticOwned = semanticBandOwned;
-    slot.semanticHasSnapshot = semanticBandHasSnapshot;
-    slot.semanticOriginalStates = semanticBandOriginalStates;
-    slot.semanticLastAppliedStates = semanticBandLastAppliedStates;
-    slot.semanticOriginalActiveBandCount = semanticOriginalActiveBandCount;
-    slot.semanticLastRequestedActiveBandCount = semanticLastRequestedActiveBandCount;
-}
-
-void AIEqualizerAudioProcessor::restoreSemanticProvenanceFromSlot(const EQSlot& slot) noexcept
-{
-    semanticBandAssignments = slot.semanticAssignments;
-    semanticBandOwned = slot.semanticOwned;
-    semanticBandHasSnapshot = slot.semanticHasSnapshot;
-    semanticBandOriginalStates = slot.semanticOriginalStates;
-    semanticBandLastAppliedStates = slot.semanticLastAppliedStates;
-    semanticOriginalActiveBandCount = slot.semanticOriginalActiveBandCount;
-    semanticLastRequestedActiveBandCount = slot.semanticLastRequestedActiveBandCount;
 }
 
 namespace
