@@ -163,7 +163,13 @@ AIEqualizerAudioProcessor::AIEqualizerAudioProcessor()
                     AIEQDSP::defaultBandFrequencies[static_cast<size_t>(i)];
                 slot.bands[static_cast<size_t>(i)].sidechainFrequency =
                     AIEQDSP::defaultBandFrequencies[static_cast<size_t>(i)];
+                // Match APVTS factory: only the first 8 bands are enabled.
+                // BandState.enabled defaults true, which used to occupy every
+                // unused A/B slot and left Semantic BestEffort with nothing to write.
+                slot.bands[static_cast<size_t>(i)].enabled = (i < 8);
             }
+            slot.numActiveBands = 8;
+            slot.clearSemanticProvenance();
             slot.name = name;
         };
         initSlot(slotA, "A");
@@ -1295,15 +1301,15 @@ void AIEqualizerAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     oversamplingTransitionBuffer.clear();
     msModeTransitionBuffer.setSize(mainInputChannels, preallocatedMaxSamples, false, true, false);
     msModeTransitionBuffer.clear();
-    // Pre-allocate LP first-load crossfade buffer — NEVER allocate on audio thread
-    lpFirstLoadFallbackBuf.setSize(mainInputChannels, preallocatedMaxSamples, false, true, false);
-    lpFirstLoadFallbackBuf.clear();
     phaseTransitionFromMode.store(-1, std::memory_order_relaxed);
     phaseTransitionSamplesRemaining.store(0, std::memory_order_relaxed);
     phaseTransitionTotalSamples.store(phaseTransitionCrossfadeSamples, std::memory_order_relaxed);
     phaseTransitionAudioFromMode = -1;
     phaseTransitionAudioToMode = -1;
     phaseTransitionInitialOldPadSamples = 0;
+    linearPhaseEntryPending.store(false, std::memory_order_relaxed);
+    linearPhaseEntryFromMode.store(static_cast<int>(PhaseMode::ZeroLatency), std::memory_order_relaxed);
+    pendingLatencyAdoptionRemaining.store(0, std::memory_order_relaxed);
     msModeTransitionSamplesRemaining.store(0, std::memory_order_relaxed);
     previousMSModeForCrossfade.store(static_cast<int>(currentMSMode.load(std::memory_order_relaxed)), std::memory_order_relaxed);
     oversamplingTransitionFromEffective.store(-1, std::memory_order_relaxed);
@@ -2400,11 +2406,38 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& processBu
     // Checkpoint 1 — pre-EQ (after param update / spectrum capture, before EQ processing)
     checkClicks(1);
 
+    if (linearPhaseEntryPending.load(std::memory_order_acquire)
+        || phaseModeSnapshot == PhaseMode::LinearPhase)
+        updateLinearPhaseIRIfNeeded();
+
+    if (phaseModeSnapshot == PhaseMode::LinearPhase
+        && !linearIRLoaded[0].load(std::memory_order_acquire)
+        && !linearPhaseEntryPending.load(std::memory_order_acquire))
+        beginLinearPhaseEntryPending(PhaseMode::ZeroLatency);
+
+    bool deferLinearAlignedBlendThisBlock = false;
+    if (linearPhaseEntryPending.load(std::memory_order_acquire)
+        && linearIRLoaded[0].load(std::memory_order_acquire))
+    {
+        const auto pendingFrom = static_cast<PhaseMode>(
+            linearPhaseEntryFromMode.load(std::memory_order_acquire));
+        armAlignedPhaseTransition(pendingFrom);
+        cancelLinearPhaseEntryPending();
+        pendingLatencyAdoptionRemaining.store(0, std::memory_order_release);
+        deferLinearAlignedBlendThisBlock = true;
+    }
+
     // A latent phase path is held back until the message thread has installed
-    // the matching host-visible latency plan.
-    const auto mode = (!paddedLatencyActive && phaseModeSnapshot != PhaseMode::ZeroLatency)
+    // the matching host-visible latency plan. A Linear request whose IR is not
+    // ready stays on the single pre-Linear stateful path; that is not progress
+    // through the aligned ZL/Natural→LP blend.
+    const auto requestedPhaseMode = (!paddedLatencyActive && phaseModeSnapshot != PhaseMode::ZeroLatency)
         ? PhaseMode::ZeroLatency
         : phaseModeSnapshot;
+    const auto mode = (linearPhaseEntryPending.load(std::memory_order_acquire)
+                       || deferLinearAlignedBlendThisBlock)
+        ? static_cast<PhaseMode>(linearPhaseEntryFromMode.load(std::memory_order_acquire))
+        : requestedPhaseMode;
 
     auto resolveNaturalOsEffective = [&]()
     {
@@ -2796,6 +2829,8 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& processBu
         const int transitionRemaining = phaseTransitionSamplesRemaining.load(std::memory_order_acquire);
         const auto transitionFromMode = static_cast<PhaseMode>(phaseTransitionFromMode.load(std::memory_order_acquire));
         const bool lpTransitionActive = transitionRemaining > 0
+            && !linearPhaseEntryPending.load(std::memory_order_acquire)
+            && !deferLinearAlignedBlendThisBlock
             && (mode == PhaseMode::LinearPhase || transitionFromMode == PhaseMode::LinearPhase);
 
         if (lpTransitionActive
@@ -2822,13 +2857,15 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& processBu
 
             if (skipCrossfade)
             {
-                // Both paths would use eqProcessor — just process once to preserve filter state.
+                // Both paths would use eqProcessor — process once to preserve filter state.
                 processStereoForPhaseMode(buffer, PhaseMode::ZeroLatency, true);
-                // Drain the crossfade counter so it ends normally
-                const int remaining = juce::jmax(0, transitionRemaining - blockSamples);
-                phaseTransitionSamplesRemaining.store(remaining, std::memory_order_release);
-                if (remaining == 0)
-                    phaseTransitionFromMode.store(-1, std::memory_order_release);
+                if (!linearPhaseEntryPending.load(std::memory_order_acquire))
+                {
+                    const int remaining = juce::jmax(0, transitionRemaining - blockSamples);
+                    phaseTransitionSamplesRemaining.store(remaining, std::memory_order_release);
+                    if (remaining == 0)
+                        phaseTransitionFromMode.store(-1, std::memory_order_release);
+                }
             }
             else
             {
@@ -2984,8 +3021,6 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& processBu
 
         if (!irLoaded)
         {
-            // No IR yet: fall back to zero-latency EQ
-            lpWasFallback = true;
             eqProcessor.process(buffer);
             if (dynEqEnabledLocal)
             {
@@ -2995,25 +3030,6 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& processBu
         }
         else
         {
-            // IR just became ready — arm crossfade from fallback ZL to LP convolution
-            if (lpWasFallback)
-            {
-                lpWasFallback = false;
-                lpFirstLoadCrossfadeRemaining = lpFirstLoadCrossfadeSamples;
-            }
-
-            // If crossfade is active, save a copy of the raw input BEFORE
-            // LP convolution so we can render a ZL version for blending.
-            // Without this, we'd re-process the previous block's ZL *output*
-            // through the EQ again, causing exponential gain accumulation.
-            if (lpFirstLoadCrossfadeRemaining > 0)
-            {
-                // Buffer pre-allocated in prepareToPlay() — no heap allocation here
-                for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
-                    lpFirstLoadFallbackBuf.copyFrom(ch, 0, buffer, ch, 0, blockSamples);
-            }
-
-            // Process through LP convolution (primary path)
             auto* lp = linearPhaseProcessors[0].get();
             if (lp != nullptr)
             {
@@ -3028,34 +3044,6 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& processBu
                 eqProcessor.process(buffer);
             }
 
-            // Crossfade from fallback ZL output to LP convolution output
-            if (lpFirstLoadCrossfadeRemaining > 0)
-            {
-                // Process the fresh input copy through ZL EQ for blending
-                eqProcessor.process(lpFirstLoadFallbackBuf);
-
-                const int samplesToFade = juce::jmin(lpFirstLoadCrossfadeRemaining, blockSamples);
-                const int fadeStart = lpFirstLoadCrossfadeSamples - lpFirstLoadCrossfadeRemaining;
-
-                for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
-                {
-                    auto* lpOut = buffer.getWritePointer(ch);
-                    const auto* zlOut = lpFirstLoadFallbackBuf.getReadPointer(ch);
-
-                    for (int i = 0; i < samplesToFade; ++i)
-                    {
-                        const float t = static_cast<float>(fadeStart + i)
-                                      / static_cast<float>(lpFirstLoadCrossfadeSamples);
-                        lpOut[i] = zlOut[i] * (1.0f - t) + lpOut[i] * t;
-                    }
-                }
-                lpFirstLoadCrossfadeRemaining -= samplesToFade;
-            }
-
-            // Bug fix: Dynamic EQ must run after LP convolution in Linear Phase mode.
-            // Previously it was skipped entirely when irLoaded=true, causing:
-            // 1. Dynamic compression not applied in LP mode
-            // 2. GR meter always showing 0 in LP mode
             if (dynEqEnabledLocal)
             {
                 dynamicEQProcessor.process(buffer, externalDetectorLinear);
@@ -3436,18 +3424,56 @@ void AIEqualizerAudioProcessor::processBlock(juce::AudioBuffer<float>& processBu
             int& activeWrite = alternateWetPaddingBufferActive
                 ? phaseTransitionPaddingWritePos : wetPaddingWritePos;
 
-            const bool transitionActive = phaseTransitionRemainingAtBlockStart > 0;
-            const int transitionTotal = juce::jmax(
-                phaseTransitionCrossfadeSamples,
-                phaseTransitionTotalSamples.load(std::memory_order_acquire));
-            const int transitionProgress = juce::jlimit(
-                0, transitionTotal, transitionTotal - phaseTransitionRemainingAtBlockStart);
-            applyAlignedDelay(buffer, activeDelay, activeWrite,
-                              static_cast<float>(wetPadLastSamples),
-                              static_cast<float>(padSamples),
-                              transitionProgress,
-                              transitionActive ? transitionTotal : 0);
-            wetPadLastSamples = padSamples;
+            // Host latency may already be Linear while the audible path is still
+            // ZL (IR pending). Jumping wetPadLastSamples to the destination pad
+            // would skip ~2176 samples in the ring and punch a hole. Slew the
+            // existing ring over the remaining adoption window; when IR becomes
+            // ready, this block holds the current pad and the next block's
+            // finishAlignedPhaseTransitionBlock continues from that tap.
+            if (deferLinearAlignedBlendThisBlock)
+            {
+                applyAlignedDelay(buffer, activeDelay, activeWrite,
+                                  static_cast<float>(wetPadLastSamples),
+                                  static_cast<float>(wetPadLastSamples),
+                                  0, 0);
+            }
+            else
+            {
+                const int adoptRem = pendingLatencyAdoptionRemaining.load(
+                    std::memory_order_acquire);
+                if (adoptRem > 0)
+                {
+                    applyAlignedDelay(buffer, activeDelay, activeWrite,
+                                      static_cast<float>(wetPadLastSamples),
+                                      static_cast<float>(padSamples),
+                                      0, adoptRem);
+                    const float tEnd = juce::jmin(
+                        1.0f, static_cast<float>(blockSamples)
+                                  / static_cast<float>(juce::jmax(1, adoptRem)));
+                    wetPadLastSamples = static_cast<int>(std::lround(
+                        static_cast<float>(wetPadLastSamples)
+                        + static_cast<float>(padSamples - wetPadLastSamples) * tEnd));
+                    pendingLatencyAdoptionRemaining.store(
+                        juce::jmax(0, adoptRem - blockSamples), std::memory_order_release);
+                }
+                else
+                {
+                    const bool transitionActive = phaseTransitionRemainingAtBlockStart > 0;
+                    const int transitionTotal = juce::jmax(
+                        phaseTransitionCrossfadeSamples,
+                        phaseTransitionTotalSamples.load(std::memory_order_acquire));
+                    const int transitionProgress = juce::jlimit(
+                        0, transitionTotal,
+                        transitionTotal - phaseTransitionRemainingAtBlockStart);
+
+                    applyAlignedDelay(buffer, activeDelay, activeWrite,
+                                      static_cast<float>(wetPadLastSamples),
+                                      static_cast<float>(padSamples),
+                                      transitionProgress,
+                                      transitionActive ? transitionTotal : 0);
+                    wetPadLastSamples = padSamples;
+                }
+            }
         }
     }
 
@@ -3619,17 +3645,36 @@ void AIEqualizerAudioProcessor::parameterChanged(const juce::String& parameterID
 
         if (newMode != oldMode)
         {
-            // Arm a latency-aligned transition for every phase-mode change.
-            // The incoming path first gets two maximum-latency windows to fill
-            // its private padding history while the outgoing path remains the
-            // audible authority.  The final window is the actual output blend.
-            // No heap work is performed here or by the audio-thread transition.
-            const int transitionTotal = juce::jmax(
-                phaseTransitionCrossfadeSamples,
-                latencyPlan.maximumSamples * 2 + phaseTransitionCrossfadeSamples);
-            phaseTransitionFromMode.store(static_cast<int>(oldMode), std::memory_order_release);
-            phaseTransitionTotalSamples.store(transitionTotal, std::memory_order_release);
-            phaseTransitionSamplesRemaining.store(transitionTotal, std::memory_order_release);
+            const bool irReady = linearIRLoaded[0].load(std::memory_order_acquire);
+            const bool pendingEntry = linearPhaseEntryPending.load(std::memory_order_acquire);
+
+            if (newMode == PhaseMode::LinearPhase && !irReady)
+            {
+                beginLinearPhaseEntryPending(oldMode);
+                phaseTransitionFromMode.store(-1, std::memory_order_release);
+                phaseTransitionSamplesRemaining.store(0, std::memory_order_release);
+            }
+            else if (pendingEntry && newMode != PhaseMode::LinearPhase)
+            {
+                cancelLinearPhaseEntryPending();
+                if (newMode == PhaseMode::ZeroLatency)
+                {
+                    phaseTransitionFromMode.store(-1, std::memory_order_release);
+                    phaseTransitionSamplesRemaining.store(0, std::memory_order_release);
+                    // Keep pendingLatencyAdoptionRemaining running: host latency
+                    // does not contract live (reductionDeferred). Continue the
+                    // bounded pad slew toward the still-active plan. No fake fade.
+                }
+                else
+                {
+                    pendingLatencyAdoptionRemaining.store(0, std::memory_order_release);
+                    armAlignedPhaseTransition(PhaseMode::ZeroLatency);
+                }
+            }
+            else
+            {
+                armAlignedPhaseTransition(oldMode);
+            }
         }
 
         if (newMode == PhaseMode::LinearPhase)
@@ -3785,29 +3830,51 @@ void AIEqualizerAudioProcessor::updateLinearPhaseIRIfNeeded()
     activeIRIndex.store(0, std::memory_order_relaxed);
 }
 
-void AIEqualizerAudioProcessor::forceLinearIRReady()
+void AIEqualizerAudioProcessor::drainPinnedLinearIRMailbox()
 {
-    // Build a Dirac-delta IR (flat magnitude, zero phase = identity convolution).
-    // This injects the IR directly into the convolver, bypassing the builder thread,
-    // so tests can deterministically control when linearIRLoaded transitions to true.
+    auto ignored = pendingFreqIR.acquireLatest();
+    if (ignored)
+        pendingFreqIR.release(ignored);
+}
+
+void AIEqualizerAudioProcessor::injectPinnedTestLinearIR(size_t impulseTap)
+{
     linearIRTestOverridePinned.store(true, std::memory_order_release);
+    drainPinnedLinearIRMailbox();
 
     std::vector<float> diracIR(PartitionedConvolver::irSize, 0.0f);
-    diracIR[0] = 1.0f;  // unit impulse → flat frequency response
+    const size_t tap = juce::jmin(impulseTap, PartitionedConvolver::irSize - 1);
+    diracIR[tap] = 1.0f;
 
-    // Pre-partition into frequency domain (same path as the builder thread)
     std::vector<float> packed(PartitionedConvolver::numParts *
                               PartitionedConvolver::fftPartSize * 2, 0.0f);
     PartitionedConvolver::buildPackedPartitions(diracIR.data(), diracIR.size(), packed.data());
 
-    // Inject into the LP processor
     auto* lp = linearPhaseProcessors[0].get();
     if (lp != nullptr)
         lp->storePrePartitionedIRDirect(packed.data());
 
-    // Mark IR as loaded — this is the flag processBlock() checks
     linearIRLoaded[0].store(true, std::memory_order_release);
     activeIRIndex.store(0, std::memory_order_relaxed);
+}
+
+void AIEqualizerAudioProcessor::forceLinearIRReady()
+{
+    // Historical fixture: impulse at tap 0. Existing tests depend on this
+    // shape; do not silently retarget it to irSize/2.
+    injectPinnedTestLinearIR(0);
+}
+
+void AIEqualizerAudioProcessor::forceLinearIRUnavailable()
+{
+    linearIRTestOverridePinned.store(true, std::memory_order_release);
+    linearIRLoaded[0].store(false, std::memory_order_release);
+    drainPinnedLinearIRMailbox();
+}
+
+void AIEqualizerAudioProcessor::forceLinearIRReadyCentered()
+{
+    injectPinnedTestLinearIR(LinearPhaseProcessor::irSize / 2);
 }
 
 void AIEqualizerAudioProcessor::requestIRBuild()
@@ -4022,6 +4089,32 @@ void AIEqualizerAudioProcessor::updateDynamicMeterCacheFromMS(const DynamicEQPro
 }
 
 //==============================================================================
+void AIEqualizerAudioProcessor::armAlignedPhaseTransition(PhaseMode fromMode) noexcept
+{
+    const int transitionTotal = juce::jmax(
+        phaseTransitionCrossfadeSamples,
+        latencyPlan.maximumSamples * 2 + phaseTransitionCrossfadeSamples);
+    phaseTransitionFromMode.store(static_cast<int>(fromMode), std::memory_order_release);
+    phaseTransitionTotalSamples.store(transitionTotal, std::memory_order_release);
+    phaseTransitionSamplesRemaining.store(transitionTotal, std::memory_order_release);
+}
+
+void AIEqualizerAudioProcessor::beginLinearPhaseEntryPending(PhaseMode fromMode) noexcept
+{
+    if (!linearPhaseEntryPending.exchange(true, std::memory_order_acq_rel))
+    {
+        linearPhaseEntryFromMode.store(static_cast<int>(fromMode),
+                                       std::memory_order_release);
+        pendingLatencyAdoptionRemaining.store(
+            juce::jmax(1, latencyPlan.maximumSamples * 2), std::memory_order_release);
+    }
+}
+
+void AIEqualizerAudioProcessor::cancelLinearPhaseEntryPending() noexcept
+{
+    linearPhaseEntryPending.store(false, std::memory_order_release);
+}
+
 bool AIEqualizerAudioProcessor::requiresPaddedLatencyPlan() const noexcept
 {
     const auto read = [this](const char* id, float fallback) noexcept
@@ -4615,6 +4708,9 @@ void AIEqualizerAudioProcessor::saveCurrentStateToSlot(ABState slot)
         targetSlot->dynAutoMakeup = dynAutoMakeupParam->load() > 0.5f;
     else
         targetSlot->dynAutoMakeup = false;
+
+    targetSlot->numActiveBands = getNumActiveBands();
+    captureSemanticProvenanceToSlot(*targetSlot);
 }
 
 void AIEqualizerAudioProcessor::loadStateFromSlot(ABState slot)
@@ -4744,6 +4840,24 @@ void AIEqualizerAudioProcessor::loadStateFromSlot(ABState slot)
             }
         }
     }
+
+    if (auto* param = apvts.getParameter("numActiveBands"))
+    {
+        const int desired = juce::jlimit(1, maxBands, sourceSlot->numActiveBands);
+        if (auto* raw = apvts.getRawParameterValue("numActiveBands"); raw != nullptr)
+        {
+            const int current = static_cast<int>(std::round(raw->load())) + 1;
+            if (current != desired)
+            {
+                param->beginChangeGesture();
+                param->setValueNotifyingHost(param->convertTo0to1(static_cast<float>(desired - 1)));
+                param->endChangeGesture();
+                anyMaterialChange = true;
+            }
+        }
+    }
+
+    restoreSemanticProvenanceFromSlot(*sourceSlot);
 
     // NOTE: crossfade snapshot is armed in setABState() BEFORE loadStateFromSlot()
     // is called, so the audio thread snapshots old state before seeing new coefficients.
@@ -5837,6 +5951,28 @@ void AIEqualizerAudioProcessor::clearSemanticBandProvenance() noexcept
     semanticBandLastAppliedStates = {};
     semanticOriginalActiveBandCount = -1;
     semanticLastRequestedActiveBandCount = -1;
+}
+
+void AIEqualizerAudioProcessor::captureSemanticProvenanceToSlot(EQSlot& slot) const noexcept
+{
+    slot.semanticAssignments = semanticBandAssignments;
+    slot.semanticOwned = semanticBandOwned;
+    slot.semanticHasSnapshot = semanticBandHasSnapshot;
+    slot.semanticOriginalStates = semanticBandOriginalStates;
+    slot.semanticLastAppliedStates = semanticBandLastAppliedStates;
+    slot.semanticOriginalActiveBandCount = semanticOriginalActiveBandCount;
+    slot.semanticLastRequestedActiveBandCount = semanticLastRequestedActiveBandCount;
+}
+
+void AIEqualizerAudioProcessor::restoreSemanticProvenanceFromSlot(const EQSlot& slot) noexcept
+{
+    semanticBandAssignments = slot.semanticAssignments;
+    semanticBandOwned = slot.semanticOwned;
+    semanticBandHasSnapshot = slot.semanticHasSnapshot;
+    semanticBandOriginalStates = slot.semanticOriginalStates;
+    semanticBandLastAppliedStates = slot.semanticLastAppliedStates;
+    semanticOriginalActiveBandCount = slot.semanticOriginalActiveBandCount;
+    semanticLastRequestedActiveBandCount = slot.semanticLastRequestedActiveBandCount;
 }
 
 namespace

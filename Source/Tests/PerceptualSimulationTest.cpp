@@ -245,10 +245,10 @@ class PerceptualTest1_LPCrackling : public juce::UnitTest
 {
 public:
     PerceptualTest1_LPCrackling()
-        // KnownDebt (non-blocking): rapid Linear-Phase toggle causes a brief
-        // dropout (~76 silent samples) — latency change flushes buffers (clicks=0).
-        // Real DSP debt; fix = crossfade/defer the latency switch. Scorecard
-        // KnownDebt-DSP. TEST 2/4/5 stay blocking.
+        // KnownDebt (non-blocking): ZL→LP silent hole (~76) is gone after
+        // deferred-IR alignment (now dropout=1). LP→ZL still records 1 click
+        // (maxDelta≈0.36) — host latency does not contract live (R3).
+        // Scorecard KnownDebt-DSP. TEST 2/4/5 stay blocking.
         : juce::UnitTest("Perceptual TEST 1 — LP Crackling", "KnownDebt") {}
 
     void runTest() override
@@ -471,9 +471,9 @@ class PerceptualTest3_PhaseClick : public juce::UnitTest
 {
 public:
     PerceptualTest3_PhaseClick()
-        // KnownDebt (non-blocking): full phase-mode cycle causes a brief dropout
-        // (~82 silent samples) — same latency-switch flush family as TEST 1.
-        // Real DSP debt. Scorecard KnownDebt-DSP.
+        // KnownDebt category retained for scorecard continuity. The ~82-sample
+        // silent hole is gone on this protocol (clicks=0, dropout=1). Remaining
+        // LP→ZL click lives in TEST 1 / R3, not this cycle.
         : juce::UnitTest("Perceptual TEST 3 — Phase Mode Click", "KnownDebt") {}
 
     void runTest() override
@@ -765,10 +765,11 @@ static PerceptualTest5_Stress sPerceptualTest5;
 //
 // Uses forceLinearIRReady() hook to inject a flat IR at a precise block,
 // bypassing the builder thread entirely. This eliminates timing dependence
-// and exercises the lpFirstLoadCrossfade path deterministically.
+// and covers Linear entry after a period of IR-unavailable fallback (now
+// routed through the latency-aligned ZL→LP machine, not lpFirstLoadCrossfade).
 //
 // Sub-test A: First IR load (fallback ZL → LP convolution transition)
-//   - Processes 20 blocks in LP fallback (lpWasFallback = true)
+//   - Processes 20 blocks with Linear requested and IR unavailable (pending)
 //   - Injects flat IR at block 20 via forceLinearIRReady()
 //   - Processes 60 more blocks (LP convolution active)
 //   - Analyzes 10-block window around transition for clicks/explosion

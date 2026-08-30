@@ -561,8 +561,20 @@ public:
         convolver, set linearIRLoaded = true and pin that fixture until the next
         prepareToPlay(). Background results are drained but cannot replace it.
         Enables deterministic tests that exercise LP routing rather than the
-        asynchronous IR builder. */
+        asynchronous IR builder.
+
+        The impulse sits at tap 0. Production IRs are centred at irSize/2;
+        tests that must match actualLatencyForPhaseMode (partSize + irSize/2)
+        should use forceLinearIRReadyCentered(). */
     void forceLinearIRReady();
+
+    /** Test-only: pin the override, mark IR not loaded, and drain the mailbox.
+        Background builder results cannot become audible until a later ready hook. */
+    void forceLinearIRUnavailable();
+
+    /** Test-only: like forceLinearIRReady(), but the impulse is centred at
+        irSize/2 so the convolver group delay matches actualLatencyForPhaseMode. */
+    void forceLinearIRReadyCentered();
     
     //==============================================================================
     // Source Profile
@@ -675,6 +687,9 @@ private:
     void loadStateFromSlot(ABState slot);
     bool applyBandStateDelta(int bandIndex, const BandState& targetState, bool useGestures);
     void updateReportedLatency();
+    void armAlignedPhaseTransition(PhaseMode fromMode) noexcept;
+    void beginLinearPhaseEntryPending(PhaseMode fromMode) noexcept;
+    void cancelLinearPhaseEntryPending() noexcept;
     void handleAsyncUpdate() override;
     [[nodiscard]] bool requiresPaddedLatencyPlan() const noexcept;
     void cacheParameterPointers();
@@ -827,6 +842,8 @@ private:
     DynamicEQProcessor dynamicEQProcessorForIR;
     std::atomic<bool> irCoefficientsUpdated { false };
     std::atomic<bool> linearIRTestOverridePinned { false };
+    void injectPinnedTestLinearIR(size_t impulseTap);
+    void drainPinnedLinearIRMailbox();
     
     // Mid/Side processing chains
     ParametricEQProcessor eqProcessorMid;
@@ -855,6 +872,9 @@ private:
     int phaseTransitionAudioFromMode = -1;
     int phaseTransitionAudioToMode = -1;
     int phaseTransitionInitialOldPadSamples = 0;
+    std::atomic<bool> linearPhaseEntryPending { false };
+    std::atomic<int> linearPhaseEntryFromMode { static_cast<int>(PhaseMode::ZeroLatency) };
+    std::atomic<int> pendingLatencyAdoptionRemaining { 0 };
     std::atomic<int> oversamplingTransitionFromEffective { -1 };
     std::atomic<int> oversamplingTransitionSamplesRemaining { 0 };
     static constexpr int oversamplingTransitionCrossfadeSamples = 2048; // longer fade for 2x↔4x startup/warmup
@@ -942,15 +962,6 @@ private:
     std::array<std::atomic<bool>, 2> linearIRLoaded { false, false };
     std::atomic<int> consecutiveIRReadyBlocks { 0 };
 
-    // LP IR first-load crossfade: when the IR becomes ready while we were in
-    // fallback ZL-EQ mode, crossfade from ZL output to LP convolution output
-    // over 1024 samples to avoid a hard cut.
-    bool lpWasFallback = false;    // true while LP mode is active but IR not yet loaded
-    int  lpFirstLoadCrossfadeRemaining = 0;
-    static constexpr int lpFirstLoadCrossfadeSamples = 1024;
-    juce::AudioBuffer<float> lpFirstLoadFallbackBuf;
-    
-    // IR crossfade for click-free transitions
     static constexpr int irCrossfadeSamples = 128;
     std::atomic<int> crossfadeSamplesRemaining { 0 };
     std::atomic<int> previousIRIndex { 0 };
@@ -1068,7 +1079,31 @@ private:
         bool dynEqEnabled = true;
         float dynEqMix = 100.0f;
         bool dynAutoMakeup = false;
+        int numActiveBands = 8;
         juce::String name;
+
+        // RAM-only Semantic claim for this comparison slot. Not serialized:
+        // session restore still fail-closes via clearSemanticBandProvenance().
+        std::array<std::array<int, kMaxSemanticBandSlots>,
+                   SemanticEQEngine::numQualities> semanticAssignments {};
+        std::array<bool, maxBands> semanticOwned {};
+        std::array<bool, maxBands> semanticHasSnapshot {};
+        std::array<BandState, maxBands> semanticOriginalStates {};
+        std::array<BandState, maxBands> semanticLastAppliedStates {};
+        int semanticOriginalActiveBandCount = -1;
+        int semanticLastRequestedActiveBandCount = -1;
+
+        void clearSemanticProvenance() noexcept
+        {
+            for (auto& perQuality : semanticAssignments)
+                perQuality.fill(-1);
+            semanticOwned.fill(false);
+            semanticHasSnapshot.fill(false);
+            semanticOriginalStates = {};
+            semanticLastAppliedStates = {};
+            semanticOriginalActiveBandCount = -1;
+            semanticLastRequestedActiveBandCount = -1;
+        }
     };
     
     // slotMutex_ guards ALL reads/writes to slotA..D and their fields.
@@ -1077,6 +1112,8 @@ private:
     mutable std::recursive_mutex slotMutex_;
     EQSlot slotA, slotB, slotC, slotD;
     std::atomic<ABState> currentABState { ABState::A };
+    void captureSemanticProvenanceToSlot(EQSlot& slot) const noexcept;
+    void restoreSemanticProvenanceFromSlot(const EQSlot& slot) noexcept;
     
     //==============================================================================
     // Auto-Gain (all atomic for thread-safety)

@@ -1441,6 +1441,7 @@ if(HAVE_JUCE)
         Source/Tests/DryWetGainPipelineTest.cpp
         Source/Tests/DynEQTransitionWitnessTest.cpp
         Source/Tests/PhaseTransitionMatrixTest.cpp
+        Source/Tests/DeferredLinearPhaseIRTest.cpp
         Source/Tests/BandContextContinuityTest.cpp
         Source/Tests/LinearPhaseLatencyContractTest.cpp
         # Instantiates AIEqualizerAudioProcessor to exercise the real IR builder,

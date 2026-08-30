@@ -436,19 +436,27 @@ private:
     {
         beginTest("Phase mode: Zero → Natural → Linear → Zero with audio");
 
-        auto result = runSession(sr, blockSize, 200, setupRealisticSession,
-            [](AIEqualizerAudioProcessor&, juce::AudioProcessorValueTreeState& apvts, int block)
+        constexpr int completeTransitionSamples = 12288;
+        const int segment = (completeTransitionSamples + blockSize - 1) / blockSize;
+        const int switch1 = segment;
+        const int switch2 = switch1 + segment;
+        const int switch3 = switch2 + segment;
+        const int numBlocks = switch3 + segment;
+
+        auto result = runSession(sr, blockSize, numBlocks, setupRealisticSession,
+            [switch1, switch2, switch3](AIEqualizerAudioProcessor&, juce::AudioProcessorValueTreeState& apvts, int block)
             {
-                if (block == 40)  setChoice(apvts, "phaseMode", 1); // Natural
-                if (block == 90)  setChoice(apvts, "phaseMode", 2); // Linear
-                if (block == 150) setChoice(apvts, "phaseMode", 0); // Zero
+                if (block == switch1) setChoice(apvts, "phaseMode", 1); // Natural
+                if (block == switch2) setChoice(apvts, "phaseMode", 2); // Linear
+                if (block == switch3) setChoice(apvts, "phaseMode", 0); // Zero
             });
 
         for (auto [blk, label] : std::initializer_list<std::pair<int, const char*>>{
-                {40, "Zero→Natural"}, {90, "Natural→Linear"}, {150, "Linear→Zero"} })
+                {switch1, "Zero→Natural"}, {switch2, "Natural→Linear"}, {switch3, "Linear→Zero"} })
         {
-            int start = blk * blockSize;
-            int len   = 20 * blockSize; // longer window for phase transitions
+            const int start = blk * blockSize;
+            const int len = juce::jmin(completeTransitionSamples,
+                                       result.output.getNumSamples() - start);
             auto m = analyzeForClicks(result.output, result.input, start, len);
             expectClean(m, juce::String("Phase: ") + label);
         }
