@@ -25,4 +25,14 @@ Hard stop: start + 7200 s → **2026-08-31 10:02:22 CEST** unix `1788163342`
 - Decision: first proposal
 - Assumptions: this GitHub tree is the product-of-record for this run; Assist graph pin stays parked; no `processBlock` rewrite; `PluginProcessor.cpp/.h` **will be required** for the chosen slice (stated below); no production code this round.
 
+### Round 2 — 2026-08-31 08:21:34 CEST (unix 1788157294)
+
+- Wait after Round 1 files: ~16.5 min (08:04:49 → 08:21:34)
+- Duration: ~4 min
+- Skill invoked: brainstorming (evaluate previous, then evolve)
+- Evaluation: R1 last-write-wins **confirmed**; complementary-stamps-parent **falsified** (`sourceQuality = comp.quality`, Air steals Clarity). Merge-TODO as product fix **killed**.
+- Proposal: **Driver-keyed 1:N occupancy; skip complementary at apply; persist+undo; RESET deferred**
+- Decision: **evolve**
+- Assumptions: same tree; `PluginProcessor` required; no production code.
+
 ---
