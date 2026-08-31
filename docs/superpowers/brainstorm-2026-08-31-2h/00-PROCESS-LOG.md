@@ -35,4 +35,15 @@ Hard stop: start + 7200 s → **2026-08-31 10:02:22 CEST** unix `1788163342`
 - Decision: **evolve**
 - Assumptions: same tree; `PluginProcessor` required; no production code.
 
+### Round 3 — 2026-08-31 08:37:47 CEST (unix 1788158267)
+
+- Wait after Round 2 files: ~16.2 min (08:21:34 → 08:37:47)
+- Duration: ~4 min
+- Skill invoked: brainstorming (evaluate R2)
+- Evaluation: complementary skip **kept** (Air today hitchhikes Clarity’s 3 bands). Undo-per-apply **killed** (slider ticks + 30 Hz morph). Release-on-zero **required** (same hole as RESET, live path).
+- Proposal: **Full SemanticState projector: 1:N + release-on-zero + persist; no HistoryManager on live apply**
+- Decision: **evolve**
+- Assumptions: sliders stay live; PluginProcessor required; no production code.
+
 ---
+
