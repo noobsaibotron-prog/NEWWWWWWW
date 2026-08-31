@@ -65,7 +65,18 @@ Hard stop: start + 7200 s → **2026-08-31 10:02:22 CEST** unix `1788163342`
 - Decision: **evolve**
 - Assumptions: no production code; remaining waits shortened for 10:02 CEST wall.
 
+### Round 6 — 2026-08-31 09:25:03 CEST (unix 1788161103)
+
+- Wait after Round 5 files: ~11.6 min (shortened)
+- Duration: ~5 min
+- Skill invoked: brainstorming (evaluate R5, freeze API)
+- Evaluation: DSP-only tests **kept**. New APVTS intensity param **killed**. Reuse window = existing `0.148*f`, not Ember 0.25 oct. `numQualities` from engine enum, no magic 32.
+- Proposal: **Frozen `project(ProjectIn) -> ProjectOut` + SemanticIntent ValueTree sibling of SlotA**
+- Decision: **evolve** (lock, do not shop)
+- Assumptions: production code still forbidden; next waits shortened.
+
 ---
+
 
 
 
