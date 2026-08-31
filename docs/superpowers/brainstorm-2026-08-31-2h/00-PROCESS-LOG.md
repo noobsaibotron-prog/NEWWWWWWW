@@ -75,7 +75,18 @@ Hard stop: start + 7200 s → **2026-08-31 10:02:22 CEST** unix `1788163342`
 - Decision: **evolve** (lock, do not shop)
 - Assumptions: production code still forbidden; next waits shortened.
 
+### Round 7 — 2026-08-31 09:34:23 CEST (unix 1788161663)
+
+- Wait after Round 6 files: ~9.3 min (shortened)
+- Duration: ~5 min
+- Skill invoked: brainstorming (evaluate R6)
+- Evaluation: frozen API **kept** except 23→0 scan (**killed**: already forces `numActiveBands=24` today) and zip-reuse (**killed**). Prefer grow from first free slot ≥ current active count; nearest owned freq for reuse.
+- Proposal: **Occupancy projector as R6 + lowest-free claim + nearest reuse**
+- Decision: **evolve** (last design patch)
+- Assumptions: Round 8 synthesizes this idea; PluginProcessor wrapper only; no production code this round.
+
 ---
+
 
 
 
