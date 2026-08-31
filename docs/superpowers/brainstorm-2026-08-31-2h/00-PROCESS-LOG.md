@@ -45,5 +45,16 @@ Hard stop: start + 7200 s → **2026-08-31 10:02:22 CEST** unix `1788163342`
 - Decision: **evolve**
 - Assumptions: sliders stay live; PluginProcessor required; no production code.
 
+### Round 4 — 2026-08-31 08:54:13 CEST (unix 1788159253)
+
+- Wait after Round 3 files: ~16.4 min (08:37:47 → 08:54:13)
+- Duration: ~4 min
+- Skill invoked: brainstorming (evaluate R3)
+- Evaluation: projector **kept**; persist-occupancy-only **killed** (recall + Warmth would release Air). Must persist `SemanticState` + occupancy; hydrate sliders. Release-on-zero is a live-macro behavior change vs today (empty batch no-op).
+- Proposal: **SemanticIntent ValueTree: qualities + occupancy + intensity; editor sync**
+- Decision: **evolve**
+- Assumptions: PluginProcessor + SemanticControlPanel; no processBlock; no production code.
+
 ---
+
 
