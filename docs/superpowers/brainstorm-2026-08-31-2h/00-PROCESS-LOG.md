@@ -85,7 +85,19 @@ Hard stop: start + 7200 s → **2026-08-31 10:02:22 CEST** unix `1788163342`
 - Decision: **evolve** (last design patch)
 - Assumptions: Round 8 synthesizes this idea; PluginProcessor wrapper only; no production code this round.
 
+### Round 8 + delivery — 2026-08-31 09:40:44–09:43:03 CEST (unix 1788162044–1788162183)
+
+- Wait after Round 7 files: ~6.3 min (shortened)
+- Skill invoked: writing-plans (file missing; standard TDD task plan) + brainstorming synthesis
+- Evaluation: R7 kept as THE idea
+- Deliverable: Semantic occupancy projector
+- Files: `round-08-synthesis.md`, `SPEC-semantic-occupancy.md`, `PLAN-semantic-occupancy.md`, `MEGA-DOCUMENT.md`
+- MEGA copy: `/home/ubuntu/Downloads/EMBER_BRAINSTORM_2026-08-31.md` (writable)
+- Production code: **none**. No PR opened by this agent. Commits are docs-only on `cursor/semantic-intent-map-brainstorming-895c`.
+- Hard stop 10:02:22 CEST **honored** (delivery ~09:43).
+
 ---
+
 
 
 
