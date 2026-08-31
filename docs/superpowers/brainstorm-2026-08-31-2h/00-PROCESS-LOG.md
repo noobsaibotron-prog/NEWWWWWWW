@@ -55,6 +55,17 @@ Hard stop: start + 7200 s → **2026-08-31 10:02:22 CEST** unix `1788163342`
 - Decision: **evolve**
 - Assumptions: PluginProcessor + SemanticControlPanel; no processBlock; no production code.
 
+### Round 5 — 2026-08-31 09:13:27 CEST (unix 1788160407)
+
+- Wait after Round 4 files: ~19.2 min (08:54:13 → 09:13:27) — slight overrun
+- Duration: ~5 min
+- Skill invoked: brainstorming (evaluate R4)
+- Evaluation: persist triple **kept**. Processor-in-unit-tests **killed** (`AIEqualizerPro_Tests` is DSP-only; Processor ctor starts IR+AI threads). Extract **pure** `SemanticOccupancy` for that target.
+- Proposal: **POD projector + ValueTree helpers in AIEqualizerPro_Tests; Processor is a thin wrapper later**
+- Decision: **evolve**
+- Assumptions: no production code; remaining waits shortened for 10:02 CEST wall.
+
 ---
+
 
 
