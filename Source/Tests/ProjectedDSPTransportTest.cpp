@@ -6,11 +6,59 @@
 #include "Support/TestParameters.h"
 
 #if JUCE_MAC || JUCE_IOS
-#include <malloc/malloc.h>
+#include <pthread.h>
 #endif
 
+#include <atomic>
+#include <cstdlib>
+#include <dlfcn.h>
 #include <memory>
 #include <vector>
+
+#if JUCE_MAC || JUCE_IOS
+extern "C"
+{
+typedef void malloc_logger_t (uint32_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uint32_t);
+void aieqThreadMallocLogger (uint32_t type,
+                             uintptr_t,
+                             uintptr_t sizeOrPtr,
+                             uintptr_t,
+                             uintptr_t,
+                             uint32_t);
+}
+
+struct ThreadMallocProbe
+{
+    pthread_t thread {};
+    malloc_logger_t* previous { nullptr };
+    std::atomic<uint64_t> allocatedBytes { 0 };
+    std::atomic<uint64_t> loggerCalls { 0 };
+    std::atomic<bool> armed { false };
+};
+
+static ThreadMallocProbe* gThreadMallocProbe = nullptr;
+static constexpr uint32_t kMallocLogAllocate = 2;
+
+extern "C" void aieqThreadMallocLogger (uint32_t type,
+                                       uintptr_t,
+                                       uintptr_t sizeOrPtr,
+                                       uintptr_t,
+                                       uintptr_t,
+                                       uint32_t)
+{
+    auto* probe = gThreadMallocProbe;
+    if (probe == nullptr)
+        return;
+    probe->loggerCalls.fetch_add (1, std::memory_order_relaxed);
+    if (! probe->armed.load (std::memory_order_relaxed))
+        return;
+    if (! pthread_equal (pthread_self(), probe->thread))
+        return;
+    if ((type & kMallocLogAllocate) == 0)
+        return;
+    probe->allocatedBytes.fetch_add ((uint64_t) sizeOrPtr, std::memory_order_relaxed);
+}
+#endif
 
 namespace
 {
@@ -92,6 +140,70 @@ juce::String committedDigest (Processor& proc)
     }
     return d;
 }
+
+#if JUCE_MAC || JUCE_IOS
+// Thread-filtered Darwin malloc_logger: counts allocations on the calling
+// thread only. malloc_zone_statistics is process-wide and includes the AI/IR
+// worker threads that live for the processor lifetime (pre-E2 noise).
+malloc_logger_t** darwinMallocLoggerSlot()
+{
+    return reinterpret_cast<malloc_logger_t**> (dlsym (RTLD_DEFAULT, "malloc_logger"));
+}
+
+struct ScopedThreadMallocProbe
+{
+    ThreadMallocProbe probe;
+    malloc_logger_t** slot { nullptr };
+
+    ScopedThreadMallocProbe()
+    {
+        probe.thread = pthread_self();
+        slot = darwinMallocLoggerSlot();
+        if (slot == nullptr)
+            return;
+        probe.previous = *slot;
+        gThreadMallocProbe = &probe;
+        *slot = aieqThreadMallocLogger;
+    }
+
+    ~ScopedThreadMallocProbe()
+    {
+        probe.armed.store (false, std::memory_order_relaxed);
+        if (slot != nullptr)
+            *slot = probe.previous;
+        if (gThreadMallocProbe == &probe)
+            gThreadMallocProbe = nullptr;
+    }
+
+    bool hooked() const { return slot != nullptr; }
+
+    void reset()
+    {
+        probe.allocatedBytes.store (0, std::memory_order_relaxed);
+        probe.loggerCalls.store (0, std::memory_order_relaxed);
+    }
+
+    void arm()
+    {
+        probe.armed.store (true, std::memory_order_relaxed);
+    }
+
+    void disarm()
+    {
+        probe.armed.store (false, std::memory_order_relaxed);
+    }
+
+    uint64_t bytes() const
+    {
+        return probe.allocatedBytes.load (std::memory_order_relaxed);
+    }
+
+    uint64_t loggerCalls() const
+    {
+        return probe.loggerCalls.load (std::memory_order_relaxed);
+    }
+};
+#endif
 } // namespace
 
 class ProjectedDSPTransportTest final : public juce::UnitTest
@@ -293,20 +405,40 @@ public:
             const auto snapshot = makePublishableSnapshot (
                 *this, *proc, Quality::Air, 12000.0f, 1.8f);
 
+            juce::AudioBuffer<float> buffer (2, kBlock);
+            juce::MidiBuffer midi;
+
 #if JUCE_MAC || JUCE_IOS
-            malloc_statistics_t before {};
-            malloc_zone_statistics (malloc_default_zone(), &before);
+            ScopedThreadMallocProbe probe;
+            expect (probe.hooked(), "malloc_logger symbol missing; cannot attribute processBlock allocations");
+            probe.reset();
+            probe.arm();
+            void* canary = std::malloc (4096);
+            if (canary != nullptr)
+                static_cast<volatile unsigned char*> (canary)[0] = 1;
+            probe.disarm();
+            std::free (canary);
+            expect (probe.bytes() >= 4096,
+                    "thread malloc probe must observe a known allocation; bytes="
+                        + juce::String ((juce::int64) probe.bytes())
+                        + " calls=" + juce::String ((juce::int64) probe.loggerCalls()));
+            probe.reset();
 #endif
             for (int i = 0; i < 32; ++i)
             {
                 expect (proc->publishProjectedDSPState (snapshot));
-                pumpAudio (*proc);
+                buffer.clear();
+                midi.clear();
+#if JUCE_MAC || JUCE_IOS
+                probe.arm();
+#endif
+                proc->processBlock (buffer, midi);
+#if JUCE_MAC || JUCE_IOS
+                probe.disarm();
+#endif
             }
 #if JUCE_MAC || JUCE_IOS
-            malloc_statistics_t after {};
-            malloc_zone_statistics (malloc_default_zone(), &after);
-            const auto growth = after.size_in_use > before.size_in_use
-                ? (after.size_in_use - before.size_in_use) : 0;
+            const auto growth = probe.bytes();
             expect (growth <= 65536,
                     "VPA mailbox consume must not allocate in processBlock; growth="
                         + juce::String ((juce::int64) growth));
