@@ -695,6 +695,13 @@ option(AIEQ_MOTORE_V2_EXP "Build the Motore v2 EXP listening plugin (separate id
 # auditioned in a host alongside the installed shipping plug-in instead of
 # replacing it. Identity only; enables no extra engine.
 option(AIEQ_SEMANTIC_EXP "Build the Semantic listening plugin (separate identity)" OFF)
+# Copilot Proposal V1: unique JUCE identity so Ableton Live cannot collapse
+# this bundle with shipping (AIAUAIEQ) or the SEMANTIC experiment (AIAUAIQS).
+# Live keys VST3 on TUID/CID + factory name. ASCII byte-patches of Mach-O
+# leave the Steinberg factory CID unchanged and are not sufficient.
+option(AIEQ_COPILOT_PROPOSAL_V1
+    "Build Copilot Proposal V1 with unique PLUGIN_CODE AIQP and a ProposalV1 product name"
+    OFF)
 # Developer-only analyzer A1 switch. OFF is the product: A2 hop interpolation,
 # which won listening A/B at 48 kHz and 96 kHz. ON shows the latest hop
 # immediately; the visible/unfrozen timer stays at 60 Hz.
@@ -764,7 +771,14 @@ if(HAVE_JUCE)
     # Create the plugin using JUCE helper
     # Motore v2 EXP uses a DISTINCT plugin code + name so macOS/Ableton treat it
     # as a separate plugin installed next to the shipped one (untouched).
-    if(AIEQ_SEMANTIC_EXP)
+    if(AIEQ_COPILOT_PROPOSAL_V1)
+        # Distinct from shipping AIEQ and experiment AIQS. Factory / product
+        # name must contain ProposalV1 so Live cannot merge browser rows.
+        set(_AIEQ_CODE "AIQP")
+        set(_AIEQ_NAME "AI Equalizer Pro SEMANTIC ProposalV1")
+        set(_AIEQ_BUNDLE_ID "com.AIAudio.AIEqualizerProSemanticProposalV1")
+        message(STATUS "Copilot Proposal V1 identity: ${_AIEQ_NAME} (PLUGIN_CODE ${_AIEQ_CODE}, TUID AIAUAIQP)")
+    elseif(AIEQ_SEMANTIC_EXP)
         # Same reasoning as the Motore v2 EXP identity below, for a different
         # feature: the Semantic branch needs to be auditioned in a host BESIDE
         # the shipping plug-in, not on top of it. Sharing PRODUCT_NAME and
@@ -783,7 +797,7 @@ if(HAVE_JUCE)
         set(_AIEQ_NAME "AI Equalizer Pro")
         set(_AIEQ_BUNDLE_ID "com.AIAudio.AIEqualizerPro")
     endif()
-    if(AIEQ_ENABLE_ANALYZER_AB_TELEMETRY)
+    if(AIEQ_ENABLE_ANALYZER_AB_TELEMETRY AND NOT AIEQ_COPILOT_PROPOSAL_V1)
         # Throwaway listening identities for the A1/A2 experiment. These override
         # SEMANTIC/shipping names so the artefacts can sit beside the installed
         # SEMANTIC and never replace shipping AI Equalizer Pro.
@@ -805,6 +819,7 @@ if(HAVE_JUCE)
         BUNDLE_ID ${_AIEQ_BUNDLE_ID}
         FORMATS ${AIEQ_PLUGIN_FORMATS}
         PRODUCT_NAME "${_AIEQ_NAME}"
+        PLUGIN_NAME "${_AIEQ_NAME}"
         IS_SYNTH FALSE
         NEEDS_MIDI_INPUT FALSE
         NEEDS_MIDI_OUTPUT FALSE
