@@ -23,6 +23,13 @@ inline constexpr const char* kHumanAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 inline constexpr const char* kForbiddenSecret = "dev-token";
 inline constexpr const char* kLoopbackAddress = "127.0.0.1";
 inline constexpr const char* kPendingSourceLabel = "Ableton Copilot";
+/** Frozen relative path under ~/Library. Must match ACB Observer. */
+inline constexpr const char* kCanonicalControlRelativePath =
+    "Application Support/AbletonCopilotBridge/control";
+inline constexpr const char* kRendezvousFileName = "ember-proposal-v1.json";
+inline constexpr const char* kAuditFileName = "ember-proposal-audit.v1.jsonl";
+inline constexpr std::int64_t kMaxSafeJsonInt = 9007199254740991LL;
+inline constexpr std::uint64_t kPairOfferTtlNs = 60'000'000'000ULL;
 
 enum class MessageType
 {

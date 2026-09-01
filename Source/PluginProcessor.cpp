@@ -7100,8 +7100,7 @@ void AIEqualizerAudioProcessor::requestEmberPairOffer()
     offer.controlRevision = emberControlRevision.load(std::memory_order_acquire);
     offer.projectionBaseEpoch = projectionBaseEpoch.load(std::memory_order_acquire);
     offer.auditionContextEpoch = auditionContextEpoch.load(std::memory_order_acquire);
-    offer.expiresAtMonotonicNs = static_cast<std::uint64_t>(
-        std::max<std::int64_t>(0, juce::Time::getHighResolutionTicks())) + 60'000'000'000ULL;
+    offer.expiresAtMonotonicNs = 0;
     offer.editorOpen = emberEditorOpen.load(std::memory_order_acquire);
     emberProposalClient->sendPairOffer(offer);
     publishEmberLinkUi();
@@ -7372,6 +7371,12 @@ void AIEqualizerAudioProcessor::handleEmberProposalInbound(EmberProposal::WireMe
 {
     jassert(juce::MessageManager::existsAndIsCurrentThread());
     juce::ignoreUnused(frame);
+
+    if (message.type == EmberProposal::MessageType::handshake)
+    {
+        publishEmberLinkUi();
+        return;
+    }
 
     if (message.type == EmberProposal::MessageType::pair_confirm)
     {

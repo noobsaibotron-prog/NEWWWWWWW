@@ -2,6 +2,7 @@
 
 #include "EmberProposalProtocol.h"
 
+#include <array>
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>
@@ -23,11 +24,12 @@ class Transport
 {
 public:
     virtual ~Transport() = default;
-    virtual void send(const EncodedFrame& frame) = 0;
+    virtual bool send(const EncodedFrame& frame) = 0;
     virtual bool waitReceive(EncodedFrame& out, int timeoutMs) = 0;
     virtual void close() = 0;
     [[nodiscard]] virtual bool hasOpenListener() const { return false; }
     [[nodiscard]] virtual bool isConnected() const { return false; }
+    virtual void setExpectMacTrailer(bool) {}
 };
 
 /** In-process duplex queue. No OS socket, no bind. Used by tests and as the
@@ -35,7 +37,7 @@ public:
 class InProcessTransport final : public Transport
 {
 public:
-    void send(const EncodedFrame& frame) override;
+    bool send(const EncodedFrame& frame) override;
     bool waitReceive(EncodedFrame& out, int timeoutMs) override;
     void close() override;
     [[nodiscard]] bool hasOpenListener() const override { return false; }
@@ -89,6 +91,10 @@ public:
     void sendOutcome(const WireMessage& message);
     void sendHandshakeHello();
     void beginHandshakeWithRendezvous(const RendezvousRecord& record);
+    void setControlDirectory(juce::File directory);
+    [[nodiscard]] juce::File controlDirectory() const;
+    void bindRendezvous(const juce::File& file, const RendezvousRecord& record);
+    [[nodiscard]] juce::File boundRendezvousFile() const;
 
     void teardown(UnpairedCause cause);
     [[nodiscard]] std::uint64_t generation() const noexcept { return generation_.load(); }
@@ -110,7 +116,9 @@ private:
     void handleInbound(const EncodedFrame& frame);
     std::int64_t nowNs() const;
     std::int64_t nowUnix() const;
-    void sendEncoded(const WireMessage& message, bool mac);
+    bool sendEncoded(const WireMessage& message, bool mac);
+    [[nodiscard]] bool pairOfferAllowed() const;
+    [[nodiscard]] juce::File activeRendezvousFile() const;
 
     std::atomic<bool> enabled { false };
     std::atomic<std::uint64_t> generation_ { 1 };
@@ -135,9 +143,17 @@ private:
     };
     std::shared_ptr<Lifetime> lifetime;
     bool autoConnectRendezvous = false;
+    juce::File controlDirectory_;
+    juce::File boundRendezvousFile_;
+    std::string boundSessionUuid;
+    std::string boundSessionSecretHex;
+    std::int64_t lastRendezvousAttemptMs = 0;
 };
 
+[[nodiscard]] juce::File defaultControlDirectory();
 [[nodiscard]] juce::File defaultRendezvousFile();
+[[nodiscard]] bool controlDirectoryIsUsable(const juce::File& directory, ProtocolErrorCode& error);
+[[nodiscard]] bool rendezvousFileIsUsable(const juce::File& file, ProtocolErrorCode& error);
 [[nodiscard]] std::optional<RendezvousRecord> readRendezvousFile(const juce::File& file,
                                                                  std::int64_t nowUnixS,
                                                                  ProtocolErrorCode& error);

@@ -1,5 +1,6 @@
 #include <juce_core/juce_core.h>
 #include <juce_events/juce_events.h>
+#include <cstdlib>
 #include <iostream>
 
 class HarnessSelfTest : public juce::UnitTest
@@ -280,6 +281,8 @@ private:
 
 int main(int argc, char** argv)
 {
+    // Never let unit tests handshake against a live Observer rendezvous.
+    setenv("EMBER_PROPOSAL_DISABLE_AUTOCONNECT", "1", 1);
     juce::ScopedJuceInitialiser_GUI juceInitialiser;
     auto options = TestRunner::parseArgs(argc, argv);
     const int result = TestRunner::run(options);

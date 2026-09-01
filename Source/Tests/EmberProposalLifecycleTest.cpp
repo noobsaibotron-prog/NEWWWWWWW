@@ -9,13 +9,16 @@
 #include "../GUI/SemanticControlPanel.h"
 
 #include <CoreFoundation/CoreFoundation.h>
+#include <array>
 #include <atomic>
 #include <cmath>
 #include <cstring>
 #include <memory>
 #include <optional>
 #include <string>
+#include <sys/stat.h>
 #include <thread>
+#include <unistd.h>
 #include <vector>
 
 namespace
@@ -136,6 +139,33 @@ std::optional<PairOffer> takeLastPairOffer(InProcessTransport& pipe)
             found = parsed.message.pairOffer;
     }
     return found;
+}
+
+juce::File makeControlDir(const juce::String& tag)
+{
+    auto dir = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                   .getChildFile("ember-pair-rdv")
+                   .getChildFile(tag + "-" + juce::Uuid().toDashedString())
+                   .getChildFile("control");
+    dir.createDirectory();
+    chmod(dir.getFullPathName().toRawUTF8(), 0700);
+    return dir;
+}
+
+RendezvousRecord writeUsableRendezvous(const juce::File& control)
+{
+    RendezvousRecord record;
+    record.listenAddress = kLoopbackAddress;
+    record.listenPort = 23456;
+    record.sessionUuid = randomUuidV4();
+    record.sessionSecretHex = randomHex64();
+    record.serverEpoch = 1;
+    record.expiresAtUnixS = 2'000'000'000;
+    record.createdAtUnixS = 1;
+    const auto file = control.getChildFile(kRendezvousFileName);
+    file.replaceWithText(serializeRendezvousJson(record));
+    chmod(file.getFullPathName().toRawUTF8(), 0600);
+    return record;
 }
 
 WireMessage stageMoreAir(const LinkUiState& paired, const PairOffer& offer)
@@ -477,6 +507,77 @@ public:
             expect(maxDiff < 1.0e-5f);
             neverOn.releaseResources();
             toggled.releaseResources();
+        }
+
+        beginTest("PAIR fails closed when TCP/session is bound to a different rendezvous dir");
+        {
+            auto pipe = std::make_shared<InProcessTransport>();
+            Client client;
+            client.setAutoConnectRendezvous(false);
+            client.attachTransport(pipe);
+            std::array<std::uint8_t, 32> secret {};
+            secret.fill(0x44);
+            client.session().setSecret(secret);
+            client.session().setAuthenticated(true);
+            client.setEnabled(true);
+
+            auto dirA = makeControlDir("A");
+            auto dirB = makeControlDir("B");
+            const auto recordB = writeUsableRendezvous(dirB);
+            client.setControlDirectory(dirA);
+            client.bindRendezvous(dirB.getChildFile(kRendezvousFileName), recordB);
+
+            PairOffer offer;
+            offer.runtimeInstanceId = randomUuidV4();
+            offer.humanCode = randomHumanCode();
+            offer.controlRevision = 1;
+            offer.projectionBaseEpoch = 1;
+            offer.auditionContextEpoch = 1;
+            offer.expiresAtMonotonicNs = 10'000'000'000ULL;
+            offer.editorOpen = true;
+            client.sendPairOffer(offer);
+            expect(!client.pairing().offerPending,
+                   "mismatched rendezvous dirs must not arm local offerPending");
+            expect(!takeLastPairOffer(*pipe).has_value(),
+                   "mismatched rendezvous dirs must not emit pair_offer");
+            dirA.getParentDirectory().deleteRecursively();
+            dirB.getParentDirectory().deleteRecursively();
+            client.setEnabled(false);
+            for (int i = 0; i < 50 && client.isIoThreadRunning(); ++i)
+                pump(10);
+        }
+
+        beginTest("PAIR fails closed when a bound rendezvous exists but handshake is not done");
+        {
+            auto pipe = std::make_shared<InProcessTransport>();
+            Client client;
+            client.setAutoConnectRendezvous(false);
+            client.attachTransport(pipe);
+            client.setEnabled(true);
+
+            auto dir = makeControlDir("unauth");
+            const auto record = writeUsableRendezvous(dir);
+            client.setControlDirectory(dir);
+            client.bindRendezvous(dir.getChildFile(kRendezvousFileName), record);
+            expect(!client.isAuthenticated());
+
+            PairOffer offer;
+            offer.runtimeInstanceId = randomUuidV4();
+            offer.humanCode = randomHumanCode();
+            offer.controlRevision = 1;
+            offer.projectionBaseEpoch = 1;
+            offer.auditionContextEpoch = 1;
+            offer.expiresAtMonotonicNs = 10'000'000'000ULL;
+            offer.editorOpen = true;
+            client.sendPairOffer(offer);
+            expect(!client.pairing().offerPending,
+                   "unauthenticated PAIR must not show a local human_code");
+            expect(!takeLastPairOffer(*pipe).has_value(),
+                   "unauthenticated PAIR must not send pair_offer on the wire");
+            dir.getParentDirectory().deleteRecursively();
+            client.setEnabled(false);
+            for (int i = 0; i < 50 && client.isIoThreadRunning(); ++i)
+                pump(10);
         }
     }
 };

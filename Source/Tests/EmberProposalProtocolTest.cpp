@@ -2,9 +2,12 @@
 #include <juce_events/juce_events.h>
 
 #include "../Integration/EmberProposalProtocol.h"
+#include "../Integration/EmberProposalClient.h"
 
 #include <cstring>
 #include <string>
+#include <sys/stat.h>
+#include <unistd.h>
 #include <vector>
 
 namespace
@@ -272,6 +275,47 @@ public:
             const auto parsed = parseWireJson(serializeWireJson(m));
             expect(!parsed.ok);
             expect(parsed.error == ProtocolErrorCode::oversized_frame);
+        }
+
+        beginTest("canonical rendezvous is Application Support AbletonCopilotBridge control");
+        {
+            const auto path = defaultRendezvousFile().getFullPathName().replaceCharacter('\\', '/');
+            expect(path.contains(kCanonicalControlRelativePath), path.toStdString());
+            expect(path.fromLastOccurrenceOf("/", false, false) == kRendezvousFileName);
+            expect(!path.contains("/Library/AbletonCopilotBridge/"),
+                   "JUCE userApplicationDataDirectory must not be used without Application Support");
+        }
+
+        beginTest("rendezvous file that is not 0600 is fail-closed");
+        {
+            const auto root = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                                  .getChildFile("ember-rdv-perm")
+                                  .getChildFile(juce::Uuid().toDashedString());
+            const auto control = root.getChildFile("control");
+            expect(control.createDirectory());
+            chmod(control.getFullPathName().toRawUTF8(), 0700);
+
+            RendezvousRecord record;
+            record.listenAddress = kLoopbackAddress;
+            record.listenPort = 23456;
+            record.sessionUuid = uuid();
+            record.sessionSecretHex = randomHex64();
+            record.serverEpoch = 1;
+            record.expiresAtUnixS = 2'000'000'000;
+            record.createdAtUnixS = 1;
+            const auto file = control.getChildFile(kRendezvousFileName);
+            expect(file.replaceWithText(serializeRendezvousJson(record)));
+            chmod(file.getFullPathName().toRawUTF8(), 0644);
+
+            ProtocolErrorCode error = ProtocolErrorCode::malformed_json;
+            expect(!readRendezvousFile(file, 10, error));
+            expect(error == ProtocolErrorCode::stale_rendezvous);
+
+            chmod(file.getFullPathName().toRawUTF8(), 0600);
+            error = ProtocolErrorCode::malformed_json;
+            const auto ok = readRendezvousFile(file, 10, error);
+            expect(ok.has_value(), toString(error));
+            root.deleteRecursively();
         }
     }
 };

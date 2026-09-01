@@ -1,18 +1,23 @@
 #include "EmberProposalClient.h"
 
+#include <algorithm>
 #include <chrono>
+#include <cstdlib>
 #include <cstring>
+#include <sys/stat.h>
+#include <unistd.h>
 #include <utility>
 
 namespace EmberProposal
 {
 
-void InProcessTransport::send(const EncodedFrame& frame)
+bool InProcessTransport::send(const EncodedFrame& frame)
 {
     std::lock_guard<std::mutex> lock(mutex);
     if (closed.load())
-        return;
+        return false;
     outbound.push_back(frame);
+    return true;
 }
 
 bool InProcessTransport::waitReceive(EncodedFrame& out, int timeoutMs)
@@ -108,19 +113,23 @@ public:
         return true;
     }
 
-    void send(const EncodedFrame& frame) override
+    bool send(const EncodedFrame& frame) override
     {
         if (socket == nullptr || !connected)
-            return;
+            return false;
         const auto len = juce::ByteOrder::swapIfLittleEndian(
             static_cast<std::uint32_t>(frame.body.size()));
         if (socket->waitUntilReady(false, 200) < 0)
-            return;
-        socket->write(&len, 4);
-        if (!frame.body.empty())
-            socket->write(frame.body.data(), static_cast<int>(frame.body.size()));
-        if (frame.hasHmac)
-            socket->write(frame.hmac.data(), 32);
+            return false;
+        if (socket->write(&len, 4) != 4)
+            return false;
+        if (!frame.body.empty()
+            && socket->write(frame.body.data(), static_cast<int>(frame.body.size()))
+                   != static_cast<int>(frame.body.size()))
+            return false;
+        if (frame.hasHmac && socket->write(frame.hmac.data(), 32) != 32)
+            return false;
+        return true;
     }
 
     bool waitReceive(EncodedFrame& out, int timeoutMs) override
@@ -140,21 +149,23 @@ public:
         if (len == 0 || len > static_cast<std::uint32_t>(kMaxFrameBytes))
             return false;
         out.body.resize(len);
+        out.hasHmac = false;
         if (!readExact(out.body.data(), static_cast<int>(len)))
             return false;
-        // HMAC trailer is present once the peer has authenticated; E2 treats
-        // a following 32 bytes as HMAC when readable without blocking long.
-        if (socket->waitUntilReady(true, 0) > 0)
+        if (expectMacTrailer.load())
         {
             std::uint8_t mac[32];
-            const int got = socket->read(mac, 32, false);
-            if (got == 32)
-            {
-                std::memcpy(out.hmac.data(), mac, 32);
-                out.hasHmac = true;
-            }
+            if (!readExact(mac, 32))
+                return false;
+            std::memcpy(out.hmac.data(), mac, 32);
+            out.hasHmac = true;
         }
         return true;
+    }
+
+    void setExpectMacTrailer(bool expectMac) override
+    {
+        expectMacTrailer.store(expectMac);
     }
 
     void close() override
@@ -189,6 +200,7 @@ private:
     int port = 0;
     std::unique_ptr<juce::StreamingSocket> socket;
     bool connected = false;
+    std::atomic<bool> expectMacTrailer { false };
 };
 } // namespace
 
@@ -198,6 +210,7 @@ Client::Client()
 {
     monotonicNsFn = defaultMonotonicNs;
     unixSecondsFn = defaultUnixSeconds;
+    controlDirectory_ = defaultControlDirectory();
 }
 
 Client::~Client()
@@ -257,19 +270,31 @@ void Client::setClock(std::function<std::int64_t()> monotonicNs,
 
 void Client::sendPairOffer(const PairOffer& offer)
 {
+    if (!pairOfferAllowed())
+        return;
+
+    PairOffer clamped = offer;
+    const auto now = static_cast<std::uint64_t>(std::max<std::int64_t>(0, nowNs()));
+    const auto cap = static_cast<std::uint64_t>(kMaxSafeJsonInt);
+    if (clamped.expiresAtMonotonicNs > cap || clamped.expiresAtMonotonicNs < now)
+        clamped.expiresAtMonotonicNs = std::min(now + kPairOfferTtlNs, cap);
+
     WireMessage message;
     message.type = MessageType::pair_offer;
-    message.pairOffer = offer;
+    message.pairOffer = clamped;
+    const bool mac = session_.isAuthenticated();
+    const bool bound = !boundRendezvousFile_.getFullPathName().isEmpty();
     {
         std::lock_guard<std::mutex> lock(stateMutex);
         pairingState.offerPending = true;
-        pairingState.runtimeInstanceId = offer.runtimeInstanceId;
-        pairingState.humanCode = offer.humanCode;
-        pairingState.offerExpiresAtNs = offer.expiresAtMonotonicNs;
+        pairingState.runtimeInstanceId = clamped.runtimeInstanceId;
+        pairingState.humanCode = clamped.humanCode;
+        pairingState.offerExpiresAtNs = clamped.expiresAtMonotonicNs;
         pairingState.paired = false;
         pairingState.pairBindingId.clear();
     }
-    sendEncoded(message, session_.isAuthenticated());
+    if (!sendEncoded(message, mac) && bound)
+        clearPairing();
 }
 
 void Client::sendUnpair(const UnpairCommand& command)
@@ -321,6 +346,67 @@ void Client::beginHandshakeWithRendezvous(const RendezvousRecord& record)
         return;
     session_.setSecret(secret);
     sendHandshakeHello();
+}
+
+void Client::setControlDirectory(juce::File directory)
+{
+    std::lock_guard<std::mutex> lock(stateMutex);
+    controlDirectory_ = std::move(directory);
+}
+
+juce::File Client::controlDirectory() const
+{
+    std::lock_guard<std::mutex> lock(stateMutex);
+    return controlDirectory_;
+}
+
+void Client::bindRendezvous(const juce::File& file, const RendezvousRecord& record)
+{
+    std::lock_guard<std::mutex> lock(stateMutex);
+    boundRendezvousFile_ = file;
+    boundSessionUuid = record.sessionUuid;
+    boundSessionSecretHex = record.sessionSecretHex;
+}
+
+juce::File Client::boundRendezvousFile() const
+{
+    std::lock_guard<std::mutex> lock(stateMutex);
+    return boundRendezvousFile_;
+}
+
+juce::File Client::activeRendezvousFile() const
+{
+    return controlDirectory_.getChildFile(kRendezvousFileName);
+}
+
+bool Client::pairOfferAllowed() const
+{
+    juce::File bound;
+    juce::File control;
+    std::string uuid;
+    std::string secret;
+    bool authed = false;
+    {
+        std::lock_guard<std::mutex> lock(stateMutex);
+        if (!enabled.load())
+            return false;
+        if (boundRendezvousFile_.getFullPathName().isEmpty())
+            return true;
+        authed = session_.isAuthenticated();
+        bound = boundRendezvousFile_;
+        control = controlDirectory_;
+        uuid = boundSessionUuid;
+        secret = boundSessionSecretHex;
+    }
+    if (!authed)
+        return false;
+    if (bound.getParentDirectory().getFullPathName() != control.getFullPathName())
+        return false;
+    ProtocolErrorCode error = ProtocolErrorCode::stale_rendezvous;
+    auto record = readRendezvousFile(bound, nowUnix(), error);
+    if (!record)
+        return false;
+    return record->sessionUuid == uuid && record->sessionSecretHex == secret;
 }
 
 void Client::teardown(UnpairedCause /*cause*/)
@@ -389,19 +475,31 @@ void Client::run()
     while (!threadShouldExit())
     {
         std::shared_ptr<Transport> t;
+        bool authed = false;
         {
             std::lock_guard<std::mutex> lock(stateMutex);
             t = transport;
+            authed = session_.isAuthenticated();
         }
 
         if (t != nullptr)
         {
+            t->setExpectMacTrailer(authed);
             EncodedFrame frame;
             if (t->waitReceive(frame, 50))
                 handleInbound(frame);
         }
         else
         {
+            if (enabled.load() && autoConnectRendezvous)
+            {
+                const auto nowMs = static_cast<std::int64_t>(juce::Time::getMillisecondCounter());
+                if (nowMs - lastRendezvousAttemptMs >= 250)
+                {
+                    lastRendezvousAttemptMs = nowMs;
+                    tryConnectDefaultRendezvous();
+                }
+            }
             juce::Thread::sleep(50);
         }
     }
@@ -409,8 +507,16 @@ void Client::run()
 
 void Client::tryConnectDefaultRendezvous()
 {
+    if (std::getenv("EMBER_PROPOSAL_DISABLE_AUTOCONNECT") != nullptr)
+        return;
+    {
+        std::lock_guard<std::mutex> lock(stateMutex);
+        if (transport != nullptr && transport->isConnected())
+            return;
+    }
     ProtocolErrorCode error = ProtocolErrorCode::stale_rendezvous;
-    auto record = readRendezvousFile(defaultRendezvousFile(), nowUnix(), error);
+    const auto file = activeRendezvousFile();
+    auto record = readRendezvousFile(file, nowUnix(), error);
     if (!record)
         return;
     auto loop = std::make_shared<LoopbackClientTransport>(*record);
@@ -419,6 +525,9 @@ void Client::tryConnectDefaultRendezvous()
     {
         std::lock_guard<std::mutex> lock(stateMutex);
         transport = loop;
+        boundRendezvousFile_ = file;
+        boundSessionUuid = record->sessionUuid;
+        boundSessionSecretHex = record->sessionSecretHex;
     }
     beginHandshakeWithRendezvous(*record);
 }
@@ -476,10 +585,9 @@ void Client::handleInbound(const EncodedFrame& frame)
     {
         sendEncoded(outboundConfirm, false);
         session_.setAuthenticated(true);
+        if (transport)
+            transport->setExpectMacTrailer(true);
     }
-
-    if (ingested.message.type == MessageType::handshake)
-        return;
 
     deliverOnMessageThread(std::move(ingested.message), frame);
 }
@@ -525,31 +633,84 @@ std::int64_t Client::nowUnix() const
     return unixSecondsFn ? unixSecondsFn() : defaultUnixSeconds();
 }
 
-void Client::sendEncoded(const WireMessage& message, bool mac)
+bool Client::sendEncoded(const WireMessage& message, bool mac)
 {
     std::lock_guard<std::mutex> lock(stateMutex);
     auto encoded = session_.encode(message, nowNs(), mac);
-    if (encoded.ok && transport != nullptr)
-        transport->send(encoded.frame);
+    if (!encoded.ok || transport == nullptr)
+        return false;
+    return transport->send(encoded.frame);
+}
+
+namespace
+{
+bool lstatPath(const juce::File& file, struct stat& st)
+{
+    return lstat(file.getFullPathName().toRawUTF8(), &st) == 0;
+}
+} // namespace
+
+juce::File defaultControlDirectory()
+{
+#if JUCE_MAC
+    return juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
+        .getChildFile("Application Support")
+        .getChildFile("AbletonCopilotBridge")
+        .getChildFile("control");
+#else
+    return juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
+        .getChildFile("AbletonCopilotBridge")
+        .getChildFile("control");
+#endif
 }
 
 juce::File defaultRendezvousFile()
 {
-    return juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
-        .getChildFile("AbletonCopilotBridge")
-        .getChildFile("control")
-        .getChildFile("ember-proposal-v1.json");
+    return defaultControlDirectory().getChildFile(kRendezvousFileName);
+}
+
+bool controlDirectoryIsUsable(const juce::File& directory, ProtocolErrorCode& error)
+{
+    struct stat st {};
+    if (!lstatPath(directory, st))
+    {
+        error = ProtocolErrorCode::stale_rendezvous;
+        return false;
+    }
+    if (S_ISLNK(st.st_mode) || !S_ISDIR(st.st_mode) || st.st_uid != getuid()
+        || (st.st_mode & 0777) != 0700)
+    {
+        error = ProtocolErrorCode::stale_rendezvous;
+        return false;
+    }
+    return true;
+}
+
+bool rendezvousFileIsUsable(const juce::File& file, ProtocolErrorCode& error)
+{
+    struct stat st {};
+    if (!lstatPath(file, st))
+    {
+        error = ProtocolErrorCode::stale_rendezvous;
+        return false;
+    }
+    if (S_ISLNK(st.st_mode) || !S_ISREG(st.st_mode) || st.st_uid != getuid()
+        || (st.st_mode & 0777) != 0600)
+    {
+        error = ProtocolErrorCode::stale_rendezvous;
+        return false;
+    }
+    if (!controlDirectoryIsUsable(file.getParentDirectory(), error))
+        return false;
+    return true;
 }
 
 std::optional<RendezvousRecord> readRendezvousFile(const juce::File& file,
                                                    std::int64_t nowUnixS,
                                                    ProtocolErrorCode& error)
 {
-    if (!file.existsAsFile())
-    {
-        error = ProtocolErrorCode::stale_rendezvous;
+    if (!rendezvousFileIsUsable(file, error))
         return std::nullopt;
-    }
     const auto text = file.loadFileAsString().toStdString();
     auto record = parseRendezvousJson(text, error);
     if (!record)
