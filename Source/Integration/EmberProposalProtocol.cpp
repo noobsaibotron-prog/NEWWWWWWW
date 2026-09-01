@@ -1351,6 +1351,7 @@ const char* toString(UnpairedCause cause) noexcept
         case UnpairedCause::duplicate_instance: return "duplicate_instance";
         case UnpairedCause::duplicate_human_code: return "duplicate_human_code";
         case UnpairedCause::stale_live_identity: return "stale_live_identity";
+        case UnpairedCause::missing_live_identity: return "missing_live_identity";
         case UnpairedCause::disconnect: return "disconnect";
         case UnpairedCause::reload: return "reload";
         case UnpairedCause::delete_recreate: return "delete_recreate";

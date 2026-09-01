@@ -97,6 +97,7 @@ enum class UnpairedCause
     duplicate_instance,
     duplicate_human_code,
     stale_live_identity,
+    missing_live_identity,
     disconnect,
     reload,
     delete_recreate,
