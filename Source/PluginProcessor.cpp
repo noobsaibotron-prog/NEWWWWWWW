@@ -5,6 +5,7 @@
 #include "DSP/DefaultBandFrequencies.h"
 #include "Utils/APVTSStateSchema.h"
 #include "Utils/Logger.h"
+#include "Integration/EmberProposalClient.h"
 #if defined(AIEQ_ENABLE_MOTORE_V2) && AIEQ_ENABLE_MOTORE_V2
 #include "AI/MotoreV2Features.h"   // EXP hybrid: rawDb -> 64 log-mel (gated)
 #endif
@@ -180,6 +181,18 @@ AIEqualizerAudioProcessor::AIEqualizerAudioProcessor()
 
     // Initialize history manager with APVTS reference
     historyManager.initialize(apvts, *this);
+
+    emberProposalClient = std::make_unique<EmberProposal::Client>();
+    emberProposalInbox = std::make_unique<EmberProposal::ExternalSemanticProposalInbox>();
+    emberProposalClient->setAutoConnectRendezvous(false);
+    emberRuntimeInstanceId = EmberProposal::randomUuidV4();
+    juce::WeakReference<AIEqualizerAudioProcessor> weak { this };
+    emberProposalClient->setDelivery(
+        [weak](EmberProposal::WireMessage message, EmberProposal::EncodedFrame frame)
+        {
+            if (weak != nullptr)
+                weak->handleEmberProposalInbound(std::move(message), std::move(frame));
+        });
 
     // OSC parameter server created here but started in prepareToPlay
     // (starting in constructor crashes during VST3 plugin scan)
@@ -875,6 +888,12 @@ void AIEqualizerAudioProcessor::restartBackgroundWorkersAfterLifecycle()
 
 AIEqualizerAudioProcessor::~AIEqualizerAudioProcessor()
 {
+    if (emberProposalClient != nullptr)
+        emberProposalClient->setEnabled(false);
+    emberProposalClient.reset();
+    emberStageHandler = {};
+    emberLinkUiHandler = {};
+
     cancelPendingUpdate();
     // Request complete background quiescence before member teardown.
     quiesceBackgroundWorkersForLifecycle();
@@ -7040,6 +7059,381 @@ void AIEqualizerAudioProcessor::setStateInformation(const void* data, int sizeIn
 juce::AudioProcessorEditor* AIEqualizerAudioProcessor::createEditor()
 {
     return new AIEqualizerAudioProcessorEditor(*this);
+}
+
+void AIEqualizerAudioProcessor::setEmberLinkEnabled(bool enabled)
+{
+    jassert(juce::MessageManager::existsAndIsCurrentThread());
+    emberLinkEnabledFlag.store(enabled, std::memory_order_release);
+    if (emberProposalClient == nullptr)
+        return;
+    emberProposalClient->setAutoConnectRendezvous(enabled);
+    emberProposalClient->setEnabled(enabled);
+    if (!enabled)
+    {
+        if (emberProposalInbox != nullptr)
+            emberProposalInbox->clearPending();
+        emberHasPendingRequest = false;
+        emberExternalStaged = false;
+        emberPendingRequestId.clear();
+        emberProposalClient->clearPairing();
+    }
+    publishEmberLinkUi();
+}
+
+bool AIEqualizerAudioProcessor::isEmberLinkEnabled() const noexcept
+{
+    return emberLinkEnabledFlag.load(std::memory_order_acquire);
+}
+
+void AIEqualizerAudioProcessor::requestEmberPairOffer()
+{
+    jassert(juce::MessageManager::existsAndIsCurrentThread());
+    if (emberProposalClient == nullptr || !isEmberLinkEnabled())
+        return;
+    if (emberRuntimeInstanceId.empty())
+        emberRuntimeInstanceId = EmberProposal::randomUuidV4();
+
+    EmberProposal::PairOffer offer;
+    offer.runtimeInstanceId = emberRuntimeInstanceId;
+    offer.humanCode = EmberProposal::randomHumanCode();
+    offer.controlRevision = emberControlRevision.load(std::memory_order_acquire);
+    offer.projectionBaseEpoch = projectionBaseEpoch.load(std::memory_order_acquire);
+    offer.auditionContextEpoch = auditionContextEpoch.load(std::memory_order_acquire);
+    offer.expiresAtMonotonicNs = static_cast<std::uint64_t>(
+        std::max<std::int64_t>(0, juce::Time::getHighResolutionTicks())) + 60'000'000'000ULL;
+    offer.editorOpen = emberEditorOpen.load(std::memory_order_acquire);
+    emberProposalClient->sendPairOffer(offer);
+    publishEmberLinkUi();
+}
+
+void AIEqualizerAudioProcessor::noteEmberEditorOpen(bool open)
+{
+    jassert(juce::MessageManager::existsAndIsCurrentThread());
+    emberEditorOpen.store(open, std::memory_order_release);
+    if (!open)
+    {
+        emberStageHandler = {};
+        if (emberHasPendingRequest)
+        {
+            sendEmberOutcome(EmberProposal::ReasonCode::target_ui_unavailable,
+                             &emberPendingRequest, {}, {},
+                             EmberProposal::UnpairedCause::editor_closed);
+            emberHasPendingRequest = false;
+            emberExternalStaged = false;
+            if (emberProposalInbox != nullptr)
+                emberProposalInbox->clearPending();
+        }
+    }
+    publishEmberLinkUi();
+}
+
+bool AIEqualizerAudioProcessor::isEmberEditorOpen() const noexcept
+{
+    return emberEditorOpen.load(std::memory_order_acquire);
+}
+
+void AIEqualizerAudioProcessor::noteLocalSemanticAction()
+{
+    jassert(juce::MessageManager::existsAndIsCurrentThread());
+    emberControlRevision.fetch_add(1, std::memory_order_acq_rel);
+    if (emberProposalInbox != nullptr)
+        emberProposalInbox->noteLocalInvalidation();
+}
+
+void AIEqualizerAudioProcessor::notifyEmberUserApplied(const std::string& planHashHex)
+{
+    jassert(juce::MessageManager::existsAndIsCurrentThread());
+    if (!emberHasPendingRequest && emberPendingRequestId.empty())
+        return;
+    sendEmberOutcome(EmberProposal::ReasonCode::user_applied,
+                     emberHasPendingRequest ? &emberPendingRequest : nullptr,
+                     {}, planHashHex, EmberProposal::UnpairedCause::user_unpair);
+    emberHasPendingRequest = false;
+    emberExternalStaged = false;
+    emberPendingRequestId.clear();
+    if (emberProposalInbox != nullptr)
+        emberProposalInbox->clearPending();
+}
+
+void AIEqualizerAudioProcessor::notifyEmberUserRejected()
+{
+    jassert(juce::MessageManager::existsAndIsCurrentThread());
+    if (!emberHasPendingRequest && emberPendingRequestId.empty())
+        return;
+    sendEmberOutcome(EmberProposal::ReasonCode::user_rejected,
+                     emberHasPendingRequest ? &emberPendingRequest : nullptr,
+                     {}, {}, EmberProposal::UnpairedCause::user_unpair);
+    emberHasPendingRequest = false;
+    emberExternalStaged = false;
+    emberPendingRequestId.clear();
+    if (emberProposalInbox != nullptr)
+        emberProposalInbox->clearPending();
+}
+
+void AIEqualizerAudioProcessor::noteExternalProposalInvalidated(bool alreadyStaged)
+{
+    jassert(juce::MessageManager::existsAndIsCurrentThread());
+    noteLocalSemanticAction();
+    if (!emberHasPendingRequest)
+        return;
+    sendEmberOutcome(alreadyStaged ? EmberProposal::ReasonCode::user_rejected
+                                   : EmberProposal::ReasonCode::stale_revision,
+                     &emberPendingRequest, {}, {}, EmberProposal::UnpairedCause::user_unpair);
+    emberHasPendingRequest = false;
+    emberExternalStaged = false;
+    emberPendingRequestId.clear();
+}
+
+void AIEqualizerAudioProcessor::handleEmberExternalPlanResult(EmberProposal::ReasonCode reason,
+                                                              const std::string& summary,
+                                                              const std::string& planHashHex)
+{
+    jassert(juce::MessageManager::existsAndIsCurrentThread());
+    if (!emberHasPendingRequest)
+        return;
+    sendEmberOutcome(reason, &emberPendingRequest, summary, planHashHex,
+                     EmberProposal::UnpairedCause::user_unpair);
+    emberExternalStaged = (reason == EmberProposal::ReasonCode::plan_staged);
+    if (!emberExternalStaged)
+    {
+        emberHasPendingRequest = false;
+        emberPendingRequestId.clear();
+        if (emberProposalInbox != nullptr)
+            emberProposalInbox->clearPending();
+    }
+}
+
+EmberProposal::LinkUiState AIEqualizerAudioProcessor::getEmberLinkUiState() const
+{
+    EmberProposal::LinkUiState ui;
+    ui.linkEnabled = isEmberLinkEnabled();
+    ui.hasOpenListener = emberProposalHasOpenListener();
+    if (emberProposalClient != nullptr)
+    {
+        ui.connected = emberProposalClient->isIoThreadRunning() && ui.linkEnabled;
+        ui.authenticated = emberProposalClient->isAuthenticated();
+        const auto pairing = emberProposalClient->pairing();
+        ui.paired = pairing.paired;
+        ui.pairOfferPending = pairing.offerPending;
+        ui.humanCode = pairing.humanCode;
+        ui.runtimeInstanceId = pairing.runtimeInstanceId.empty()
+            ? emberRuntimeInstanceId : pairing.runtimeInstanceId;
+        ui.pairBindingId = pairing.pairBindingId;
+    }
+    if (emberHasPendingRequest)
+        ui.pendingSource = EmberProposal::kPendingSourceLabel;
+    if (!ui.linkEnabled)
+        ui.statusText = "Link off";
+    else if (ui.paired)
+        ui.statusText = "Paired " + ui.humanCode;
+    else if (ui.pairOfferPending)
+        ui.statusText = "PAIR " + ui.humanCode;
+    else if (ui.authenticated)
+        ui.statusText = "Connected";
+    else if (ui.connected)
+        ui.statusText = "Connecting";
+    else
+        ui.statusText = "Link on";
+    if (!ui.pendingSource.empty())
+        ui.statusText += " · " + ui.pendingSource;
+    return ui;
+}
+
+void AIEqualizerAudioProcessor::setEmberStageHandler(std::function<void(std::string, float)> handler)
+{
+    emberStageHandler = std::move(handler);
+}
+
+void AIEqualizerAudioProcessor::setEmberLinkUiHandler(std::function<void(EmberProposal::LinkUiState)> handler)
+{
+    emberLinkUiHandler = std::move(handler);
+    publishEmberLinkUi();
+}
+
+void AIEqualizerAudioProcessor::attachEmberProposalTransportForTests(
+    std::shared_ptr<EmberProposal::Transport> transport)
+{
+    jassert(juce::MessageManager::existsAndIsCurrentThread());
+    if (emberProposalClient == nullptr)
+        return;
+    emberProposalClient->setAutoConnectRendezvous(false);
+    emberProposalClient->attachTransport(std::move(transport));
+}
+
+void AIEqualizerAudioProcessor::injectEmberProposalMessageForTests(EmberProposal::WireMessage message)
+{
+    jassert(juce::MessageManager::existsAndIsCurrentThread());
+    handleEmberProposalInbound(std::move(message), {});
+}
+
+bool AIEqualizerAudioProcessor::emberProposalHasOpenListener() const noexcept
+{
+    return emberProposalClient != nullptr && emberProposalClient->hasOpenListener();
+}
+
+EmberProposal::InboxSnapshot AIEqualizerAudioProcessor::emberInboxSnapshot() const
+{
+    EmberProposal::InboxSnapshot snap;
+    snap.messageThread = juce::MessageManager::existsAndIsCurrentThread();
+    snap.editorOpen = emberEditorOpen.load(std::memory_order_acquire);
+    snap.linkEnabled = emberLinkEnabledFlag.load(std::memory_order_acquire);
+    snap.controlRevision = emberControlRevision.load(std::memory_order_acquire);
+    snap.projectionBaseEpoch = projectionBaseEpoch.load(std::memory_order_acquire);
+    snap.auditionContextEpoch = auditionContextEpoch.load(std::memory_order_acquire);
+    snap.nowMonotonicNs = static_cast<std::uint64_t>(
+        std::max<std::int64_t>(0, juce::Time::getHighResolutionTicks()));
+    if (emberProposalClient != nullptr)
+    {
+        const auto pairing = emberProposalClient->pairing();
+        snap.paired = pairing.paired;
+        snap.runtimeInstanceId = pairing.runtimeInstanceId.empty()
+            ? emberRuntimeInstanceId : pairing.runtimeInstanceId;
+        snap.pairBindingId = pairing.pairBindingId;
+    }
+    return snap;
+}
+
+void AIEqualizerAudioProcessor::publishEmberLinkUi()
+{
+    if (emberLinkUiHandler)
+        emberLinkUiHandler(getEmberLinkUiState());
+}
+
+void AIEqualizerAudioProcessor::sendEmberOutcome(EmberProposal::ReasonCode reason,
+                                                 const EmberProposal::StageSemanticRequest* request,
+                                                 const std::string& summary,
+                                                 const std::string& planHashHex,
+                                                 EmberProposal::UnpairedCause unpairedCause)
+{
+    if (emberProposalClient == nullptr || !emberProposalClient->isEnabled())
+        return;
+
+    EmberProposal::WireMessage message;
+    message.type = EmberProposal::messageTypeFromReason(reason);
+    auto fillBase = [&](EmberProposal::OutcomeBase& base)
+    {
+        if (request != nullptr)
+        {
+            base.requestId = request->requestId;
+            base.pairBindingId = request->pairBindingId;
+            base.targetRuntimeInstanceId = request->targetRuntimeInstanceId;
+        }
+        else
+        {
+            base.requestId = emberPendingRequestId;
+            base.pairBindingId = emberPendingPairBinding;
+            base.targetRuntimeInstanceId = emberPendingTargetId.empty()
+                ? emberRuntimeInstanceId : emberPendingTargetId;
+        }
+        base.controlRevision = emberControlRevision.load(std::memory_order_acquire);
+        base.projectionBaseEpoch = projectionBaseEpoch.load(std::memory_order_acquire);
+        base.auditionContextEpoch = auditionContextEpoch.load(std::memory_order_acquire);
+        base.audit = EmberProposal::makeAudit(EmberProposal::toString(reason));
+    };
+
+    switch (reason)
+    {
+        case EmberProposal::ReasonCode::plan_staged:
+            fillBase(message.planStaged);
+            message.planStaged.planHash = planHashHex.empty()
+                ? EmberProposal::randomHex64() : planHashHex;
+            message.planStaged.summary = summary.empty() ? "Staged in Semantic" : summary;
+            if (message.planStaged.summary.size() > 128)
+                message.planStaged.summary.resize(128);
+            break;
+        case EmberProposal::ReasonCode::user_applied:
+            fillBase(message.userApplied);
+            message.userApplied.planHash = planHashHex.empty()
+                ? EmberProposal::randomHex64() : planHashHex;
+            break;
+        case EmberProposal::ReasonCode::user_rejected:
+            fillBase(message.userRejected);
+            break;
+        case EmberProposal::ReasonCode::unpaired:
+            fillBase(message.unpaired);
+            message.unpaired.unpairedCause = unpairedCause;
+            break;
+        case EmberProposal::ReasonCode::protocol_error:
+            message.protocolError.protocolErrorCode = EmberProposal::ProtocolErrorCode::forbidden_verb;
+            message.protocolError.closeConnection = true;
+            message.protocolError.audit = EmberProposal::makeAudit("protocol_error");
+            break;
+        default:
+            fillBase(message.refusal);
+            break;
+    }
+    emberProposalClient->sendOutcome(message);
+    publishEmberLinkUi();
+}
+
+void AIEqualizerAudioProcessor::handleEmberProposalInbound(EmberProposal::WireMessage message,
+                                                           EmberProposal::EncodedFrame frame)
+{
+    jassert(juce::MessageManager::existsAndIsCurrentThread());
+    juce::ignoreUnused(frame);
+
+    if (message.type == EmberProposal::MessageType::pair_confirm)
+    {
+        if (emberProposalClient != nullptr)
+        {
+            const auto pairing = emberProposalClient->pairing();
+            const auto& confirm = message.pairConfirm;
+            if (pairing.offerPending
+                && !pairing.humanCode.empty()
+                && !pairing.runtimeInstanceId.empty()
+                && confirm.humanCode == pairing.humanCode
+                && confirm.runtimeInstanceId == pairing.runtimeInstanceId)
+            {
+                emberProposalClient->notePairConfirm(confirm);
+            }
+        }
+        publishEmberLinkUi();
+        return;
+    }
+
+    if (message.type == EmberProposal::MessageType::unpair
+        || message.type == EmberProposal::MessageType::unpaired
+        || message.type == EmberProposal::MessageType::protocol_error)
+    {
+        emberHasPendingRequest = false;
+        emberExternalStaged = false;
+        if (emberProposalInbox != nullptr)
+            emberProposalInbox->clearPending();
+        if (emberProposalClient != nullptr)
+            emberProposalClient->clearPairing();
+        publishEmberLinkUi();
+        return;
+    }
+
+    if (message.type != EmberProposal::MessageType::stage_semantic_request)
+        return;
+
+    const auto decision = emberProposalInbox->evaluateStage(message.stage, emberInboxSnapshot());
+    if (decision.disposition != EmberProposal::StageDisposition::accept)
+    {
+        sendEmberOutcome(decision.reason, &message.stage, {}, {}, decision.unpairedCause);
+        return;
+    }
+
+    emberPendingRequest = message.stage;
+    emberHasPendingRequest = true;
+    emberExternalStaged = false;
+    emberPendingRequestId = message.stage.requestId;
+    emberPendingPairBinding = message.stage.pairBindingId;
+    emberPendingTargetId = message.stage.targetRuntimeInstanceId;
+    emberProposalInbox->noteExternalRequest(message.stage.requestId);
+
+    if (!emberEditorOpen.load(std::memory_order_acquire) || !emberStageHandler)
+    {
+        sendEmberOutcome(EmberProposal::ReasonCode::target_ui_unavailable,
+                         &message.stage, {}, {}, EmberProposal::UnpairedCause::editor_closed);
+        emberHasPendingRequest = false;
+        return;
+    }
+
+    emberStageHandler(message.stage.phrase, static_cast<float>(message.stage.intensity));
+    publishEmberLinkUi();
 }
 
 //==============================================================================

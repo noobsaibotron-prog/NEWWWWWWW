@@ -197,6 +197,46 @@ AIEqualizerAudioProcessorEditor::AIEqualizerAudioProcessorEditor(AIEqualizerAudi
             spectrum->setSemanticIntentMapHover(hover);
     };
 
+    semanticPanel->onEmberLinkToggled = [this](bool enabled)
+    {
+        processor.setEmberLinkEnabled(enabled);
+        semanticPanel->setEmberLinkUi(processor.getEmberLinkUiState());
+    };
+    semanticPanel->onEmberPairClicked = [this]()
+    {
+        processor.requestEmberPairOffer();
+        semanticPanel->setEmberLinkUi(processor.getEmberLinkUiState());
+    };
+    semanticPanel->onExternalProposalInvalidated = [this](bool alreadyStaged)
+    {
+        processor.noteExternalProposalInvalidated(alreadyStaged);
+    };
+    semanticPanel->onExternalPlanResult = [this](EmberProposal::ReasonCode reason,
+                                                 std::string summary,
+                                                 std::string planHash)
+    {
+        processor.handleEmberExternalPlanResult(reason, summary, planHash);
+        semanticPanel->setEmberLinkUi(processor.getEmberLinkUiState());
+    };
+    semanticPanel->onExternalApplied = [this](std::string planHash)
+    {
+        processor.notifyEmberUserApplied(planHash);
+        semanticPanel->setEmberLinkUi(processor.getEmberLinkUiState());
+    };
+    processor.setEmberStageHandler([this](std::string phrase, float intensity)
+    {
+        if (semanticPanel)
+            semanticPanel->stageExternalCommand(
+                juce::String::fromUTF8(phrase.c_str()), intensity);
+    });
+    processor.setEmberLinkUiHandler([this](EmberProposal::LinkUiState ui)
+    {
+        if (semanticPanel)
+            semanticPanel->setEmberLinkUi(ui);
+    });
+    processor.noteEmberEditorOpen(true);
+    semanticPanel->setEmberLinkUi(processor.getEmberLinkUiState());
+
     // A3 fix: feed the live pre-EQ analyzer spectrum (smoothed dB) and the real
     // sample rate into the semantic engine's context-aware path. Both were
     // previously stuck at "empty spectrum + 44100" so adjustForContext() never
@@ -292,6 +332,10 @@ AIEqualizerAudioProcessorEditor::~AIEqualizerAudioProcessorEditor()
 {
     // Stop timer FIRST — prevents callbacks from accessing half-destroyed components
     stopTimer();
+
+    processor.setEmberStageHandler({});
+    processor.setEmberLinkUiHandler({});
+    processor.noteEmberEditorOpen(false);
 
 #if defined(AIEQ_ENABLE_ANALYZER_AB_TELEMETRY) && AIEQ_ENABLE_ANALYZER_AB_TELEMETRY
     {

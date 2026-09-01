@@ -5,6 +5,7 @@
 #include <optional>
 #include "../AI/SemanticEQEngine.h"
 #include "../AI/SemanticPlanningService.h"
+#include "../Integration/EmberProposalProtocol.h"
 #include "ModernLookAndFeel.h"
 #include "SemanticIntentMap.h"
 #include <vector>
@@ -75,6 +76,43 @@ public:
         The panel must not read the processor or the graph. */
     std::function<std::vector<AIEQPerceptual::SemanticProtectedRange>()> onRequestProtectedRanges;
 
+    std::function<void(bool)> onEmberLinkToggled;
+    std::function<void()> onEmberPairClicked;
+    std::function<void(bool /*alreadyStaged*/)> onExternalProposalInvalidated;
+    std::function<void(EmberProposal::ReasonCode, std::string, std::string)> onExternalPlanResult;
+    std::function<void(std::string)> onExternalApplied;
+
+    void setEmberLinkUi(const EmberProposal::LinkUiState& ui)
+    {
+        emberLinkToggle.setToggleState(ui.linkEnabled, juce::dontSendNotification);
+        emberLinkToggle.setButtonText(ui.linkEnabled ? "LINK ON" : "LINK OFF");
+        emberPairButton.setEnabled(ui.linkEnabled && !ui.paired);
+        emberPairButton.setButtonText("PAIR");
+        emberLinkStatus.setText(ui.statusText, juce::dontSendNotification);
+        if (!ui.pendingSource.empty())
+            pendingProposalSource = juce::String::fromUTF8(ui.pendingSource.c_str());
+        else if (!isPendingExternal())
+            pendingProposalSource.clear();
+    }
+
+    void stageExternalCommand(const juce::String& phrase, float intensity01)
+    {
+        jassert(juce::MessageManager::existsAndIsCurrentThread());
+        suppressExternalInvalidate = true;
+        invalidatePendingTextPlan();
+        suppressExternalInvalidate = false;
+        pendingProposalSource = EmberProposal::kPendingSourceLabel;
+        intensitySlider.setValue(static_cast<double>(intensity01), juce::dontSendNotification);
+        semanticEngine.setIntensity(intensity01);
+        commandInput.setText(phrase, juce::dontSendNotification);
+        submitPlanForText(phrase);
+    }
+
+    [[nodiscard]] bool isPendingExternal() const
+    {
+        return pendingProposalSource.isNotEmpty();
+    }
+
     // Supplies the current smoothed dB spectrum (analyzer format: numBins,
     // dB values) for the engine's context-aware mapping. Wired by the editor;
     // when unset the engine falls back to context-neutral behaviour (A3 fix —
@@ -141,6 +179,39 @@ public:
         applyButton.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
         applyButton.onClick = [this]() { applyTextCommand(); };
         addAndMakeVisible(applyButton);
+
+        emberLinkToggle.setButtonText("LINK OFF");
+        emberLinkToggle.setClickingTogglesState(true);
+        emberLinkToggle.setColour(juce::TextButton::buttonColourId, ModernLookAndFeel::Colors::bgLighter);
+        emberLinkToggle.setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xFF2D5A27));
+        emberLinkToggle.setColour(juce::TextButton::textColourOffId, ModernLookAndFeel::Colors::textLabel);
+        emberLinkToggle.setTooltip("Ember Link: optional Ableton Copilot proposals. Off by default. APPLY stays local.");
+        emberLinkToggle.setComponentID("emberLinkToggle");
+        emberLinkToggle.onClick = [this]() {
+            const bool on = emberLinkToggle.getToggleState();
+            emberLinkToggle.setButtonText(on ? "LINK ON" : "LINK OFF");
+            if (onEmberLinkToggled)
+                onEmberLinkToggled(on);
+        };
+        addAndMakeVisible(emberLinkToggle);
+
+        emberPairButton.setButtonText("PAIR");
+        emberPairButton.setEnabled(false);
+        emberPairButton.setComponentID("emberPairButton");
+        emberPairButton.setTooltip("Send a one-time pair offer to Ableton Copilot Bridge");
+        emberPairButton.onClick = [this]() {
+            if (onEmberPairClicked)
+                onEmberPairClicked();
+        };
+        addAndMakeVisible(emberPairButton);
+
+        emberLinkStatus.setText("Link off", juce::dontSendNotification);
+        emberLinkStatus.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
+        emberLinkStatus.setColour(juce::Label::textColourId, ModernLookAndFeel::Colors::textSecondary);
+        emberLinkStatus.setJustificationType(juce::Justification::centredLeft);
+        emberLinkStatus.setInterceptsMouseClicks(false, false);
+        emberLinkStatus.setComponentID("emberLinkStatus");
+        addAndMakeVisible(emberLinkStatus);
         
         // Initialize quality sliders - Main qualities
         setupQualitySlider(SemanticEQEngine::SemanticQuality::Air, "AIR", "Aria",
@@ -315,6 +386,9 @@ public:
             intensityLabel.setVisible(false);
             resetButton.setVisible(false);
             morphButton.setVisible(false);
+            emberLinkToggle.setVisible(false);
+            emberPairButton.setVisible(false);
+            emberLinkStatus.setVisible(false);
             responseChip.setVisible(false);
             responseDetail.setVisible(false);
             for (auto& btn : presetButtons) btn->setVisible(false);
@@ -350,10 +424,19 @@ public:
             intensityLabel.setVisible(true);
             resetButton.setVisible(true);
             morphButton.setVisible(true);
+            emberLinkToggle.setVisible(true);
+            emberPairButton.setVisible(true);
+            emberLinkStatus.setVisible(true);
             for (auto& btn : presetButtons) btn->setVisible(true);
 
             titleLabel.setBounds(bounds.removeFromTop(20));
             subtitleLabel.setBounds(bounds.removeFromTop(16));
+            bounds.removeFromTop(4);
+
+            auto linkRow = bounds.removeFromTop(22);
+            emberLinkToggle.setBounds(linkRow.removeFromLeft(72).reduced(1));
+            emberPairButton.setBounds(linkRow.removeFromLeft(48).reduced(1));
+            emberLinkStatus.setBounds(linkRow.reduced(4, 0));
             bounds.removeFromTop(4);
 
             auto inputRow = bounds.removeFromTop(28);
@@ -759,10 +842,17 @@ private:
                 auto map = EmberUI::buildSemanticIntentMapState(
                     *pendingTextPlan, EmberUI::SemanticIntentMapPhase::Applied);
                 map.appliedBandSlots = feedback.appliedBandSlots;
-                const juce::String appliedDetail = "Applied: " + interpretation
+                const auto appliedDetail = "Applied: " + interpretation
                     + intentMapSummarySuffix(map);
                 publishIntentMap(std::move(map));
+                if (isPendingExternal() && onExternalApplied)
+                {
+                    const auto hash = EmberProposal::makeAudit(
+                        pendingTextPlan->interpretation).sha256Hex;
+                    onExternalApplied(hash);
+                }
                 invalidatePendingTextPlan(false);
+                pendingProposalSource.clear();
                 commandInput.clear();
                 setResponseStrip(ResponseChip::Applied, appliedDetail);
                 return;
@@ -777,6 +867,14 @@ private:
                 return;
             }
         }
+
+        submitPlanForText(text);
+    }
+
+    void submitPlanForText(const juce::String& text)
+    {
+        if (text.isEmpty())
+            return;
 
         // PLAN. The fit costs 32-42 ms on this machine (measured 44.1/48/96 kHz),
         // so it runs on a worker: doing it here dropped 2-3 GUI frames per press.
@@ -840,35 +938,47 @@ private:
         {
             case Status::UnknownIntent:
                 setResponseStrip(ResponseChip::CantPlan, "Couldn't understand command");
+                notifyExternalPlannerOutcome(EmberProposal::ReasonCode::unknown_intent, plan);
+                suppressExternalInvalidate = true;
                 invalidatePendingTextPlan();
+                suppressExternalInvalidate = false;
                 // P0-C: do not leave a zombie prompt for 90s after a failed parse
                 commandInput.clear();
                 return;
 
             case Status::ContradictoryIntent:
+                notifyExternalPlannerOutcome(EmberProposal::ReasonCode::contradictory_intent, plan);
                 setResponseStrip(plan.intent.goalConstraintConflict
                                      ? ResponseChip::Conflict
                                      : ResponseChip::Ambiguous,
                                  plan.intent.goalConstraintConflict
                                      ? juce::String("Contradictory request - goal conflicts with requested protection")
                                      : juce::String("Ambiguous command - clarify the direction"));
+                suppressExternalInvalidate = true;
                 invalidatePendingTextPlan();
+                suppressExternalInvalidate = false;
                 commandInput.clear();
                 return;
 
             case Status::InternalError:
+                notifyExternalPlannerOutcome(EmberProposal::ReasonCode::internal_error, plan);
                 setResponseStrip(ResponseChip::CantPlan, "Couldn't build a safe semantic plan");
+                suppressExternalInvalidate = true;
                 invalidatePendingTextPlan();
+                suppressExternalInvalidate = false;
                 return;
 
             case Status::NoSafeMove:
+                notifyExternalPlannerOutcome(EmberProposal::ReasonCode::no_safe_move, plan);
                 if (!plan.outcomeSummary.empty())
                     setResponseStrip(ResponseChip::NoSafeMove,
                         "No safe move - "
                         + juce::String::fromUTF8(plan.outcomeSummary.c_str()));
                 else
                     setResponseStrip(ResponseChip::NoSafeMove, "No meaningful EQ move required");
+                suppressExternalInvalidate = true;
                 invalidatePendingTextPlan();
+                suppressExternalInvalidate = false;
                 publishIntentMap(EmberUI::buildSemanticIntentMapState(
                     plan, EmberUI::SemanticIntentMapPhase::NoSafeMove));
                 return;
@@ -897,6 +1007,20 @@ private:
         planStatus += intentMapSummarySuffix(map);
         publishIntentMap(std::move(map));
         setResponseStrip(ResponseChip::Ready, planStatus);
+        notifyExternalPlannerOutcome(EmberProposal::ReasonCode::plan_staged, plan);
+    }
+
+    void notifyExternalPlannerOutcome(EmberProposal::ReasonCode reason,
+                                      const AIEQPerceptual::SemanticPlan& plan)
+    {
+        if (!isPendingExternal() || !onExternalPlanResult)
+            return;
+        std::string summary = plan.interpretation.empty() ? "Staged in Semantic"
+                                                          : plan.interpretation;
+        if (summary.size() > 128)
+            summary.resize(128);
+        const auto hash = EmberProposal::makeAudit(plan.interpretation).sha256Hex;
+        onExternalPlanResult(reason, summary, hash);
     }
 
 
@@ -1055,6 +1179,8 @@ private:
 
     void invalidatePendingTextPlan(bool clearIntentMap = true)
     {
+        const bool wasExternal = isPendingExternal();
+        const bool wasStaged = pendingTextPlan.has_value();
         pendingTextPlan.reset();
         pendingTextCommand.clear();
         // Bump the epoch, do not merely clear the slot: an in-flight fit is only
@@ -1066,6 +1192,14 @@ private:
         applyButton.setButtonText("PLAN");
         if (clearIntentMap)
             hideIntentMap();
+        if (wasExternal && !suppressExternalInvalidate)
+        {
+            pendingProposalSource.clear();
+            if (onExternalProposalInvalidated)
+                onExternalProposalInvalidated(wasStaged);
+        }
+        else if (!wasExternal)
+            pendingProposalSource.clear();
     }
     
     void resetAllSliders()
@@ -1274,7 +1408,11 @@ private:
     int responseDividerY = 0;
     juce::TextEditor commandInput;
     juce::TextButton applyButton, resetButton, morphButton;
+    juce::TextButton emberLinkToggle, emberPairButton;
+    juce::Label emberLinkStatus;
     juce::Slider intensitySlider;
+    juce::String pendingProposalSource;
+    bool suppressExternalInvalidate = false;
     
     std::vector<QualitySliderData> qualitySliders;
     std::vector<std::unique_ptr<juce::TextButton>> presetButtons;

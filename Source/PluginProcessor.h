@@ -66,6 +66,15 @@
 #include "AI/DynamicCorrectionEngine.h"
 #include "Utils/Logger.h"
 #include "Utils/PresetManager.h"
+#include "Integration/EmberProposalProtocol.h"
+#include "Integration/ExternalSemanticProposalInbox.h"
+
+namespace EmberProposal
+{
+class Client;
+class Transport;
+}
+
 #if AIEQ_GUI_DEBUG
 #include "Utils/DebugLog.h"
 #endif
@@ -220,6 +229,27 @@ public:
 
     [[nodiscard]] SemanticEQEngine& getSemanticEngine() noexcept { return semanticEngine; }
     [[nodiscard]] const SemanticEQEngine& getSemanticEngine() const noexcept { return semanticEngine; }
+
+    // Ember Copilot proposal channel. Session RAM only, message-thread.
+    // Disabled by default. Never invoked from processBlock.
+    void setEmberLinkEnabled(bool enabled);
+    [[nodiscard]] bool isEmberLinkEnabled() const noexcept;
+    void requestEmberPairOffer();
+    void noteEmberEditorOpen(bool open);
+    [[nodiscard]] bool isEmberEditorOpen() const noexcept;
+    void noteLocalSemanticAction();
+    void notifyEmberUserApplied(const std::string& planHashHex);
+    void notifyEmberUserRejected();
+    void noteExternalProposalInvalidated(bool alreadyStaged);
+    void handleEmberExternalPlanResult(EmberProposal::ReasonCode reason,
+                                       const std::string& summary,
+                                       const std::string& planHashHex);
+    [[nodiscard]] EmberProposal::LinkUiState getEmberLinkUiState() const;
+    void setEmberStageHandler(std::function<void(std::string, float)> handler);
+    void setEmberLinkUiHandler(std::function<void(EmberProposal::LinkUiState)> handler);
+    void attachEmberProposalTransportForTests(std::shared_ptr<EmberProposal::Transport> transport);
+    void injectEmberProposalMessageForTests(EmberProposal::WireMessage message);
+    [[nodiscard]] bool emberProposalHasOpenListener() const noexcept;
     
     [[nodiscard]] PresetManager& getPresetManager() { 
         jassert(presetManager != nullptr); 
@@ -1364,6 +1394,30 @@ private:
     void syncEffectiveActiveBandCountFromCommitted() noexcept;
     [[nodiscard]] EmberDSP::PackedBandDSPState packBandDSPState(
         const BandState& state, bool enabledFiltered, bool ownedByDynamic) const noexcept;
+
+    void handleEmberProposalInbound(EmberProposal::WireMessage message,
+                                    EmberProposal::EncodedFrame frame);
+    void sendEmberOutcome(EmberProposal::ReasonCode reason,
+                          const EmberProposal::StageSemanticRequest* request,
+                          const std::string& summary,
+                          const std::string& planHashHex,
+                          EmberProposal::UnpairedCause unpairedCause);
+    void publishEmberLinkUi();
+    [[nodiscard]] EmberProposal::InboxSnapshot emberInboxSnapshot() const;
+    std::function<void(std::string, float)> emberStageHandler;
+    std::function<void(EmberProposal::LinkUiState)> emberLinkUiHandler;
+    std::unique_ptr<EmberProposal::Client> emberProposalClient;
+    std::unique_ptr<EmberProposal::ExternalSemanticProposalInbox> emberProposalInbox;
+    std::atomic<bool> emberEditorOpen { false };
+    std::atomic<bool> emberLinkEnabledFlag { false };
+    std::atomic<std::uint64_t> emberControlRevision { 1 };
+    std::string emberRuntimeInstanceId;
+    std::string emberPendingRequestId;
+    std::string emberPendingPairBinding;
+    std::string emberPendingTargetId;
+    EmberProposal::StageSemanticRequest emberPendingRequest;
+    bool emberHasPendingRequest = false;
+    bool emberExternalStaged = false;
     
     // Parameter IDs for listener registration
     std::vector<juce::String> eqParameterIDs;

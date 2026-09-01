@@ -622,6 +622,12 @@ set(PLUGIN_SOURCES
     Source/AI/SemanticPlanner.h
     Source/AI/SemanticPlanningService.cpp
     Source/AI/SemanticPlanningService.h
+    Source/Integration/EmberProposalProtocol.cpp
+    Source/Integration/EmberProposalProtocol.h
+    Source/Integration/EmberProposalClient.cpp
+    Source/Integration/EmberProposalClient.h
+    Source/Integration/ExternalSemanticProposalInbox.cpp
+    Source/Integration/ExternalSemanticProposalInbox.h
     Source/AI/SemanticTargetBuilder.cpp
     Source/AI/SemanticTargetBuilder.h
     Source/AI/SparseParametricFitter.cpp
@@ -1494,6 +1500,9 @@ if(HAVE_JUCE)
         Source/Tests/SemanticPlanningContextTest.cpp
         Source/Tests/SemanticProtectedRangeHostTest.cpp
         Source/Tests/SemanticProtectedRangeGestureTest.cpp
+        Source/Tests/EmberProposalProtocolTest.cpp
+        Source/Tests/ExternalSemanticProposalTest.cpp
+        Source/Tests/EmberProposalLifecycleTest.cpp
         Source/Tests/AIHeadlessDetectionParityTest.cpp
         Source/Tests/AIHeadlessPositiveBackendWitnessTest.cpp
         Source/Tests/AICaptureDisabledWitnessTest.cpp
