@@ -6,12 +6,14 @@
 #include "../Integration/EmberProposalProtocol.h"
 #include "../Integration/ExternalSemanticProposalInbox.h"
 #include "../PluginProcessor.h"
+#include "../GUI/SemanticControlPanel.h"
 
 #include <CoreFoundation/CoreFoundation.h>
 #include <atomic>
 #include <cmath>
 #include <cstring>
 #include <memory>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -89,6 +91,69 @@ void pump(int ms)
     const CFTimeInterval until = CFAbsoluteTimeGetCurrent() + ms / 1000.0;
     while (CFAbsoluteTimeGetCurrent() < until)
         CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.01, true);
+}
+
+/** APVTS digest of everything Semantic APPLY is allowed to write. Staging a
+    Copilot phrase must not move this; inbound has no applySemanticAdjustments. */
+juce::String eqDigest(AIEqualizerAudioProcessor& proc)
+{
+    juce::String d;
+    if (auto* n = proc.getAPVTS().getRawParameterValue("numActiveBands"))
+        d << "n=" << juce::String(n->load(), 4) << ";";
+    for (int i = 0; i < AIEqualizerAudioProcessor::maxBands; ++i)
+    {
+        const auto b = proc.getBandState(i);
+        d << i << ":"
+          << juce::String(b.frequency, 2) << ","
+          << juce::String(b.gain, 4) << ","
+          << juce::String(b.q, 4) << ","
+          << b.type << ","
+          << (b.enabled ? 1 : 0) << ";";
+    }
+    return d;
+}
+
+WireMessage pairConfirmMatching(const LinkUiState& offer)
+{
+    WireMessage m;
+    m.type = MessageType::pair_confirm;
+    m.pairConfirm.pairBindingId = randomUuidV4();
+    m.pairConfirm.runtimeInstanceId = offer.runtimeInstanceId;
+    m.pairConfirm.humanCode = offer.humanCode;
+    m.pairConfirm.controlRevision = 1;
+    m.pairConfirm.confirmedAtMonotonicNs = 2;
+    return m;
+}
+
+std::optional<PairOffer> takeLastPairOffer(InProcessTransport& pipe)
+{
+    std::optional<PairOffer> found;
+    for (const auto& frame : pipe.takeOutbound())
+    {
+        const std::string body(frame.body.begin(), frame.body.end());
+        const auto parsed = parseWireJson(body);
+        if (parsed.ok && parsed.message.type == MessageType::pair_offer)
+            found = parsed.message.pairOffer;
+    }
+    return found;
+}
+
+WireMessage stageMoreAir(const LinkUiState& paired, const PairOffer& offer)
+{
+    WireMessage m;
+    m.type = MessageType::stage_semantic_request;
+    m.stage.targetRuntimeInstanceId = paired.runtimeInstanceId;
+    m.stage.pairBindingId = paired.pairBindingId;
+    m.stage.requestId = randomUuidV4();
+    m.stage.expectedControlRevision = offer.controlRevision;
+    m.stage.expectedProjectionBaseEpoch = offer.projectionBaseEpoch;
+    m.stage.expectedAuditionContextEpoch = offer.auditionContextEpoch;
+    m.stage.phrase = "more air";
+    m.stage.intensity = 0.4;
+    m.stage.expiresAtMonotonicNs = static_cast<std::uint64_t>(
+        std::max<std::int64_t>(0, juce::Time::getHighResolutionTicks())) + 60'000'000'000ULL;
+    m.stage.requestHash = requestHashHex(m.stage);
+    return m;
 }
 
 class EmberProposalLifecycleTest : public juce::UnitTest
@@ -417,4 +482,180 @@ public:
 };
 
 static EmberProposalLifecycleTest emberProposalLifecycleTest;
+
+class EmberProposalE4IsolationTest : public juce::UnitTest
+{
+public:
+    EmberProposalE4IsolationTest()
+        : juce::UnitTest("Ember Proposal E4 Isolation", "Integration") {}
+
+    void runTest() override
+    {
+        beginTest("message thread ownership");
+        expect(juce::MessageManager::existsAndIsCurrentThread());
+
+        beginTest("two processors: PAIR and more-air stage only on A; no inbound APPLY");
+        {
+            AIEqualizerAudioProcessor procA;
+            AIEqualizerAudioProcessor procB;
+
+            auto pipeA = std::make_shared<InProcessTransport>();
+            auto pipeB = std::make_shared<InProcessTransport>();
+            procA.setEmberLinkEnabled(true);
+            procB.setEmberLinkEnabled(true);
+            procA.attachEmberProposalTransportForTests(pipeA);
+            procB.attachEmberProposalTransportForTests(pipeB);
+
+            SemanticControlPanel panelA(procA.getSemanticEngine());
+            SemanticControlPanel panelB(procB.getSemanticEngine());
+            panelA.setSampleRate(48000.0);
+            panelB.setSampleRate(48000.0);
+
+            int applyA = 0, applyB = 0;
+            int legacyA = 0, legacyB = 0;
+            panelA.onTextPlanApply = [&](const auto&) {
+                ++applyA;
+                return SemanticControlPanel::TextApplyFeedback {};
+            };
+            panelB.onTextPlanApply = [&](const auto&) {
+                ++applyB;
+                return SemanticControlPanel::TextApplyFeedback {};
+            };
+            panelA.onEQGenerated = [&](const auto&) { ++legacyA; };
+            panelB.onEQGenerated = [&](const auto&) { ++legacyB; };
+            panelA.onExternalPlanResult = [&](ReasonCode reason, std::string summary, std::string hash) {
+                procA.handleEmberExternalPlanResult(reason, summary, hash);
+            };
+            panelB.onExternalPlanResult = [&](ReasonCode reason, std::string summary, std::string hash) {
+                procB.handleEmberExternalPlanResult(reason, summary, hash);
+            };
+
+            int stageCallsA = 0, stageCallsB = 0;
+            std::string stagedPhraseA, stagedPhraseB;
+            procA.setEmberStageHandler([&](std::string phrase, float intensity) {
+                ++stageCallsA;
+                stagedPhraseA = phrase;
+                panelA.stageExternalCommand(juce::String::fromUTF8(phrase.c_str()), intensity);
+            });
+            procB.setEmberStageHandler([&](std::string phrase, float intensity) {
+                ++stageCallsB;
+                stagedPhraseB = phrase;
+                panelB.stageExternalCommand(juce::String::fromUTF8(phrase.c_str()), intensity);
+            });
+            procA.noteEmberEditorOpen(true);
+            procB.noteEmberEditorOpen(true);
+
+            const auto beforeA = eqDigest(procA);
+            const auto beforeB = eqDigest(procB);
+            expect(procA.getEmberLinkUiState().runtimeInstanceId
+                       != procB.getEmberLinkUiState().runtimeInstanceId,
+                   "two processors must have distinct runtime instance ids");
+
+            expect(!procB.getEmberLinkUiState().pairOfferPending);
+            procA.requestEmberPairOffer();
+            const auto offerWire = takeLastPairOffer(*pipeA);
+            expect(offerWire.has_value(), "PAIR on A must emit pair_offer on the in-process transport");
+            const auto offerA = procA.getEmberLinkUiState();
+            expect(offerA.pairOfferPending, "PAIR on A must set local offerPending");
+            expect(!offerA.paired);
+            expect(!procB.getEmberLinkUiState().pairOfferPending,
+                   "PAIR gesture on A must not create offerPending on B");
+            expect(!procB.getEmberLinkUiState().paired);
+
+            const auto confirm = pairConfirmMatching(offerA);
+            expect(!confirm.pairConfirm.humanCode.empty());
+            procA.injectEmberProposalMessageForTests(confirm);
+            procB.injectEmberProposalMessageForTests(confirm);
+
+            expect(procA.getEmberLinkUiState().paired, "matching pair_confirm pairs only the offerPending instance");
+            expect(!procA.getEmberLinkUiState().pairOfferPending);
+            expect(!procB.getEmberLinkUiState().paired,
+                   "pair_confirm without B offerPending must not pair B");
+            expect(!procB.getEmberLinkUiState().pairOfferPending);
+            expect(procA.getEmberLinkUiState().pairBindingId == confirm.pairConfirm.pairBindingId);
+
+            if (!offerWire.has_value())
+                return;
+
+            ExternalSemanticProposalInbox inboxProbe;
+            InboxSnapshot snapA;
+            snapA.messageThread = true;
+            snapA.editorOpen = true;
+            snapA.linkEnabled = true;
+            snapA.paired = procA.getEmberLinkUiState().paired;
+            snapA.runtimeInstanceId = procA.getEmberLinkUiState().runtimeInstanceId;
+            snapA.pairBindingId = procA.getEmberLinkUiState().pairBindingId;
+            snapA.controlRevision = offerWire->controlRevision;
+            snapA.projectionBaseEpoch = offerWire->projectionBaseEpoch;
+            snapA.auditionContextEpoch = offerWire->auditionContextEpoch;
+            snapA.nowMonotonicNs = static_cast<std::uint64_t>(
+                std::max<std::int64_t>(0, juce::Time::getHighResolutionTicks()));
+
+            const auto stage = stageMoreAir(procA.getEmberLinkUiState(), *offerWire);
+            expect(inboxProbe.evaluateStage(stage.stage, snapA).disposition == StageDisposition::accept,
+                   "more air must be an inbox accept on A's paired snapshot");
+
+            InboxSnapshot snapB;
+            snapB.messageThread = true;
+            snapB.editorOpen = true;
+            snapB.linkEnabled = true;
+            snapB.paired = procB.getEmberLinkUiState().paired;
+            snapB.runtimeInstanceId = procB.getEmberLinkUiState().runtimeInstanceId;
+            snapB.pairBindingId = procB.getEmberLinkUiState().pairBindingId;
+            snapB.controlRevision = offerWire->controlRevision;
+            snapB.projectionBaseEpoch = offerWire->projectionBaseEpoch;
+            snapB.auditionContextEpoch = offerWire->auditionContextEpoch;
+            snapB.nowMonotonicNs = snapA.nowMonotonicNs;
+            expect(inboxProbe.evaluateStage(stage.stage, snapB).disposition != StageDisposition::accept,
+                   "the same more-air request must not inbox-accept on unpaired B");
+
+            procA.injectEmberProposalMessageForTests(stage);
+            procB.injectEmberProposalMessageForTests(stage);
+
+            expect(stageCallsA == 1, "inbox accept on A must reach the Semantic panel stage path");
+            expect(stagedPhraseA == "more air");
+            expect(procA.getEmberLinkUiState().pendingSource == kPendingSourceLabel);
+            expect(panelA.isPendingExternal(), "A's Semantic panel must show the Copilot pending source");
+            auto* inputA = dynamic_cast<juce::TextEditor*>(
+                panelA.findChildWithID("semanticCommandInput"));
+            expect(inputA != nullptr && inputA->getText().trim() == "more air",
+                   "A's Semantic panel must stage the more air phrase");
+            expect(stageCallsB == 0, "B must not stage from A's stage_semantic_request");
+            expect(stagedPhraseB.empty());
+            expect(procB.getEmberLinkUiState().pendingSource.empty(),
+                   "B must not mark a pending Copilot proposal");
+            expect(!panelB.isPendingExternal());
+            expect(!procB.getEmberLinkUiState().paired);
+
+            expect(eqDigest(procA) == beforeA,
+                   "staging more air on A must not write APVTS / apply Semantic");
+            expect(eqDigest(procB) == beforeB,
+                   "B APVTS must be untouched");
+
+            pump(50);
+            panelA.timerCallback();
+            panelB.timerCallback();
+            expect(applyA == 0 && applyB == 0,
+                   "inbound path must not invoke onTextPlanApply / applySemanticAdjustments");
+            expect(legacyA == 0 && legacyB == 0,
+                   "inbound path must not fire the legacy onEQGenerated apply");
+            expect(eqDigest(procA) == beforeA,
+                   "planning after stage must still not write APVTS");
+            expect(eqDigest(procB) == beforeB,
+                   "B APVTS must stay untouched after the planning tick");
+
+            procA.setEmberStageHandler({});
+            procB.setEmberStageHandler({});
+            procA.noteEmberEditorOpen(false);
+            procB.noteEmberEditorOpen(false);
+            procA.setEmberLinkEnabled(false);
+            procB.setEmberLinkEnabled(false);
+            for (int i = 0; i < 50 && (procA.emberProposalHasOpenListener()
+                                       || procB.emberProposalHasOpenListener()); ++i)
+                pump(10);
+        }
+    }
+};
+
+static EmberProposalE4IsolationTest emberProposalE4IsolationTest;
 } // namespace
