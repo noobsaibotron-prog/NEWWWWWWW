@@ -248,6 +248,7 @@ public:
     void setEmberStageHandler(std::function<void(std::string, float)> handler);
     void setEmberLinkUiHandler(std::function<void(EmberProposal::LinkUiState)> handler);
     void attachEmberProposalTransportForTests(std::shared_ptr<EmberProposal::Transport> transport);
+    void setEmberProposalControlDirectoryForTests(juce::File directory);
     void injectEmberProposalMessageForTests(EmberProposal::WireMessage message);
     [[nodiscard]] bool emberProposalHasOpenListener() const noexcept;
     

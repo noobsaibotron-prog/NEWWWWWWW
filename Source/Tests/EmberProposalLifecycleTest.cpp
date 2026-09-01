@@ -16,6 +16,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <cstdlib>
 #include <sys/stat.h>
 #include <thread>
 #include <unistd.h>
@@ -126,6 +127,58 @@ WireMessage pairConfirmMatching(const LinkUiState& offer)
     m.pairConfirm.controlRevision = 1;
     m.pairConfirm.confirmedAtMonotonicNs = 2;
     return m;
+}
+
+bool readExactSocket(juce::StreamingSocket& socket, void* dest, int n)
+{
+    auto* p = static_cast<char*>(dest);
+    int got = 0;
+    while (got < n)
+    {
+        const int r = socket.read(p + got, n - got, true);
+        if (r <= 0)
+            return false;
+        got += r;
+    }
+    return true;
+}
+
+bool writeTcpFrame(juce::StreamingSocket& socket, const EncodedFrame& frame)
+{
+    const auto len = juce::ByteOrder::swapIfLittleEndian(
+        static_cast<std::uint32_t>(frame.body.size()));
+    if (socket.write(&len, 4) != 4)
+        return false;
+    if (!frame.body.empty()
+        && socket.write(frame.body.data(), static_cast<int>(frame.body.size()))
+               != static_cast<int>(frame.body.size()))
+        return false;
+    if (frame.hasHmac && socket.write(frame.hmac.data(), 32) != 32)
+        return false;
+    return true;
+}
+
+bool readTcpFrame(juce::StreamingSocket& socket, EncodedFrame& out, bool mac, int timeoutMs)
+{
+    if (socket.waitUntilReady(true, timeoutMs) <= 0)
+        return false;
+    std::uint32_t len = 0;
+    if (!readExactSocket(socket, &len, 4))
+        return false;
+    len = juce::ByteOrder::swapIfLittleEndian(len);
+    if (len == 0 || len > static_cast<std::uint32_t>(kMaxFrameBytes))
+        return false;
+    out.body.resize(len);
+    out.hasHmac = false;
+    if (!readExactSocket(socket, out.body.data(), static_cast<int>(len)))
+        return false;
+    if (mac)
+    {
+        if (!readExactSocket(socket, out.hmac.data(), 32))
+            return false;
+        out.hasHmac = true;
+    }
+    return true;
 }
 
 std::optional<PairOffer> takeLastPairOffer(InProcessTransport& pipe)
@@ -759,4 +812,145 @@ public:
 };
 
 static EmberProposalE4IsolationTest emberProposalE4IsolationTest;
+
+class EmberProposalTcpPairTest : public juce::UnitTest
+{
+public:
+    EmberProposalTcpPairTest()
+        : juce::UnitTest("Ember Proposal TCP PAIR", "Integration") {}
+
+    void runTest() override
+    {
+        beginTest("message thread ownership");
+        expect(juce::MessageManager::existsAndIsCurrentThread());
+
+        beginTest("TCP handshake then PAIR click emits HMAC pair_offer while IO is polling");
+        {
+            struct RestoreAutoconnect
+            {
+                RestoreAutoconnect()
+                {
+                    unsetenv("EMBER_PROPOSAL_DISABLE_AUTOCONNECT");
+                }
+                ~RestoreAutoconnect()
+                {
+                    setenv("EMBER_PROPOSAL_DISABLE_AUTOCONNECT", "1", 1);
+                }
+            } restoreAutoconnect;
+            juce::StreamingSocket listener;
+            expect(listener.createListener(0, juce::String(kLoopbackAddress)),
+                   "test Observer must listen on loopback");
+            const int port = listener.getBoundPort();
+            expect(port > 0);
+
+            auto dir = makeControlDir("tcp-pair");
+            auto record = writeUsableRendezvous(dir);
+            record.listenAddress = kLoopbackAddress;
+            record.listenPort = port;
+            const auto rdvFile = dir.getChildFile(kRendezvousFileName);
+            expect(rdvFile.replaceWithText(serializeRendezvousJson(record)));
+            chmod(rdvFile.getFullPathName().toRawUTF8(), 0600);
+
+            FakeAcb acb;
+            bool secretOk = false;
+            acb.secret = secretFromHex(record.sessionSecretHex, secretOk);
+            expect(secretOk);
+            acb.session.setSecret(acb.secret);
+
+            AIEqualizerAudioProcessor proc;
+            proc.setEmberProposalControlDirectoryForTests(dir);
+            proc.noteEmberEditorOpen(true);
+            proc.setEmberLinkEnabled(true);
+
+            expect(listener.waitUntilReady(true, 2000) > 0,
+                   "Ember must connect after LINK ON + canonical rendezvous");
+            std::unique_ptr<juce::StreamingSocket> conn(listener.waitForNextConnection());
+            expect(conn != nullptr, "Observer accept must yield a connected socket");
+            if (conn == nullptr)
+            {
+                proc.setEmberLinkEnabled(false);
+                dir.getParentDirectory().deleteRecursively();
+                return;
+            }
+
+            EncodedFrame helloFrame;
+            expect(readTcpFrame(*conn, helloFrame, false, 2000), "must receive handshake hello");
+            auto ack = acb.ackHello(helloFrame);
+            expect(!ack.body.empty());
+            expect(writeTcpFrame(*conn, ack), "must write handshake_ack");
+
+            EncodedFrame confirmFrame;
+            expect(readTcpFrame(*conn, confirmFrame, false, 2000), "must receive handshake_confirm");
+            acb.confirmAndAuth(confirmFrame);
+            expect(acb.session.isAuthenticated());
+
+            for (int i = 0; i < 40 && !proc.getEmberLinkUiState().authenticated; ++i)
+                pump(25);
+            expect(proc.getEmberLinkUiState().authenticated,
+                   "editor must publish Connected after handshake_confirm");
+            expect(proc.getEmberLinkUiState().statusText == "Connected",
+                   "status after handshake must be Connected");
+
+            // Tonight's Live miss: PAIR after Connected, while the client I/O
+            // thread is blocked in waitUntilReady(read) holding JUCE readLock.
+            pump(150);
+
+            SemanticControlPanel panel(proc.getSemanticEngine());
+            panel.setSize(420, 360);
+            panel.setEmberLinkUi(proc.getEmberLinkUiState());
+            panel.onEmberPairClicked = [&] {
+                proc.requestEmberPairOffer();
+                panel.setEmberLinkUi(proc.getEmberLinkUiState());
+            };
+            auto* pairBtn = dynamic_cast<juce::Button*>(panel.findChildWithID("emberPairButton"));
+            expect(pairBtn != nullptr, "PAIR control must be emberPairButton");
+            expect(pairBtn != nullptr && pairBtn->isEnabled(),
+                   "PAIR must be enabled after Connected");
+            if (pairBtn != nullptr)
+                pairBtn->triggerClick();
+            pump(50);
+            const auto afterClick = proc.getEmberLinkUiState();
+            expect(afterClick.pairOfferPending,
+                   "PAIR click must arm local offerPending before the Observer read");
+            expect(afterClick.statusText.rfind("PAIR ", 0) == 0,
+                   "PAIR click must publish PAIR <code> immediately");
+
+            EncodedFrame offerFrame;
+            bool gotOffer = false;
+            for (int i = 0; i < 40 && !gotOffer; ++i)
+            {
+                pump(50);
+                gotOffer = readTcpFrame(*conn, offerFrame, true, 50);
+            }
+            expect(gotOffer,
+                   "PAIR after handshake_confirm must write pair_offer on the TCP socket");
+            expect(offerFrame.hasHmac,
+                   "pair_offer after auth must carry the 32-byte HMAC trailer");
+            if (gotOffer)
+            {
+                auto ingested = acb.session.ingest(offerFrame);
+                expect(ingested.ok, "Observer ingest of HMAC pair_offer must succeed");
+                expect(ingested.message.type == MessageType::pair_offer,
+                       "wire type must be pair_offer so Confirm Pair can arm");
+                expect(!ingested.message.pairOffer.humanCode.empty());
+                expect(ingested.message.pairOffer.editorOpen);
+            }
+
+            const auto ui = proc.getEmberLinkUiState();
+            expect(ui.pairOfferPending, "PAIR click must keep local offerPending");
+            expect(ui.statusText.rfind("PAIR ", 0) == 0,
+                   "editor must show PAIR <human_code>, not stay on Connected");
+            expect(!ui.paired);
+
+            conn->close();
+            proc.setEmberLinkEnabled(false);
+            proc.noteEmberEditorOpen(false);
+            for (int i = 0; i < 50 && proc.getEmberLinkUiState().connected; ++i)
+                pump(10);
+            dir.getParentDirectory().deleteRecursively();
+        }
+    }
+};
+
+static EmberProposalTcpPairTest emberProposalTcpPairTest;
 } // namespace

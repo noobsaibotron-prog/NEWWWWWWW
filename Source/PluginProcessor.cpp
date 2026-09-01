@@ -7260,6 +7260,14 @@ void AIEqualizerAudioProcessor::attachEmberProposalTransportForTests(
     emberProposalClient->attachTransport(std::move(transport));
 }
 
+void AIEqualizerAudioProcessor::setEmberProposalControlDirectoryForTests(juce::File directory)
+{
+    jassert(juce::MessageManager::existsAndIsCurrentThread());
+    if (emberProposalClient == nullptr)
+        return;
+    emberProposalClient->setControlDirectory(std::move(directory));
+}
+
 void AIEqualizerAudioProcessor::injectEmberProposalMessageForTests(EmberProposal::WireMessage message)
 {
     jassert(juce::MessageManager::existsAndIsCurrentThread());

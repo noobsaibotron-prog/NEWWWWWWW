@@ -2,8 +2,12 @@
 
 #include <algorithm>
 #include <chrono>
+#include <climits>
+#include <limits.h>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
+#include <mutex>
 #include <sys/stat.h>
 #include <unistd.h>
 #include <utility>
@@ -115,20 +119,26 @@ public:
 
     bool send(const EncodedFrame& frame) override
     {
+        std::lock_guard<std::mutex> lock(sendMutex);
         if (socket == nullptr || !connected)
             return false;
-        const auto len = juce::ByteOrder::swapIfLittleEndian(
-            static_cast<std::uint32_t>(frame.body.size()));
-        if (socket->waitUntilReady(false, 200) < 0)
-            return false;
-        if (socket->write(&len, 4) != 4)
-            return false;
-        if (!frame.body.empty()
-            && socket->write(frame.body.data(), static_cast<int>(frame.body.size()))
-                   != static_cast<int>(frame.body.size()))
-            return false;
-        if (frame.hasHmac && socket->write(frame.hmac.data(), 32) != 32)
-            return false;
+        outboundQueue.push_back(frame);
+        return true;
+    }
+
+    bool flushOutbound() override
+    {
+        std::deque<EncodedFrame> batch;
+        {
+            std::lock_guard<std::mutex> lock(sendMutex);
+            batch.swap(outboundQueue);
+        }
+        while (!batch.empty())
+        {
+            if (!writeFrame(batch.front()))
+                return false;
+            batch.pop_front();
+        }
         return true;
     }
 
@@ -171,6 +181,10 @@ public:
     void close() override
     {
         connected = false;
+        {
+            std::lock_guard<std::mutex> lock(sendMutex);
+            outboundQueue.clear();
+        }
         if (socket != nullptr)
         {
             socket->close();
@@ -182,6 +196,23 @@ public:
     [[nodiscard]] bool isConnected() const override { return connected; }
 
 private:
+    bool writeFrame(const EncodedFrame& frame)
+    {
+        if (socket == nullptr || !connected)
+            return false;
+        const auto len = juce::ByteOrder::swapIfLittleEndian(
+            static_cast<std::uint32_t>(frame.body.size()));
+        if (socket->write(&len, 4) != 4)
+            return false;
+        if (!frame.body.empty()
+            && socket->write(frame.body.data(), static_cast<int>(frame.body.size()))
+                   != static_cast<int>(frame.body.size()))
+            return false;
+        if (frame.hasHmac && socket->write(frame.hmac.data(), 32) != 32)
+            return false;
+        return true;
+    }
+
     bool readExact(void* dest, int n)
     {
         auto* p = static_cast<char*>(dest);
@@ -201,6 +232,8 @@ private:
     std::unique_ptr<juce::StreamingSocket> socket;
     bool connected = false;
     std::atomic<bool> expectMacTrailer { false };
+    std::mutex sendMutex;
+    std::deque<EncodedFrame> outboundQueue;
 };
 } // namespace
 
@@ -400,7 +433,13 @@ bool Client::pairOfferAllowed() const
     }
     if (!authed)
         return false;
-    if (bound.getParentDirectory().getFullPathName() != control.getFullPathName())
+    auto resolved = [](const juce::File& file) -> juce::String {
+        char path[PATH_MAX];
+        if (realpath(file.getFullPathName().toRawUTF8(), path) != nullptr)
+            return juce::String(path);
+        return file.getFullPathName();
+    };
+    if (resolved(bound.getParentDirectory()) != resolved(control))
         return false;
     ProtocolErrorCode error = ProtocolErrorCode::stale_rendezvous;
     auto record = readRendezvousFile(bound, nowUnix(), error);
@@ -485,12 +524,19 @@ void Client::run()
         if (t != nullptr)
         {
             t->setExpectMacTrailer(authed);
+            if (!t->flushOutbound())
+            {
+                const bool bound = !boundRendezvousFile().getFullPathName().isEmpty();
+                if (bound)
+                    clearPairing();
+            }
             EncodedFrame frame;
             if (t->waitReceive(frame, 50))
                 handleInbound(frame);
         }
         else
         {
+            bool attempted = false;
             if (enabled.load() && autoConnectRendezvous)
             {
                 const auto nowMs = static_cast<std::int64_t>(juce::Time::getMillisecondCounter());
@@ -498,9 +544,11 @@ void Client::run()
                 {
                     lastRendezvousAttemptMs = nowMs;
                     tryConnectDefaultRendezvous();
+                    attempted = true;
                 }
             }
-            juce::Thread::sleep(50);
+            if (!attempted)
+                juce::Thread::sleep(50);
         }
     }
 }

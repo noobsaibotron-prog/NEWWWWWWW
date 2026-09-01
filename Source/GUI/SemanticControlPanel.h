@@ -86,8 +86,13 @@ public:
     {
         emberLinkToggle.setToggleState(ui.linkEnabled, juce::dontSendNotification);
         emberLinkToggle.setButtonText(ui.linkEnabled ? "LINK ON" : "LINK OFF");
-        emberPairButton.setEnabled(ui.linkEnabled && !ui.paired);
+        const bool pairArmed = ui.linkEnabled && !ui.paired;
+        emberPairButton.setEnabled(pairArmed);
         emberPairButton.setButtonText("PAIR");
+        emberPairButton.setColour(juce::TextButton::buttonColourId,
+                                  pairArmed ? juce::Colour(0xFF3D5A27) : ModernLookAndFeel::Colors::bgLighter);
+        emberPairButton.setColour(juce::TextButton::textColourOffId,
+                                  pairArmed ? juce::Colours::white : ModernLookAndFeel::Colors::textMuted);
         emberLinkStatus.setText(ui.statusText, juce::dontSendNotification);
         if (!ui.pendingSource.empty())
             pendingProposalSource = juce::String::fromUTF8(ui.pendingSource.c_str());
@@ -198,7 +203,9 @@ public:
         emberPairButton.setButtonText("PAIR");
         emberPairButton.setEnabled(false);
         emberPairButton.setComponentID("emberPairButton");
-        emberPairButton.setTooltip("Send a one-time pair offer to Ableton Copilot Bridge");
+        emberPairButton.setTooltip("Send a one-time pair offer to Ableton Copilot Bridge. Click PAIR after LINK shows Connected.");
+        emberPairButton.setColour(juce::TextButton::buttonColourId, ModernLookAndFeel::Colors::bgLighter);
+        emberPairButton.setColour(juce::TextButton::textColourOffId, ModernLookAndFeel::Colors::textMuted);
         emberPairButton.onClick = [this]() {
             if (onEmberPairClicked)
                 onEmberPairClicked();
@@ -433,9 +440,9 @@ public:
             subtitleLabel.setBounds(bounds.removeFromTop(16));
             bounds.removeFromTop(4);
 
-            auto linkRow = bounds.removeFromTop(22);
+            auto linkRow = bounds.removeFromTop(24);
             emberLinkToggle.setBounds(linkRow.removeFromLeft(72).reduced(1));
-            emberPairButton.setBounds(linkRow.removeFromLeft(48).reduced(1));
+            emberPairButton.setBounds(linkRow.removeFromLeft(56).reduced(1));
             emberLinkStatus.setBounds(linkRow.reduced(4, 0));
             bounds.removeFromTop(4);
 

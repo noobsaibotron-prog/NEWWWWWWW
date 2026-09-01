@@ -30,6 +30,8 @@ public:
     [[nodiscard]] virtual bool hasOpenListener() const { return false; }
     [[nodiscard]] virtual bool isConnected() const { return false; }
     virtual void setExpectMacTrailer(bool) {}
+    /** Socket transports queue on send() and write from the I/O thread. */
+    virtual bool flushOutbound() { return true; }
 };
 
 /** In-process duplex queue. No OS socket, no bind. Used by tests and as the
