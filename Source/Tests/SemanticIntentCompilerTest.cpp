@@ -29,6 +29,36 @@ const SemanticConstraint* findConstraint(const SemanticIntent& intent,
             return &constraint;
     return nullptr;
 }
+
+bool hasMudFence(const SemanticPlan& plan)
+{
+    for (const auto& bound : plan.target.responseBounds)
+        if (bound.minFrequencyHz >= 240.0f && bound.minFrequencyHz <= 260.0f
+            && bound.maxFrequencyHz >= 490.0f && bound.maxFrequencyHz <= 510.0f)
+            return true;
+    return false;
+}
+
+const PlannedBand* findBandNear(const FitResult& fit, float hz, float tolHz)
+{
+    const PlannedBand* best = nullptr;
+    float bestErr = tolHz + 1.0f;
+    for (const auto& band : fit.bands)
+    {
+        const float err = std::abs(band.frequencyHz - hz);
+        if (err <= tolHz && err < bestErr)
+        {
+            best = &band;
+            bestErr = err;
+        }
+    }
+    return best;
+}
+
+bool interpretationHas(const SemanticPlan& plan, const char* needle)
+{
+    return plan.interpretation.find(needle) != std::string::npos;
+}
 } // namespace
 
 class SemanticIntentCompilerTest final : public juce::UnitTest
@@ -359,6 +389,192 @@ public:
             expectEquals(static_cast<int>(a.constraints.size()), static_cast<int>(b.constraints.size()));
             if (!a.goals.empty() && !b.goals.empty())
                 expectWithinAbsoluteError(a.goals.front().amount, b.goals.front().amount, 0.0f);
+        }
+
+        beginTest("Golden geometry: more air is an Air shelf near 11 kHz");
+        {
+            const auto plan = SemanticPlanner().plan("more air", kSampleRate, 1.0f);
+            expect(plan.valid && !plan.fit.bands.empty());
+            const auto* air = findGoal(plan.intent, SemanticDimension::Brightness);
+            expect(air != nullptr && air->focus == SemanticSpectralFocus::Air,
+                   "more air must keep Air focus, not generic brightness");
+            const PlannedBand* hs11k = nullptr;
+            bool sawGeneric6kShelf = false;
+            for (const auto& band : plan.fit.bands)
+            {
+                if (band.type == FilterType::HighShelf && band.gainDb > 0.0f
+                    && band.frequencyHz >= 10000.0f && band.frequencyHz <= 12500.0f)
+                    hs11k = &band;
+                if (band.type == FilterType::HighShelf && band.gainDb > 0.0f
+                    && band.frequencyHz >= 5000.0f && band.frequencyHz <= 7000.0f)
+                    sawGeneric6kShelf = true;
+            }
+            expect(hs11k != nullptr, "more air must PLAN an Air high-shelf near 11 kHz");
+            expect(!sawGeneric6kShelf, "more air must not collapse to a generic 6 kHz brightness shelf");
+        }
+
+        beginTest("Golden geometry: less harsh is Smoothness near 3.4 kHz");
+        {
+            const auto plan = SemanticPlanner().plan("less harsh", kSampleRate, 1.0f);
+            expect(plan.valid);
+            const auto* smooth = findGoal(plan.intent, SemanticDimension::Smoothness);
+            expect(smooth != nullptr && smooth->amount > 0.0f);
+            expect(!interpretationHas(plan, "harsher"));
+            const auto* cut = findBandNear(plan.fit, 3400.0f, 500.0f);
+            expect(cut != nullptr && cut->gainDb < 0.0f,
+                   "less harsh must cut around 3.4 kHz, not boost");
+        }
+
+        beginTest("Golden geometry: more body unconstrained peaks near 190 Hz");
+        {
+            const auto plan = SemanticPlanner().plan("more body", kSampleRate, 1.0f);
+            expect(plan.valid);
+            const auto* warmth = findGoal(plan.intent, SemanticDimension::Warmth);
+            expect(warmth != nullptr && warmth->amount > 0.0f);
+            const auto* body = findBandNear(plan.fit, 190.0f, 40.0f);
+            expect(body != nullptr && body->gainDb > 0.0f,
+                   "more body without a mud fence must stay near 190 Hz");
+        }
+
+        beginTest("Golden geometry: warmer without mud keeps 250-500 Hz fence and ~104 Hz peak");
+        {
+            const auto plan = SemanticPlanner().plan("warmer without mud", kSampleRate, 1.0f);
+            expect(plan.valid);
+            expect(hasMudFence(plan), "warmer without mud must keep the 250-500 Hz mud fence");
+            const auto* peak = findBandNear(plan.fit, 104.0f, 20.0f);
+            expect(peak != nullptr && peak->gainDb > 0.0f && peak->type == FilterType::Peak,
+                   "constrained warmth must remain a ~104 Hz peak, not an unconstrained 190 Hz body");
+        }
+
+        beginTest("Mix-language V1: not/no/avoid/don't never invert to harsher or muddier");
+        {
+            struct Case { const char* phrase; SemanticDimension dimension; };
+            const Case cases[] = {
+                { "avoid harshness", SemanticDimension::Smoothness },
+                { "not harsh", SemanticDimension::Smoothness },
+                { "no mud", SemanticDimension::Clarity },
+                { "don't make it harsh", SemanticDimension::Smoothness },
+                { "dont make it harsh", SemanticDimension::Smoothness },
+            };
+
+            for (const auto& c : cases)
+            {
+                const auto intent = compiler.compile(c.phrase);
+                const auto plan = SemanticPlanner().plan(c.phrase, kSampleRate, 1.0f);
+                const auto* goal = findGoal(intent, c.dimension);
+                expect(intent.hasRecognizedContent && intent.isValid() && !intent.contradictory,
+                       juce::String(c.phrase) + " must compile");
+                expect(goal != nullptr && goal->amount > 0.0f,
+                       juce::String(c.phrase) + " must not invert polarity");
+                expect(plan.valid && !plan.fit.bands.empty(),
+                       juce::String(c.phrase) + " must PLAN");
+                expect(!interpretationHas(plan, "harsher") && !interpretationHas(plan, "muddier"),
+                       juce::String(c.phrase) + " must not interpret as harsher/muddier");
+            }
+        }
+
+        beginTest("Mix-language V1: bright but not harsh is brighter + smoother");
+        {
+            const auto intent = compiler.compile("bright but not harsh");
+            const auto plan = SemanticPlanner().plan("bright but not harsh", kSampleRate, 1.0f);
+            const auto* bright = findGoal(intent, SemanticDimension::Brightness);
+            const auto* smooth = findGoal(intent, SemanticDimension::Smoothness);
+            const auto* avoidHarsh = findConstraint(intent, SemanticDimension::Smoothness);
+            expect(bright != nullptr && bright->amount > 0.0f);
+            expect((smooth != nullptr && smooth->amount > 0.0f) || avoidHarsh != nullptr,
+                   "not harsh must add smoothness or avoid-harsh, never +harsh");
+            expect(smooth == nullptr || smooth->amount > 0.0f);
+            expect(plan.valid);
+            expect(interpretationHas(plan, "brighter"));
+            expect(!interpretationHas(plan, "harsher"));
+            bool sawSmoothCut = false;
+            for (const auto& band : plan.fit.bands)
+                if (band.gainDb < 0.0f && band.frequencyHz >= 2500.0f && band.frequencyHz <= 4500.0f)
+                    sawSmoothCut = true;
+            expect(sawSmoothCut || avoidHarsh != nullptr,
+                   "bright but not harsh must cut 3.4 kHz or fence harshness");
+        }
+
+        beginTest("Mix-language V1: Italian aliases fango/sibilanza/asprezza/morso");
+        {
+            const auto fango = compiler.compile("più caldo senza fango");
+            const auto fangoPlan = SemanticPlanner().plan("più caldo senza fango", kSampleRate, 1.0f);
+            expect(findGoal(fango, SemanticDimension::Warmth) != nullptr);
+            expect(findConstraint(fango, SemanticDimension::Clarity) != nullptr,
+                   "fango must alias mud so senza fango applies the mud fence");
+            expect(fangoPlan.valid && hasMudFence(fangoPlan));
+
+            const auto sib = compiler.compile("più aria senza sibilanza");
+            const auto sibPlan = SemanticPlanner().plan("più aria senza sibilanza", kSampleRate, 1.0f);
+            expect(findGoal(sib, SemanticDimension::Brightness) != nullptr);
+            expect(findConstraint(sib, SemanticDimension::Smoothness) != nullptr,
+                   "sibilanza must alias sibilance/sibilo");
+            expect(sibPlan.valid);
+            const auto* air = findGoal(sib, SemanticDimension::Brightness);
+            expect(air != nullptr && air->focus == SemanticSpectralFocus::Air);
+
+            const auto asp = compiler.compile("più presenza senza asprezza");
+            expect(findGoal(asp, SemanticDimension::Presence) != nullptr);
+            expect(findConstraint(asp, SemanticDimension::Smoothness) != nullptr,
+                   "asprezza must alias harsh/aspro");
+
+            const auto bite = compiler.compile("più morso senza aspro");
+            const auto bitePlan = SemanticPlanner().plan("più morso senza aspro", kSampleRate, 1.0f);
+            expect(findGoal(bite, SemanticDimension::Presence) != nullptr,
+                   "morso must alias bite");
+            expect(findConstraint(bite, SemanticDimension::Smoothness) != nullptr);
+            expect(bitePlan.valid);
+        }
+
+        beginTest("Mix-language V1: less boxy in the mids stays boxy/clarity");
+        {
+            const auto intent = compiler.compile("less boxy in the mids");
+            const auto plan = SemanticPlanner().plan("less boxy in the mids", kSampleRate, 1.0f);
+            const auto* clarity = findGoal(intent, SemanticDimension::Clarity);
+            const auto* presence = findGoal(intent, SemanticDimension::Presence);
+            expect(clarity != nullptr && clarity->amount > 0.0f,
+                   "less boxy is the primary move");
+            expect(presence == nullptr || presence->amount >= 0.0f,
+                   "in the mids must not apply less to mids as a presence scoop");
+            expect(plan.valid);
+            expect(!interpretationHas(plan, "less presence"));
+        }
+
+        beginTest("Mix-language V1: fatter without boom is warmth plus boom fence");
+        {
+            const auto intent = compiler.compile("fatter without boom");
+            const auto plan = SemanticPlanner().plan("fatter without boom", kSampleRate, 1.0f);
+            expect(findGoal(intent, SemanticDimension::Warmth) != nullptr,
+                   "fatter is the comparative of fat/body, not an unknown");
+            expect(findConstraint(intent, SemanticDimension::Tightness) != nullptr);
+            expect(plan.valid);
+        }
+
+        beginTest("Mix-language V1: keep/Hz/cinematic fail closed, not guessed");
+        {
+            const auto keep = SemanticPlanner().plan("keep it warm", kSampleRate, 1.0f);
+            expect(!keep.valid, "keep it warm with no other goal is a no-op, fail closed");
+            expect(keep.intent.hasRecognizedContent);
+            expect(findConstraint(keep.intent, SemanticDimension::Warmth) != nullptr);
+
+            const auto hz = SemanticPlanner().plan("cut 300 without losing body", kSampleRate, 1.0f);
+            expect(!hz.valid, "Hz numerals must not be parsed into a cut");
+            bool invented300 = false;
+            for (const auto& band : hz.fit.bands)
+                if (std::abs(band.frequencyHz - 300.0f) <= 20.0f)
+                    invented300 = true;
+            expect(!invented300);
+
+            const auto boost12k = SemanticPlanner().plan("boost 12k without sibilance", kSampleRate, 1.0f);
+            expect(!boost12k.valid, "12k must not invent a brightness goal");
+
+            const auto cinematic = SemanticPlanner().plan("make it cinematic", kSampleRate, 1.0f);
+            expect(!cinematic.intent.hasRecognizedContent);
+            expect(!cinematic.valid);
+
+            const auto glue = SemanticPlanner().plan("glue the mix", kSampleRate, 1.0f);
+            expect(!glue.intent.hasRecognizedContent);
+            expect(!glue.valid);
         }
     }
 };

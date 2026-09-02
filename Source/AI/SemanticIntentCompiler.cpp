@@ -24,7 +24,7 @@ struct Alias
 
 // Long phrases deliberately precede their shorter relatives. Word-boundary
 // checks prevent "bright" from matching inside "brighter".
-constexpr std::array<Alias, 120> kAliases {{
+constexpr Alias kAliases[] = {
     { "low end",       SemanticDimension::Weight,      +1, 0.68f },
     { "low-end",       SemanticDimension::Weight,      +1, 0.68f },
     { "bass weight",   SemanticDimension::Weight,      +1, 0.68f },
@@ -68,6 +68,7 @@ constexpr std::array<Alias, 120> kAliases {{
     { "full",          SemanticDimension::Warmth,      +1, 0.60f },
     { "thick",         SemanticDimension::Warmth,      +1, 0.60f },
     { "fat",           SemanticDimension::Warmth,      +1, 0.62f },
+    { "fatter",        SemanticDimension::Warmth,      +1, 0.64f },
     { "thinness",      SemanticDimension::Warmth,      -1, 0.66f },
     { "thinner",       SemanticDimension::Warmth,      -1, 0.68f },
     { "thin",          SemanticDimension::Warmth,      -1, 0.64f },
@@ -88,6 +89,7 @@ constexpr std::array<Alias, 120> kAliases {{
     { "muddier",       SemanticDimension::Clarity,     -1, 0.70f },
     { "muddy",         SemanticDimension::Clarity,     -1, 0.68f },
     { "mud",           SemanticDimension::Clarity,     -1, 0.68f },
+    { "fango",         SemanticDimension::Clarity,     -1, 0.68f },
     { "boxiness",      SemanticDimension::Clarity,     -1, 0.70f },
     { "boxy",          SemanticDimension::Clarity,     -1, 0.68f },
     { "woolly",        SemanticDimension::Clarity,     -1, 0.66f },
@@ -109,6 +111,7 @@ constexpr std::array<Alias, 120> kAliases {{
     { "forward",       SemanticDimension::Presence,    +1, 0.62f },
     { "articulation",  SemanticDimension::Presence,    +1, 0.60f },
     { "bite",          SemanticDimension::Presence,    +1, 0.62f , SemanticSpectralFocus::Presence},
+    { "morso",         SemanticDimension::Presence,    +1, 0.62f , SemanticSpectralFocus::Presence},
     { "scoop",         SemanticDimension::Presence,    -1, 0.66f , SemanticSpectralFocus::Presence},
     { "recessed",      SemanticDimension::Presence,    -1, 0.62f },
     { "distant",       SemanticDimension::Presence,    -1, 0.58f },
@@ -127,7 +130,9 @@ constexpr std::array<Alias, 120> kAliases {{
     { "harsher",       SemanticDimension::Smoothness,  -1, 0.72f },
     { "harsh",         SemanticDimension::Smoothness,  -1, 0.70f },
     { "sibilance",     SemanticDimension::Smoothness,  -1, 0.70f , SemanticSpectralFocus::Air},
+    { "sibilanza",     SemanticDimension::Smoothness,  -1, 0.70f , SemanticSpectralFocus::Air},
     { "sibilant",      SemanticDimension::Smoothness,  -1, 0.70f , SemanticSpectralFocus::Air},
+    { "asprezza",      SemanticDimension::Smoothness,  -1, 0.70f },
     { "aspro",         SemanticDimension::Smoothness,  -1, 0.70f },
     { "morbido",       SemanticDimension::Smoothness,  +1, 0.64f },
     { "sibilo",        SemanticDimension::Smoothness,  -1, 0.70f , SemanticSpectralFocus::Air},
@@ -153,7 +158,7 @@ constexpr std::array<Alias, 120> kAliases {{
     { "loose",         SemanticDimension::Tightness,   -1, 0.60f },
     { "compatto",      SemanticDimension::Tightness,   +1, 0.66f },
     { "gonfio",        SemanticDimension::Tightness,   -1, 0.66f }
-}};
+};
 
 struct Span
 {
@@ -327,6 +332,41 @@ bool containsPhrase(const std::string& text, std::string_view phrase)
     return false;
 }
 
+bool precededByLocative(const std::string& text, std::size_t termPos)
+{
+    const auto begin = clauseStart(text, termPos);
+    if (termPos <= begin)
+        return false;
+
+    std::string prefix = trim(text.substr(begin, termPos - begin));
+    while (prefix.find("  ") != std::string::npos)
+        replaceAll(prefix, "  ", " ");
+    if (prefix.empty())
+        return false;
+
+    // Longer locatives first so "in the" wins over "in".
+    constexpr const char* locatives[] = {
+        "into the", "in the", "on the", "in", "on",
+        "nello", "nella", "negli", "nelle", "nei", "nel",
+        "sugli", "sulle", "sulla", "sui", "sul"
+    };
+
+    for (const char* loc : locatives)
+    {
+        const std::string needle(loc);
+        if (prefix == needle)
+            return true;
+        if (prefix.size() > needle.size()
+            && prefix.compare(prefix.size() - needle.size(), needle.size(), needle) == 0)
+        {
+            const char before = prefix[prefix.size() - needle.size() - 1];
+            if (before == ' ')
+                return true;
+        }
+    }
+    return false;
+}
+
 int localModifier(const std::string& text, std::size_t termPos)
 {
     const auto begin = clauseStart(text, termPos);
@@ -334,12 +374,14 @@ int localModifier(const std::string& text, std::size_t termPos)
     const auto context = text.substr(contextStart, termPos - contextStart);
 
     struct Modifier { const char* phrase; int sign; };
-    constexpr std::array<Modifier, 18> modifiers {{
+    constexpr std::array<Modifier, 25> modifiers {{
         { "more", +1 }, { "add", +1 }, { "increase", +1 }, { "boost", +1 },
         { "piu", +1 }, { "più", +1 }, { "aumenta", +1 }, { "aumentare", +1 },
         { "less", -1 }, { "reduce", -1 }, { "remove", -1 }, { "cut", -1 },
         { "meno", -1 }, { "riduci", -1 }, { "ridurre", -1 }, { "togli", -1 },
-        { "decrease", -1 }, { "lower", -1 }
+        { "decrease", -1 }, { "lower", -1 },
+        { "not", -1 }, { "no", -1 }, { "avoid", -1 }, { "evita", -1 },
+        { "don t", -1 }, { "dont", -1 }, { "non", -1 }
     }};
 
     std::size_t bestPos = std::string::npos;
@@ -557,6 +599,10 @@ SemanticIntent SemanticIntentCompiler::compile(std::string_view input) const
     for (const auto& term : terms)
     {
         if (insideSpan(term.begin, constraintSpans))
+            continue;
+        // "less boxy in the mids": mids is a location, not a second goal.
+        // Applying `less` to mids would scoop presence and steal the boxy cut.
+        if (precededByLocative(text, term.begin))
             continue;
 
         const int modifier = localModifier(text, term.begin);
