@@ -42,4 +42,8 @@ public:
 
 [[nodiscard]] const char* semanticDimensionName(SemanticDimension dimension) noexcept;
 
+/** Label-only ember.proposal.v1 plan_staged.summary (1..128 UTF-8 code points).
+    No Hz, dB, Q, or user phrase. Does not change makeInterpretation. */
+[[nodiscard]] std::string packProposalPlanSummary(const SemanticPlan& plan);
+
 } // namespace AIEQPerceptual

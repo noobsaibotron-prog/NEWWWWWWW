@@ -4,6 +4,7 @@
 #include <memory>
 #include <optional>
 #include "../AI/SemanticEQEngine.h"
+#include "../AI/SemanticPlanner.h"
 #include "../AI/SemanticPlanningService.h"
 #include "../Integration/EmberProposalProtocol.h"
 #include "ModernLookAndFeel.h"
@@ -1022,10 +1023,15 @@ private:
     {
         if (!isPendingExternal() || !onExternalPlanResult)
             return;
-        std::string summary = plan.interpretation.empty() ? "Staged in Semantic"
-                                                          : plan.interpretation;
-        if (summary.size() > 128)
-            summary.resize(128);
+        std::string summary;
+        if (reason == EmberProposal::ReasonCode::plan_staged)
+            summary = AIEQPerceptual::packProposalPlanSummary(plan);
+        else
+        {
+            summary = plan.interpretation.empty() ? "Staged in Semantic" : plan.interpretation;
+            if (summary.size() > 128)
+                summary.resize(128);
+        }
         const auto hash = EmberProposal::makeAudit(plan.interpretation).sha256Hex;
         onExternalPlanResult(reason, summary, hash);
     }

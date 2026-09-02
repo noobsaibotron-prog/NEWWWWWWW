@@ -4,6 +4,7 @@
 #include <cmath>
 #include <map>
 #include <sstream>
+#include <string_view>
 
 namespace AIEQPerceptual
 {
@@ -202,6 +203,104 @@ std::string makeOutcomeSummary(const std::vector<SemanticGoalOutcome>& outcomes)
 }
 
 } // namespace
+
+namespace
+{
+std::string utf8TruncateCodePoints(std::string_view text, std::size_t maxPoints)
+{
+    std::string out;
+    out.reserve(std::min(text.size(), maxPoints * 4));
+    std::size_t points = 0;
+    for (std::size_t i = 0; i < text.size() && points < maxPoints; )
+    {
+        const unsigned char c = static_cast<unsigned char>(text[i]);
+        std::size_t width = 1;
+        if ((c & 0x80) == 0)
+            width = 1;
+        else if ((c & 0xE0) == 0xC0)
+            width = 2;
+        else if ((c & 0xF0) == 0xE0)
+            width = 3;
+        else if ((c & 0xF8) == 0xF0)
+            width = 4;
+        else
+            break;
+        if (i + width > text.size())
+            break;
+        out.append(text.data() + i, width);
+        i += width;
+        ++points;
+    }
+    return out;
+}
+
+const char* spectralFocusLabel(SemanticSpectralFocus focus) noexcept
+{
+    switch (focus)
+    {
+        case SemanticSpectralFocus::Air:        return "air";
+        case SemanticSpectralFocus::Brilliance: return "brilliance";
+        case SemanticSpectralFocus::Presence:   return "presence";
+        case SemanticSpectralFocus::LowMid:     return "lowmid";
+        case SemanticSpectralFocus::Bass:       return "bass";
+        case SemanticSpectralFocus::Sub:        return "sub";
+        case SemanticSpectralFocus::General:    break;
+    }
+    return nullptr;
+}
+} // namespace
+
+std::string packProposalPlanSummary(const SemanticPlan& plan)
+{
+    std::string text = plan.interpretation.empty() ? "Staged in Semantic" : plan.interpretation;
+
+    if (!plan.intent.goals.empty())
+    {
+        if (const char* focus = spectralFocusLabel(plan.intent.goals.front().focus))
+        {
+            text += " | ";
+            text += focus;
+        }
+    }
+
+    if (plan.fit.valid)
+    {
+        text += " | ";
+        text += std::to_string(static_cast<int>(plan.fit.bands.size()));
+        text += "b";
+    }
+
+    if (!plan.intent.goals.empty() && !plan.contextAdjustments.empty())
+    {
+        const auto dimension = plan.intent.goals.front().dimension;
+        const SemanticContextAdjustment* adjustment = nullptr;
+        for (const auto& item : plan.contextAdjustments)
+            if (item.dimension == dimension)
+            {
+                adjustment = &item;
+                break;
+            }
+        text += " | src ";
+        if (adjustment != nullptr && adjustment->contextualized)
+            text += std::to_string(static_cast<int>(std::round(100.0f * adjustment->scale))) + "%";
+        else
+            text += "n/a";
+    }
+
+    for (const auto& outcome : plan.goalOutcomes)
+    {
+        if (outcome.status == GoalOutcomeStatus::ConstraintLimited)
+        {
+            text += " | lim";
+            break;
+        }
+    }
+
+    text = utf8TruncateCodePoints(text, 128);
+    if (text.empty())
+        text = "Staged in Semantic";
+    return text;
+}
 
 const char* semanticDimensionName(SemanticDimension dimension) noexcept
 {

@@ -576,6 +576,78 @@ public:
             expect(!glue.intent.hasRecognizedContent);
             expect(!glue.valid);
         }
+
+        beginTest("PlanTruth E5: packProposalPlanSummary is label-only and <=128");
+        {
+            const auto air = SemanticPlanner().plan("more air", kSampleRate, 1.0f);
+            const auto airSummary = packProposalPlanSummary(air);
+            expect(air.valid);
+            expect(airSummary.find("brighter") != std::string::npos);
+            expect(airSummary.find("air") != std::string::npos);
+            expect(airSummary.find("1b") != std::string::npos);
+            expect(airSummary.find("10861") == std::string::npos);
+            expect(airSummary.find("+1.45") == std::string::npos);
+            expect(airSummary.find("Hz") == std::string::npos);
+            expect(airSummary.find("dB") == std::string::npos);
+            expect(airSummary.size() <= 128);
+
+            const auto mud = SemanticPlanner().plan("warmer without mud", kSampleRate, 1.0f);
+            const auto mudSummary = packProposalPlanSummary(mud);
+            expect(mudSummary.find("avoid") != std::string::npos || mudSummary.find("mud") != std::string::npos);
+            expect(mudSummary.find("104") == std::string::npos);
+            expect(mudSummary.find("Hz") == std::string::npos);
+            bool sawLim = mudSummary.find("lim") != std::string::npos;
+            bool sawConstraint = false;
+            for (const auto& outcome : mud.goalOutcomes)
+                if (outcome.status == GoalOutcomeStatus::ConstraintLimited)
+                    sawConstraint = true;
+            expect(!sawConstraint || sawLim, "constraint-limited warmth must mark lim");
+
+            const auto harsh = SemanticPlanner().plan("bright but not harsh", kSampleRate, 1.0f);
+            const auto harshSummary = packProposalPlanSummary(harsh);
+            expect(harshSummary.find("harsher") == std::string::npos);
+            expect(harshSummary.find("3421") == std::string::npos);
+
+            SemanticPlan oversized;
+            oversized.interpretation = std::string(200, 'w');
+            oversized.fit.valid = true;
+            const auto clipped = packProposalPlanSummary(oversized);
+            expect(clipped.size() <= 128);
+            expect(!clipped.empty());
+
+            auto held = air;
+            SemanticContextAdjustment adj;
+            adj.dimension = SemanticDimension::Brightness;
+            adj.scale = 0.44f;
+            adj.contextualized = true;
+            held.contextAdjustments = { adj };
+            const auto heldSummary = packProposalPlanSummary(held);
+            expect(heldSummary.find("src 44%") != std::string::npos);
+            expect(heldSummary.find("10861") == std::string::npos);
+
+            SemanticPlan italian;
+            italian.interpretation.clear();
+            for (int i = 0; i < 200; ++i)
+                italian.interpretation += "à";
+            const auto italianSummary = packProposalPlanSummary(italian);
+            std::size_t italianPoints = 0;
+            for (std::size_t i = 0; i < italianSummary.size(); )
+            {
+                const unsigned char c = static_cast<unsigned char>(italianSummary[i]);
+                const std::size_t width = (c & 0x80) == 0 ? 1
+                    : (c & 0xE0) == 0xC0 ? 2
+                    : (c & 0xF0) == 0xE0 ? 3
+                    : 4;
+                if (i + width > italianSummary.size())
+                    break;
+                i += width;
+                ++italianPoints;
+            }
+            expect(italianPoints <= 128);
+            expect(italianSummary.find("Hz") == std::string::npos);
+            expect(italianSummary.find("dB") == std::string::npos);
+            expect(italianSummary.find("à") != std::string::npos);
+        }
     }
 };
 
