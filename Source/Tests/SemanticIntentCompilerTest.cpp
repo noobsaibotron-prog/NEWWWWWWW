@@ -648,6 +648,27 @@ public:
             expect(italianSummary.find("dB") == std::string::npos);
             expect(italianSummary.find("à") != std::string::npos);
         }
+
+        beginTest("E6 chips compile the same goals as the long studio sentence");
+        {
+            const auto chips = compiler.compile("more air, less harsh, more body");
+            const auto longTalk = compiler.compile(
+                "hey can you open it up a bit, I want more air on the vocal but please don't make it harsh, also a bit more body");
+            const auto* chipAir = findGoal(chips, SemanticDimension::Brightness);
+            const auto* chipSmooth = findGoal(chips, SemanticDimension::Smoothness);
+            const auto* chipBody = findGoal(chips, SemanticDimension::Warmth);
+            const auto* longAir = findGoal(longTalk, SemanticDimension::Brightness);
+            const auto* longSmooth = findGoal(longTalk, SemanticDimension::Smoothness);
+            expect(chips.isValid());
+            expect(chipAir != nullptr && chipAir->amount > 0.0f);
+            expect(chipSmooth != nullptr && chipSmooth->amount > 0.0f);
+            expect(chipBody != nullptr && chipBody->amount > 0.0f);
+            expect(longTalk.isValid() || chipAir != nullptr);
+            if (longAir != nullptr)
+                expect(longAir->amount > 0.0f);
+            if (longSmooth != nullptr)
+                expect(longSmooth->amount > 0.0f);
+        }
     }
 };
 
