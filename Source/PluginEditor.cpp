@@ -1896,18 +1896,24 @@ void AIEqualizerAudioProcessorEditor::showSavePresetDialog()
     aw->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
 
     aw->enterModalState(true, juce::ModalCallbackFunction::create(
-        [this, aw](int result)
+        [safeThis = juce::Component::SafePointer<AIEqualizerAudioProcessorEditor>(this),
+         aw](int result)
         {
-            if (result == 1)
+            // The AlertWindow is a desktop window, not a child of this editor, so the
+            // host closing the plugin window does not cancel the modal. `aw` stays
+            // valid here (ModalComponentManager deletes it only after the callbacks),
+            // but the editor may already be gone — and `processor` is a member
+            // reference, so touching it unguarded is a use-after-free.
+            if (auto* self = safeThis.getComponent(); self != nullptr && result == 1)
             {
                 auto name = aw->getTextEditorContents("name").trim();
                 auto* catBox = aw->getComboBoxComponent("category");
                 auto category = catBox ? catBox->getText() : "User";
 
-                if (name.isNotEmpty() && processor.hasPresetManager())
+                if (name.isNotEmpty() && self->processor.hasPresetManager())
                 {
-                    processor.getPresetManager().saveUserPreset(name, category);
-                    rebuildPresetMenu();
+                    self->processor.getPresetManager().saveUserPreset(name, category);
+                    self->rebuildPresetMenu();
                 }
             }
             delete aw;

@@ -1193,10 +1193,18 @@ private:
         
         juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::InfoIcon,
             tr("Full Analysis: ", "Full Analysis: ") + AIEngine::getProblemTypeName(p.type), msg, tr("OK", "OK"),
-            nullptr, juce::ModalCallbackFunction::create([this, p](int)
+            nullptr, juce::ModalCallbackFunction::create(
+                [safeThis = juce::Component::SafePointer<AIProblemPanel>(this), p](int)
         {
+            // Same lifetime hazard as showAutoFixConfirmation(): the message box is a
+            // desktop window and survives this panel. tr() is a member, so the
+            // announcement must be skipped rather than read from freed memory.
+            auto* self = safeThis.getComponent();
+            if (self == nullptr)
+                return;
+
             juce::AccessibilityHandler::postAnnouncement(
-                tr("Analisi completa chiusa per ", "Full analysis closed for ") + AIEngine::getProblemTypeName(p.type),
+                self->tr("Analisi completa chiusa per ", "Full analysis closed for ") + AIEngine::getProblemTypeName(p.type),
                 juce::AccessibilityHandler::AnnouncementPriority::medium);
         }));
     }
@@ -1457,24 +1465,33 @@ private:
 
         juce::AlertWindow::showOkCancelBox(juce::AlertWindow::QuestionIcon,
             tr("Apply AI Corrections", "Apply AI Corrections"), msg, tr("Apply", "Apply"), tr("Cancel", "Cancel"), nullptr,
-            juce::ModalCallbackFunction::create([this](int result) {
-                fixAllInProgress = false;
+            juce::ModalCallbackFunction::create(
+                [safeThis = juce::Component::SafePointer<AIProblemPanel>(this)](int result) {
+                // The dialog outlives this panel when the host tears the editor down
+                // while it is open: the AlertWindow is a desktop window, not our child,
+                // so nothing cancels the modal on our destruction. Unguarded, this
+                // callback would drive the processor through a freed panel.
+                auto* self = safeThis.getComponent();
+                if (self == nullptr)
+                    return;
+
+                self->fixAllInProgress = false;
                 // Finding #2: do not re-enable unconditionally — updateProblemList()
                 // re-applies the frozen-aware enable logic
                 // ("autoFixBtn.setEnabled(!isFrozen && liveProblemCount > 0)").
-                updateProblemList();
+                self->updateProblemList();
                 if (result == 1) {
-                    if (!canApplyNow()) { updateProblemList(); return; }
-                    processor.getAIEngine().approveAllCorrections();
-                    processor.applyAICorrections();
-                    transientVisualHolds.clear();
-                    updateProblemList();
+                    if (!self->canApplyNow()) { self->updateProblemList(); return; }
+                    self->processor.getAIEngine().approveAllCorrections();
+                    self->processor.applyAICorrections();
+                    self->transientVisualHolds.clear();
+                    self->updateProblemList();
                     juce::AccessibilityHandler::postAnnouncement(
-                        tr("Corrections applied", "Corrections applied"),
+                        self->tr("Corrections applied", "Corrections applied"),
                         juce::AccessibilityHandler::AnnouncementPriority::high);
                 } else {
                     juce::AccessibilityHandler::postAnnouncement(
-                        tr("Correction application cancelled", "Correction application cancelled"),
+                        self->tr("Correction application cancelled", "Correction application cancelled"),
                         juce::AccessibilityHandler::AnnouncementPriority::medium);
                 }
             }));
