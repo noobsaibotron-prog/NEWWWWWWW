@@ -702,6 +702,14 @@ option(AIEQ_SEMANTIC_EXP "Build the Semantic listening plugin (separate identity
 option(AIEQ_COPILOT_PROPOSAL_V1
     "Build Copilot Proposal V1 with unique PLUGIN_CODE AIQP and a ProposalV1 product name"
     OFF)
+# Ember Core: the product identity from the beta plan (product name "EMBER CORE",
+# PLUGIN_CODE EMBR). Distinct from shipping AIEQ and from every listening
+# experiment, so it installs alongside them instead of replacing one — the
+# machine currently carries five "AI Equalizer Pro*" bundles and a sixth that
+# shared a code would be indistinguishable in the host browser.
+option(AIEQ_EMBER_CORE
+    "Build with the Ember Core product identity (PLUGIN_CODE EMBR)"
+    OFF)
 # Developer-only analyzer A1 switch. OFF is the product: A2 hop interpolation,
 # which won listening A/B at 48 kHz and 96 kHz. ON shows the latest hop
 # immediately; the visible/unfrozen timer stays at 60 Hz.
@@ -771,7 +779,12 @@ if(HAVE_JUCE)
     # Create the plugin using JUCE helper
     # Motore v2 EXP uses a DISTINCT plugin code + name so macOS/Ableton treat it
     # as a separate plugin installed next to the shipped one (untouched).
-    if(AIEQ_COPILOT_PROPOSAL_V1)
+    if(AIEQ_EMBER_CORE)
+        set(_AIEQ_CODE "EMBR")
+        set(_AIEQ_NAME "EMBER CORE")
+        set(_AIEQ_BUNDLE_ID "com.AIAudio.EmberCore")
+        message(STATUS "Ember Core identity: ${_AIEQ_NAME} (PLUGIN_CODE ${_AIEQ_CODE}, TUID AIAUEMBR)")
+    elseif(AIEQ_COPILOT_PROPOSAL_V1)
         # Distinct from shipping AIEQ and experiment AIQS. Factory / product
         # name must contain ProposalV1 so Live cannot merge browser rows.
         set(_AIEQ_CODE "AIQP")
