@@ -316,15 +316,11 @@ AIEqualizerAudioProcessorEditor::AIEqualizerAudioProcessorEditor(AIEqualizerAudi
     versionLabel.setJustificationType(juce::Justification::centredRight);
     addAndMakeVisible(versionLabel);
 
-    setSize(1200, 810);
-    setResizable(true, true);
-    setResizeLimits(1100, 740, 1800, 1200);
-    
-    // Ensure a band is selected so the detail panel shows controls (including filter type)
-    selectBand(0);
-    
-    // Keep the editor timer responsive for meters, capture state and general UI.
-    // Spectrum/FFT work is throttled separately inside timerCallback().
+    // UI v2 SPECCHIO: Ember Core layout (~980×640). Legacy gold rack stays in
+    // the tree but is hidden — params preserved, Analog/Air/Punch not attached.
+    activateEmberV2();
+
+    // Keep the editor timer responsive for meters / Ember shell.
     startTimerHz(60);
 }
 
@@ -350,6 +346,10 @@ AIEqualizerAudioProcessorEditor::~AIEqualizerAudioProcessorEditor()
     if (analysisThread && analysisThread->joinable())
         analysisThread->join();
 
+    // Ember shell holds a raw pointer into spectrumPipeline — tear it down first.
+    emberShell.reset();
+    emberV2Active = false;
+
     // Detach GL context BEFORE destroying pipeline objects.
     openGLContext.detach();
 
@@ -360,6 +360,35 @@ AIEqualizerAudioProcessorEditor::~AIEqualizerAudioProcessorEditor()
 }
 
 //==============================================================================
+
+
+void AIEqualizerAudioProcessorEditor::hideLegacyGoldUi()
+{
+    // Hide every direct child except the Ember shell. Do not delete params.
+    for (int i = 0; i < getNumChildComponents(); ++i)
+    {
+        if (auto* c = getChildComponent(i))
+        {
+            if (emberShell && c == emberShell.get())
+                continue;
+            c->setVisible(false);
+        }
+    }
+}
+
+void AIEqualizerAudioProcessorEditor::activateEmberV2()
+{
+    emberV2Active = true;
+    emberShell = std::make_unique<EmberV2Shell>(processor, spectrumPipeline.get());
+    addAndMakeVisible(*emberShell);
+    hideLegacyGoldUi();
+    emberShell->setVisible(true);
+    emberShell->toFront(false);
+
+    setSize(980, 640);
+    setResizable(true, true);
+    setResizeLimits(900, 560, 1400, 900);
+}
 
 void AIEqualizerAudioProcessorEditor::createHeader()
 {
@@ -1091,6 +1120,12 @@ void AIEqualizerAudioProcessorEditor::showOptionsMenu()
 
 void AIEqualizerAudioProcessorEditor::paint(juce::Graphics& g)
 {
+    if (emberV2Active && emberShell)
+    {
+        g.fillAll(juce::Colour(0xff0A0B0E));
+        return;
+    }
+
     // Wave 4A: Liquid Intelligence background — deep blue-black gradient (135°)
     // matching the mockup. The top-left is nearly black, the bottom-right has a
     // subtle navy tint so the spectrum's azure dust reads as if it floats above
@@ -1294,6 +1329,14 @@ void AIEqualizerAudioProcessorEditor::paint(juce::Graphics& g)
 
 void AIEqualizerAudioProcessorEditor::resized()
 {
+    if (emberV2Active && emberShell)
+    {
+        emberShell->setBounds(getLocalBounds());
+        hideLegacyGoldUi();
+        emberShell->setVisible(true);
+        return;
+    }
+
     auto bounds = getLocalBounds();
 
     // === HEADER (44 px — mockup: logo | div | ‹ Preset › | div | A B | spacer | PRE POST DELTA | div | LINEAR PHASE | div | AI dot) ===
@@ -1514,6 +1557,16 @@ void AIEqualizerAudioProcessorEditor::resized()
 }
 void AIEqualizerAudioProcessorEditor::timerCallback()
 {
+    if (emberV2Active)
+    {
+        ++timerTickCount;
+        if (!processor.isProcessorReady())
+            return;
+        AIEQLogger::getInstance().flushRTLogs();
+        // Spectrum + meters owned by EmberV2Shell timer.
+        return;
+    }
+
     ++timerTickCount;
 
     // Bug K fix: guard against timer firing during processor teardown

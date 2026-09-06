@@ -15,6 +15,7 @@
 #include "GUI/SemanticControlPanel.h"
 #include "GUI/LevelMeter.h"
 #include "GUI/NewSpectrumPipeline.h"
+#include "GUI/Ember/EmberV2Shell.h"
 #include <atomic>
 #include <vector>
 
@@ -201,6 +202,12 @@ private:
     // message thread starvation (Ableton freeze). timerTickCount increments
     // each timerCallback() call; heavy work runs only on selected ticks.
     int timerTickCount = 0;
+
+    // UI v2 SPECCHIO — Ember overlay (this branch). When active, gold rack is hidden.
+    std::unique_ptr<EmberV2Shell> emberShell;
+    bool emberV2Active = false;
+    void activateEmberV2();
+    void hideLegacyGoldUi();
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AIEqualizerAudioProcessorEditor)
 };
