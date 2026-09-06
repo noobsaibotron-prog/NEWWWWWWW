@@ -1457,6 +1457,7 @@ if(HAVE_JUCE)
     add_executable(AIEqualizerPro_IntegrationTests
         Source/Tests/TransitionContinuityTests.cpp
         Source/Tests/IntegrationStateTest.cpp
+        Source/Tests/PresetFactoryRoundTripTest.cpp
         Source/Tests/LatencyPlanTest.cpp
         Source/Tests/DryWetMixAlignmentTest.cpp
         Source/Tests/DryWetGainPipelineTest.cpp

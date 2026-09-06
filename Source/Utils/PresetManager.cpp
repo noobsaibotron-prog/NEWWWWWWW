@@ -72,14 +72,19 @@ void PresetManager::createDefaultFactoryPresets()
     // This avoids audible glitches and host automation events during factory preset init.
     auto setParamInTree = [this](juce::ValueTree& state, const juce::String& paramId, float value)
     {
-        // APVTS stores parameters as children with "id" property.
-        // We need the parameter's normalization range to convert value→0-1.
+        // APVTS stores the DENORMALISED value in the "value" property, not a
+        // 0..1 normalised one: replaceState() feeds it straight to
+        // ParameterAdapter::setDenormalisedValue (juce_AudioProcessorValueTreeState
+        // .cpp, "setNewState"). Writing a normalised value here made every factory
+        // preset collapse — 3000 Hz stored as 0.63 came back as 0.63 Hz, clamped to
+        // the 20 Hz range minimum, and -2.0 dB stored as 0.45 came back as +0.45 dB.
+        // The round-trip through the range only clamps/snaps to legal values.
         if (auto* param = apvts.getParameter(paramId))
         {
-            float normalized = param->convertTo0to1(value);
+            const float legal = param->convertFrom0to1(param->convertTo0to1(value));
             auto paramTree = state.getChildWithProperty("id", paramId);
             if (paramTree.isValid())
-                paramTree.setProperty("value", normalized, nullptr);
+                paramTree.setProperty("value", legal, nullptr);
         }
     };
 
