@@ -64,6 +64,15 @@ public:
         repaint();
     }
 
+    /** On-screen amber ghosts with intensity already applied to dB (Apply commit source). */
+    [[nodiscard]] std::vector<EmberGhostBand> getEffectiveGhosts() const
+    {
+        auto out = ghosts;
+        for (auto& g : out)
+            g.db *= ghostIntensity;
+        return out;
+    }
+
     void setApplyProgress(float p01) { applyProgress = juce::jlimit(0.0f, 1.0f, p01); repaint(); }
 
     void setClimate(bool on)

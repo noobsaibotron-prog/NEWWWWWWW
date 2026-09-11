@@ -64,15 +64,12 @@ public:
         };
         bar->onPhraseChanged = [this](const juce::String& text)
         {
-            auto ghosts = EmberPhrase::parse(text);
-            for (auto& g : ghosts)
-                g.db *= bar->getIntensity();
-            graph->setGhosts(ghosts, 1.0f);
+            // Parse only while typing updates amber ghosts — Apply commits this same vector.
+            graph->setGhosts(EmberPhrase::parse(text), bar->getIntensity());
         };
-        bar->onIntensity = [this](float)
+        bar->onIntensity = [this](float intens)
         {
-            auto ghosts = EmberPhrase::parse(bar->getPhrase());
-            graph->setGhosts(ghosts, bar->getIntensity());
+            graph->setGhosts(EmberPhrase::parse(bar->getPhrase()), intens);
         };
         bar->onApply = [this]{ beginApply(); };
         bar->onMatchToggle = [this]
@@ -167,30 +164,59 @@ private:
 
     void beginApply()
     {
-        pendingGhosts = EmberPhrase::parse(bar->getPhrase());
-        const float intens = bar->getIntensity();
+        // Commit exactly the on-screen amber ghosts (intensity already applied).
+        // Do not re-parse here — that can diverge from the displayed ghost vector.
+        pendingGhosts = graph->getEffectiveGhosts();
         for (auto& g : pendingGhosts)
-            g.db *= intens;
+            quantizeGhostToApvts(g);
         if (pendingGhosts.empty())
-            return;
+            return; // gate Apply when no ghosts
 
         setState(EmberUiState::Apply);
         applyMsLeft = 280.0;
+        // Keep display locked to the pending (post-quant) vector during the 280ms morph.
         graph->setGhosts(pendingGhosts, 1.0f);
         graph->setApplyProgress(0.0f);
     }
 
     void finishApply()
     {
-        // Unique write I→F
-        for (const auto& g : pendingGhosts)
+        // Unique write I→F: replace F with the ghost set (no empty-slot merge).
+        // Bands not in the ghost set are removed by shrinking numActiveBands.
+        const int nGhosts = (int) pendingGhosts.size();
+        if (nGhosts <= 0)
         {
-            int slot = findSlotForGhost(g);
-            if (slot < 0) continue;
-            if (slot >= processor.getNumActiveBands())
-                processor.setNumActiveBands(slot + 1);
-            processor.setBandGeometry(slot, g.hz, g.db, g.q, g.type, true);
+            pendingGhosts.clear();
+            phraseAlive = false;
+            bar->clearPhrase();
+            graph->setGhosts({}, 1.0f);
+            graph->setApplyProgress(1.0f);
+            graph->selectBand(-1);
+            setState(EmberUiState::Riposo);
+            return;
         }
+
+        const int n = juce::jlimit(1, AIEqualizerAudioProcessor::maxBands, nGhosts);
+        const int prevActive = processor.getNumActiveBands();
+
+        // Same commit: APVTS numActiveBands + band geometry.
+        writeNumActiveBandsApvts(n);
+        processor.setNumActiveBands(n);
+
+        for (int i = 0; i < n; ++i)
+        {
+            const auto& g = pendingGhosts[(size_t) i];
+            processor.setBandGeometry(i, g.hz, g.db, g.q, g.type, true);
+        }
+
+        // Explicitly disable leftover slots so old peaks cannot linger enabled in APVTS.
+        for (int i = n; i < AIEqualizerAudioProcessor::maxBands && i < prevActive; ++i)
+        {
+            auto st = processor.getBandState(i);
+            if (st.enabled || std::abs(st.gain) > 0.01f)
+                processor.setBandGeometry(i, st.frequency, 0.0f, st.q, st.type, false);
+        }
+
         pendingGhosts.clear();
         phraseAlive = false;
         bar->clearPhrase();
@@ -200,31 +226,25 @@ private:
         setState(EmberUiState::Riposo);
     }
 
-    int findSlotForGhost(const EmberGhostBand& g) const
+    static void quantizeGhostToApvts(EmberGhostBand& g) noexcept
     {
-        int best = -1;
-        float bestDist = 1.0e9f;
-        for (int i = 0; i < AIEqualizerAudioProcessor::maxBands; ++i)
+        // Match createParameterLayout intervals (Freq 1 Hz, Gain 0.1 dB, Q 0.01).
+        g.hz = std::round(juce::jlimit(20.0f, 20000.0f, g.hz));
+        g.db = std::round(juce::jlimit(-24.0f, 24.0f, g.db) * 10.0f) * 0.1f;
+        g.q  = std::round(juce::jlimit(0.1f, 10.0f, g.q) * 100.0f) * 0.01f;
+        g.type = juce::jlimit(0, 8, g.type);
+    }
+
+    void writeNumActiveBandsApvts(int count)
+    {
+        if (auto* param = processor.getAPVTS().getParameter("numActiveBands"))
         {
-            auto st = processor.getBandState(i);
-            if (! st.enabled || std::abs(st.gain) < 0.05f)
-            {
-                const float d = std::abs(std::log2(juce::jmax(20.0f, st.frequency) / juce::jmax(20.0f, g.hz)));
-                if (d < bestDist) { bestDist = d; best = i; }
-            }
+            const int clamped = juce::jlimit(1, AIEqualizerAudioProcessor::maxBands, count);
+            // Choice index is 0-based (display "1".."24" → index count-1).
+            param->beginChangeGesture();
+            param->setValueNotifyingHost(param->convertTo0to1(static_cast<float>(clamped - 1)));
+            param->endChangeGesture();
         }
-        if (best >= 0) return best;
-        // reuse closest by frequency among active
-        const int n = processor.getNumActiveBands();
-        for (int i = 0; i < n; ++i)
-        {
-            auto st = processor.getBandState(i);
-            const float d = std::abs(std::log2(juce::jmax(20.0f, st.frequency) / juce::jmax(20.0f, g.hz)));
-            if (d < bestDist) { bestDist = d; best = i; }
-        }
-        if (best < 0)
-            best = juce::jmin(n, AIEqualizerAudioProcessor::maxBands - 1);
-        return best;
     }
 
     void captureMatchRef()
