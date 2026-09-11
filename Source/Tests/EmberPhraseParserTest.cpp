@@ -9,6 +9,7 @@
 #include "../GUI/Ember/EmberTokens.h"
 #include "../GUI/Ember/EmberLookAndFeel.h"
 #include "../GUI/Ember/EmberGraph.h"
+#include "../GUI/Ember/EmberApplyCommit.h"
 
 #include <cmath>
 #include <vector>
@@ -16,50 +17,6 @@
 namespace
 {
 using Processor = AIEqualizerAudioProcessor;
-
-/** Mirror EmberV2Shell::quantizeGhostToApvts — same APVTS intervals. */
-void quantizeGhostToApvts(EmberGhostBand& g) noexcept
-{
-    g.hz = std::round(juce::jlimit(20.0f, 20000.0f, g.hz));
-    g.db = std::round(juce::jlimit(-24.0f, 24.0f, g.db) * 10.0f) * 0.1f;
-    g.q  = std::round(juce::jlimit(0.1f, 10.0f, g.q) * 100.0f) * 0.01f;
-    g.type = juce::jlimit(0, 8, g.type);
-}
-
-/** Mirror EmberV2Shell::finishApply replace commit (T1). */
-void commitGhostsReplaceStyle(Processor& processor, std::vector<EmberGhostBand> ghosts)
-{
-    for (auto& g : ghosts)
-        quantizeGhostToApvts(g);
-
-    const int nGhosts = (int) ghosts.size();
-    if (nGhosts <= 0)
-        return;
-
-    const int n = juce::jlimit(1, Processor::maxBands, nGhosts);
-    const int prevActive = processor.getNumActiveBands();
-
-    if (auto* param = processor.getAPVTS().getParameter("numActiveBands"))
-    {
-        param->beginChangeGesture();
-        param->setValueNotifyingHost(param->convertTo0to1(static_cast<float>(n - 1)));
-        param->endChangeGesture();
-    }
-    processor.setNumActiveBands(n);
-
-    for (int i = 0; i < n; ++i)
-    {
-        const auto& g = ghosts[(size_t) i];
-        processor.setBandGeometry(i, g.hz, g.db, g.q, g.type, true);
-    }
-
-    for (int i = n; i < Processor::maxBands && i < prevActive; ++i)
-    {
-        auto st = processor.getBandState(i);
-        if (st.enabled || std::abs(st.gain) > 0.01f)
-            processor.setBandGeometry(i, st.frequency, 0.0f, st.q, st.type, false);
-    }
-}
 
 void seedDirtyEq(juce::UnitTest& t, Processor& proc)
 {
@@ -155,21 +112,27 @@ public:
             expectWithinAbsoluteError(pending[0].db, parsed[0].db * kIntensity, 0.01f);
             expectWithinAbsoluteError(pending[0].q, parsed[0].q, 0.01f);
 
-            commitGhostsReplaceStyle(proc, pending);
+            // The function EmberV2Shell::finishApply calls — not a copy of it.
+            const auto result = EmberApply::commitGhosts(proc, pending);
 
-            expectEquals(proc.getNumActiveBands(), 1);
-            auto st0 = proc.getBandState(0);
-            expect(st0.enabled);
-            expectEquals(st0.type, 2);
-            expectWithinAbsoluteError(st0.frequency, 2000.0f, 0.5f);
-            expectWithinAbsoluteError(st0.gain, -4.0f, 0.05f);
-            expectWithinAbsoluteError(st0.q, 2.50f, 0.02f);
+            expect(result.committed);
+            expectEquals(EmberApply::readLiveCount(proc), 5, "Apply adds one band to four");
+            const int slot = result.slots.empty() ? -1 : result.slots[0];
+            expectEquals(slot, 4, "the ghost lands past the four live bands");
+            auto stNew = proc.getBandState(juce::jmax(0, slot));
+            expect(stNew.enabled);
+            expectEquals(stNew.type, 2);
+            expectWithinAbsoluteError(stNew.frequency, 2000.0f, 0.5f);
+            expectWithinAbsoluteError(stNew.gain, -4.0f, 0.05f);
+            expectWithinAbsoluteError(stNew.q, 2.50f, 0.02f);
 
-            // Leftover dirty slots disabled / zeroed gain (T1 replace).
-            for (int i = 1; i < 4; ++i)
+            // Additive (Marco, 2026-09-11): the dirty EQ is still there.
+            const float dirtyGain[4] = { 3.0f, -2.5f, 2.0f, -1.5f };
+            for (int i = 0; i < 4; ++i)
             {
                 auto st = proc.getBandState(i);
-                expect(! st.enabled || std::abs(st.gain) < 0.05f);
+                expect(st.enabled, "dirty band " + juce::String(i) + " still on");
+                expectWithinAbsoluteError(st.gain, dirtyGain[i], 0.05f);
             }
         }
 
@@ -188,11 +151,12 @@ public:
             expectEquals((int) pending.size(), 1);
             expectWithinAbsoluteError(pending[0].db, -2.0f, 0.01f);
 
-            commitGhostsReplaceStyle(proc, pending);
-            auto st0 = proc.getBandState(0);
-            expectWithinAbsoluteError(st0.gain, -2.0f, 0.05f);
-            expectWithinAbsoluteError(st0.frequency, 2000.0f, 0.5f);
-            expectWithinAbsoluteError(st0.q, 2.50f, 0.02f);
+            const auto result = EmberApply::commitGhosts(proc, pending);
+            expect(result.committed && ! result.slots.empty());
+            auto stNew = proc.getBandState(result.slots.empty() ? 0 : result.slots[0]);
+            expectWithinAbsoluteError(stNew.gain, -2.0f, 0.05f);
+            expectWithinAbsoluteError(stNew.frequency, 2000.0f, 0.5f);
+            expectWithinAbsoluteError(stNew.q, 2.50f, 0.02f);
         }
     }
 };

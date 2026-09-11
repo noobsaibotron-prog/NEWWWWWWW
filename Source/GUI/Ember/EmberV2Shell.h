@@ -9,6 +9,7 @@
 #include "EmberBar.h"
 #include "EmberOverflow.h"
 #include "EmberPhraseParser.h"
+#include "EmberApplyCommit.h"
 
 /** Top-level Ember Core UI v2 host (SPECCHIO). */
 class EmberV2Shell : public juce::Component,
@@ -168,7 +169,7 @@ private:
         // Do not re-parse here — that can diverge from the displayed ghost vector.
         pendingGhosts = graph->getEffectiveGhosts();
         for (auto& g : pendingGhosts)
-            quantizeGhostToApvts(g);
+            EmberApply::quantizeGhostToApvts(g);
         if (pendingGhosts.empty())
             return; // gate Apply when no ghosts
 
@@ -181,40 +182,18 @@ private:
 
     void finishApply()
     {
-        // Unique write I→F: replace F with the ghost set (no empty-slot merge).
-        // Bands not in the ghost set are removed by shrinking numActiveBands.
-        const int nGhosts = (int) pendingGhosts.size();
-        if (nGhosts <= 0)
+        // The only write I→F. EmberApply::commitGhosts owns the slot policy and
+        // the numActiveBands commit, so the tests exercise the code the shell runs.
+        const auto result = EmberApply::commitGhosts(processor, pendingGhosts);
+
+        if (! pendingGhosts.empty() && ! result.committed)
         {
+            // Nothing was written (no free band for every ghost). Keep the phrase
+            // and its amber ghosts on screen rather than pretending it applied.
             pendingGhosts.clear();
-            phraseAlive = false;
-            bar->clearPhrase();
-            graph->setGhosts({}, 1.0f);
             graph->setApplyProgress(1.0f);
-            graph->selectBand(-1);
-            setState(EmberUiState::Riposo);
+            setState(EmberUiState::Frase);
             return;
-        }
-
-        const int n = juce::jlimit(1, AIEqualizerAudioProcessor::maxBands, nGhosts);
-        const int prevActive = processor.getNumActiveBands();
-
-        // Same commit: APVTS numActiveBands + band geometry.
-        writeNumActiveBandsApvts(n);
-        processor.setNumActiveBands(n);
-
-        for (int i = 0; i < n; ++i)
-        {
-            const auto& g = pendingGhosts[(size_t) i];
-            processor.setBandGeometry(i, g.hz, g.db, g.q, g.type, true);
-        }
-
-        // Explicitly disable leftover slots so old peaks cannot linger enabled in APVTS.
-        for (int i = n; i < AIEqualizerAudioProcessor::maxBands && i < prevActive; ++i)
-        {
-            auto st = processor.getBandState(i);
-            if (st.enabled || std::abs(st.gain) > 0.01f)
-                processor.setBandGeometry(i, st.frequency, 0.0f, st.q, st.type, false);
         }
 
         pendingGhosts.clear();
@@ -224,27 +203,6 @@ private:
         graph->setApplyProgress(1.0f);
         graph->selectBand(-1);
         setState(EmberUiState::Riposo);
-    }
-
-    static void quantizeGhostToApvts(EmberGhostBand& g) noexcept
-    {
-        // Match createParameterLayout intervals (Freq 1 Hz, Gain 0.1 dB, Q 0.01).
-        g.hz = std::round(juce::jlimit(20.0f, 20000.0f, g.hz));
-        g.db = std::round(juce::jlimit(-24.0f, 24.0f, g.db) * 10.0f) * 0.1f;
-        g.q  = std::round(juce::jlimit(0.1f, 10.0f, g.q) * 100.0f) * 0.01f;
-        g.type = juce::jlimit(0, 8, g.type);
-    }
-
-    void writeNumActiveBandsApvts(int count)
-    {
-        if (auto* param = processor.getAPVTS().getParameter("numActiveBands"))
-        {
-            const int clamped = juce::jlimit(1, AIEqualizerAudioProcessor::maxBands, count);
-            // Choice index is 0-based (display "1".."24" → index count-1).
-            param->beginChangeGesture();
-            param->setValueNotifyingHost(param->convertTo0to1(static_cast<float>(clamped - 1)));
-            param->endChangeGesture();
-        }
     }
 
     void captureMatchRef()
