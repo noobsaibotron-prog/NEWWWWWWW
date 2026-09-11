@@ -7,6 +7,7 @@
 #include "EmberMeters.h"
 #include "EmberInspector.h"
 #include "EmberLookAndFeel.h"
+#include "EmberPhraseParser.h"
 #include <vector>
 
 class EmberGraph : public juce::Component
@@ -507,6 +508,23 @@ private:
         juce::PathStrokeType(1.2f).createDashedStroke(dashed, p, dashes, 2);
         g.setColour(EmberTokens::gold.withAlpha(0.85f * fade));
         g.strokePath(dashed, juce::PathStrokeType(1.2f));
+
+        // Amber readouts = the exact vector Apply will commit (intensity baked).
+        g.setFont(laf.getMetaFont());
+        for (const auto& gb : ghosts)
+        {
+            const float g0 = gb.db * ghostIntensity;
+            const float x = freqToX(gb.hz);
+            const float y = gainToY(g0 * fade);
+            const float r = 4.0f;
+            g.setColour(EmberTokens::gold.withAlpha(0.95f * fade));
+            g.fillEllipse(x - r, y - r, r * 2.0f, r * 2.0f);
+            g.setColour(EmberTokens::intent.withAlpha(0.92f * fade));
+            const juce::String line = EmberPhrase::formatHzChip(gb.hz) + "  "
+                + EmberPhrase::formatDbChip(g0) + "  Q "
+                + juce::String(gb.q, 2);
+            g.drawText(line, (int) x - 54, (int) y - 18, 110, 12, juce::Justification::centred);
+        }
     }
 
     void paintMatchOverlay(juce::Graphics& g)

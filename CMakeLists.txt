@@ -1529,6 +1529,7 @@ if(HAVE_JUCE)
         Source/Tests/SemanticPlanningContextTest.cpp
         Source/Tests/SemanticProtectedRangeHostTest.cpp
         Source/Tests/SemanticProtectedRangeGestureTest.cpp
+        Source/Tests/EmberPhraseParserTest.cpp
         Source/Tests/EmberProposalProtocolTest.cpp
         Source/Tests/ExternalSemanticProposalTest.cpp
         Source/Tests/EmberProposalLifecycleTest.cpp

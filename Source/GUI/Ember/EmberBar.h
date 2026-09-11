@@ -163,7 +163,7 @@ public:
         {
             if (chips[i].isVisible())
             {
-                chips[i].setBounds(r.removeFromLeft(64));
+                chips[i].setBounds(r.removeFromLeft(88));
                 r.removeFromLeft(4);
             }
         }
