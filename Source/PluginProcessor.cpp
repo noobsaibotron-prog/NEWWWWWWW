@@ -4493,7 +4493,7 @@ void AIEqualizerAudioProcessor::updateEQFromParameters()
     // Update active bands count (robust against NaN / invalid)
     {
         const float raw = loadParam(cachedNumActiveBands, 7.0f);
-        const int idx = std::isfinite(raw) ? static_cast<int>(raw) : 7;
+        const int idx = std::isfinite(raw) ? juce::roundToInt(raw) : 7;
         numActiveBands.store(juce::jlimit(1, maxBands, idx + 1), std::memory_order_relaxed); // choice index starts at 0
     }
 

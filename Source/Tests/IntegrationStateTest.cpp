@@ -32,6 +32,7 @@ public:
         testCorruptStateIsRejectedTransactionally();
         testDefaultFrequenciesStayInsideHostRange();
         testBypassPassThrough();
+        testDefaultBandCountIsProcessed();
     }
 
 private:
@@ -40,6 +41,82 @@ private:
         juce::String id;
         int versionHint = 1;
     };
+
+    void testDefaultBandCountIsProcessed()
+    {
+        beginTest("Default band count: a fresh instance processes 8 bands, and reload does not change the sound");
+
+        // numActiveBands defaults to index 7 of 24. APVTS keeps a parameter's
+        // default unsnapped until the parameter is first notified, and
+        // float32(7/23) * 23 is 6.9999995: a plain int cast turned 8 bands into 7
+        // on every new instance, while the host showed 8.
+        constexpr double sampleRate = 48000.0;
+        constexpr int blockSize = 512;
+        const float band8Hz = AIEQDSP::defaultBandFrequencies[7]; // 500 Hz
+
+        // A sine at band 8's centre through processBlock: output over input level, in dB.
+        const auto levelAtBand8Db = [&](AIEqualizerAudioProcessor& proc)
+        {
+            juce::AudioBuffer<float> buffer(2, blockSize);
+            juce::MidiBuffer midi;
+            const double increment = juce::MathConstants<double>::twoPi * band8Hz / sampleRate;
+            const int settleBlocks = static_cast<int>(sampleRate) / blockSize; // about 1 s
+            const int measureBlocks = settleBlocks / 2;
+            double phase = 0.0, inEnergy = 0.0, outEnergy = 0.0;
+
+            for (int block = 0; block < settleBlocks + measureBlocks; ++block)
+            {
+                const bool measuring = block >= settleBlocks;
+                for (int i = 0; i < blockSize; ++i)
+                {
+                    const float sample = 0.1f * static_cast<float>(std::sin(phase));
+                    phase += increment;
+                    buffer.setSample(0, i, sample);
+                    buffer.setSample(1, i, sample);
+                    if (measuring)
+                        inEnergy += static_cast<double>(sample) * sample;
+                }
+
+                proc.processBlock(buffer, midi);
+
+                if (measuring)
+                    for (int i = 0; i < blockSize; ++i)
+                        outEnergy += static_cast<double>(buffer.getSample(0, i)) * buffer.getSample(0, i);
+            }
+
+            return static_cast<float>(10.0 * std::log10(outEnergy / inEnergy));
+        };
+
+        AIEqualizerAudioProcessor fresh;
+        fresh.prepareToPlay(sampleRate, blockSize);
+
+        auto* count = dynamic_cast<juce::AudioParameterChoice*>(fresh.getAPVTS().getParameter("numActiveBands"));
+        expect(count != nullptr, "numActiveBands must be a choice parameter");
+        if (count == nullptr)
+            return;
+
+        expectEquals(count->getIndex() + 1, 8, "the host sees the default of 8 bands");
+        expectEquals(fresh.getNumActiveBands(), 8, "the audio path must process the 8 bands the host sees");
+
+        // Boost band 8 through its own gain parameter; the count is never touched.
+        auto* gain = fresh.getAPVTS().getParameter("band7Gain");
+        gain->beginChangeGesture();
+        gain->setValueNotifyingHost(gain->convertTo0to1(12.0f));
+        gain->endChangeGesture();
+
+        const float freshDb = levelAtBand8Db(fresh);
+        expectWithinAbsoluteError(freshDb, 12.0f, 0.5f, "band 8 at +12 dB must be heard on a fresh instance");
+
+        juce::MemoryBlock saved;
+        fresh.getStateInformation(saved);
+
+        AIEqualizerAudioProcessor reloaded;
+        reloaded.setStateInformation(saved.getData(), static_cast<int>(saved.getSize()));
+        reloaded.prepareToPlay(sampleRate, blockSize);
+
+        const float reloadedDb = levelAtBand8Db(reloaded);
+        expectWithinAbsoluteError(reloadedDb, freshDb, 0.1f, "saving and reloading must not change the sound");
+    }
 
     void testGraphGeometryEditPreservesAdvancedState()
     {
