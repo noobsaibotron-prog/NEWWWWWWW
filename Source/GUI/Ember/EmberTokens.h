@@ -3,47 +3,75 @@
 
 namespace EmberTokens
 {
-    inline const juce::Colour bg       { 0xff0A0B0E };
-    inline const juce::Colour raised   { 0xff1A1B1F };
-    inline const juce::Colour sunken   { 0xff07080A };
-    inline const juce::Colour hairline { 0xff2A2B31 };
-    inline const juce::Colour text     { 0xffF4F4F2 };
-    inline const juce::Colour dim      { 0xff8A8B90 };
-    inline const juce::Colour mute     { 0xff55565C };
-    inline const juce::Colour intent   { 0xffFF9D2E };
-    inline const juce::Colour gold     { 0xffFFD27A };
-    inline const juce::Colour cyan     { 0xff2ED6E6 };
-    inline const juce::Colour ref      { 0xff3AA8B8 };
-    inline const juce::Colour meter    { 0xff2EC8D4 };
-    inline const juce::Colour grid     { 0x0FF4F4F2 }; // ~0.06 alpha white
-    inline const juce::Colour glass    { 0xE6121318 };
+    // Carbon hierarchy
+    inline const juce::Colour bg       { 0xff090A0B };
+    inline const juce::Colour chrome   { 0xff070809 };
+    inline const juce::Colour raised   { 0xff101214 };
+    inline const juce::Colour sunken   { 0xff060708 };
+    inline const juce::Colour hairline { 0xff25292E };
 
-    // Opacity
-    constexpr float alphaSpectrumFillTop    = 0.14f;
-    constexpr float alphaSpectrumFillBottom = 0.02f;
-    constexpr float alphaSpectrumLine       = 0.72f;
-    constexpr float alphaGhostCurve         = 0.85f;
-    constexpr float alphaGhostNode          = 0.95f;
-    constexpr float alphaGhostReadout       = 0.92f;
-    constexpr float alphaMatchCurve         = 0.55f;
-    constexpr float alphaSelectedRing       = 0.35f;
-    constexpr float alphaClimate            = 0.85f;
-    constexpr float alphaMeterFill          = 0.85f;
-    constexpr float alphaMeterPeak          = 0.55f;
-    constexpr float alphaIntentFilament     = 0.85f;
-    constexpr float alphaTextSelection      = 0.35f;
-    // Stroke width, px at 100% scale
-    constexpr float strokeSpectrum     = 1.1f;
-    constexpr float strokeFactCurve    = 1.6f;
-    constexpr float strokeGhostCurve   = 1.2f;
-    constexpr float strokeMatchCurve   = 1.2f;
-    constexpr float strokeSelectedRing = 1.0f;
-    constexpr float strokeHairline     = 1.0f;
-    // Corner radius
-    constexpr float radiusInspector = 6.0f;
+    // Semantic colours
+    inline const juce::Colour state     { 0xffE8EAEC }; // committed DSP truth
+    inline const juce::Colour stateHi   { 0xffF6F7F8 }; // tiny selected highlights only
+    inline const juce::Colour dim       { 0xff858B91 };
+    inline const juce::Colour mute      { 0xff50565C };
+    inline const juce::Colour signal    { 0xff56C7C6 }; // live measurement
+    inline const juce::Colour intent    { 0xffD49A32 }; // pending semantic intent, never decoration
+    inline const juce::Colour reference { 0xff6E8A9A }; // comparison / memory
+
+    // Aliases, so existing call sites keep their names
+    inline const juce::Colour& text  = state;
+    inline const juce::Colour& cyan  = signal;
+    inline const juce::Colour& meter = signal;
+    inline const juce::Colour& ref   = reference;
+
+    // Grid
+    constexpr float gridPrimaryAlpha   = 0.070f;
+    constexpr float gridSecondaryAlpha = 0.032f;
+    constexpr float gridZeroAlpha      = 0.105f;
+    // Spectrum
+    constexpr float spectrumStrokeWidth  = 0.95f;
+    constexpr float spectrumLineAlpha    = 0.58f;
+    constexpr float spectrumFillTopAlpha = 0.105f;
+    constexpr float spectrumFillBotAlpha = 0.012f;
+    // Curves
+    constexpr float actualCurveWidth    = 1.15f;
+    constexpr float actualCurveAlpha    = 0.96f;
+    constexpr float intentCurveWidth    = 1.30f;
+    constexpr float intentCurveAlpha    = 0.90f;
+    constexpr float intentNodeAlpha     = 0.95f;
+    constexpr float intentReadoutAlpha  = 0.92f;
+    constexpr float referenceCurveWidth = 0.90f;
+    constexpr float referenceCurveAlpha = 0.60f;
+    constexpr float referenceDashLength = 2.0f;
+    constexpr float referenceGapLength  = 3.0f;
+    // Legibility floors on the final alpha, after the state profile
+    constexpr float actualCurveMinAlpha  = 0.90f;
+    constexpr float spectrumLineMinAlpha = 0.40f;
+    // Nodes: drawn size only, the hit radius stays in EmberGraph
+    constexpr float nodeIdleRadius        = 3.25f;
+    constexpr float nodeSelectedRadius    = 4.25f;
+    constexpr float nodeSelectedRingR     = 8.25f;
+    constexpr float nodeSelectedRingWidth = 1.0f;
+    constexpr float nodeSelectedRingAlpha = 0.70f;
+    // Surfaces
+    constexpr float inspectorSurfaceAlpha = 0.94f;
+    constexpr float inspectorBorderAlpha  = 0.70f;
+    constexpr float radiusInspector       = 6.0f;
+    constexpr float strokeHairline        = 1.0f;
+    // Other opacity
+    constexpr float alphaClimate        = 0.85f;
+    constexpr float alphaMeterFill      = 0.85f;
+    constexpr float alphaMeterPeak      = 0.55f;
+    constexpr float alphaIntentFilament = 0.85f;
+    constexpr float alphaTextSelection  = 0.35f;
     // Motion
-    constexpr double motionApplyMs    = 280.0;
-    constexpr float  motionBarEaseSec = 0.220f;
+    constexpr double motionApplyMs       = 280.0;
+    constexpr float  motionBarEaseSec    = 0.220f;
+    constexpr float  visualFocusMs       = 160.0f;
+    constexpr float  visualContextMs     = 220.0f;
+    constexpr float  visualCommitMs      = 320.0f; // reserved; Apply timing is unchanged
+    constexpr float  visualProfileTauSec = 0.180f;
 
     constexpr int headerH = 36;
     constexpr int barRiposoH = 20;

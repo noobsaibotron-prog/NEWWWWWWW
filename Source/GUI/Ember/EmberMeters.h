@@ -38,6 +38,13 @@ public:
         repaint();
     }
 
+    /** State-profile presence, applied to the colours: no component alpha, no layer. */
+    void setPresence(float p)
+    {
+        presence = p;
+        repaint();
+    }
+
     void paint(juce::Graphics& g) override
     {
         auto b = getLocalBounds().toFloat();
@@ -64,15 +71,16 @@ private:
 
         const float y = dbToY(levelDb, col.getY(), col.getBottom());
         auto fill = juce::Rectangle<float>(col.getX(), y, col.getWidth(), col.getBottom() - y);
-        g.setColour(EmberTokens::meter.withAlpha(EmberTokens::alphaMeterFill));
+        g.setColour(EmberTokens::meter.withAlpha(EmberTokens::alphaMeterFill * presence));
         g.fillRect(fill);
 
         const float py = dbToY(peakDb, col.getY(), col.getBottom());
-        g.setColour(EmberTokens::cyan.withAlpha(EmberTokens::alphaMeterPeak));
+        g.setColour(EmberTokens::cyan.withAlpha(EmberTokens::alphaMeterPeak * presence));
         g.fillRect(col.getX(), py, col.getWidth(), 1.0f);
     }
 
     float left = -100.0f, right = -100.0f;
     float peakL = -100.0f, peakR = -100.0f;
     double peakHoldUntilL = 0.0, peakHoldUntilR = 0.0;
+    float presence = 1.0f;
 };

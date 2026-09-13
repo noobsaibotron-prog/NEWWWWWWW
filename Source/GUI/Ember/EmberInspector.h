@@ -59,9 +59,9 @@ public:
 
     void paint(juce::Graphics& g) override
     {
-        g.setColour(EmberTokens::glass);
+        g.setColour(EmberTokens::raised.withAlpha(EmberTokens::inspectorSurfaceAlpha));
         g.fillRoundedRectangle(getLocalBounds().toFloat(), EmberTokens::radiusInspector);
-        g.setColour(EmberTokens::hairline);
+        g.setColour(EmberTokens::hairline.withAlpha(EmberTokens::inspectorBorderAlpha));
         g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(0.5f), EmberTokens::radiusInspector, EmberTokens::strokeHairline);
     }
 

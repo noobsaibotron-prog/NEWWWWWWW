@@ -94,6 +94,14 @@ public:
         repaint();
     }
 
+    /** State-profile presence. Only the intent filament follows it: the controls stay
+        fully legible, and component alpha would open a transparency layer per repaint. */
+    void setVisualPresence(float presence)
+    {
+        visualPresence = presence;
+        repaint();
+    }
+
     void focusPhrase()
     {
         editor.setVisible(true);
@@ -136,7 +144,7 @@ public:
         // filament (intent) only when frase alive
         if (state == EmberUiState::Frase || state == EmberUiState::Apply)
         {
-            g.setColour(EmberTokens::intent.withAlpha(EmberTokens::alphaIntentFilament));
+            g.setColour(EmberTokens::intent.withAlpha(EmberTokens::alphaIntentFilament * visualPresence));
             g.fillRect(0, 0, getWidth(), 1);
         }
     }
@@ -200,4 +208,5 @@ private:
     juce::Slider intensity, matchAmt;
     juce::TextButton apply, match;
     juce::Label chips[2];
+    float visualPresence = 1.0f;
 };

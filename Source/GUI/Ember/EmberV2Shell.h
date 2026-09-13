@@ -10,6 +10,7 @@
 #include "EmberOverflow.h"
 #include "EmberPhraseParser.h"
 #include "EmberApplyCommit.h"
+#include "EmberVisualState.h"
 
 /** Top-level Ember Core UI v2 host (SPECCHIO). */
 class EmberV2Shell : public juce::Component,
@@ -94,6 +95,9 @@ public:
 
         setWantsKeyboardFocus(true);
         setState(EmberUiState::Riposo);
+        visualCurrent = visualTarget; // open settled, no fade-in
+        visualSettling = false;
+        pushVisualProfile();
         startTimerHz(45);
         barHeightAnim = (float) EmberTokens::barRiposoH;
     }
@@ -158,9 +162,17 @@ private:
         header->updateBadge();
         graph->setUiState(s);
         bar->setUiState(s);
+        visualTarget = emberVisualProfileFor(s);
+        visualSettling = true;
         targetBarH = (s == EmberUiState::Riposo || (s == EmberUiState::Nodo && ! phraseAlive))
                      ? (float) EmberTokens::barRiposoH
                      : (float) EmberTokens::barActiveH;
+    }
+
+    void pushVisualProfile()
+    {
+        graph->setVisualProfile(visualCurrent);
+        bar->setVisualPresence(visualCurrent.bar);
     }
 
     void beginApply()
@@ -239,6 +251,18 @@ private:
             resized();
         }
 
+        // visual hierarchy follows the state with one time constant, on this same timer
+        if (visualSettling)
+        {
+            const float a = 1.0f - std::exp(-(1.0f / 45.0f) / EmberTokens::visualProfileTauSec);
+            if (emberApproachProfile(visualCurrent, visualTarget, a) < 0.001f)
+            {
+                visualCurrent = visualTarget;
+                visualSettling = false;
+            }
+            pushVisualProfile();
+        }
+
         if (state == EmberUiState::Apply)
         {
             applyMsLeft -= 1000.0 / 45.0;
@@ -279,6 +303,8 @@ private:
     float barHeightAnim = 20.0f;
     float targetBarH = 20.0f;
     double applyMsLeft = 0.0;
+    EmberVisualProfile visualCurrent, visualTarget;
+    bool visualSettling = false;
     std::vector<EmberGhostBand> pendingGhosts;
     std::vector<float> matchRefDb;
 };

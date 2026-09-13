@@ -80,9 +80,9 @@ public:
 
     void paint(juce::Graphics& g) override
     {
-        g.setColour(EmberTokens::bg);
+        g.setColour(EmberTokens::chrome);
         g.fillRect(getLocalBounds());
-        // small mark
+        // Brand mark: the one deliberate amber exception to 'amber means pending intent'.
         g.setColour(EmberTokens::intent);
         g.fillEllipse(10.0f, (float) getHeight() * 0.5f - 5.0f, 10.0f, 10.0f);
         g.setColour(EmberTokens::hairline);

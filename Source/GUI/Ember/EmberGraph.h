@@ -8,6 +8,7 @@
 #include "EmberInspector.h"
 #include "EmberLookAndFeel.h"
 #include "EmberPhraseParser.h"
+#include "EmberVisualState.h"
 #include <vector>
 
 class EmberGraph : public juce::Component
@@ -46,7 +47,7 @@ public:
 
         refLabel.setText("Ref A", juce::dontSendNotification);
         refLabel.setFont(laf.getMetaFont());
-        refLabel.setColour(juce::Label::textColourId, EmberTokens::cyan);
+        refLabel.setColour(juce::Label::textColourId, EmberTokens::reference);
         addChildComponent(refLabel);
     }
 
@@ -106,6 +107,14 @@ public:
 
     void setLevels(float l, float r) { meters.setLevels(l, r); }
 
+    /** Current state profile from the shell. Visual only: nothing here writes the processor. */
+    void setVisualProfile(const EmberVisualProfile& v)
+    {
+        visual = v;
+        meters.setPresence(v.meter);
+        repaint();
+    }
+
     void selectBand(int idx)
     {
         selected = idx;
@@ -119,7 +128,7 @@ public:
 
     void paint(juce::Graphics& g) override
     {
-        g.setColour(EmberTokens::sunken);
+        g.setColour(EmberTokens::bg);
         g.fillRect(getLocalBounds());
 
         rebuildEQCurve();
@@ -141,7 +150,7 @@ public:
         // 5. F white
         paintFactCurve(g);
 
-        // 6. ghost dashed gold
+        // 6. ghost dashed intent
         if (state == EmberUiState::Frase || state == EmberUiState::Apply)
             paintGhost(g);
 
@@ -389,16 +398,25 @@ private:
 
     void paintGrid(juce::Graphics& g)
     {
-        g.setColour(EmberTokens::grid);
-        for (float hz : { 50.f, 100.f, 200.f, 500.f, 1000.f, 2000.f, 5000.f, 10000.f })
+        // Same lines as before, classified: decades primary, the rest secondary, 0 dB its own reference.
+        struct GridLine { float value; float alpha; };
+        const GridLine verticals[] = {
+            { 50.f, EmberTokens::gridSecondaryAlpha }, { 100.f, EmberTokens::gridPrimaryAlpha },
+            { 200.f, EmberTokens::gridSecondaryAlpha }, { 500.f, EmberTokens::gridSecondaryAlpha },
+            { 1000.f, EmberTokens::gridPrimaryAlpha }, { 2000.f, EmberTokens::gridSecondaryAlpha },
+            { 5000.f, EmberTokens::gridSecondaryAlpha }, { 10000.f, EmberTokens::gridPrimaryAlpha } };
+        const GridLine horizontals[] = {
+            { -6.f, EmberTokens::gridPrimaryAlpha }, { 0.f, EmberTokens::gridZeroAlpha }, { 6.f, EmberTokens::gridPrimaryAlpha } };
+
+        for (const auto& line : verticals)
         {
-            const float x = freqToX(hz);
-            g.drawVerticalLine((int) x, plotBounds.getY(), plotBounds.getBottom());
+            g.setColour(EmberTokens::state.withAlpha(line.alpha * visual.grid));
+            g.drawVerticalLine((int) freqToX(line.value), plotBounds.getY(), plotBounds.getBottom());
         }
-        for (float db : { -6.f, 0.f, 6.f })
+        for (const auto& line : horizontals)
         {
-            const float y = gainToY(db);
-            g.drawHorizontalLine((int) y, plotBounds.getX(), plotBounds.getRight());
+            g.setColour(EmberTokens::state.withAlpha(line.alpha * visual.grid));
+            g.drawHorizontalLine((int) gainToY(line.value), plotBounds.getX(), plotBounds.getRight());
         }
     }
 
@@ -452,12 +470,12 @@ private:
         {
             fill.lineTo(plotBounds.getRight(), bottom);
             fill.closeSubPath();
-            juce::ColourGradient grad(EmberTokens::cyan.withAlpha(EmberTokens::alphaSpectrumFillTop), 0, plotBounds.getY(),
-                                      EmberTokens::cyan.withAlpha(EmberTokens::alphaSpectrumFillBottom), 0, bottom, false);
+            juce::ColourGradient grad(EmberTokens::signal.withAlpha(EmberTokens::spectrumFillTopAlpha * visual.spectrum), 0, plotBounds.getY(),
+                                      EmberTokens::signal.withAlpha(EmberTokens::spectrumFillBotAlpha * visual.spectrum), 0, bottom, false);
             g.setGradientFill(grad);
             g.fillPath(fill);
-            g.setColour(EmberTokens::cyan.withAlpha(EmberTokens::alphaSpectrumLine));
-            g.strokePath(stroke, juce::PathStrokeType(EmberTokens::strokeSpectrum));
+            g.setColour(EmberTokens::signal.withAlpha(juce::jmax(EmberTokens::spectrumLineMinAlpha, EmberTokens::spectrumLineAlpha * visual.spectrum)));
+            g.strokePath(stroke, juce::PathStrokeType(EmberTokens::spectrumStrokeWidth));
         }
     }
 
@@ -473,14 +491,14 @@ private:
             if (i == 0) p.startNewSubPath(x, y);
             else p.lineTo(x, y);
         }
-        g.setColour(EmberTokens::text);
-        g.strokePath(p, juce::PathStrokeType(EmberTokens::strokeFactCurve, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        g.setColour(EmberTokens::state.withAlpha(juce::jmax(EmberTokens::actualCurveMinAlpha, EmberTokens::actualCurveAlpha * visual.actualCurve)));
+        g.strokePath(p, juce::PathStrokeType(EmberTokens::actualCurveWidth, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
     }
 
     void paintGhost(juce::Graphics& g)
     {
         if (ghosts.empty()) return;
-        // Draw dashed gold response of ghost bands only (intent, not audio).
+        // Draw dashed intent response of ghost bands only (intent, not audio).
         const int N = (int) curveHz.size();
         if (N <= 1) return;
         juce::Path p;
@@ -505,9 +523,9 @@ private:
         }
         float dashes[] = { 4.0f, 4.0f };
         juce::Path dashed;
-        juce::PathStrokeType(EmberTokens::strokeGhostCurve).createDashedStroke(dashed, p, dashes, 2);
-        g.setColour(EmberTokens::gold.withAlpha(EmberTokens::alphaGhostCurve * fade));
-        g.strokePath(dashed, juce::PathStrokeType(EmberTokens::strokeGhostCurve));
+        juce::PathStrokeType(EmberTokens::intentCurveWidth).createDashedStroke(dashed, p, dashes, 2);
+        g.setColour(EmberTokens::intent.withAlpha(EmberTokens::intentCurveAlpha * fade * visual.ghost));
+        g.strokePath(dashed, juce::PathStrokeType(EmberTokens::intentCurveWidth));
 
         // Amber readouts = the exact vector Apply will commit (intensity baked).
         g.setFont(laf.getMetaFont());
@@ -517,9 +535,9 @@ private:
             const float x = freqToX(gb.hz);
             const float y = gainToY(g0 * fade);
             const float r = 4.0f;
-            g.setColour(EmberTokens::gold.withAlpha(EmberTokens::alphaGhostNode * fade));
+            g.setColour(EmberTokens::intent.withAlpha(EmberTokens::intentNodeAlpha * fade * visual.ghost));
             g.fillEllipse(x - r, y - r, r * 2.0f, r * 2.0f);
-            g.setColour(EmberTokens::intent.withAlpha(EmberTokens::alphaGhostReadout * fade));
+            g.setColour(EmberTokens::intent.withAlpha(EmberTokens::intentReadoutAlpha * fade * visual.ghost));
             const juce::String line = EmberPhrase::formatHzChip(gb.hz) + "  "
                 + EmberPhrase::formatDbChip(g0) + "  Q "
                 + juce::String(gb.q, 2);
@@ -539,8 +557,12 @@ private:
             if (i == 0) p.startNewSubPath(x, y);
             else p.lineTo(x, y);
         }
-        g.setColour(EmberTokens::cyan.withAlpha(EmberTokens::alphaMatchCurve));
-        g.strokePath(p, juce::PathStrokeType(EmberTokens::strokeMatchCurve));
+        // Dashed, and with a shorter dash than the ghost, so reference never reads as a second EQ or as intent.
+        const float dashes[] = { EmberTokens::referenceDashLength, EmberTokens::referenceGapLength };
+        juce::Path dashed;
+        juce::PathStrokeType(EmberTokens::referenceCurveWidth).createDashedStroke(dashed, p, dashes, 2);
+        g.setColour(EmberTokens::reference.withAlpha(EmberTokens::referenceCurveAlpha * visual.reference));
+        g.fillPath(dashed);
     }
 
     void paintNodes(juce::Graphics& g)
@@ -552,13 +574,20 @@ private:
             if (! st.enabled) continue;
             const float x = freqToX(st.frequency);
             const float y = gainToY(st.gain);
-            const float r = (i == selected) ? 6.0f : 3.5f;
-            g.setColour(EmberTokens::text);
-            g.fillEllipse(x - r, y - r, r * 2.0f, r * 2.0f);
             if (i == selected)
             {
-                g.setColour(EmberTokens::text.withAlpha(EmberTokens::alphaSelectedRing));
-                g.drawEllipse(x - r - 3.0f, y - r - 3.0f, (r + 3.0f) * 2.0f, (r + 3.0f) * 2.0f, EmberTokens::strokeSelectedRing);
+                const float r = EmberTokens::nodeSelectedRadius;
+                const float ring = EmberTokens::nodeSelectedRingR;
+                g.setColour(EmberTokens::stateHi.withAlpha(visual.selected));
+                g.fillEllipse(x - r, y - r, r * 2.0f, r * 2.0f);
+                g.setColour(EmberTokens::state.withAlpha(EmberTokens::nodeSelectedRingAlpha * visual.selected));
+                g.drawEllipse(x - ring, y - ring, ring * 2.0f, ring * 2.0f, EmberTokens::nodeSelectedRingWidth);
+            }
+            else
+            {
+                const float r = EmberTokens::nodeIdleRadius;
+                g.setColour(EmberTokens::state.withAlpha(visual.idleNodes));
+                g.fillEllipse(x - r, y - r, r * 2.0f, r * 2.0f);
             }
         }
     }
@@ -631,6 +660,7 @@ private:
     std::vector<EmberGhostBand> ghosts;
     float ghostIntensity = 1.0f;
     float applyProgress = 0.0f;
+    EmberVisualProfile visual;
 
     bool climateOn = false;
     ember::ThermalState thermal;
