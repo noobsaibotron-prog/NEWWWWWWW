@@ -174,7 +174,7 @@ private:
             return; // gate Apply when no ghosts
 
         setState(EmberUiState::Apply);
-        applyMsLeft = 280.0;
+        applyMsLeft = EmberTokens::motionApplyMs;
         // Keep display locked to the pending (post-quant) vector during the 280ms morph.
         graph->setGhosts(pendingGhosts, 1.0f);
         graph->setApplyProgress(0.0f);
@@ -227,7 +227,7 @@ private:
     void timerCallback() override
     {
         // bar height ease ~220ms
-        const float alpha = 1.0f - std::exp(-1.0f / (0.220f * 45.0f));
+        const float alpha = 1.0f - std::exp(-1.0f / (EmberTokens::motionBarEaseSec * 45.0f));
         if (std::abs(barHeightAnim - targetBarH) > 0.25f)
         {
             barHeightAnim += (targetBarH - barHeightAnim) * alpha;
@@ -242,7 +242,7 @@ private:
         if (state == EmberUiState::Apply)
         {
             applyMsLeft -= 1000.0 / 45.0;
-            const float p = 1.0f - (float) juce::jlimit(0.0, 1.0, applyMsLeft / 280.0);
+            const float p = 1.0f - (float) juce::jlimit(0.0, 1.0, applyMsLeft / EmberTokens::motionApplyMs);
             graph->setApplyProgress(p);
             if (applyMsLeft <= 0.0)
                 finishApply();

@@ -136,7 +136,7 @@ public:
         // filament (intent) only when frase alive
         if (state == EmberUiState::Frase || state == EmberUiState::Apply)
         {
-            g.setColour(EmberTokens::intent.withAlpha(0.85f));
+            g.setColour(EmberTokens::intent.withAlpha(EmberTokens::alphaIntentFilament));
             g.fillRect(0, 0, getWidth(), 1);
         }
     }

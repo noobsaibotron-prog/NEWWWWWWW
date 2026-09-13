@@ -18,6 +18,33 @@ namespace EmberTokens
     inline const juce::Colour grid     { 0x0FF4F4F2 }; // ~0.06 alpha white
     inline const juce::Colour glass    { 0xE6121318 };
 
+    // Opacity
+    constexpr float alphaSpectrumFillTop    = 0.14f;
+    constexpr float alphaSpectrumFillBottom = 0.02f;
+    constexpr float alphaSpectrumLine       = 0.72f;
+    constexpr float alphaGhostCurve         = 0.85f;
+    constexpr float alphaGhostNode          = 0.95f;
+    constexpr float alphaGhostReadout       = 0.92f;
+    constexpr float alphaMatchCurve         = 0.55f;
+    constexpr float alphaSelectedRing       = 0.35f;
+    constexpr float alphaClimate            = 0.85f;
+    constexpr float alphaMeterFill          = 0.85f;
+    constexpr float alphaMeterPeak          = 0.55f;
+    constexpr float alphaIntentFilament     = 0.85f;
+    constexpr float alphaTextSelection      = 0.35f;
+    // Stroke width, px at 100% scale
+    constexpr float strokeSpectrum     = 1.1f;
+    constexpr float strokeFactCurve    = 1.6f;
+    constexpr float strokeGhostCurve   = 1.2f;
+    constexpr float strokeMatchCurve   = 1.2f;
+    constexpr float strokeSelectedRing = 1.0f;
+    constexpr float strokeHairline     = 1.0f;
+    // Corner radius
+    constexpr float radiusInspector = 6.0f;
+    // Motion
+    constexpr double motionApplyMs    = 280.0;
+    constexpr float  motionBarEaseSec = 0.220f;
+
     constexpr int headerH = 36;
     constexpr int barRiposoH = 20;
     constexpr int barActiveH = 68;

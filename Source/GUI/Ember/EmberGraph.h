@@ -452,12 +452,12 @@ private:
         {
             fill.lineTo(plotBounds.getRight(), bottom);
             fill.closeSubPath();
-            juce::ColourGradient grad(EmberTokens::cyan.withAlpha(0.14f), 0, plotBounds.getY(),
-                                      EmberTokens::cyan.withAlpha(0.02f), 0, bottom, false);
+            juce::ColourGradient grad(EmberTokens::cyan.withAlpha(EmberTokens::alphaSpectrumFillTop), 0, plotBounds.getY(),
+                                      EmberTokens::cyan.withAlpha(EmberTokens::alphaSpectrumFillBottom), 0, bottom, false);
             g.setGradientFill(grad);
             g.fillPath(fill);
-            g.setColour(EmberTokens::cyan.withAlpha(0.72f));
-            g.strokePath(stroke, juce::PathStrokeType(1.1f));
+            g.setColour(EmberTokens::cyan.withAlpha(EmberTokens::alphaSpectrumLine));
+            g.strokePath(stroke, juce::PathStrokeType(EmberTokens::strokeSpectrum));
         }
     }
 
@@ -474,7 +474,7 @@ private:
             else p.lineTo(x, y);
         }
         g.setColour(EmberTokens::text);
-        g.strokePath(p, juce::PathStrokeType(1.6f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        g.strokePath(p, juce::PathStrokeType(EmberTokens::strokeFactCurve, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
     }
 
     void paintGhost(juce::Graphics& g)
@@ -505,9 +505,9 @@ private:
         }
         float dashes[] = { 4.0f, 4.0f };
         juce::Path dashed;
-        juce::PathStrokeType(1.2f).createDashedStroke(dashed, p, dashes, 2);
-        g.setColour(EmberTokens::gold.withAlpha(0.85f * fade));
-        g.strokePath(dashed, juce::PathStrokeType(1.2f));
+        juce::PathStrokeType(EmberTokens::strokeGhostCurve).createDashedStroke(dashed, p, dashes, 2);
+        g.setColour(EmberTokens::gold.withAlpha(EmberTokens::alphaGhostCurve * fade));
+        g.strokePath(dashed, juce::PathStrokeType(EmberTokens::strokeGhostCurve));
 
         // Amber readouts = the exact vector Apply will commit (intensity baked).
         g.setFont(laf.getMetaFont());
@@ -517,9 +517,9 @@ private:
             const float x = freqToX(gb.hz);
             const float y = gainToY(g0 * fade);
             const float r = 4.0f;
-            g.setColour(EmberTokens::gold.withAlpha(0.95f * fade));
+            g.setColour(EmberTokens::gold.withAlpha(EmberTokens::alphaGhostNode * fade));
             g.fillEllipse(x - r, y - r, r * 2.0f, r * 2.0f);
-            g.setColour(EmberTokens::intent.withAlpha(0.92f * fade));
+            g.setColour(EmberTokens::intent.withAlpha(EmberTokens::alphaGhostReadout * fade));
             const juce::String line = EmberPhrase::formatHzChip(gb.hz) + "  "
                 + EmberPhrase::formatDbChip(g0) + "  Q "
                 + juce::String(gb.q, 2);
@@ -539,8 +539,8 @@ private:
             if (i == 0) p.startNewSubPath(x, y);
             else p.lineTo(x, y);
         }
-        g.setColour(EmberTokens::cyan.withAlpha(0.55f));
-        g.strokePath(p, juce::PathStrokeType(1.2f));
+        g.setColour(EmberTokens::cyan.withAlpha(EmberTokens::alphaMatchCurve));
+        g.strokePath(p, juce::PathStrokeType(EmberTokens::strokeMatchCurve));
     }
 
     void paintNodes(juce::Graphics& g)
@@ -557,8 +557,8 @@ private:
             g.fillEllipse(x - r, y - r, r * 2.0f, r * 2.0f);
             if (i == selected)
             {
-                g.setColour(EmberTokens::text.withAlpha(0.35f));
-                g.drawEllipse(x - r - 3.0f, y - r - 3.0f, (r + 3.0f) * 2.0f, (r + 3.0f) * 2.0f, 1.0f);
+                g.setColour(EmberTokens::text.withAlpha(EmberTokens::alphaSelectedRing));
+                g.drawEllipse(x - r - 3.0f, y - r - 3.0f, (r + 3.0f) * 2.0f, (r + 3.0f) * 2.0f, EmberTokens::strokeSelectedRing);
             }
         }
     }
@@ -569,7 +569,7 @@ private:
         for (int k = 0; k < ember::ThermalState::kNumCells; ++k)
         {
             const float t = thermal.T[(size_t) k];
-            const juce::Colour c = EmberTokens::cyan.interpolatedWith(EmberTokens::intent, t).withAlpha(t * 0.85f);
+            const juce::Colour c = EmberTokens::cyan.interpolatedWith(EmberTokens::intent, t).withAlpha(t * EmberTokens::alphaClimate);
             g.setColour(c);
             g.fillRect(climateBounds.getX() + (float) k * cellW, climateBounds.getY(), cellW + 0.5f, climateBounds.getHeight());
         }

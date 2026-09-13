@@ -60,9 +60,9 @@ public:
     void paint(juce::Graphics& g) override
     {
         g.setColour(EmberTokens::glass);
-        g.fillRoundedRectangle(getLocalBounds().toFloat(), 6.0f);
+        g.fillRoundedRectangle(getLocalBounds().toFloat(), EmberTokens::radiusInspector);
         g.setColour(EmberTokens::hairline);
-        g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(0.5f), 6.0f, 1.0f);
+        g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(0.5f), EmberTokens::radiusInspector, EmberTokens::strokeHairline);
     }
 
     void resized() override

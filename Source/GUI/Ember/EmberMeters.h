@@ -64,11 +64,11 @@ private:
 
         const float y = dbToY(levelDb, col.getY(), col.getBottom());
         auto fill = juce::Rectangle<float>(col.getX(), y, col.getWidth(), col.getBottom() - y);
-        g.setColour(EmberTokens::meter.withAlpha(0.85f));
+        g.setColour(EmberTokens::meter.withAlpha(EmberTokens::alphaMeterFill));
         g.fillRect(fill);
 
         const float py = dbToY(peakDb, col.getY(), col.getBottom());
-        g.setColour(EmberTokens::cyan.withAlpha(0.55f));
+        g.setColour(EmberTokens::cyan.withAlpha(EmberTokens::alphaMeterPeak));
         g.fillRect(col.getX(), py, col.getWidth(), 1.0f);
     }
 

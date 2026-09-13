@@ -27,7 +27,7 @@ public:
         setColour(juce::TextEditor::textColourId, EmberTokens::text);
         setColour(juce::TextEditor::outlineColourId, EmberTokens::hairline);
         setColour(juce::TextEditor::focusedOutlineColourId, EmberTokens::intent);
-        setColour(juce::TextEditor::highlightColourId, EmberTokens::intent.withAlpha(0.35f));
+        setColour(juce::TextEditor::highlightColourId, EmberTokens::intent.withAlpha(EmberTokens::alphaTextSelection));
         setColour(juce::CaretComponent::caretColourId, EmberTokens::intent);
         setColour(juce::Label::textColourId, EmberTokens::dim);
     }
