@@ -43,6 +43,8 @@ public:
             resized();
         };
 
+        overflow->onClose = [this] { resized(); };
+
         graph->onBandSelected = [this](int idx)
         {
             if (idx >= 0)

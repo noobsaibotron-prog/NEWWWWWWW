@@ -8,6 +8,7 @@ class EmberOverflow : public juce::Component
 {
 public:
     std::function<void(bool)> onClimateChanged;
+    std::function<void()> onClose;
 
     EmberOverflow(juce::AudioProcessorValueTreeState& apvtsIn, EmberLookAndFeel& sharedLaf)
         : apvts(apvtsIn), laf(sharedLaf)
@@ -44,7 +45,7 @@ public:
         addAndMakeVisible(climate);
 
         close.setButtonText("Close");
-        close.onClick = [this]{ setVisible(false); };
+        close.onClick = [this]{ setVisible(false); if (onClose) onClose(); };
         addAndMakeVisible(close);
         setVisible(false);
     }
