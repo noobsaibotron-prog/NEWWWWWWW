@@ -152,7 +152,35 @@ inline std::vector<EmberGhostBand> parse(const juce::String& raw)
     if (! absolute.empty())
         return absolute;
 
-    const bool invert = text.contains("less") || text.contains("cut") || text.contains("tame");
+    enum class ClausePolarity { Default, Boost, Cut };
+
+    auto splitClauses = [](const juce::String& phrase)
+    {
+        auto normalized = phrase.replaceCharacter(',', '|').replaceCharacter(';', '|');
+        normalized = normalized.replace(" and ", " | ")
+                               .replace(" but ", " | ")
+                               .replace(" then ", " | ");
+        auto clauses = juce::StringArray::fromTokens(normalized, "|", "");
+        clauses.trim();
+        clauses.removeEmptyStrings();
+        return clauses;
+    };
+
+    auto polarityForClause = [](const juce::String& clause)
+    {
+        const auto words = juce::StringArray::fromTokens(clause, " \t\n\r,.;:!?/+-", "");
+        for (auto w : words)
+        {
+            w = w.trim().toLowerCase();
+            if (w == "less" || w == "cut" || w == "tame")
+                return ClausePolarity::Cut;
+            if (w == "more" || w == "add" || w == "boost")
+                return ClausePolarity::Boost;
+        }
+        return ClausePolarity::Default;
+    };
+
+    const auto clauses = splitClauses(text);
 
     struct Rule
     {
@@ -176,7 +204,16 @@ inline std::vector<EmberGhostBand> parse(const juce::String& raw)
     {
         if (out.size() >= 2)
             break;
-        if (! tokenHit(text, rule.keys))
+        juce::String matchedClause;
+        for (const auto& clause : clauses)
+        {
+            if (tokenHit(clause, rule.keys))
+            {
+                matchedClause = clause;
+                break;
+            }
+        }
+        if (matchedClause.isEmpty())
             continue;
 
         EmberGhostBand g;
@@ -185,8 +222,11 @@ inline std::vector<EmberGhostBand> parse(const juce::String& raw)
         g.hz = rule.hz;
         g.db = rule.db;
         g.q = rule.q;
-        if (invert && g.db > 0.0f)
-            g.db = -g.db;
+        const auto polarity = polarityForClause(matchedClause);
+        if (polarity == ClausePolarity::Cut)
+            g.db = -std::abs(g.db);
+        else if (polarity == ClausePolarity::Boost)
+            g.db = std::abs(g.db);
         out.push_back(g);
     }
     return out;

@@ -82,6 +82,52 @@ public:
             }
         }
 
+        beginTest("Keyword polarity is local to the matching clause");
+        {
+            auto expectGhost = [this](const std::vector<EmberGhostBand>& ghosts, float hz, float db)
+            {
+                for (const auto& g : ghosts)
+                    if (std::abs(g.hz - hz) < 0.5f)
+                    {
+                        expectWithinAbsoluteError(g.db, db, 0.01f);
+                        return;
+                    }
+                expect(false, "missing ghost @ " + juce::String(hz));
+            };
+
+            auto g = EmberPhrase::parse("more air, less harsh");
+            expectEquals((int) g.size(), 2);
+            expectGhost(g, 11200.0f,  2.4f);
+            expectGhost(g,  6500.0f, -2.8f);
+
+            g = EmberPhrase::parse("cut the mud, add air");
+            expectEquals((int) g.size(), 2);
+            expectGhost(g,   280.0f, -2.2f);
+            expectGhost(g, 11200.0f,  2.4f);
+
+            g = EmberPhrase::parse("less warm and more punch");
+            expectEquals((int) g.size(), 2);
+            expectGhost(g, 180.0f, -1.8f);
+            expectGhost(g,  95.0f,  1.7f);
+
+            g = EmberPhrase::parse("more clarity and less boxy");
+            expectEquals((int) g.size(), 2);
+            expectGhost(g, 3200.0f,  1.4f);
+            expectGhost(g,  280.0f, -2.2f);
+        }
+
+        beginTest("Absolute numeric parse keeps its existing signed-dB semantics");
+        {
+            auto g = EmberPhrase::parse("add a peak at 2khz with -4db gain and 2.5 q.");
+            expectEquals((int) g.size(), 1);
+            if (! g.empty())
+            {
+                expectWithinAbsoluteError(g[0].hz, 2000.0f, 0.5f);
+                expectWithinAbsoluteError(g[0].db, -4.0f, 0.01f);
+                expectWithinAbsoluteError(g[0].q, 2.50f, 0.01f);
+            }
+        }
+
         beginTest("T1-2 harness: exact phrase → setGhosts → getEffectiveGhosts → Apply → bands");
         {
             constexpr float kIntensity = 1.0f;
