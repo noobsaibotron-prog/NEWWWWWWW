@@ -1,6 +1,7 @@
 #pragma once
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <juce_audio_processors/juce_audio_processors.h>
+#include "../../Integration/EmberProposalProtocol.h"
 #include "EmberTokens.h"
 #include "EmberLookAndFeel.h"
 
@@ -8,6 +9,8 @@ class EmberOverflow : public juce::Component
 {
 public:
     std::function<void(bool)> onClimateChanged;
+    std::function<void(bool)> onCopilotLinkChanged;
+    std::function<void()> onCopilotPair;
     std::function<void()> onClose;
 
     EmberOverflow(juce::AudioProcessorValueTreeState& apvtsIn, EmberLookAndFeel& sharedLaf)
@@ -44,6 +47,43 @@ public:
         };
         addAndMakeVisible(climate);
 
+        copilotTitle.setText("COPILOT", juce::dontSendNotification);
+        copilotTitle.setFont(laf.getMetaFont());
+        copilotTitle.setColour(juce::Label::textColourId, EmberTokens::dim);
+        addAndMakeVisible(copilotTitle);
+
+        copilotLink.setButtonText("Link off");
+        copilotLink.setClickingTogglesState(true);
+        copilotLink.setColour(juce::ToggleButton::textColourId, EmberTokens::dim);
+        copilotLink.setTooltip("Allow this Ember Core instance to receive proposals from Ableton Copilot");
+        copilotLink.setComponentID("emberV2CopilotLink");
+        copilotLink.onClick = [this]
+        {
+            const bool on = copilotLink.getToggleState();
+            copilotLink.setButtonText(on ? "Link on" : "Link off");
+            if (onCopilotLinkChanged) onCopilotLinkChanged(on);
+        };
+        addAndMakeVisible(copilotLink);
+
+        copilotPair.setButtonText("Pair this instance");
+        copilotPair.setEnabled(false);
+        copilotPair.setTooltip("Pair Copilot with this exact Ember Core instance");
+        copilotPair.setComponentID("emberV2CopilotPair");
+        copilotPair.onClick = [this]
+        {
+            if (onCopilotPair) onCopilotPair();
+        };
+        addAndMakeVisible(copilotPair);
+
+        copilotStatus.setText("Link off", juce::dontSendNotification);
+        copilotStatus.setFont(laf.getMetaFont());
+        copilotStatus.setColour(juce::Label::textColourId, EmberTokens::mute);
+        copilotStatus.setJustificationType(juce::Justification::centredLeft);
+        copilotStatus.setMinimumHorizontalScale(0.75f);
+        copilotStatus.setInterceptsMouseClicks(false, false);
+        copilotStatus.setComponentID("emberV2CopilotStatus");
+        addAndMakeVisible(copilotStatus);
+
         close.setButtonText("Close");
         close.onClick = [this]{ setVisible(false); if (onClose) onClose(); };
         addAndMakeVisible(close);
@@ -53,6 +93,26 @@ public:
     ~EmberOverflow() override { setLookAndFeel(nullptr); }
 
     bool isClimateOn() const { return climate.getToggleState(); }
+
+    void setCopilotUi(const EmberProposal::LinkUiState& ui)
+    {
+        copilotLink.setToggleState(ui.linkEnabled, juce::dontSendNotification);
+        copilotLink.setButtonText(ui.linkEnabled ? "Link on" : "Link off");
+
+        const bool canPair = ui.linkEnabled && ui.authenticated
+                          && ! ui.paired && ! ui.pairOfferPending;
+        copilotPair.setEnabled(canPair);
+        copilotPair.setButtonText(ui.paired ? "Paired"
+                                  : (ui.pairOfferPending ? "Waiting for Copilot"
+                                                         : "Pair this instance"));
+        copilotStatus.setText(juce::String::fromUTF8(ui.statusText.c_str()),
+                              juce::dontSendNotification);
+        copilotStatus.setColour(juce::Label::textColourId,
+                                ! ui.pendingSource.empty() ? EmberTokens::intent
+                                : ui.paired ? EmberTokens::signal
+                                : ui.linkEnabled ? EmberTokens::dim
+                                                 : EmberTokens::mute);
+    }
 
     void paint(juce::Graphics& g) override
     {
@@ -70,14 +130,22 @@ public:
         phase.setBounds(r.removeFromTop(28));
         r.removeFromTop(12);
         climate.setBounds(r.removeFromTop(24));
+        r.removeFromTop(22);
+        copilotTitle.setBounds(r.removeFromTop(18));
+        r.removeFromTop(6);
+        copilotLink.setBounds(r.removeFromTop(24));
+        r.removeFromTop(6);
+        copilotPair.setBounds(r.removeFromTop(28));
+        r.removeFromTop(5);
+        copilotStatus.setBounds(r.removeFromTop(20));
         close.setBounds(r.removeFromBottom(28));
     }
 
 private:
     juce::AudioProcessorValueTreeState& apvts;
     EmberLookAndFeel& laf;
-    juce::Label title;
+    juce::Label title, copilotTitle, copilotStatus;
     juce::ComboBox phase;
-    juce::ToggleButton climate;
-    juce::TextButton close;
+    juce::ToggleButton climate, copilotLink;
+    juce::TextButton copilotPair, close;
 };

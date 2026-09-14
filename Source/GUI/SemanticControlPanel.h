@@ -82,6 +82,9 @@ public:
     std::function<void(bool /*alreadyStaged*/)> onExternalProposalInvalidated;
     std::function<void(EmberProposal::ReasonCode, std::string, std::string)> onExternalPlanResult;
     std::function<void(std::string)> onExternalApplied;
+    std::function<bool(const juce::String&,
+                       const AIEQPerceptual::SemanticPlan&,
+                       const std::string&)> onExternalPlanPreview;
 
     void setEmberLinkUi(const EmberProposal::LinkUiState& ui)
     {
@@ -117,6 +120,40 @@ public:
     [[nodiscard]] bool isPendingExternal() const
     {
         return pendingProposalSource.isNotEmpty();
+    }
+
+    void clearExternalPlanFromSpecchio()
+    {
+        if (! isPendingExternal())
+            return;
+
+        suppressExternalInvalidate = true;
+        invalidatePendingTextPlan();
+        suppressExternalInvalidate = false;
+        pendingProposalSource.clear();
+        commandInput.clear();
+        clearResponseStrip();
+    }
+
+    /** Apply the exact external plan currently held by the canonical Semantic
+        PLAN/APPLY state machine. The reviewed hash must still match, otherwise
+        the request fails closed without touching processor state. */
+    [[nodiscard]] bool applyExternalPlanFromSpecchio(
+        const std::string& reviewedPlanHash)
+    {
+        if (! isPendingExternal()
+            || planningUiState != AIEQPerceptual::SemanticPlanningUiState::Ready
+            || ! pendingTextPlan.has_value()
+            || pendingTextCommand != commandInput.getText().trim())
+            return false;
+
+        const auto currentHash = EmberProposal::makeAudit(
+            pendingTextPlan->interpretation).sha256Hex;
+        if (currentHash != reviewedPlanHash)
+            return false;
+
+        applyTextCommand();
+        return ! isPendingExternal();
     }
 
     // Supplies the current smoothed dB spectrum (analyzer format: numBins,
@@ -1015,6 +1052,20 @@ private:
         planStatus += intentMapSummarySuffix(map);
         publishIntentMap(std::move(map));
         setResponseStrip(ResponseChip::Ready, planStatus);
+        if (isPendingExternal() && onExternalPlanPreview)
+        {
+            const auto hash = EmberProposal::makeAudit(plan.interpretation).sha256Hex;
+            if (! onExternalPlanPreview(planningText, plan, hash))
+            {
+                setResponseStrip(ResponseChip::CantPlan,
+                                 "Plan could not be represented safely in Specchio");
+                notifyExternalPlannerOutcome(EmberProposal::ReasonCode::internal_error, plan);
+                suppressExternalInvalidate = true;
+                invalidatePendingTextPlan();
+                suppressExternalInvalidate = false;
+                return;
+            }
+        }
         notifyExternalPlannerOutcome(EmberProposal::ReasonCode::plan_staged, plan);
     }
 

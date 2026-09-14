@@ -14,6 +14,7 @@ public:
     std::function<void()> onMatchToggle;
     std::function<void(float)> onMatchAmount;
     std::function<void(float)> onIntensity;
+    std::function<void()> onRejectCopilot;
 
     EmberBar(EmberLookAndFeel& sharedLaf) : laf(sharedLaf)
     {
@@ -25,11 +26,14 @@ public:
         addAndMakeVisible(hint);
 
         editor.setMultiLine(false);
+        editor.setComponentID("emberV2PhraseInput");
         editor.setReturnKeyStartsNewLine(false);
         editor.setFont(laf.getVoiceFont());
         editor.setTextToShowWhenEmpty("air / warm / harsh / mud / punch / clear", EmberTokens::mute);
         editor.onTextChange = [this]
         {
+            if (suppressTextCallback)
+                return;
             if (onPhraseChanged)
                 onPhraseChanged(editor.getText());
             updateChips();
@@ -47,10 +51,30 @@ public:
         addChildComponent(intensity);
 
         apply.setButtonText("Apply");
+        apply.setComponentID("emberV2Apply");
         apply.setColour(juce::TextButton::buttonColourId, EmberTokens::intent);
         apply.setColour(juce::TextButton::textColourOffId, EmberTokens::bg);
         apply.onClick = [this]{ if (onApply) onApply(); };
         addChildComponent(apply);
+
+        copilotSource.setText("COPILOT", juce::dontSendNotification);
+        copilotSource.setComponentID("emberV2CopilotSource");
+        copilotSource.setFont(laf.getMetaFont());
+        copilotSource.setColour(juce::Label::textColourId, EmberTokens::signal);
+        copilotSource.setJustificationType(juce::Justification::centred);
+        copilotSource.setInterceptsMouseClicks(false, false);
+        addChildComponent(copilotSource);
+
+        rejectCopilot.setButtonText("X");
+        rejectCopilot.setColour(juce::TextButton::buttonColourId, EmberTokens::raised);
+        rejectCopilot.setColour(juce::TextButton::textColourOffId, EmberTokens::dim);
+        rejectCopilot.setTooltip("Reject this Copilot proposal");
+        rejectCopilot.setComponentID("emberV2CopilotReject");
+        rejectCopilot.onClick = [this]
+        {
+            if (onRejectCopilot) onRejectCopilot();
+        };
+        addChildComponent(rejectCopilot);
 
         match.setButtonText("MATCH");
         match.setColour(juce::TextButton::buttonColourId, EmberTokens::raised);
@@ -84,9 +108,13 @@ public:
         const bool frase = (s == EmberUiState::Frase || s == EmberUiState::Apply);
         const bool matchMode = (s == EmberUiState::Match);
         editor.setVisible(frase);
-        intensity.setVisible(frase);
-        apply.setVisible(frase && s != EmberUiState::Apply);
-        match.setVisible(frase || matchMode || s == EmberUiState::Riposo || s == EmberUiState::Nodo);
+        intensity.setVisible(frase && ! copilotMode);
+        apply.setVisible(frase && s != EmberUiState::Apply
+                         && (! copilotMode || copilotReady));
+        copilotSource.setVisible(frase && copilotMode);
+        rejectCopilot.setVisible(frase && copilotMode && s != EmberUiState::Apply);
+        match.setVisible(matchMode || s == EmberUiState::Riposo || s == EmberUiState::Nodo
+                         || (frase && ! copilotMode));
         matchAmt.setVisible(matchMode);
         hint.setVisible(s == EmberUiState::Riposo || s == EmberUiState::Nodo);
         updateChips();
@@ -117,6 +145,38 @@ public:
         editor.clear();
         updateChips();
     }
+
+    void setCopilotProposal(const juce::String& phrase,
+                            std::vector<EmberGhostBand> ghosts,
+                            bool ready)
+    {
+        copilotMode = true;
+        copilotReady = ready;
+        copilotGhosts = std::move(ghosts);
+        editor.setReadOnly(true);
+        suppressTextCallback = true;
+        editor.setText(phrase, false);
+        suppressTextCallback = false;
+        copilotSource.setText(ready ? "COPILOT" : "COPILOT  PLANNING",
+                              juce::dontSendNotification);
+        updateChips();
+        setUiState(state);
+    }
+
+    void clearCopilotProposal()
+    {
+        copilotMode = false;
+        copilotReady = false;
+        copilotGhosts.clear();
+        editor.setReadOnly(false);
+        suppressTextCallback = true;
+        editor.clear();
+        suppressTextCallback = false;
+        updateChips();
+        setUiState(state);
+    }
+
+    [[nodiscard]] bool isCopilotProposal() const noexcept { return copilotMode; }
 
     void mouseDown(const juce::MouseEvent&) override
     {
@@ -165,7 +225,13 @@ public:
             return;
         }
         // FRASE / APPLY
-        editor.setBounds(r.removeFromLeft(juce::jmin(320, r.getWidth() / 2)));
+        if (copilotMode)
+        {
+            copilotSource.setBounds(r.removeFromLeft(118));
+            r.removeFromLeft(6);
+        }
+        editor.setBounds(r.removeFromLeft(juce::jmin(copilotMode ? 300 : 320,
+                                                    r.getWidth() / 2)));
         r.removeFromLeft(8);
         for (int i = 0; i < 2; ++i)
         {
@@ -175,17 +241,26 @@ public:
                 r.removeFromLeft(4);
             }
         }
-        intensity.setBounds(r.removeFromLeft(100));
-        r.removeFromLeft(8);
+        if (! copilotMode)
+        {
+            intensity.setBounds(r.removeFromLeft(100));
+            r.removeFromLeft(8);
+        }
         apply.setBounds(r.removeFromLeft(64));
         r.removeFromLeft(8);
+        if (copilotMode)
+        {
+            rejectCopilot.setBounds(r.removeFromLeft(30));
+            r.removeFromLeft(8);
+        }
         match.setBounds(r.removeFromLeft(64));
     }
 
 private:
     void updateChips()
     {
-        auto ghosts = EmberPhrase::parse(editor.getText());
+        const auto ghosts = copilotMode ? copilotGhosts
+                                        : EmberPhrase::parse(editor.getText());
         for (int i = 0; i < 2; ++i)
         {
             if (i < (int) ghosts.size() && (state == EmberUiState::Frase || state == EmberUiState::Apply))
@@ -203,10 +278,14 @@ private:
 
     EmberLookAndFeel& laf;
     EmberUiState state { EmberUiState::Riposo };
-    juce::Label hint;
+    juce::Label hint, copilotSource;
     juce::TextEditor editor;
     juce::Slider intensity, matchAmt;
-    juce::TextButton apply, match;
+    juce::TextButton apply, match, rejectCopilot;
     juce::Label chips[2];
     float visualPresence = 1.0f;
+    bool copilotMode = false;
+    bool copilotReady = false;
+    bool suppressTextCallback = false;
+    std::vector<EmberGhostBand> copilotGhosts;
 };

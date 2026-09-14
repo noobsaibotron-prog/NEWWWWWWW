@@ -1,6 +1,7 @@
 #pragma once
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <juce_audio_processors/juce_audio_processors.h>
+#include "../../Integration/EmberProposalProtocol.h"
 #include "EmberTokens.h"
 #include "EmberLookAndFeel.h"
 
@@ -51,7 +52,17 @@ public:
         addAndMakeVisible(badge);
         updateBadge();
 
+        copilot.setText("COPILOT", juce::dontSendNotification);
+        copilot.setComponentID("emberV2CopilotHeaderStatus");
+        copilot.setFont(laf.getMetaFont());
+        copilot.setColour(juce::Label::textColourId, EmberTokens::mute);
+        copilot.setJustificationType(juce::Justification::centredLeft);
+        copilot.setInterceptsMouseClicks(false, false);
+        copilot.setTooltip("Ableton Copilot connection status");
+        addAndMakeVisible(copilot);
+
         menu.setButtonText(juce::String::fromUTF8("\xE2\x98\xB0")); // ☰
+        menu.setComponentID("emberV2Menu");
         menu.setColour(juce::TextButton::buttonColourId, juce::Colours::transparentBlack);
         menu.setColour(juce::TextButton::textColourOffId, EmberTokens::dim);
         menu.onClick = [this]{ if (onMenu) onMenu(); };
@@ -61,6 +72,16 @@ public:
     ~EmberHeader() override { setLookAndFeel(nullptr); }
 
     void setPresetName(const juce::String& name) { preset.setText(name, juce::dontSendNotification); }
+
+    void setCopilotUi(const EmberProposal::LinkUiState& ui)
+    {
+        copilotUi = ui;
+        copilot.setColour(juce::Label::textColourId,
+                          ui.paired ? EmberTokens::signal
+                                    : (ui.linkEnabled ? EmberTokens::dim : EmberTokens::mute));
+        copilot.setTooltip(juce::String::fromUTF8(ui.statusText.c_str()));
+        repaint(copilot.getBounds().expanded(2));
+    }
 
     void updateBadge()
     {
@@ -87,6 +108,13 @@ public:
         g.fillEllipse(10.0f, (float) getHeight() * 0.5f - 5.0f, 10.0f, 10.0f);
         g.setColour(EmberTokens::hairline);
         g.fillRect(0, getHeight() - 1, getWidth(), 1);
+
+        const auto dot = copilot.getBounds().toFloat();
+        g.setColour(! copilotUi.pendingSource.empty() ? EmberTokens::intent
+                    : copilotUi.paired ? EmberTokens::signal
+                    : copilotUi.linkEnabled ? EmberTokens::dim
+                                            : EmberTokens::mute);
+        g.fillEllipse(dot.getX() - 8.0f, dot.getCentreY() - 2.5f, 5.0f, 5.0f);
     }
 
     void resized() override
@@ -96,6 +124,7 @@ public:
         wordmark.setBounds(r.removeFromLeft(120));
         preset.setBounds(r.removeFromLeft(100));
         menu.setBounds(r.removeFromRight(28));
+        copilot.setBounds(r.removeFromRight(82).withTrimmedLeft(11));
         badge.setBounds(r.removeFromRight(64));
         bypass.setBounds(r.removeFromRight(72));
         btnB.setBounds(r.removeFromRight(28));
@@ -105,8 +134,9 @@ public:
 private:
     juce::AudioProcessorValueTreeState& apvts;
     EmberLookAndFeel& laf;
-    juce::Label wordmark, preset, badge;
+    juce::Label wordmark, preset, badge, copilot;
     juce::TextButton btnA { "A" }, btnB { "B" }, menu;
     juce::ToggleButton bypass;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> bypassAtt;
+    EmberProposal::LinkUiState copilotUi;
 };

@@ -209,14 +209,28 @@ AIEqualizerAudioProcessorEditor::AIEqualizerAudioProcessorEditor(AIEqualizerAudi
     };
     semanticPanel->onExternalProposalInvalidated = [this](bool alreadyStaged)
     {
+        if (emberShell)
+            emberShell->failCopilotProposal();
         processor.noteExternalProposalInvalidated(alreadyStaged);
+    };
+    semanticPanel->onExternalPlanPreview = [this](
+        const juce::String& phrase,
+        const AIEQPerceptual::SemanticPlan& plan,
+        const std::string& planHash)
+    {
+        return emberShell != nullptr
+            && emberShell->stageCopilotPlan(phrase, plan, planHash);
     };
     semanticPanel->onExternalPlanResult = [this](EmberProposal::ReasonCode reason,
                                                  std::string summary,
                                                  std::string planHash)
     {
         processor.handleEmberExternalPlanResult(reason, summary, planHash);
+        if (reason != EmberProposal::ReasonCode::plan_staged && emberShell)
+            emberShell->failCopilotProposal();
         semanticPanel->setEmberLinkUi(processor.getEmberLinkUiState());
+        if (emberShell)
+            emberShell->setCopilotUi(processor.getEmberLinkUiState());
     };
     semanticPanel->onExternalApplied = [this](std::string planHash)
     {
@@ -225,6 +239,8 @@ AIEqualizerAudioProcessorEditor::AIEqualizerAudioProcessorEditor(AIEqualizerAudi
     };
     processor.setEmberStageHandler([this](std::string phrase, float intensity)
     {
+        if (emberShell)
+            emberShell->beginCopilotProposal(juce::String::fromUTF8(phrase.c_str()));
         if (semanticPanel)
             semanticPanel->stageExternalCommand(
                 juce::String::fromUTF8(phrase.c_str()), intensity);
@@ -233,6 +249,8 @@ AIEqualizerAudioProcessorEditor::AIEqualizerAudioProcessorEditor(AIEqualizerAudi
     {
         if (semanticPanel)
             semanticPanel->setEmberLinkUi(ui);
+        if (emberShell)
+            emberShell->setCopilotUi(ui);
     });
     processor.noteEmberEditorOpen(true);
     semanticPanel->setEmberLinkUi(processor.getEmberLinkUiState());
@@ -380,6 +398,46 @@ void AIEqualizerAudioProcessorEditor::activateEmberV2()
 {
     emberV2Active = true;
     emberShell = std::make_unique<EmberV2Shell>(processor, spectrumPipeline.get());
+    emberShell->onCopilotLinkChanged = [this](bool enabled)
+    {
+        if (! enabled && semanticPanel)
+            semanticPanel->clearExternalPlanFromSpecchio();
+        processor.setEmberLinkEnabled(enabled);
+        const auto ui = processor.getEmberLinkUiState();
+        emberShell->setCopilotUi(ui);
+        if (semanticPanel)
+            semanticPanel->setEmberLinkUi(ui);
+    };
+    emberShell->onCopilotPair = [this]
+    {
+        processor.requestEmberPairOffer();
+        const auto ui = processor.getEmberLinkUiState();
+        emberShell->setCopilotUi(ui);
+        if (semanticPanel)
+            semanticPanel->setEmberLinkUi(ui);
+    };
+    emberShell->onCopilotProposalRejected = [this]
+    {
+        processor.notifyEmberUserRejected();
+        if (semanticPanel)
+            semanticPanel->clearExternalPlanFromSpecchio();
+        const auto ui = processor.getEmberLinkUiState();
+        emberShell->setCopilotUi(ui);
+        if (semanticPanel)
+            semanticPanel->setEmberLinkUi(ui);
+    };
+    emberShell->onCopilotProposalApply = [this](const std::string& planHash)
+    {
+        if (! semanticPanel
+            || ! semanticPanel->applyExternalPlanFromSpecchio(planHash))
+            return false;
+
+        const auto ui = processor.getEmberLinkUiState();
+        emberShell->setCopilotUi(ui);
+        semanticPanel->setEmberLinkUi(ui);
+        return true;
+    };
+    emberShell->setCopilotUi(processor.getEmberLinkUiState());
     addAndMakeVisible(*emberShell);
     hideLegacyGoldUi();
     emberShell->setVisible(true);

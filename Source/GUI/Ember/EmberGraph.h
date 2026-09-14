@@ -18,6 +18,7 @@ public:
 
     std::function<void(int)> onBandSelected; // -1 = deselect
     std::function<void()> onRequestRepaint;
+    std::function<void()> onBandEdited;
 
     EmberGraph(AIEqualizerAudioProcessor& p, EmberLookAndFeel& sharedLaf)
         : processor(p), laf(sharedLaf)
@@ -273,6 +274,8 @@ private:
     {
         if (band < 0 || band >= AIEqualizerAudioProcessor::maxBands)
             return;
+        if (onBandEdited)
+            onBandEdited();
         auto st = processor.getBandState(band);
         if (setF) st.frequency = freq;
         if (setG) st.gain = gain;
@@ -285,6 +288,8 @@ private:
 
     void addPeakAt(float hz, float db)
     {
+        if (onBandEdited)
+            onBandEdited();
         const int n = processor.getNumActiveBands();
         int slot = -1;
         for (int i = 0; i < AIEqualizerAudioProcessor::maxBands; ++i)
