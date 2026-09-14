@@ -8,19 +8,53 @@
 namespace EmberPhrase
 {
 
+/** Lower-case words of a phrase. ASCII letters and digits belong to a word. An apostrophe (ASCII ' or
+    U+2019) between two word characters stays in the word, normalised to ': "vocal's" and "vocal’s" are one
+    word. Every other character (space, punctuation, brackets, quotes, an apostrophe at a word edge, any other
+    non-ASCII code point) is a boundary, whatever the locale. The vocabulary below is ASCII English. */
+inline juce::StringArray words(const juce::String& text)
+{
+    const auto isWordChar = [](juce::juce_wchar c)
+    {
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9');
+    };
+
+    juce::StringArray out;
+    juce::String current;
+    for (auto p = text.getCharPointer(); ! p.isEmpty(); ++p)
+    {
+        const juce::juce_wchar c = *p;
+        if (isWordChar(c))
+        {
+            current += juce::CharacterFunctions::toLowerCase(c);
+            continue;
+        }
+
+        auto next = p;
+        ++next;
+        const bool apostrophe = c == '\'' || c == (juce::juce_wchar) 0x2019;
+        if (apostrophe && current.isNotEmpty() && ! next.isEmpty() && isWordChar(*next))
+        {
+            current += "'";
+            continue;
+        }
+
+        if (current.isNotEmpty())
+        {
+            out.add(current);
+            current.clear();
+        }
+    }
+    if (current.isNotEmpty())
+        out.add(current);
+    return out;
+}
+
+/** Whole-word match against an explicit vocabulary: "muddy" hits because it is listed, "hair" never hits "air". */
 inline bool tokenHit(const juce::String& text, const juce::StringArray& keys)
 {
-    auto words = juce::StringArray::fromTokens(text, " \t\n\r,.;:!?/+-", "");
-    for (auto& w : words)
-    {
-        w = w.trim().toLowerCase();
-        for (const auto& k : keys)
-            if (w.contains(k) || w == k)
-                return true;
-    }
-    // also allow substring match on full phrase for short stems
-    for (const auto& k : keys)
-        if (text.contains(k))
+    for (const auto& w : words(text))
+        if (keys.contains(w))
             return true;
     return false;
 }
@@ -168,10 +202,8 @@ inline std::vector<EmberGhostBand> parse(const juce::String& raw)
 
     auto polarityForClause = [](const juce::String& clause)
     {
-        const auto words = juce::StringArray::fromTokens(clause, " \t\n\r,.;:!?/+-", "");
-        for (auto w : words)
+        for (const auto& w : words(clause))
         {
-            w = w.trim().toLowerCase();
             if (w == "less" || w == "cut" || w == "tame")
                 return ClausePolarity::Cut;
             if (w == "more" || w == "add" || w == "boost")
@@ -191,12 +223,20 @@ inline std::vector<EmberGhostBand> parse(const juce::String& raw)
     };
 
     const Rule rules[] = {
-        { juce::StringArray{ "air", "bright", "open", "sparkle" }, "air+", 3, 11200.f,  2.4f, 0.85f },
-        { juce::StringArray{ "warm", "warmer", "body", "round" },  "warmth+", 1, 180.f, 1.8f, 0.72f },
-        { juce::StringArray{ "harsh", "sibil", "essy", "pierc" },  "harsh-", 2, 6500.f, -2.8f, 1.35f },
-        { juce::StringArray{ "mud", "boxy", "box" },               "mud-", 2, 280.f, -2.2f, 1.10f },
-        { juce::StringArray{ "punch", "thump", "attack" },         "punch+", 2, 95.f, 1.7f, 0.90f },
-        { juce::StringArray{ "clear", "clarity", "presence" },     "clear+", 2, 3200.f, 1.4f, 0.95f },
+        // Explicit vocabulary, whole words only, no roots: a word that merely starts with or contains
+        // a key (hair, airport, mudguard, brighton, pierce, messy, clearly) never fires.
+        { juce::StringArray{ "air", "airy", "airier", "airiest", "airiness",
+                             "bright", "brighter", "brightest", "brightness", "brighten",
+                             "open", "openness", "sparkle", "sparkly", "sparkling" },        "air+",    3, 11200.f,  2.4f, 0.85f },
+        { juce::StringArray{ "warm", "warmer", "warmest", "warmth", "warming",
+                             "body", "bodied", "round", "rounder", "rounded", "roundness" }, "warmth+", 1,   180.f,  1.8f, 0.72f },
+        { juce::StringArray{ "harsh", "harsher", "harshest", "harshness",
+                             "sibilance", "sibilant", "sibilants", "essy", "piercing" },     "harsh-",  2,  6500.f, -2.8f, 1.35f },
+        { juce::StringArray{ "mud", "muddy", "muddier", "muddiest", "muddiness",
+                             "box", "boxy", "boxier", "boxiness" },                          "mud-",    2,   280.f, -2.2f, 1.10f },
+        { juce::StringArray{ "punch", "punches", "punchy", "punchier", "punchiest", "punchiness",
+                             "thump", "thumpy", "thumping", "attack" },                      "punch+",  2,    95.f,  1.7f, 0.90f },
+        { juce::StringArray{ "clear", "clearer", "clearest", "clarity", "presence" },        "clear+",  2,  3200.f,  1.4f, 0.95f },
     };
 
     std::vector<EmberGhostBand> out;
