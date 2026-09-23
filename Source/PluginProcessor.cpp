@@ -4415,6 +4415,22 @@ bool AIEqualizerAudioProcessor::applySmoothedBandParams(int blockSamples, bool p
 
     previousSmoothedBandBlockSamples = blockSamples;
 
+    // Bands past the effective count are silent. The loop above only reaches
+    // bands below it, so a band that falls out of the count when the host
+    // lowers "Number of Bands" (undo, automation) is switched off here, as
+    // setNumActiveBands() does for the direct call. Atomic stores only.
+    if (paramsChanged)
+    {
+        for (int i = availableBands; i < eqProcessor.getNumBands(); ++i)
+            eqProcessor.setBandEnabled(i, false);
+        for (int i = availableBands; i < eqProcessorHQ.getNumBands(); ++i)
+            eqProcessorHQ.setBandEnabled(i, false);
+        for (int i = availableBands; i < eqProcessorMid.getNumBands(); ++i)
+            eqProcessorMid.setBandEnabled(i, false);
+        for (int i = availableBands; i < eqProcessorSide.getNumBands(); ++i)
+            eqProcessorSide.setBandEnabled(i, false);
+    }
+
     // When an AI correction finishes, restore the authority maxima used for
     // direct user/host automation. Current values are never reset.
     if (correctionSmoothingActive.load(std::memory_order_relaxed))

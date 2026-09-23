@@ -1534,6 +1534,7 @@ if(HAVE_JUCE)
         Source/Tests/EmberOverflowCloseTest.cpp
         Source/Tests/EmberCopilotUiTest.cpp
         Source/Tests/EmberPhraseCommitsOnlyOnApplyTest.cpp
+        Source/Tests/HostBandCountShrinkTest.cpp
         Source/Tests/EmberProposalProtocolTest.cpp
         Source/Tests/ExternalSemanticProposalTest.cpp
         Source/Tests/EmberProposalLifecycleTest.cpp
