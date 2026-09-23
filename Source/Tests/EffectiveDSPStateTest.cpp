@@ -8,6 +8,7 @@
 #include <array>
 #include <cstring>
 #include <cmath>
+#include <memory>
 #include <type_traits>
 #include <vector>
 
@@ -120,10 +121,14 @@ public:
         juce::MessageManager::getInstance();
         constexpr double kSr = 48000.0;
         constexpr int kBlock = 512;
+        // Each Processor is ~800 KB. Debug builds give every block-scoped local its
+        // own stack slot, so ten of them in this one frame overflow the 8 MB
+        // main-thread stack. Keep them on the heap.
 
         beginTest ("1. payload is trivially copyable");
         {
-            Processor proc;
+            auto procOwner = std::make_unique<Processor>();
+            auto& proc = *procOwner;
             proc.prepareToPlay (kSr, kBlock);
             pumpAudio (proc);
             const auto a = proc.snapshotCommittedEffectiveDSPState();
@@ -139,7 +144,8 @@ public:
 
         beginTest ("2. selector A keeps effective count equal to committed");
         {
-            Processor proc;
+            auto procOwner = std::make_unique<Processor>();
+            auto& proc = *procOwner;
             proc.prepareToPlay (kSr, kBlock);
             pumpAudio (proc);
             expect (proc.getEffectiveDSPSource()
@@ -164,7 +170,8 @@ public:
 
         beginTest ("3. committed snapshot matches getBandState after a block");
         {
-            Processor proc;
+            auto procOwner = std::make_unique<Processor>();
+            auto& proc = *procOwner;
             proc.prepareToPlay (kSr, kBlock);
             aieq::test::setFloat (*this, proc.getAPVTS(), "band0Gain", 3.5f);
             aieq::test::setFloat (*this, proc.getAPVTS(), "band1Freq", 250.0f);
@@ -193,7 +200,8 @@ public:
 
         beginTest ("4. projected snapshot fills B without mutating APVTS");
         {
-            Processor proc;
+            auto procOwner = std::make_unique<Processor>();
+            auto& proc = *procOwner;
             proc.prepareToPlay (kSr, kBlock);
             restoreFactoryFreeHighSlots (*this, proc);
             pumpAudio (proc);
@@ -233,7 +241,8 @@ public:
 
         beginTest ("5. post-apply committed payload matches pre-apply projected B");
         {
-            Processor proc;
+            auto procOwner = std::make_unique<Processor>();
+            auto& proc = *procOwner;
             proc.prepareToPlay (kSr, kBlock);
             restoreFactoryFreeHighSlots (*this, proc);
             pumpAudio (proc);
@@ -263,7 +272,8 @@ public:
 
         beginTest ("6. epochs: band params bump projection base, mix params bump context");
         {
-            Processor proc;
+            auto procOwner = std::make_unique<Processor>();
+            auto& proc = *procOwner;
             proc.prepareToPlay (kSr, kBlock);
             pumpAudio (proc);
 
@@ -299,7 +309,8 @@ public:
 
         beginTest ("7. old projection is stale after a later band edit");
         {
-            Processor proc;
+            auto procOwner = std::make_unique<Processor>();
+            auto& proc = *procOwner;
             proc.prepareToPlay (kSr, kBlock);
             restoreFactoryFreeHighSlots (*this, proc);
             pumpAudio (proc);
@@ -329,7 +340,8 @@ public:
 
         beginTest ("8. two plans against the same A get distinct previewGeneration");
         {
-            Processor proc;
+            auto procOwner = std::make_unique<Processor>();
+            auto& proc = *procOwner;
             proc.prepareToPlay (kSr, kBlock);
             restoreFactoryFreeHighSlots (*this, proc);
             pumpAudio (proc);
@@ -352,7 +364,8 @@ public:
 
         beginTest ("9. dynEq mix/makeup and prepareToPlay bump audition context");
         {
-            Processor proc;
+            auto procOwner = std::make_unique<Processor>();
+            auto& proc = *procOwner;
             proc.prepareToPlay (kSr, kBlock);
             pumpAudio (proc);
 
@@ -378,7 +391,8 @@ public:
 
         beginTest ("10. mix listeners stay epoch-only and do not republish the EQ");
         {
-            Processor proc;
+            auto procOwner = std::make_unique<Processor>();
+            auto& proc = *procOwner;
             proc.prepareToPlay (kSr, kBlock);
             pumpAudio (proc);
             pumpAudio (proc);

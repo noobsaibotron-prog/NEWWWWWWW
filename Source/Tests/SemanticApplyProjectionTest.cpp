@@ -5,6 +5,7 @@
 #include "Support/TestParameters.h"
 
 #include <cmath>
+#include <memory>
 #include <vector>
 
 namespace
@@ -83,10 +84,14 @@ public:
         juce::MessageManager::getInstance();
         constexpr double kSr = 48000.0;
         constexpr int kBlock = 512;
+        // Each Processor is ~800 KB. Debug builds give every block-scoped local its
+        // own stack slot, so ten of them in this one frame overflow the 8 MB
+        // main-thread stack. Keep them on the heap.
 
         beginTest ("1. single adjustment on a free slot");
         {
-            Processor proc;
+            auto procOwner = std::make_unique<Processor>();
+            auto& proc = *procOwner;
             proc.prepareToPlay (kSr, kBlock);
             restoreFactoryFreeHighSlots (*this, proc);
             const auto adj = std::vector<Adjustment> {
@@ -98,7 +103,8 @@ public:
 
         beginTest ("2. multiple adjustments of the same quality/ordinal sequence");
         {
-            Processor proc;
+            auto procOwner = std::make_unique<Processor>();
+            auto& proc = *procOwner;
             proc.prepareToPlay (kSr, kBlock);
             restoreFactoryFreeHighSlots (*this, proc);
             const auto adj = std::vector<Adjustment> {
@@ -115,7 +121,8 @@ public:
 
         beginTest ("3. plan that grows the committed active-band count");
         {
-            Processor proc;
+            auto procOwner = std::make_unique<Processor>();
+            auto& proc = *procOwner;
             proc.prepareToPlay (kSr, kBlock);
             restoreFactoryFreeHighSlots (*this, proc);
             const int beforeCount = apvtsActiveBandCount (proc);
@@ -135,7 +142,8 @@ public:
 
         beginTest ("4. full capacity atomically rejects RequireCompletePlan");
         {
-            Processor proc;
+            auto procOwner = std::make_unique<Processor>();
+            auto& proc = *procOwner;
             proc.prepareToPlay (kSr, kBlock);
             occupyEverySlot (proc);
             const auto beforeHistory = proc.getUndoStackSize();
@@ -168,7 +176,8 @@ public:
 
         beginTest ("5. existing Semantic slot is reused");
         {
-            Processor proc;
+            auto procOwner = std::make_unique<Processor>();
+            auto& proc = *procOwner;
             proc.prepareToPlay (kSr, kBlock);
             restoreFactoryFreeHighSlots (*this, proc);
             const auto adj = std::vector<Adjustment> {
@@ -189,7 +198,8 @@ public:
 
         beginTest ("6. obsolete Semantic slot restores the original snapshot");
         {
-            Processor proc;
+            auto procOwner = std::make_unique<Processor>();
+            auto& proc = *procOwner;
             proc.prepareToPlay (kSr, kBlock);
             restoreFactoryFreeHighSlots (*this, proc);
             std::array<Processor::BandState, Processor::maxBands> original {};
@@ -222,7 +232,8 @@ public:
 
         beginTest ("7. manual takeover is preserved");
         {
-            Processor proc;
+            auto procOwner = std::make_unique<Processor>();
+            auto& proc = *procOwner;
             proc.prepareToPlay (kSr, kBlock);
             restoreFactoryFreeHighSlots (*this, proc);
             const auto air = std::vector<Adjustment> {
@@ -248,7 +259,8 @@ public:
 
         beginTest ("8. empty/reset plan restores active-band count");
         {
-            Processor proc;
+            auto procOwner = std::make_unique<Processor>();
+            auto& proc = *procOwner;
             proc.prepareToPlay (kSr, kBlock);
             restoreFactoryFreeHighSlots (*this, proc);
             pumpAudio (proc);
@@ -274,7 +286,8 @@ public:
 
         beginTest ("9. previously Dynamic band becomes Semantic static");
         {
-            Processor proc;
+            auto procOwner = std::make_unique<Processor>();
+            auto& proc = *procOwner;
             proc.prepareToPlay (kSr, kBlock);
             restoreFactoryFreeHighSlots (*this, proc);
             aieq::test::setChoice (*this, proc.getAPVTS(), "band23DynMode", 1);
@@ -297,7 +310,8 @@ public:
 
         beginTest ("10. invalid quality stays unresolved and rejects complete plans");
         {
-            Processor proc;
+            auto procOwner = std::make_unique<Processor>();
+            auto& proc = *procOwner;
             proc.prepareToPlay (kSr, kBlock);
             auto invalid = makeAdj (Quality::Air, 1000.0f, 0.5f);
             invalid.sourceQuality = static_cast<Quality> (-1);
