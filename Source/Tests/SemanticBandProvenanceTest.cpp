@@ -8,6 +8,7 @@
 #include "../GUI/BandControlPanel.h"
 #include "Support/TestParameters.h"
 
+#include <memory>
 #include <vector>
 
 namespace
@@ -60,9 +61,14 @@ public:
         constexpr double kSr = 48000.0;
         constexpr int kBlock = 512;
 
+        // Each Processor is ~800 KB. Debug builds give every block-scoped local its
+        // own stack slot, so nine of them made this frame 7.4 MB of the 8 MB
+        // main-thread stack. Keep them on the heap.
+
         beginTest ("fresh processor claims no Semantic-managed slots");
         {
-            Processor proc;
+            auto procOwner = std::make_unique<Processor>();
+            auto& proc = *procOwner;
             proc.prepareToPlay (kSr, kBlock);
             expectEquals (countManaged (proc), 0);
             expect (! proc.isSemanticManagedBand (-1));
@@ -71,7 +77,8 @@ public:
 
         beginTest ("successful APPLY marks only the written slots");
         {
-            Processor proc;
+            auto procOwner = std::make_unique<Processor>();
+            auto& proc = *procOwner;
             proc.prepareToPlay (kSr, kBlock);
             restoreFactoryFreeHighSlots (*this, proc);
             const auto result = proc.applySemanticAdjustments (
@@ -89,7 +96,8 @@ public:
 
         beginTest ("in-tolerance drift keeps provenance; material edit clears it");
         {
-            Processor proc;
+            auto procOwner = std::make_unique<Processor>();
+            auto& proc = *procOwner;
             proc.prepareToPlay (kSr, kBlock);
             restoreFactoryFreeHighSlots (*this, proc);
             const auto result = proc.applySemanticAdjustments (
@@ -113,7 +121,8 @@ public:
 
         beginTest ("graph geometry edits also drop provenance");
         {
-            Processor proc;
+            auto procOwner = std::make_unique<Processor>();
+            auto& proc = *procOwner;
             proc.prepareToPlay (kSr, kBlock);
             restoreFactoryFreeHighSlots (*this, proc);
             const auto result = proc.applySemanticAdjustments (
@@ -129,7 +138,8 @@ public:
 
         beginTest ("undo of APPLY drops provenance; redo restores matching bands");
         {
-            Processor proc;
+            auto procOwner = std::make_unique<Processor>();
+            auto& proc = *procOwner;
             proc.prepareToPlay (kSr, kBlock);
             restoreFactoryFreeHighSlots (*this, proc);
             const auto result = proc.applySemanticAdjustments (
@@ -151,7 +161,8 @@ public:
 
         beginTest ("A/B switch fail-closes on the loaded slot and returns on the applied one");
         {
-            Processor proc;
+            auto procOwner = std::make_unique<Processor>();
+            auto& proc = *procOwner;
             proc.prepareToPlay (kSr, kBlock);
             restoreFactoryFreeHighSlots (*this, proc);
             const auto result = proc.applySemanticAdjustments (
@@ -172,7 +183,8 @@ public:
 
         beginTest ("preset restore never reconstructs a Semantic-managed claim");
         {
-            Processor proc;
+            auto procOwner = std::make_unique<Processor>();
+            auto& proc = *procOwner;
             proc.prepareToPlay (kSr, kBlock);
             restoreFactoryFreeHighSlots (*this, proc);
             const auto result = proc.applySemanticAdjustments (
@@ -192,7 +204,8 @@ public:
 
         beginTest ("atomic reject does not mint provenance");
         {
-            Processor proc;
+            auto procOwner = std::make_unique<Processor>();
+            auto& proc = *procOwner;
             proc.prepareToPlay (kSr, kBlock);
             for (int i = 0; i < Processor::maxBands; ++i)
             {
@@ -210,7 +223,8 @@ public:
 
         beginTest ("inspector label follows the editor query through APPLY, edit, and restore");
         {
-            Processor proc;
+            auto procOwner = std::make_unique<Processor>();
+            auto& proc = *procOwner;
             proc.prepareToPlay (kSr, kBlock);
             restoreFactoryFreeHighSlots (*this, proc);
 
