@@ -1531,6 +1531,7 @@ if(HAVE_JUCE)
         Source/Tests/SemanticProtectedRangeGestureTest.cpp
         Source/Tests/EmberPhraseParserTest.cpp
         Source/Tests/EmberApplyAddTest.cpp
+        Source/Tests/EmberApplyHostWritesTest.cpp
         Source/Tests/EmberOverflowCloseTest.cpp
         Source/Tests/EmberCopilotUiTest.cpp
         Source/Tests/EmberPhraseCommitsOnlyOnApplyTest.cpp

@@ -312,7 +312,14 @@ private:
         else
         {
             // Local phrases keep their established additive slot policy.
-            const auto result = EmberApply::commitGhosts(processor, pendingGhosts);
+            // EMBER_APPLY_COUNT_DEFER_MS (Live undo experiment) writes the
+            // count as a separate host step; unset keeps the immediate write.
+            const int countDeferMs = EmberApply::countDeferMsFromEnvironment();
+            const auto result = EmberApply::commitGhosts(processor, pendingGhosts,
+                countDeferMs >= 0 ? EmberApply::CountWrite::Deferred
+                                  : EmberApply::CountWrite::Immediate);
+            if (result.countPending)
+                EmberApply::scheduleLiveCountFlush(processor, countDeferMs);
 
             if (! pendingGhosts.empty() && ! result.committed)
             {

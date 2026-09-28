@@ -32,7 +32,7 @@ enum class LoadKind
     if (version.isInt())
         exactVersion = static_cast<int>(version);
     else if (version.isInt64())
-        exactVersion = static_cast<int64_t>(version);
+        exactVersion = static_cast<juce::int64>(version);
     else if (version.isString()
              && version.toString() == juce::String(currentVersion))
         exactVersion = currentVersion;

@@ -385,6 +385,12 @@ public:
     
     [[nodiscard]] int getNumActiveBands() const noexcept { return numActiveBands.load(std::memory_order_relaxed); }
     void setNumActiveBands(int n) noexcept;
+
+    /** SPECCHIO Apply with a deferred count (EmberApplyCommit.h): the count the
+        written bands need, and the host count it grew from. Message thread only;
+        count 0 = nothing pending. Lives here because it must outlive the editor. */
+    struct PendingLiveCount { int count = 0; int basedOn = 0; };
+    PendingLiveCount& emberPendingLiveCount() noexcept { return pendingEmberLiveCount; }
     void markParametersChanged() noexcept
     {
         parameterChangeCounter.fetch_add(1, std::memory_order_relaxed);
@@ -1364,6 +1370,7 @@ private:
     
     // Active bands count
     std::atomic<int> numActiveBands { 8 };
+    PendingLiveCount pendingEmberLiveCount;
     // VPA-1.1: DSP publish path reads this, not numActiveBands, so preview B
     // can grow the audible band count without writing committed APVTS.
     // Selector stays CommittedA; the two atomics are kept equal.
