@@ -1037,6 +1037,13 @@ if(TARGET AIEqualizerPro)
                 JUCE_DISPLAY_SPLASH_SCREEN=0
         )
 
+        # DIAG branch only: the Apply/Undo trace stamps every log with this
+        # value. Pass -DEMBER_DIAG_SHA=<candidate sha>+<diag sha> at configure.
+        set(EMBER_DIAG_SHA "unknown" CACHE STRING "Source identity written in the Apply/Undo trace header")
+        target_compile_definitions(AIEqualizerPro PUBLIC EMBER_DIAG_SHA="${EMBER_DIAG_SHA}")
+        # The VST3 wrapper TU (JUCE plugin client) includes <Diag/ApplyUndoTrace.h>.
+        target_include_directories(AIEqualizerPro PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/Source)
+
         # Link JUCE modules + Liquid Intelligence BinaryData
         target_link_libraries(AIEqualizerPro
             PRIVATE

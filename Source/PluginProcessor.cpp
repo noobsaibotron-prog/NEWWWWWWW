@@ -6,6 +6,7 @@
 #include "Utils/APVTSStateSchema.h"
 #include "Utils/Logger.h"
 #include "Integration/EmberProposalClient.h"
+#include "Diag/ApplySelfTest.h"   // DIAG branch only
 #if defined(AIEQ_ENABLE_MOTORE_V2) && AIEQ_ENABLE_MOTORE_V2
 #include "AI/MotoreV2Features.h"   // EXP hybrid: rawDb -> 64 log-mel (gated)
 #endif
@@ -221,6 +222,8 @@ AIEqualizerAudioProcessor::AIEqualizerAudioProcessor()
         targetBandEnabled[static_cast<size_t>(i)] = (i < 8);
         targetBandSolo[static_cast<size_t>(i)] = false;
     }
+
+    EmberDiag::ApplySelfTest::startIfRequested (*this);   // DIAG: no-op unless EMBER_DIAG_SELFTEST_DIR is set
 }
 
 //==============================================================================

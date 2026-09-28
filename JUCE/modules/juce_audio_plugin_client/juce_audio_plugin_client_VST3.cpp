@@ -63,6 +63,7 @@ JUCE_BEGIN_NO_SANITIZE ("vptr")
 //==============================================================================
 #include <juce_audio_processors/format_types/juce_LegacyAudioParameter.cpp>
 #include <juce_audio_processors/utilities/juce_FlagCache.h>
+#include <Diag/ApplyUndoTrace.h>   // DIAG: Apply/Undo trace; include dir Source/ comes from the plugin target
 #include <juce_audio_processors/format_types/juce_VST3Utilities.h>
 #include <juce_audio_processors/format_types/juce_VST3Common.h>
 #include <juce_audio_plugin_client/VST3/juce_VST3ModuleInfo.h>
@@ -967,6 +968,7 @@ public:
         bool setNormalized (Vst::ParamValue v) override
         {
             v = jlimit (0.0, 1.0, v);
+            EmberDiag::Trace::get().recvCtrl (info.id, v, owner.vst3IsPlaying.load());   // DIAG: before the equality filter
 
             if (! approximatelyEqual (v, valueNormalized))
             {
@@ -1460,13 +1462,19 @@ public:
     void beginGesture (Vst::ParamID vstParamId)
     {
         if (! inSetState && MessageManager::getInstance()->isThisTheMessageThread())
+        {
+            EmberDiag::Trace::get().sent (EmberDiag::Kind::SentBegin, vstParamId, -1.0);   // DIAG
             beginEdit (vstParamId);
+        }
     }
 
     void endGesture (Vst::ParamID vstParamId)
     {
         if (! inSetState && MessageManager::getInstance()->isThisTheMessageThread())
+        {
+            EmberDiag::Trace::get().sent (EmberDiag::Kind::SentEnd, vstParamId, -1.0);     // DIAG
             endEdit (vstParamId);
+        }
     }
 
     void paramChanged (Steinberg::int32 parameterIndex, Vst::ParamID vstParamId, double newValue)
@@ -1477,7 +1485,11 @@ public:
         if (MessageManager::getInstance()->isThisTheMessageThread())
         {
             // NB: Cubase has problems if performEdit is called without setParamNormalized
-            EditController::setParamNormalized (vstParamId, newValue);
+            {
+                const EmberDiag::Trace::ScopedSelfWrite selfWrite;   // DIAG: mark this RECV c as SELF
+                EditController::setParamNormalized (vstParamId, newValue);
+            }
+            EmberDiag::Trace::get().sent (EmberDiag::Kind::SentPerform, vstParamId, newValue);   // DIAG
             performEdit (vstParamId, newValue);
         }
         else
@@ -1771,6 +1783,12 @@ private:
            #endif
 
             audioProcessorChanged (pluginInstance, ChangeDetails().withParameterInfoChanged (true));
+
+            // DIAG: header + id -> paramID table, once, on the message thread.
+            EmberDiag::Trace::get().start (*pluginInstance, [this] (int index)
+            {
+                return (std::uint32_t) audioProcessor->getVSTParamIDForIndex (index);
+            });
         }
     }
 
@@ -3650,6 +3668,10 @@ public:
                 }
                 else
                #endif
+                for (Steinberg::int32 point = 0; point < numPoints; ++point)   // DIAG: every point, audio thread, lock-free
+                    if (const auto change = getPointFromQueue (paramQueue, point))
+                        EmberDiag::Trace::get().recvProc (vstParamID, change->value, change->offsetSamples);
+
                 if (const auto change = getPointFromQueue (paramQueue, numPoints - 1))
                 {
                     if (auto* param = comPluginInstance->getParamForVSTParamID (vstParamID))
