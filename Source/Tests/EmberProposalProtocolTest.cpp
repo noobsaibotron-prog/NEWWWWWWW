@@ -280,10 +280,19 @@ public:
         beginTest("canonical rendezvous is Application Support AbletonCopilotBridge control");
         {
             const auto path = defaultRendezvousFile().getFullPathName().replaceCharacter('\\', '/');
+            // macOS inserts "Application Support" under ~/Library. Linux and Windows
+            // use userApplicationDataDirectory directly (~/.config, %APPDATA%).
+#if JUCE_MAC
             expect(path.contains(kCanonicalControlRelativePath), path.toStdString());
-            expect(path.fromLastOccurrenceOf("/", false, false) == kRendezvousFileName);
             expect(!path.contains("/Library/AbletonCopilotBridge/"),
                    "JUCE userApplicationDataDirectory must not be used without Application Support");
+#else
+            const juce::String relative = juce::String("AbletonCopilotBridge/control/") + kRendezvousFileName;
+            expect(path.contains(relative), path.toStdString());
+            expect(!path.contains("Application Support"),
+                   "non-macOS rendezvous must not use the macOS Application Support segment");
+#endif
+            expect(path.fromLastOccurrenceOf("/", false, false) == kRendezvousFileName);
         }
 
         beginTest("rendezvous file that is not 0600 is fail-closed");

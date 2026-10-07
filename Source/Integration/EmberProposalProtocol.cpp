@@ -4,12 +4,20 @@
 #include <cctype>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <sstream>
 
-#include <CommonCrypto/CommonDigest.h>
-#include <CommonCrypto/CommonHMAC.h>
+#if defined(__APPLE__)
+ #include <CommonCrypto/CommonDigest.h>
+ #include <CommonCrypto/CommonHMAC.h>
+#else
+ #include <cerrno>
+ #include <openssl/evp.h>
+ #include <openssl/hmac.h>
+ #include <sys/random.h>
+#endif
 
 namespace EmberProposal
 {
@@ -1574,14 +1582,29 @@ bool fromHex(std::string_view hex, std::uint8_t* out, std::size_t n)
 
 void sha256(const std::uint8_t* data, std::size_t n, std::uint8_t out[32])
 {
+#if defined(__APPLE__)
     CC_SHA256(data, static_cast<CC_LONG>(n), out);
+#else
+    unsigned int len = 0;
+    if (EVP_Digest(data, n, out, &len, EVP_sha256(), nullptr) != 1 || len != 32)
+        std::abort();
+#endif
 }
 
 void hmacSha256(const std::uint8_t* key, std::size_t keyLen,
                 const std::uint8_t* data, std::size_t dataLen,
                 std::uint8_t out[32])
 {
+#if defined(__APPLE__)
     CCHmac(kCCHmacAlgSHA256, key, keyLen, data, dataLen, out);
+#else
+    if (keyLen > static_cast<std::size_t>(std::numeric_limits<int>::max()))
+        std::abort();
+    unsigned int len = 0;
+    if (HMAC(EVP_sha256(), key, static_cast<int>(keyLen), data, dataLen, out, &len) == nullptr
+        || len != 32)
+        std::abort();
+#endif
 }
 
 bool constantTimeEquals(const std::uint8_t* a, const std::uint8_t* b, std::size_t n) noexcept
@@ -1605,7 +1628,22 @@ bool constantTimeHexEquals(std::string_view a, std::string_view b) noexcept
 
 void fillCsprng(std::uint8_t* out, std::size_t n)
 {
+#if defined(__APPLE__)
     arc4random_buf(out, n);
+#else
+    while (n > 0)
+    {
+        const ssize_t got = ::getrandom(out, n, 0);
+        if (got < 0)
+        {
+            if (errno == EINTR)
+                continue;
+            std::abort();
+        }
+        out += static_cast<std::size_t>(got);
+        n -= static_cast<std::size_t>(got);
+    }
+#endif
 }
 
 std::string randomHex64()

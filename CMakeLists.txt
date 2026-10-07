@@ -1047,9 +1047,14 @@ if(TARGET AIEqualizerPro)
         target_include_directories(AIEqualizerPro PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/Source)
 
         # Link JUCE modules + Liquid Intelligence BinaryData
+        if(NOT APPLE)
+            find_package(OpenSSL REQUIRED)
+        endif()
+
         target_link_libraries(AIEqualizerPro
             PRIVATE
                 AIEQ_Assets
+                $<$<NOT:$<BOOL:${APPLE}>>:OpenSSL::Crypto>
                 juce::juce_audio_basics
                 juce::juce_audio_devices
                 juce::juce_audio_formats
@@ -1280,6 +1285,19 @@ endif()
 if(HAVE_JUCE)
     enable_testing()
 
+    # juce_add_plugin attaches curl and WebKit/GTK via NEEDS_CURL / NEEDS_WEB_BROWSER.
+    # Plain test executables still compile juce_core and juce_gui_extra (pulled in
+    # by juce_audio_processors) and otherwise fail on Linux: missing gtk/gtk.h,
+    # then undefined curl_* at link time.
+    function(aieq_link_linux_host_deps target_name)
+        if(TARGET juce::pkgconfig_JUCE_CURL_LINUX_DEPS)
+            target_link_libraries(${target_name} PRIVATE juce::pkgconfig_JUCE_CURL_LINUX_DEPS)
+        endif()
+        if(TARGET juce::pkgconfig_JUCE_BROWSER_LINUX_DEPS)
+            target_link_libraries(${target_name} PRIVATE juce::pkgconfig_JUCE_BROWSER_LINUX_DEPS)
+        endif()
+    endfunction()
+
     add_executable(AIEqualizerPro_Tests
         # FA-002: this file registers a juce::UnitTest but had never been added
         # to any target, so it could not run at any invocation. It guards a real
@@ -1335,6 +1353,7 @@ if(HAVE_JUCE)
         juce::juce_audio_processors
         juce::juce_dsp
     )
+    aieq_link_linux_host_deps(AIEqualizerPro_Tests)
     set_target_properties(AIEqualizerPro_Tests PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/Tests)
 
@@ -1431,6 +1450,7 @@ if(HAVE_JUCE)
         juce::juce_audio_processors
         juce::juce_dsp
     )
+    aieq_link_linux_host_deps(AIEqualizerPro_AI_Tests)
     set_target_properties(AIEqualizerPro_AI_Tests PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/Tests)
 
@@ -1591,6 +1611,7 @@ if(HAVE_JUCE)
         juce::juce_audio_processors
         juce::juce_dsp
     )
+    aieq_link_linux_host_deps(AIEqualizerPro_IntegrationTests)
     set_target_properties(AIEqualizerPro_IntegrationTests PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/Tests)
 
@@ -1638,6 +1659,7 @@ if(HAVE_JUCE)
         juce::juce_events
         juce::juce_dsp
     )
+    aieq_link_linux_host_deps(AIEqualizerPro_PerformanceTests)
     set_target_properties(AIEqualizerPro_PerformanceTests PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/Tests)
 
@@ -1699,6 +1721,7 @@ if(HAVE_JUCE)
         juce::juce_audio_processors
         juce::juce_dsp
     )
+    aieq_link_linux_host_deps(AIEqualizerPro_ThreadSafetyTests)
     set_target_properties(AIEqualizerPro_ThreadSafetyTests PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/Tests)
 

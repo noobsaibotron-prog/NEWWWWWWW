@@ -8,7 +8,12 @@
 #include "../PluginProcessor.h"
 #include "../GUI/SemanticControlPanel.h"
 
-#include <CoreFoundation/CoreFoundation.h>
+#if JUCE_MAC
+ #include <CoreFoundation/CoreFoundation.h>
+#else
+ // Linux/Windows: JUCE's own queue pump (juce_MessageManager.cpp).
+ namespace juce::detail { bool dispatchNextMessageOnSystemQueue(bool returnIfNoPendingMessages); }
+#endif
 #include <array>
 #include <atomic>
 #include <cmath>
@@ -92,9 +97,16 @@ struct FakeAcb
 
 void pump(int ms)
 {
-    const CFTimeInterval until = CFAbsoluteTimeGetCurrent() + ms / 1000.0;
-    while (CFAbsoluteTimeGetCurrent() < until)
+    const auto until = juce::Time::getMillisecondCounterHiRes() + ms;
+    while (juce::Time::getMillisecondCounterHiRes() < until)
+    {
+#if JUCE_MAC
         CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.01, true);
+#else
+        if (! juce::detail::dispatchNextMessageOnSystemQueue(true))
+            juce::Thread::sleep(1);
+#endif
+    }
 }
 
 /** APVTS digest of everything Semantic APPLY is allowed to write. Staging a
