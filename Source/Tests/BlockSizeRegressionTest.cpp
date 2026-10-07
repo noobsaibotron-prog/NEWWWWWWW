@@ -118,3 +118,113 @@ private:
 };
 
 static BlockSizeRegressionTest blockSizeRegressionTest;
+
+/**
+ * Host-visible form of the same dry/wet tail clear.
+ *
+ * prepareToPlay(256) sizes DynamicEQ's dry copy at 256*8. processBlock still
+ * accepts up to max(256*4, 32768) samples. With Dynamic EQ mix below 100% and
+ * the main dry/wet left at 100%, samples past that 8x copy were zeroed.
+ */
+class DynamicEQHostOversizedBlockTest : public juce::UnitTest
+{
+public:
+    DynamicEQHostOversizedBlockTest()
+        : juce::UnitTest("Dynamic EQ oversized host block", "Integration") {}
+
+    void runTest() override
+    {
+        beginTest("Dynamic EQ mix keeps the tail of a block larger than 8x prepare");
+
+        AIEqualizerAudioProcessor proc;
+        constexpr double sampleRate = 48000.0;
+        constexpr int initialBlockSize = 256;
+        constexpr int oversizedBlock = initialBlockSize * 16; // 4096 > 256 * 8
+        constexpr int tailStart = initialBlockSize * 8;
+
+        proc.prepareToPlay(sampleRate, initialBlockSize);
+
+        auto& apvts = proc.getAPVTS();
+        setChoice(apvts, "phaseMode", 2);          // Linear phase (no oversampler on this block)
+        setChoice(apvts, "msMode", 0);
+        setChoice(apvts, "oversamplingFactor", 0);
+        setFloat(apvts, "dryWet", 100.0f);         // do not restore a cleared tail from the plugin dry path
+        setFloat(apvts, "dynEqMix", 50.0f);
+        setBool(apvts, "dynEqEnabled", true);
+        setBool(apvts, "bypass", false);
+        setFloat(apvts, "outputGain", 0.0f);
+
+        juce::AudioBuffer<float> warmup(2, initialBlockSize);
+        juce::MidiBuffer midi;
+        const float w = juce::MathConstants<float>::twoPi * 1000.0f / static_cast<float>(sampleRate);
+        auto fillSine = [&](juce::AudioBuffer<float>& buffer, int phaseStart)
+        {
+            for (int i = 0; i < buffer.getNumSamples(); ++i)
+            {
+                const float s = 0.25f * std::sin(w * static_cast<float>(phaseStart + i));
+                for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+                    buffer.setSample(ch, i, s);
+            }
+        };
+
+        for (int b = 0; b < 8; ++b)
+        {
+            fillSine(warmup, b * initialBlockSize);
+            proc.processBlock(warmup, midi);
+        }
+
+        juce::AudioBuffer<float> buffer(2, oversizedBlock);
+        fillSine(buffer, 0);
+        proc.processBlock(buffer, midi);
+
+        bool finite = true;
+        float tailMax = 0.0f;
+        float headMax = 0.0f;
+        for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+        {
+            const float* data = buffer.getReadPointer(ch);
+            for (int i = 0; i < buffer.getNumSamples(); ++i)
+            {
+                if (!std::isfinite(data[i]))
+                    finite = false;
+                if (i < tailStart)
+                    headMax = std::max(headMax, std::abs(data[i]));
+                else
+                    tailMax = std::max(tailMax, std::abs(data[i]));
+            }
+        }
+
+        expect(finite, "Oversized host block produced non-finite samples.");
+        expect(headMax > 1.0e-3f, "Head of the oversized block is silent; the fixture produced no audio.");
+        expect(tailMax > 1.0e-3f,
+               "Tail past the 8x Dynamic EQ dry copy was cleared (dynEqMix < 100%).");
+        logMessage("headMax=" + juce::String(headMax, 4) + " tailMax=" + juce::String(tailMax, 4));
+
+        const auto rmsHead = buffer.getRMSLevel(0, 0, tailStart);
+        const auto rmsTail = buffer.getRMSLevel(0, tailStart, buffer.getNumSamples() - tailStart);
+        expect(rmsTail > 1.0e-4f, "Tail RMS is effectively silent.");
+        if (rmsHead > 1.0e-6f)
+            expect(rmsTail > rmsHead * 0.1f, "Tail RMS dropped more than 20 dB vs the head.");
+    }
+
+private:
+    static void setChoice(juce::AudioProcessorValueTreeState& apvts, const juce::String& id, int index)
+    {
+        if (auto* p = apvts.getParameter(id))
+            p->setValueNotifyingHost(p->convertTo0to1(static_cast<float>(index)));
+    }
+
+    static void setBool(juce::AudioProcessorValueTreeState& apvts, const juce::String& id, bool value)
+    {
+        if (auto* p = apvts.getParameter(id))
+            p->setValueNotifyingHost(value ? 1.0f : 0.0f);
+    }
+
+    static void setFloat(juce::AudioProcessorValueTreeState& apvts, const juce::String& id, float value)
+    {
+        if (auto* p = apvts.getParameter(id))
+            p->setValueNotifyingHost(p->convertTo0to1(value));
+    }
+};
+
+static DynamicEQHostOversizedBlockTest dynamicEQHostOversizedBlockTest;
