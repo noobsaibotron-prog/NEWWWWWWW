@@ -27,6 +27,7 @@ public:
     {
         testDynamicDetectionNoSidechain();
         testDryWetOversizedBlock();
+        testDryWetBeyondEightTimesHeadroom();
         testStaticProcessingClean();
         testSilenceMetersAndAutoMakeupStayFinite();
     }
@@ -173,6 +174,61 @@ private:
         expect(tailMax > 1e-4f,
                "Tail of oversized block is silent - dry/wet blend was not applied (Bug G)");
         logMessage("Tail max amplitude: " + juce::String(tailMax, 4));
+    }
+
+    // The 8x case above fits in the historical headroom. The plugin still
+    // forwards blocks up to max(prepare * 4, 32768) without re-prepare, which
+    // is past that headroom whenever prepare was below 4096 samples. At a
+    // Dynamic EQ mix other than 100% the tail used to be cleared.
+    void testDryWetBeyondEightTimesHeadroom()
+    {
+        beginTest("Full-dry mix keeps a block larger than the 8x prepare headroom");
+
+        const int preparedBlock  = 256;
+        const int oversizedBlock = preparedBlock * 16; // 4096 > 256 * 8
+        const int tailStart      = preparedBlock * 8;
+
+        DynamicEQProcessor proc;
+        proc.prepare(kSampleRate, preparedBlock, kChannels);
+        proc.setGlobalMix(0.0f);
+
+        DynamicEQProcessor::DynamicBandParams params;
+        params.frequency   = 1000.0f;
+        params.gain        = 18.0f;
+        params.q           = 2.0f;
+        params.filterType  = 2; // Peak
+        params.enabled     = true;
+        proc.setBandParams(0, params);
+
+        // Settle the mix ramp (lastAppliedMix starts at 1) on a short block.
+        auto warmup = makeSine(1000.0f, preparedBlock);
+        proc.process(warmup);
+
+        auto input = makeSine(1000.0f, oversizedBlock);
+        auto output = input;
+        proc.process(output);
+
+        expect(isFinite(output), "Non-finite samples past the 8x dry headroom");
+
+        float tailError = 0.0f;
+        float tailMax = 0.0f;
+        for (int ch = 0; ch < kChannels; ++ch)
+        {
+            const auto* in  = input.getReadPointer(ch);
+            const auto* out = output.getReadPointer(ch);
+            for (int i = tailStart; i < oversizedBlock; ++i)
+            {
+                tailError = std::max(tailError, std::abs(out[i] - in[i]));
+                tailMax = std::max(tailMax, std::abs(out[i]));
+            }
+        }
+
+        logMessage("Tail max=" + juce::String(tailMax, 4)
+                   + " max |out-dry|=" + juce::String(tailError, 4));
+        expect(tailMax > 1.0e-3f,
+               "Tail past 8x headroom is silent");
+        expect(tailError < 1.0e-4f,
+               "Full-dry mix did not preserve the tail past the 8x headroom");
     }
 
     // Sanity: static processing (no dynamic mode) must not distort signal

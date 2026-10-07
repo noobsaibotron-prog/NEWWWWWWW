@@ -185,10 +185,14 @@ void DynamicEQProcessor::prepare(double sampleRate, int samplesPerBlock, int cha
         return;
     }
 
-    // Pre-allocate dry buffer with generous headroom so process() never needs to resize.
-    // 8x block size covers Reaper dynamic block sizes and any host that delivers
-    // larger-than-expected blocks without hitting the RT-unsafe setSize path.
-    dryBuffer.setSize(channels, samplesPerBlock * 8, false, false, true);
+    // Pre-allocate the dry copy so process() never resizes on the audio thread.
+    // PluginProcessor forwards blocks up to jmax(samplesPerBlock * 4, 32768)
+    // without another prepare(). samplesPerBlock * 8 is shorter than that
+    // whenever the host prepared below 4096 samples, and the mix loop then
+    // zeroed the tail whenever Dynamic EQ mix was not fully wet.
+    static constexpr int kHostBlockCeiling = 32768;
+    const int dryCapacity = juce::jmax(samplesPerBlock * 8, kHostBlockCeiling);
+    dryBuffer.setSize(channels, dryCapacity, false, false, true);
     dryBuffer.clear();
 
     // RB-4 FIX: always allocate lookahead buffer for the maximum possible delay (20ms)
@@ -495,9 +499,10 @@ void DynamicEQProcessor::process(juce::AudioBuffer<float>& buffer,
     //==========================================================================
     const float mix = globalMix.load(std::memory_order_relaxed);
 
-    // Safety: if host delivers a block larger than the 8x headroom pre-allocated in prepare(),
-    // skip dry/wet mix rather than allocating on the audio thread.
-    // In practice this should never trigger with 8x headroom.
+    // A block past the dry copy (host ceiling, or 8x prepare when that is larger)
+    // cannot be blended without allocating. The tail is cleared rather than read
+    // off the end of dryBuffer. prepare() sizes that copy for the host ceiling,
+    // so this is the overflow past that contract, not a normal variable block.
 
     const int safeSamples = juce::jmin(numSamples, dryBuffer.getNumSamples());
     const bool mixNeedsDry = lastAppliedMix < 0.999f || mix < 0.999f;
