@@ -1,0 +1,13 @@
+# ninja log v6
+1	45	1790586395627071637	/Users/marco/Desktop/ember-apply-undo/build-apply/JUCE/tools/CMakeFiles/cmake.verify_globs	5456d47e99686a4c
+46	123	1790586395672220731	extras/Build/juceaide/CMakeFiles/juceaide.dir/__/__/__/modules/juce_core/juce_core_CompilationTime.cpp.o	7c668a92da3fba2b
+46	345	1790586395671550058	extras/Build/juceaide/CMakeFiles/juceaide.dir/__/__/__/modules/juce_graphics/juce_graphics_Sheenbidi.c.o	3a7341f7fb423585
+47	1820	1790586395672501567	extras/Build/juceaide/CMakeFiles/juceaide.dir/__/__/__/modules/juce_data_structures/juce_data_structures.mm.o	7678834868cd275a
+45	2663	1790586395671109470	extras/Build/juceaide/CMakeFiles/juceaide.dir/__/juce_build_tools/juce_build_tools.cpp.o	75bbee852b465b2d
+45	2696	1790586395670804967	extras/Build/juceaide/CMakeFiles/juceaide.dir/Main.cpp.o	8e7d7746f4d08fb6
+46	2827	1790586395672098271	extras/Build/juceaide/CMakeFiles/juceaide.dir/__/__/__/modules/juce_events/juce_events.mm.o	f514331d5684813b
+46	4277	1790586395672361565	extras/Build/juceaide/CMakeFiles/juceaide.dir/__/__/__/modules/juce_core/juce_core.mm.o	a6327feb49ce3285
+45	6426	1790586395671423682	extras/Build/juceaide/CMakeFiles/juceaide.dir/__/__/__/modules/juce_graphics/juce_graphics_Harfbuzz.cpp.o	c2150f27bc2cc5d0
+46	6455	1790586395671729518	extras/Build/juceaide/CMakeFiles/juceaide.dir/__/__/__/modules/juce_graphics/juce_graphics.mm.o	6883bfe4f24eef6f
+45	11524	1790586395671248096	extras/Build/juceaide/CMakeFiles/juceaide.dir/__/__/__/modules/juce_gui_basics/juce_gui_basics.mm.o	14630921354bdcb9
+11525	11744	1790586407150604929	extras/Build/juceaide/juceaide_artefacts/Custom/juceaide	2b6d55ee9930949d

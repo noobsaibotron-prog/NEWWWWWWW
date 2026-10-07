@@ -780,10 +780,12 @@ if(HAVE_JUCE)
     # Motore v2 EXP uses a DISTINCT plugin code + name so macOS/Ableton treat it
     # as a separate plugin installed next to the shipped one (untouched).
     if(AIEQ_EMBER_CORE)
-        set(_AIEQ_CODE "EMBR")
-        set(_AIEQ_NAME "EMBER CORE")
-        set(_AIEQ_BUNDLE_ID "com.AIAudio.EmberCore")
-        message(STATUS "Ember Core identity: ${_AIEQ_NAME} (PLUGIN_CODE ${_AIEQ_CODE}, TUID AIAUEMBR)")
+        # Local Apply/Undo diagnostic identity (EMBF): sits beside EMBR in Live.
+        # Uncommitted override for candidate/apply-undo-live only — not product.
+        set(_AIEQ_CODE "EMBF")
+        set(_AIEQ_NAME "EMBER CORE ApplyUndo")
+        set(_AIEQ_BUNDLE_ID "com.AIAudio.EmberCoreApplyUndo")
+        message(STATUS "Ember Core identity: ${_AIEQ_NAME} (PLUGIN_CODE ${_AIEQ_CODE}, TUID AIAUEMBF)")
     elseif(AIEQ_COPILOT_PROPOSAL_V1)
         # Distinct from shipping AIEQ and experiment AIQS. Factory / product
         # name must contain ProposalV1 so Live cannot merge browser rows.
